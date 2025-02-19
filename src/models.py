@@ -1,10 +1,9 @@
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy import JSON
-from sqlalchemy import Table, Column, ForeignKey, String
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -109,6 +108,17 @@ class Tags(str, Enum):
     OTHER = "other"
 
 
+# Association tables for many-to-many relationships
+class EventDetaineeLink(SQLModel, table=True):
+    event_id: UUID = Field(foreign_key="event.id", primary_key=True)
+    detainee_id: UUID = Field(foreign_key="detainee.id", primary_key=True)
+
+
+class EventOrganisationLink(SQLModel, table=True):
+    event_id: UUID = Field(foreign_key="event.id", primary_key=True)
+    organisation_id: UUID = Field(foreign_key="organisation.id", primary_key=True)
+
+
 class Location(SQLModel, table=True):
     id: Optional[UUID] = Field(default=None, primary_key=True)
     facility: Optional[Facility] = None
@@ -132,7 +142,10 @@ class Detainee(SQLModel, table=True):
     release_status: Optional[bool] = None
 
     # Relationships
-    events: List["Event"] = Relationship(back_populates="involved_detainees")
+    events: List["Event"] = Relationship(
+        back_populates="involved_detainees",
+        link_model=EventDetaineeLink,
+    )
 
 
 class Organisation(SQLModel, table=True):
@@ -143,7 +156,10 @@ class Organisation(SQLModel, table=True):
     description: Optional[str] = None
 
     # Relationships
-    events: List["Event"] = Relationship(back_populates="involved_organisations")
+    events: List["Event"] = Relationship(
+        back_populates="involved_organisations",
+        link_model=EventOrganisationLink,
+    )
 
 
 class Event(SQLModel, table=True):
@@ -159,8 +175,14 @@ class Event(SQLModel, table=True):
 
     # Relationships
     location: Optional[Location] = Relationship(back_populates="events")
-    involved_detainees: List[Detainee] = Relationship(back_populates="events")
-    involved_organisations: List[Organisation] = Relationship(back_populates="events")
+    involved_detainees: List[Detainee] = Relationship(
+        back_populates="events",
+        link_model=EventDetaineeLink,
+    )
+    involved_organisations: List[Organisation] = Relationship(
+        back_populates="events",
+        link_model=EventOrganisationLink,
+    )
 
     # Store as JSON in SQLite
     sources: List[Dict] = Field(default=[], sa_type=JSON)
