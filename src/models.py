@@ -3,7 +3,9 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
-from pydantic import BaseModel
+from sqlalchemy import JSON
+from sqlalchemy import Table, Column, ForeignKey, String
+from sqlmodel import Field, Relationship, SQLModel
 
 
 class EventType(str, Enum):
@@ -47,29 +49,11 @@ class Facility(str, Enum):
     CAMP_7 = "Camp 7"  # High-value detainee facility
 
 
-class Location(BaseModel):  # Normalized location model
-    facility: Optional[Facility]  # Camp Delta, Camp X-Ray, etc.
-    coordinates: Optional[Tuple[float, float]]
-    city: str = "Guantánamo Bay"
-    country: str = "Cuba"
-
-
 class EventSource(str, Enum):
     GOV_REPORT = "government_report"
     MEDIA = "media"
     NGO = "ngo"
     LEGAL_FILING = "legal_filing"
-
-
-class Detainee(BaseModel):
-    id: UUID
-    name: str
-    nationality: str
-    birth_date: datetime
-    detainee_number: str
-    detention_date: datetime
-    release_date: Optional[datetime]
-    release_status: Optional[bool]  # whether detainee was released or not
 
 
 class OrganisationType(str, Enum):
@@ -82,14 +66,6 @@ class OrganisationType(str, Enum):
     MEDICAL = "medical"  # e.g. Physicians for Human Rights
     INTERNATIONAL = "international"  # e.g. UN, Red Cross
     OTHER = "other"
-
-
-class Organisation(BaseModel):
-    id: UUID
-    name: str
-    type: OrganisationType
-    country: str
-    description: Optional[str]
 
 
 class Tags(str, Enum):
@@ -133,26 +109,64 @@ class Tags(str, Enum):
     OTHER = "other"
 
 
-class Event(BaseModel):
-    id: UUID
-    title: str  # More specific than 'name'
+class Location(SQLModel, table=True):
+    id: Optional[UUID] = Field(default=None, primary_key=True)
+    facility: Optional[Facility] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    city: str = "Guantánamo Bay"
+    country: str = "Cuba"
+
+    # Relationships
+    events: List["Event"] = Relationship(back_populates="location")
+
+
+class Detainee(SQLModel, table=True):
+    id: UUID = Field(primary_key=True)
+    name: str
+    nationality: str
+    birth_date: datetime
+    detainee_number: str = Field(unique=True, index=True)
+    detention_date: datetime
+    release_date: Optional[datetime] = None
+    release_status: Optional[bool] = None
+
+    # Relationships
+    events: List["Event"] = Relationship(back_populates="involved_detainees")
+
+
+class Organisation(SQLModel, table=True):
+    id: UUID = Field(primary_key=True)
+    name: str = Field(index=True)
+    type: OrganisationType
+    country: str
+    description: Optional[str] = None
+
+    # Relationships
+    events: List["Event"] = Relationship(back_populates="involved_organisations")
+
+
+class Event(SQLModel, table=True):
+    id: UUID = Field(primary_key=True)
+    title: str = Field(index=True)
     description: str
-    classification: EventType
-    start: datetime  # ISO 8601 format
-    end: Optional[datetime]
-    location: Location  # Replaces individual location fields
+    classification: EventType = Field(index=True)
+    start: datetime = Field(index=True)
+    end: Optional[datetime] = Field(default=None)
 
-    # Relationship tracking
-    involved_detainees: List[Detainee] = []
-    involved_organisations: List[Organisation] = []  # CIA, JTF-GTMO, etc.
+    # Foreign keys
+    location_id: Optional[UUID] = Field(default=None, foreign_key="location.id")
 
-    # Source tracking
-    sources: List[Dict] = [
-        {"type": EventSource, "url": str, "archive_url": Optional[str]}
-    ]
+    # Relationships
+    location: Optional[Location] = Relationship(back_populates="events")
+    involved_detainees: List[Detainee] = Relationship(back_populates="events")
+    involved_organisations: List[Organisation] = Relationship(back_populates="events")
+
+    # Store as JSON in SQLite
+    sources: List[Dict] = Field(default=[], sa_type=JSON)
 
     # System fields
-    created_at: datetime = datetime.now()
-    updated_at: datetime = datetime.now()
-    verification_status: str = "unverified"  # workflow state
-    tags: List[Tags] = []  # "human_rights", "torture", "habeas_corpus", etc.
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    verification_status: str = Field(default="unverified")
+    tags: List[str] = Field(default=[], sa_type=JSON)

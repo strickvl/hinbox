@@ -3,3 +3,4 @@ pydantic
 instructor
 litellm
 pyclean
+alembic
