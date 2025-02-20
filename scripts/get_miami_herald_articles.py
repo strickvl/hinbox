@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 PAGE_TIMEOUT = 15000  # 15 seconds
 ARTICLE_SCRAPE_DELAY = 5.0  # seconds between article scrapes
 SAVE_FREQUENCY = 20  # Save progress every N articles
+TEST_MODE = False  # Set to True to process only a small subset of articles
+TEST_SAMPLE_SIZE = 10  # Number of articles to process in test mode
 
 
 @dataclass
@@ -412,6 +414,14 @@ async def update_articles_with_content(jsonl_path: Path) -> None:
             article_data = json.loads(line)
             articles.append(Article.from_dict(article_data))
 
+    # In test mode, only process a small subset
+    if TEST_MODE:
+        original_count = len(articles)
+        articles = articles[:TEST_SAMPLE_SIZE]
+        logger.info(
+            f"TEST MODE: Processing {TEST_SAMPLE_SIZE} articles out of {original_count}"
+        )
+
     logger.info(f"Found {len(articles)} articles to process")
 
     # Initialize processing stats
@@ -438,7 +448,12 @@ async def update_articles_with_content(jsonl_path: Path) -> None:
 
             # Save progress periodically
             if stats.should_save_progress():
-                await save_progress(processed_articles, jsonl_path, stats)
+                if TEST_MODE:
+                    # In test mode, save to a different file to avoid corrupting main data
+                    test_path = jsonl_path.with_suffix(".test.jsonl")
+                    await save_progress(processed_articles, test_path, stats)
+                else:
+                    await save_progress(processed_articles, jsonl_path, stats)
 
     # Final statistics
     logger.info("\nProcessing completed:")
@@ -449,8 +464,13 @@ async def update_articles_with_content(jsonl_path: Path) -> None:
     )
 
     # Save final results
-    await save_progress(processed_articles, jsonl_path, stats)
-    logger.info(f"Updated {len(processed_articles)} articles with content")
+    if TEST_MODE:
+        test_path = jsonl_path.with_suffix(".test.jsonl")
+        await save_progress(processed_articles, test_path, stats)
+        logger.info(f"Test results saved to: {test_path}")
+    else:
+        await save_progress(processed_articles, jsonl_path, stats)
+        logger.info(f"Updated {len(processed_articles)} articles with content")
 
 
 def save_articles_to_jsonl(articles: Iterator[Article], output_path: Path) -> None:
@@ -476,14 +496,20 @@ async def async_main() -> None:
     output_path = Path("data/raw_sources/miami_herald_articles.jsonl")
 
     try:
-        # First update existing articles with content if the file exists
-        if output_path.exists():
-            await update_articles_with_content(output_path)
-
-        # Then fetch new articles if needed
+        # Check if we need to fetch new articles first
         api = MiamiHeraldAPI()
-        articles = api.get_all_articles("Carol Rosenberg")
-        save_articles_to_jsonl(articles, output_path)
+        if not output_path.exists():
+            # If file doesn't exist, fetch and save initial articles
+            articles = api.get_all_articles("Carol Rosenberg")
+            save_articles_to_jsonl(articles, output_path)
+
+        # Now update articles with content
+        if output_path.exists():
+            if TEST_MODE:
+                logger.info(
+                    "Running in TEST MODE - processing small subset of articles"
+                )
+            await update_articles_with_content(output_path)
 
     except Exception as e:
         logger.error(f"An error occurred: {e}")
