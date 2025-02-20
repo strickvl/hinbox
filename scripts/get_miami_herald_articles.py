@@ -1,8 +1,8 @@
-from typing import Dict, Any, Optional
-import requests
-from dataclasses import dataclass
-from datetime import datetime
 import json
+from dataclasses import dataclass
+from typing import Any, Dict
+
+import requests
 
 
 @dataclass
