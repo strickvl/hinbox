@@ -1,20 +1,42 @@
 import json
-from dataclasses import dataclass
-from typing import Any, Dict
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from time import sleep
+from typing import Any, Dict, Iterator
 
 import requests
+from tqdm import tqdm
 
 
 @dataclass
 class SearchConfig:
     query: str
     start: int = 0
-    rows: int = 11
+    rows: int = 25  # Reduced batch size to be more conservative
     sort: str = "newest"
+
+
+@dataclass
+class Article:
+    title: str
+    url: str
+    published_date: str
+    scrape_timestamp: str
+
+    @classmethod
+    def from_api_response(cls, article_data: Dict[str, Any]) -> "Article":
+        return cls(
+            title=article_data.get("title", ""),
+            url=article_data.get("url", ""),
+            published_date=article_data.get("published_date", ""),
+            scrape_timestamp=datetime.now(UTC).isoformat(),
+        )
 
 
 class MiamiHeraldAPI:
     BASE_URL = "https://publicapi.misitemgr.com/webapi-public/v2/publications/miamiherald/search"
+    RATE_LIMIT_DELAY = 2.0  # seconds between requests
 
     def __init__(self) -> None:
         self.headers = {
@@ -33,6 +55,15 @@ class MiamiHeraldAPI:
             "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "x-forwarded-host": "www.miamiherald.com",
         }
+        self._last_request_time: float = 0
+
+    def _wait_for_rate_limit(self) -> None:
+        """Ensure we wait an appropriate amount of time between requests."""
+        now = datetime.now(UTC).timestamp()
+        time_since_last_request = now - self._last_request_time
+        if time_since_last_request < self.RATE_LIMIT_DELAY:
+            sleep(self.RATE_LIMIT_DELAY - time_since_last_request)
+        self._last_request_time = datetime.now(UTC).timestamp()
 
     def search_articles(self, config: SearchConfig) -> Dict[str, Any]:
         """
@@ -47,8 +78,8 @@ class MiamiHeraldAPI:
         Raises:
             requests.exceptions.RequestException: If the API request fails
         """
-        print("\n=== Request Details ===")
-        print(f"URL: {self.BASE_URL}")
+        self._wait_for_rate_limit()
+
         payload = {
             "q": config.query,
             "start": config.start,
@@ -56,27 +87,9 @@ class MiamiHeraldAPI:
             "sort": config.sort,
         }
 
-        print("\n=== Request Payload ===")
-        print(json.dumps(payload, indent=2))
-
-        print("\n=== Request Headers ===")
-        print(json.dumps(self.headers, indent=2))
-
         try:
-            print("\n=== Making Request ===")
             response = requests.post(
                 self.BASE_URL, headers=self.headers, data=json.dumps(payload)
-            )
-
-            print(f"\n=== Response Status: {response.status_code} ===")
-            print("Response Headers:")
-            print(json.dumps(dict(response.headers), indent=2))
-
-            print("\n=== Response Content ===")
-            print(
-                response.text[:500] + "..."
-                if len(response.text) > 500
-                else response.text
             )
             response.raise_for_status()
             return response.json()
@@ -84,26 +97,75 @@ class MiamiHeraldAPI:
             print(f"Error fetching articles: {e}")
             raise
 
+    def get_all_articles(self, query: str) -> Iterator[Article]:
+        """
+        Get all articles for a given query using pagination.
+
+        Args:
+            query: Search query string
+
+        Yields:
+            Article objects for each article found
+        """
+        start = 0
+        total_fetched = 0
+        total_available = None
+
+        while True:
+            config = SearchConfig(query=query, start=start)
+            results = self.search_articles(config)
+
+            if total_available is None:
+                total_available = results.get("total", 0)
+                print(
+                    f"\nFetching {total_available} articles (with {config.rows} per batch)..."
+                )
+                progress_bar = tqdm(total=total_available, desc="Articles fetched")
+
+            if not results.get("results"):
+                break
+
+            batch_count = 0
+            for article_data in results["results"]:
+                yield Article.from_api_response(article_data)
+                total_fetched += 1
+                batch_count += 1
+
+            progress_bar.update(batch_count)
+
+            if total_fetched >= total_available:
+                progress_bar.close()
+                break
+
+            start += config.rows
+
+
+def save_articles_to_jsonl(articles: Iterator[Article], output_path: Path) -> None:
+    """
+    Save articles to a JSONL file.
+
+    Args:
+        articles: Iterator of Article objects
+        output_path: Path to save the JSONL file
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    article_count = 0
+    with output_path.open("w", encoding="utf-8") as f:
+        for article in articles:
+            f.write(json.dumps(asdict(article)) + "\n")
+            article_count += 1
+
+    print(f"\nSaved {article_count} articles to {output_path}")
+
 
 def main() -> None:
     api = MiamiHeraldAPI()
-    config = SearchConfig(query="Carol Rosenberg")
+    output_path = Path("data/raw_sources/miami_herald_articles.jsonl")
 
     try:
-        results = api.search_articles(config)
-
-        # Print results in a readable format
-        if "results" in results:
-            print(f"\nFound {results.get('total', 0)} total articles")
-            print("-" * 80)
-            for article in results["results"]:
-                print(f"\nTitle: {article.get('title', 'No title')}")
-                print(f"Type: {article.get('type', 'No type')}")
-                print(f"URL: {article.get('url', 'No URL')}")
-                print(f"Published: {article.get('published_date', 'No date')}")
-                print("-" * 80)
-        else:
-            print("No articles found in the response")
+        articles = api.get_all_articles("Carol Rosenberg")
+        save_articles_to_jsonl(articles, output_path)
 
     except Exception as e:
         print(f"An error occurred: {e}")

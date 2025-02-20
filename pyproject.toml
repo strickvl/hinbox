@@ -15,6 +15,7 @@ dependencies = [
     "pyclean",
     "alembic",
     "requests",
+    "tqdm>=4.67.1",
 ]
 
 [project.optional-dependencies]
