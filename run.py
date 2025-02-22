@@ -9,9 +9,17 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.models.gemini import GeminiModel
 from rich import print
+from pydantic_ai.models.openai import OpenAIModel
 
 logfire.configure(token=os.environ["LOGFIRE_WRITE_TOKEN"])
-logfire.instrument_httpx(capture_all=True)
+
+# GEMINI MODEL
+# logfire.instrument_httpx(capture_all=True)
+# model = GeminiModel("gemini-2.0-flash", api_key=os.environ["GEMINI_API_KEY"])
+
+# OLLAMA MODEL
+logfire.instrument_openai()
+model = OpenAIModel(model_name="mixtral", base_url="http://192.168.178.175:11434/v1")
 
 
 class EventType(str, Enum):
@@ -53,8 +61,6 @@ class Event(BaseModel):
 class ArticleEvents(BaseModel):
     events: List[Event]
 
-
-model = GeminiModel("gemini-2.0-flash", api_key=os.environ["GEMINI_API_KEY"])
 
 agent = Agent(
     model,
