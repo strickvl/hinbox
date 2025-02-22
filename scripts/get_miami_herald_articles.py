@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -6,10 +7,9 @@ from pathlib import Path
 from time import sleep
 from typing import Any, Dict, Iterator, Optional, Tuple
 
-import asyncio
+import requests
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
-import requests
 from tqdm import tqdm
 
 # Configure logging

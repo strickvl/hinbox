@@ -3,9 +3,10 @@ from enum import Enum
 from typing import Dict, List, Optional
 from uuid import UUID
 
+from pydantic import BaseModel, Field
 from sqlalchemy import JSON
 from sqlmodel import Field, Relationship, SQLModel
-from pydantic import BaseModel, Field
+
 
 class EventType(str, Enum):
     MEETING = "meeting"
@@ -198,9 +199,11 @@ class EventBase(SQLModel):
     start: datetime = Field(index=True)
     end: Optional[datetime] = None
 
+
 class EventLite(EventBase):
     # Minimal fields for initial parsing
     pass
+
 
 class ArticleEvents(BaseModel):
     events: List[EventLite]

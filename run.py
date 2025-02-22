@@ -1,13 +1,17 @@
-from pydantic_ai import Agent
-from pydantic_ai.models.gemini import GeminiModel
-import logfire
-import os
-from rich import print
 import json
+import os
 from datetime import datetime
-from pydantic import BaseModel
 from enum import Enum
 from typing import List, Optional
+
+import logfire
+from pydantic import BaseModel
+from pydantic_ai import Agent
+from pydantic_ai.models.gemini import GeminiModel
+from rich import print
+
+logfire.configure(token=os.environ["LOGFIRE_WRITE_TOKEN"])
+logfire.instrument_httpx(capture_all=True)
 
 
 class EventType(str, Enum):
@@ -44,30 +48,31 @@ class Event(BaseModel):
     event_type: EventType
     start: datetime
     end: Optional[datetime]
-    
+
+
 class ArticleEvents(BaseModel):
     events: List[Event]
 
 
-logfire.configure(token=os.environ['LOGFIRE_WRITE_TOKEN'])
+model = GeminiModel("gemini-2.0-flash", api_key=os.environ["GEMINI_API_KEY"])
 
-model = GeminiModel('gemini-2.0-flash', api_key=os.environ['GEMINI_API_KEY'])
-
-agent = Agent(  
+agent = Agent(
     model,
-    system_prompt='You are a data analyst with years of experience working on information extraction.',
+    system_prompt="You are a data analyst with years of experience working on information extraction.",
     result_type=ArticleEvents,
 )
 
 # open the miami_herald_articles.jsonl file as jsonl and read the first article
-with open('data/raw_sources/miami_herald_articles.jsonl', 'r') as file:
+with open("data/raw_sources/miami_herald_articles.jsonl", "r") as file:
     first_line = file.readline()
     first_article = json.loads(first_line)
-    published_date = datetime.fromtimestamp(first_article['published_date'])
+    published_date = datetime.fromtimestamp(first_article["published_date"])
     article_text = f"# {first_article['title']}\n\n## Article Publication Date: {published_date.strftime('%B %d, %Y')}\n\n## Article Content:\n\n{first_article['content']}"
 
 print(article_text)
 
-result = agent.run_sync(f"Extract all events mentioned in the following article. Make sure to extract a title, a description, and the event type as well as the start date and an optional end date if applicable: {article_text}") 
+result = agent.run_sync(
+    f"Extract all events mentioned in the following article. Make sure to extract a title, a description, and the event type as well as the start date and an optional end date if applicable: {article_text}"
+)
 print(result.data)
 print(result.usage())
