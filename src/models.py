@@ -5,16 +5,16 @@ from uuid import UUID
 
 from sqlalchemy import JSON
 from sqlmodel import Field, Relationship, SQLModel
-
+from pydantic import BaseModel, Field
 
 class EventType(str, Enum):
     MEETING = "meeting"
     HUNGER_STRIKE = "hunger_strike"
     COURT_HEARING = "court_hearing"
     PROTEST = "protest"
-    DETAINEE_TRANSFER = "detainee_transfer"  # Inbound or outbound
+    DETAINEE_TRANSFER = "detainee_transfer"  # inter-facility movements
     DETAINEE_RELEASE = (
-        "detainee_release"  # Repatriation or transfer to another facility
+        "detainee_release"  # Repatriation or transfer elsewhere off the island
     )
     INSPECTION_OR_VISIT = (
         "inspection_or_visit"  # Visits by officials, NGOs, Red Cross, etc.
@@ -30,11 +30,8 @@ class EventType(str, Enum):
     INVESTIGATION = "investigation"  # Internal or external official investigations
     MEDICAL_EMERGENCY = "medical_emergency"  # Health crises beyond hunger strikes
     LEGAL_VERDICT = "legal_verdict"  # Court decisions
-    TRIBUNAL = "tribunal"  # Military commission proceedings
     INTERROGATION = "interrogation"  # Specific questioning sessions
-    MEDIA_ACCESS = "media_access"  # Journalist visits/documentary shoots
-    ETHICS_REVIEW = "ethics_review"  # Medical ethics committee decisions
-    CAMP_OPERATION = "camp_operation"  # Facility openings/closures/modifications
+    FACILITY_CHANGE = "facility_change"  # Facility openings/closures/modifications
     OTHER = "other"
 
 
@@ -166,7 +163,7 @@ class Event(SQLModel, table=True):
     id: UUID = Field(primary_key=True)
     title: str = Field(index=True)
     description: str
-    classification: EventType = Field(index=True)
+    event_type: EventType = Field(index=True)
     start: datetime = Field(index=True)
     end: Optional[datetime] = Field(default=None)
 
@@ -192,3 +189,18 @@ class Event(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.now)
     verification_status: str = Field(default="unverified")
     tags: List[str] = Field(default=[], sa_type=JSON)
+
+
+class EventBase(SQLModel):
+    title: str = Field(index=True)
+    description: str
+    event_type: EventType = Field(index=True)
+    start: datetime = Field(index=True)
+    end: Optional[datetime] = None
+
+class EventLite(EventBase):
+    # Minimal fields for initial parsing
+    pass
+
+class ArticleEvents(BaseModel):
+    events: List[EventLite]
