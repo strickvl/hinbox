@@ -176,3 +176,4 @@ cython_debug/
 # Project specific files
 design/
 data/hinbox.db
+drafts/
