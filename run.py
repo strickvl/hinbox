@@ -1,25 +1,12 @@
 import json
-import os
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-import logfire
+import instructor
+from litellm import completion
 from pydantic import BaseModel
-from pydantic_ai import Agent
-from pydantic_ai.models.gemini import GeminiModel
 from rich import print
-from pydantic_ai.models.openai import OpenAIModel
-
-logfire.configure(token=os.environ["LOGFIRE_WRITE_TOKEN"])
-
-# GEMINI MODEL
-# logfire.instrument_httpx(capture_all=True)
-# model = GeminiModel("gemini-2.0-flash", api_key=os.environ["GEMINI_API_KEY"])
-
-# OLLAMA MODEL
-logfire.instrument_openai()
-model = OpenAIModel(model_name="mixtral", base_url="http://192.168.178.175:11434/v1")
 
 
 class EventType(str, Enum):
@@ -62,12 +49,6 @@ class ArticleEvents(BaseModel):
     events: List[Event]
 
 
-agent = Agent(
-    model,
-    system_prompt="You are a data analyst with years of experience working on information extraction.",
-    result_type=ArticleEvents,
-)
-
 # open the miami_herald_articles.jsonl file as jsonl and read the first article
 with open("data/raw_sources/miami_herald_articles.jsonl", "r") as file:
     first_line = file.readline()
@@ -75,10 +56,57 @@ with open("data/raw_sources/miami_herald_articles.jsonl", "r") as file:
     published_date = datetime.fromtimestamp(first_article["published_date"])
     article_text = f"# {first_article['title']}\n\n## Article Publication Date: {published_date.strftime('%B %d, %Y')}\n\n## Article Content:\n\n{first_article['content']}"
 
-print(article_text)
+PROMPT = f"""Analyze this news article and extract all significant events. Follow these steps:
 
-result = agent.run_sync(
-    f"Extract all events mentioned in the following article. Make sure to extract a title, a description, and the event type as well as the start date and an optional end date if applicable: {article_text}"
+1. Identify Event Candidates:
+- Look for actions, incidents, or official activities mentioned
+- Include both direct events and implied consequences
+- Consider recurring events as separate instances if dates differ
+
+2. For each event:
+a) Title: Create a 5-8 word summary starting with verb (e.g. "Hunger Strike Initiated Over Visitation Rights")
+b) Description: 1-2 sentences with key details (who, what, where, why)
+c) Type: Strictly use these categories:
+{EventType._member_names_}
+
+d) Dates:
+- Start: Use explicit date if mentioned, otherwise article publication date ({published_date.strftime("%Y-%m-%d")})
+- End: Only include if explicitly stated
+
+3. Output Format Example:
+{{
+  "events": [
+    {{
+      "title": "Protest Organized Outside Detention Center",
+      "description": "Approximately 50 activists gathered outside the XYZ Detention Center demanding improved conditions, holding signs and chanting slogans for 3 hours.",
+      "event_type": "protest",
+      "start": "2024-03-15",
+      "end": null
+    }}
+  ]
+}}
+
+Article Content:
+{article_text}
+
+Maintain strict JSON schema compliance.
+
+JSON Output:"""
+
+client = instructor.from_litellm(completion)
+
+model = "ollama/mistral-small"
+# model = "gemini/gemini-2.0-flash"
+
+results = client.chat.completions.create(
+    model=model,
+    response_model=ArticleEvents,
+    messages=[
+        {
+            "role": "user",
+            "content": PROMPT,
+        },
+    ],
 )
-print(result.data)
-print(result.usage())
+
+print(results)
