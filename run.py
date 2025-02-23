@@ -4,9 +4,13 @@ from enum import Enum
 from typing import List, Optional
 
 import instructor
+import litellm
 from litellm import completion
 from pydantic import BaseModel
 from rich import print
+
+litellm.enable_json_schema_validation = True
+litellm.callbacks = ["braintrust"]
 
 
 class EventType(str, Enum):
@@ -107,6 +111,10 @@ results = client.chat.completions.create(
             "content": PROMPT,
         },
     ],
+    metadata={
+        "project_name": "hinbox",  # for braintrust
+        "tags": ["dev"],
+    },
 )
 
 print(results)
