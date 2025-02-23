@@ -5,9 +5,10 @@ from typing import List, Optional
 
 import instructor
 import litellm
-from litellm import completion
 from pydantic import BaseModel
 from rich import print
+
+from src.prompts import get_events_prompt
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -47,68 +48,49 @@ class Event(BaseModel):
     event_type: EventType
     start: datetime
     end: Optional[datetime]
+    fuzzy_or_unclear_dates: bool
 
 
 class ArticleEvents(BaseModel):
     events: List[Event]
 
 
-# open the miami_herald_articles.jsonl file as jsonl and read the first article
 with open("data/raw_sources/miami_herald_articles.jsonl", "r") as file:
     first_line = file.readline()
     first_article = json.loads(first_line)
     published_date = datetime.fromtimestamp(first_article["published_date"])
     article_text = f"# {first_article['title']}\n\n## Article Publication Date: {published_date.strftime('%B %d, %Y')}\n\n## Article Content:\n\n{first_article['content']}"
 
-PROMPT = f"""Analyze this news article and extract all significant events. Follow these steps:
+publication_date = published_date.strftime("%Y-%m-%d")
 
-1. Identify Event Candidates:
-- Look for actions, incidents, or official activities mentioned
-- Include both direct events and implied consequences
-- Consider recurring events as separate instances if dates differ
+EVENTS_PROMPT = get_events_prompt(
+    article_text=article_text,
+    event_categories=EventType._member_names_,
+    publication_date=publication_date,
+)
 
-2. For each event:
-a) Title: Create a 5-8 word summary starting with verb (e.g. "Hunger Strike Initiated Over Visitation Rights")
-b) Description: 1-2 sentences with key details (who, what, where, why)
-c) Type: Strictly use these categories:
-{EventType._member_names_}
+client = instructor.from_litellm(litellm.completion)
 
-d) Dates:
-- Start: Use explicit date if mentioned, otherwise article publication date ({published_date.strftime("%Y-%m-%d")})
-- End: Only include if explicitly stated
-
-3. Output Format Example:
-{{
-  "events": [
-    {{
-      "title": "Protest Organized Outside Detention Center",
-      "description": "Approximately 50 activists gathered outside the XYZ Detention Center demanding improved conditions, holding signs and chanting slogans for 3 hours.",
-      "event_type": "protest",
-      "start": "2024-03-15",
-      "end": null
-    }}
-  ]
-}}
-
-Article Content:
-{article_text}
-
-Maintain strict JSON schema compliance.
-
-JSON Output:"""
-
-client = instructor.from_litellm(completion)
-
-model = "ollama/mistral-small"
-# model = "gemini/gemini-2.0-flash"
+# model = "ollama/everythinglm"
+# model = "ollama/llama3-gradient"
+# model = "ollama/llama3.3"
+# model = "ollama_chat/llama3.3"
+# model = "ollama/mistral-small"
+model = "gemini/gemini-2.0-flash"
+# model = "gemini/gemini-2.0-pro-exp-02-05"
 
 results = client.chat.completions.create(
     model=model,
     response_model=ArticleEvents,
+    temperature=0,
     messages=[
         {
+            "role": "system",
+            "content": "You are an expert at extracting events from news articles.",
+        },
+        {
             "role": "user",
-            "content": PROMPT,
+            "content": EVENTS_PROMPT,
         },
     ],
     metadata={
