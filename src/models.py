@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 from sqlalchemy import JSON
@@ -207,3 +207,21 @@ class EventLite(EventBase):
 
 class ArticleEvents(BaseModel):
     events: List[EventLite]
+
+
+class Article(SQLModel, table=True):
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    title: str = Field(index=True)
+    url: str = Field(unique=True, index=True)
+    published_date: datetime = Field(index=True)
+    content: str
+    scrape_timestamp: datetime
+    content_scrape_timestamp: Optional[datetime] = None
+    
+    # System fields
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    
+    # Optional fields for tracking processing status
+    processed: bool = Field(default=False)
+    processing_timestamp: Optional[datetime] = None
