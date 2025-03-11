@@ -206,11 +206,11 @@ class Article(SQLModel, table=True):
     content: str
     scrape_timestamp: datetime
     content_scrape_timestamp: Optional[datetime] = None
-    
+
     # System fields
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
-    
+
     # Optional fields for tracking processing status
     processed: bool = Field(default=False)
     processing_timestamp: Optional[datetime] = None
