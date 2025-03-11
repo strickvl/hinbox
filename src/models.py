@@ -78,17 +78,6 @@ class Tags(str, Enum):
     HUNGER_STRIKE = "hunger_strike"
     SUICIDE_OR_ATTEMPT = "suicide_or_attempt"
 
-    # Afghanistan
-    AFGHANISTAN = "afghanistan"
-    PALESTINE = "palestine"
-    IRAQ = "iraq"
-    SYRIA = "syria"
-    YEMEN = "yemen"
-    LIBYA = "libya"
-    LEBANON = "lebanon"
-    SAUDI_ARABIA = "saudi_arabia"
-    UAE = "uae"
-
     # Administrative/operational
     TRANSFER = "transfer"
     INTERROGATION = "interrogation"
