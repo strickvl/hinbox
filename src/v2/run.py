@@ -20,6 +20,7 @@ from src.v2.people import (
     ollama_extract_people,
     spacy_extract_people,
 )
+from src.v2.tags import gemini_extract_tags, ollama_extract_tags
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -58,20 +59,28 @@ if __name__ == "__main__":
         action="store_true",
         help="Only extract and print event information",
     )
+    parser.add_argument(
+        "--tags",
+        action="store_true",
+        help="Only extract and print article tags",
+    )
     args = parser.parse_args()
 
     # If no specific extraction is specified, extract all types
     extract_people = args.people or not (
-        args.people or args.places or args.orgs or args.events
+        args.people or args.places or args.orgs or args.events or args.tags
     )
     extract_places = args.places or not (
-        args.people or args.places or args.orgs or args.events
+        args.people or args.places or args.orgs or args.events or args.tags
     )
     extract_orgs = args.orgs or not (
-        args.people or args.places or args.orgs or args.events
+        args.people or args.places or args.orgs or args.events or args.tags
     )
     extract_events = args.events or not (
-        args.people or args.places or args.orgs or args.events
+        args.people or args.places or args.orgs or args.events or args.tags
+    )
+    extract_tags = args.tags or not (
+        args.people or args.places or args.orgs or args.events or args.tags
     )
 
     with open(ARTICLES_PATH, "r") as f:
@@ -89,6 +98,7 @@ if __name__ == "__main__":
         gemini_people = None
         gemini_orgs = None
         gemini_events = None
+        gemini_tags = None
         if not args.local:
             if extract_places:
                 gemini_locations = gemini_extract_locations(article)
@@ -98,6 +108,8 @@ if __name__ == "__main__":
                 gemini_orgs = gemini_extract_organizations(article)
             if extract_events:
                 gemini_events = gemini_extract_events(article)
+            if extract_tags:
+                gemini_tags = gemini_extract_tags(article)
 
         # Run Ollama extraction based on flags
         ollama_locations = (
@@ -111,6 +123,9 @@ if __name__ == "__main__":
         )
         ollama_events = (
             ollama_extract_events(article, model="qwq") if extract_events else None
+        )
+        ollama_tags = (
+            ollama_extract_tags(article, model="qwq") if extract_tags else None
         )
 
     # Print the article
@@ -157,3 +172,11 @@ if __name__ == "__main__":
 
         print("Ollama events:")
         print(ollama_events)
+
+    if extract_tags:
+        if gemini_tags:
+            print("Gemini tags:")
+            print(gemini_tags)
+
+        print("Ollama tags:")
+        print(ollama_tags)
