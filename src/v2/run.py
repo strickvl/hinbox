@@ -64,6 +64,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Only extract and print article tags",
     )
+    parser.add_argument(
+        "--show-article",
+        action="store_true",
+        help="Show the article",
+    )
     args = parser.parse_args()
 
     # If no specific extraction is specified, extract all types
@@ -129,7 +134,8 @@ if __name__ == "__main__":
         )
 
     # Print the article
-    print(article)
+    if args.show_article:
+        print(article)
 
     # Print results based on flags
     if extract_places:
