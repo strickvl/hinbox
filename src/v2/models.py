@@ -1,5 +1,6 @@
-from pydantic import BaseModel
 from enum import Enum
+
+from pydantic import BaseModel
 
 
 class PlaceType(str, Enum):
@@ -8,6 +9,7 @@ class PlaceType(str, Enum):
     STATE = "state"
     DISTRICT = "district"
     CITY = "city"
+    PRISON_LOCATION = "prison_location"
     OTHER = "other"
 
 

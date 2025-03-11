@@ -1,13 +1,12 @@
 import json
-from rich import print
-
-import spacy
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 import instructor
 import litellm
-from src.v2.models import Place, PlaceType
+import spacy
+from rich import print
 
+from src.v2.models import Place, PlaceType
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -52,7 +51,18 @@ def gemini_extract_locations(
         messages=[
             {
                 "role": "system",
-                "content": "You are an expert at extracting locations from news articles.",
+                "content": """You are an expert at extracting locations from news articles.
+
+When identifying locations, categorize them using the following place types:
+- country: A sovereign state with its own government and territory
+- province: An administrative division of a country
+- state: A constituent political entity within a country
+- district: An administrative division of a city or region
+- city: An urban area with a significant population
+- prison_location: A specific location within a detention facility like 'Camp Delta' or 'Camp 6'
+- other: Any other type of place not covered by the above categories
+
+Extract all locations mentioned in the text and categorize them appropriately.""",
             },
             {
                 "role": "user",
