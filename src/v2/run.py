@@ -4,10 +4,21 @@ import json
 import litellm
 from rich import print
 
+from src.v2.events import gemini_extract_events, ollama_extract_events
 from src.v2.locations import (
     gemini_extract_locations,
     ollama_extract_locations,
     spacy_extract_locations,
+)
+from src.v2.organizations import (
+    gemini_extract_organizations,
+    ollama_extract_organizations,
+    spacy_extract_organizations,
+)
+from src.v2.people import (
+    gemini_extract_people,
+    ollama_extract_people,
+    spacy_extract_people,
 )
 
 litellm.enable_json_schema_validation = True
@@ -27,31 +38,122 @@ if __name__ == "__main__":
     parser.add_argument(
         "--local", action="store_true", help="Use only local models (spaCy and Ollama)"
     )
+    parser.add_argument(
+        "--people",
+        action="store_true",
+        help="Only extract and print people information",
+    )
+    parser.add_argument(
+        "--places",
+        action="store_true",
+        help="Only extract and print location information",
+    )
+    parser.add_argument(
+        "--orgs",
+        action="store_true",
+        help="Only extract and print organization information",
+    )
+    parser.add_argument(
+        "--events",
+        action="store_true",
+        help="Only extract and print event information",
+    )
     args = parser.parse_args()
+
+    # If no specific extraction is specified, extract all types
+    extract_people = args.people or not (
+        args.people or args.places or args.orgs or args.events
+    )
+    extract_places = args.places or not (
+        args.people or args.places or args.orgs or args.events
+    )
+    extract_orgs = args.orgs or not (
+        args.people or args.places or args.orgs or args.events
+    )
+    extract_events = args.events or not (
+        args.people or args.places or args.orgs or args.events
+    )
 
     with open(ARTICLES_PATH, "r") as f:
         first_entry = f.readline()
         loaded_entry = json.loads(first_entry)
         article = loaded_entry.get("content")
 
-        # Always run spaCy extraction
-        spacy_locations = spacy_extract_locations(article)
+        # Extract information based on flags
+        spacy_locations = spacy_extract_locations(article) if extract_places else None
+        spacy_people = spacy_extract_people(article) if extract_people else None
+        spacy_orgs = spacy_extract_organizations(article) if extract_orgs else None
 
         # Run Gemini extraction only if not in local mode
         gemini_locations = None
+        gemini_people = None
+        gemini_orgs = None
+        gemini_events = None
         if not args.local:
-            gemini_locations = gemini_extract_locations(article)
+            if extract_places:
+                gemini_locations = gemini_extract_locations(article)
+            if extract_people:
+                gemini_people = gemini_extract_people(article)
+            if extract_orgs:
+                gemini_orgs = gemini_extract_organizations(article)
+            if extract_events:
+                gemini_events = gemini_extract_events(article)
 
-        # Always run Ollama extraction
-        ollama_locations = ollama_extract_locations(article, model="qwq")
+        # Run Ollama extraction based on flags
+        ollama_locations = (
+            ollama_extract_locations(article, model="qwq") if extract_places else None
+        )
+        ollama_people = (
+            ollama_extract_people(article, model="qwq") if extract_people else None
+        )
+        ollama_orgs = (
+            ollama_extract_organizations(article, model="qwq") if extract_orgs else None
+        )
+        ollama_events = (
+            ollama_extract_events(article, model="qwq") if extract_events else None
+        )
 
+    # Print the article
     print(article)
-    print("SpaCy locations:")
-    print(spacy_locations)
 
-    if gemini_locations:
-        print("Gemini locations:")
-        print(gemini_locations)
+    # Print results based on flags
+    if extract_places:
+        print("SpaCy locations:")
+        print(spacy_locations)
 
-    print("Ollama locations:")
-    print(ollama_locations)
+        if gemini_locations:
+            print("Gemini locations:")
+            print(gemini_locations)
+
+        print("Ollama locations:")
+        print(ollama_locations)
+
+    if extract_people:
+        print("SpaCy people:")
+        print(spacy_people)
+
+        if gemini_people:
+            print("Gemini people:")
+            print(gemini_people)
+
+        print("Ollama people:")
+        print(ollama_people)
+
+    if extract_orgs:
+        print("SpaCy organizations:")
+        print(spacy_orgs)
+
+        if gemini_orgs:
+            print("Gemini organizations:")
+            print(gemini_orgs)
+
+        print("Ollama organizations:")
+        print(ollama_orgs)
+
+    if extract_events:
+        if gemini_events:
+            print("Gemini events:")
+            print(gemini_events)
+
+        print("Ollama events:")
+        print(ollama_events)
