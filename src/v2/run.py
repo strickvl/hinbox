@@ -30,8 +30,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     with open(ARTICLES_PATH, "r") as f:
-        entry = f.readline()
-        loaded_entry = json.loads(entry)
+        first_entry = f.readline()
+        loaded_entry = json.loads(first_entry)
         article = loaded_entry.get("content")
 
         # Always run spaCy extraction
