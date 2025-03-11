@@ -8,6 +8,11 @@ import instructor
 import litellm
 from src.v2.models import Place, PlaceType
 
+
+litellm.enable_json_schema_validation = True
+litellm.callbacks = ["braintrust"]
+
+
 ARTICLES_PATH = (
     "/home/strickvl/coding/hinbox/data/raw_sources/miami_herald_articles.jsonl"
 )
@@ -54,6 +59,10 @@ def gemini_extract_locations(
                 "content": text,
             },
         ],
+        metadata={
+            "project_name": "hinbox",  # for braintrust
+            "tags": ["dev"],
+        },
     )
     return results
 
