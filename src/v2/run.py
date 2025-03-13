@@ -91,7 +91,7 @@ if __name__ == "__main__":
     with open(ARTICLES_PATH, "r") as f:
         first_entry = f.readline()
         loaded_entry = json.loads(first_entry)
-        article = loaded_entry.get("content")
+        article = f"# Title: {loaded_entry.get('title')}\n\n# Article: {loaded_entry.get('content')}"
 
         # Extract information based on flags
         spacy_locations = spacy_extract_locations(article) if extract_places else None
