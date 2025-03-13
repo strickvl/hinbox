@@ -61,6 +61,8 @@ When identifying locations, categorize them using the following place types:
 - prison_location: A specific location within a detention facility like 'Camp Delta' or 'Camp 6'
 - other: Any other type of place not covered by the above categories
 
+Only use standard ASCII characters for the names that you extract.
+
 Extract all locations mentioned in the text and categorize them appropriately.""",
             },
             {
@@ -100,6 +102,8 @@ def ollama_extract_locations(text: str, model: str = "qwq") -> List[Dict[str, An
                 - prison_location: A specific location within a detention
                 facility like 'Camp Delta' or 'Camp 6'.
                 - other: Any other type of place not covered by the above categories
+
+                Only use standard ASCII characters for the names that you extract.
 
                 Extract all locations mentioned in the text and categorize them appropriately.
                 """,

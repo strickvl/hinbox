@@ -68,6 +68,8 @@ When identifying organizations, categorize them using the following organization
 Make extra sure when creating an organization that it's actually an organization and
 not a person.
 
+Only use standard ASCII characters for the names that you extract.
+
 Extract all organizations mentioned in the text and categorize them appropriately.""",
             },
             {
@@ -109,6 +111,8 @@ When identifying organizations, categorize them using the following organization
 
 Make extra sure when creating an organization that it's actually an organization and
 not a person.
+
+Only use standard ASCII characters for the names that you extract.
 
 Extract all organizations mentioned in the text and categorize them appropriately.""",
             },

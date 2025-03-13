@@ -60,6 +60,7 @@ When identifying people, categorize them using the following person types:
 - journalist: Reporters, writers, and other media professionals
 - other: Any other type of person not covered by the above categories
 
+Only use standard ASCII characters for the names that you extract.
 Extract all people mentioned in the text and categorize them appropriately.""",
             },
             {
@@ -95,6 +96,8 @@ When identifying people, categorize them using the following person types:
 - lawyer: Attorneys, legal representatives, and other legal professionals
 - journalist: Reporters, writers, and other media professionals
 - other: Any other type of person not covered by the above categories
+
+Only use standard ASCII characters for the names that you extract.
 
 Extract all people mentioned in the text and categorize them appropriately.""",
             },
