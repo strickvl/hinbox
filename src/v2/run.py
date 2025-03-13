@@ -1,34 +1,86 @@
 import argparse
 import json
+import os
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Union
 
 import litellm
+from pydantic import BaseModel
 from rich import print
 
 from src.v2.events import gemini_extract_events, ollama_extract_events
 from src.v2.locations import (
     gemini_extract_locations,
     ollama_extract_locations,
-    spacy_extract_locations,
 )
 from src.v2.organizations import (
     gemini_extract_organizations,
     ollama_extract_organizations,
-    spacy_extract_organizations,
 )
 from src.v2.people import (
     gemini_extract_people,
     ollama_extract_people,
-    spacy_extract_people,
 )
+from src.v2.relevance import gemini_check_relevance, ollama_check_relevance
 from src.v2.tags import gemini_extract_tags, ollama_extract_tags
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
 
 
-ARTICLES_PATH = (
-    "/home/strickvl/coding/hinbox/data/raw_sources/miami_herald_articles.jsonl"
-)
+ARTICLES_PATH = "data/raw_sources/miami_herald_articles.jsonl"
+
+# Use a relative path for the output file
+OUTPUT_PATH = "data/processed/processed_articles.jsonl"
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle datetime objects and Enums."""
+
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, Enum):
+            return obj.value
+        if isinstance(obj, BaseModel):
+            return obj.dict()
+        return super().default(obj)
+
+
+def ensure_dir(directory):
+    """
+    Ensure that a directory exists, creating it if necessary.
+
+    Args:
+        directory (str): The directory path to check
+    """
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
+
+
+def model_to_dict(obj: Any) -> Union[Dict, List, Any]:
+    """
+    Convert a Pydantic model or a list of models to a dictionary or list of dictionaries.
+
+    Args:
+        obj: The object to convert
+
+    Returns:
+        The converted object
+    """
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    elif hasattr(obj, "model_dump"):
+        return obj.model_dump()
+    elif isinstance(obj, list):
+        return [model_to_dict(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {k: model_to_dict(v) for k, v in obj.items()}
+    elif isinstance(obj, Enum):
+        return obj.value
+    else:
+        return obj
 
 
 if __name__ == "__main__":
@@ -69,6 +121,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Show the article",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Limit the number of articles to process (default: 5)",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=OUTPUT_PATH,
+        help=f"Path to the output file (default: {OUTPUT_PATH})",
+    )
     args = parser.parse_args()
 
     # If no specific extraction is specified, extract all types
@@ -88,101 +152,167 @@ if __name__ == "__main__":
         args.people or args.places or args.orgs or args.events or args.tags
     )
 
+    # Create the output directory if it doesn't exist
+    ensure_dir(os.path.dirname(args.output))
+
+    # Process articles
+    processed_articles = []
+    article_count = 0
+
+    print(f"Processing up to {args.limit} articles from {ARTICLES_PATH}")
+
     with open(ARTICLES_PATH, "r") as f:
-        first_entry = f.readline()
-        loaded_entry = json.loads(first_entry)
-        article = f"# Title: {loaded_entry.get('title')}\n\n# Article: {loaded_entry.get('content')}"
+        for line in f:
+            if article_count >= args.limit:
+                break
 
-        # Extract information based on flags
-        spacy_locations = spacy_extract_locations(article) if extract_places else None
-        spacy_people = spacy_extract_people(article) if extract_people else None
-        spacy_orgs = spacy_extract_organizations(article) if extract_orgs else None
+            loaded_entry = json.loads(line)
+            article_id = loaded_entry.get("id", f"article_{article_count}")
+            article_text = f"# Title: {loaded_entry.get('title')}\n\n# Article: {loaded_entry.get('content')}"
 
-        # Run Gemini extraction only if not in local mode
-        gemini_locations = None
-        gemini_people = None
-        gemini_orgs = None
-        gemini_events = None
-        gemini_tags = None
-        if not args.local:
-            if extract_places:
-                gemini_locations = gemini_extract_locations(article)
-            if extract_people:
-                gemini_people = gemini_extract_people(article)
-            if extract_orgs:
-                gemini_orgs = gemini_extract_organizations(article)
-            if extract_events:
-                gemini_events = gemini_extract_events(article)
-            if extract_tags:
-                gemini_tags = gemini_extract_tags(article)
+            print(
+                f"Processing article {article_count+1}/{args.limit}: {loaded_entry.get('title')}"
+            )
 
-        # Run Ollama extraction based on flags
-        ollama_locations = (
-            ollama_extract_locations(article, model="qwq") if extract_places else None
-        )
-        ollama_people = (
-            ollama_extract_people(article, model="qwq") if extract_people else None
-        )
-        ollama_orgs = (
-            ollama_extract_organizations(article, model="qwq") if extract_orgs else None
-        )
-        ollama_events = (
-            ollama_extract_events(article, model="qwq") if extract_events else None
-        )
-        ollama_tags = (
-            ollama_extract_tags(article, model="qwq") if extract_tags else None
-        )
+            if args.show_article:
+                print(article_text)
 
-    # Print the article
-    if args.show_article:
-        print(article)
+            # First check if the article is relevant to Guantanamo detention/prison
+            try:
+                # Check relevance before processing
+                if args.local:
+                    relevance_result = ollama_check_relevance(article_text, model="qwq")
+                else:
+                    relevance_result = gemini_check_relevance(article_text)
 
-    # Print results based on flags
-    if extract_places:
-        print("SpaCy locations:")
-        print(spacy_locations)
+                # Add relevance info to metadata regardless of relevance result
+                metadata = {
+                    "relevance_check": {
+                        "is_relevant": relevance_result.is_relevant,
+                        "reason": relevance_result.reason,
+                    }
+                }
 
-        if gemini_locations:
-            print("Gemini locations:")
-            print(gemini_locations)
+                # Show relevance result
+                print(
+                    f"Relevance check: {'RELEVANT' if relevance_result.is_relevant else 'NOT RELEVANT'}"
+                )
+                print(f"Reason: {relevance_result.reason}")
 
-        print("Ollama locations:")
-        print(ollama_locations)
+                # Only proceed with extraction if article is relevant
+                if relevance_result.is_relevant:
+                    # Process the article based on extraction flags
+                    try:
+                        if extract_people:
+                            if args.local:
+                                people = ollama_extract_people(
+                                    article_text, model="qwq"
+                                )
+                                metadata["people"] = model_to_dict(people)
+                                print(
+                                    f"Extracted {len(metadata['people'])} people with Ollama"
+                                )
+                            else:
+                                people = gemini_extract_people(article_text)
+                                metadata["people"] = model_to_dict(people)
+                                print(
+                                    f"Extracted {len(metadata['people'])} people with Gemini"
+                                )
 
-    if extract_people:
-        print("SpaCy people:")
-        print(spacy_people)
+                        if extract_places:
+                            if args.local:
+                                locations = ollama_extract_locations(
+                                    article_text, model="qwq"
+                                )
+                                metadata["locations"] = model_to_dict(locations)
+                                print(
+                                    f"Extracted {len(metadata['locations'])} locations with Ollama"
+                                )
+                            else:
+                                locations = gemini_extract_locations(article_text)
+                                metadata["locations"] = model_to_dict(locations)
+                                print(
+                                    f"Extracted {len(metadata['locations'])} locations with Gemini"
+                                )
 
-        if gemini_people:
-            print("Gemini people:")
-            print(gemini_people)
+                        if extract_orgs:
+                            if args.local:
+                                orgs = ollama_extract_organizations(
+                                    article_text, model="qwq"
+                                )
+                                metadata["organizations"] = model_to_dict(orgs)
+                                print(
+                                    f"Extracted {len(metadata['organizations'])} organizations with Ollama"
+                                )
+                            else:
+                                orgs = gemini_extract_organizations(article_text)
+                                metadata["organizations"] = model_to_dict(orgs)
+                                print(
+                                    f"Extracted {len(metadata['organizations'])} organizations with Gemini"
+                                )
 
-        print("Ollama people:")
-        print(ollama_people)
+                        if extract_events:
+                            if args.local:
+                                events = ollama_extract_events(
+                                    article_text, model="qwq"
+                                )
+                                metadata["events"] = model_to_dict(events)
+                                print(
+                                    f"Extracted {len(metadata['events'])} events with Ollama"
+                                )
+                            else:
+                                events = gemini_extract_events(article_text)
+                                metadata["events"] = model_to_dict(events)
+                                print(
+                                    f"Extracted {len(metadata['events'])} events with Gemini"
+                                )
 
-    if extract_orgs:
-        print("SpaCy organizations:")
-        print(spacy_orgs)
+                        if extract_tags:
+                            if args.local:
+                                tags_result = ollama_extract_tags(
+                                    article_text, model="qwq"
+                                )
+                                metadata["tags"] = model_to_dict(tags_result.tags)
+                                print(
+                                    f"Extracted {len(metadata['tags'])} tags with Ollama"
+                                )
+                            else:
+                                tags_result = gemini_extract_tags(article_text)
+                                metadata["tags"] = model_to_dict(tags_result.tags)
+                                print(
+                                    f"Extracted {len(metadata['tags'])} tags with Gemini"
+                                )
+                    except Exception as e:
+                        print(f"Error during extraction: {e}")
+                        metadata["extraction_error"] = str(e)
+                else:
+                    print("Skipping detailed extraction for non-relevant article")
 
-        if gemini_orgs:
-            print("Gemini organizations:")
-            print(gemini_orgs)
+                # Add the metadata to the article
+                loaded_entry["metadata"] = metadata
+                loaded_entry["metadata_extraction_timestamp"] = (
+                    datetime.now().isoformat()
+                )
 
-        print("Ollama organizations:")
-        print(ollama_orgs)
+                # Add the processed article to the list
+                processed_articles.append(loaded_entry)
 
-    if extract_events:
-        if gemini_events:
-            print("Gemini events:")
-            print(gemini_events)
+            except Exception as e:
+                print(f"Error processing article {article_count+1}: {e}")
+                # Add the article with error information
+                loaded_entry["metadata"] = {"relevance_check_error": str(e)}
+                loaded_entry["metadata_extraction_timestamp"] = (
+                    datetime.now().isoformat()
+                )
+                processed_articles.append(loaded_entry)
 
-        print("Ollama events:")
-        print(ollama_events)
+            article_count += 1
 
-    if extract_tags:
-        if gemini_tags:
-            print("Gemini tags:")
-            print(gemini_tags)
+    # Write the processed articles to the output file
+    with open(args.output, "w") as f:
+        for article in processed_articles:
+            f.write(json.dumps(article, cls=DateTimeEncoder) + "\n")
 
-        print("Ollama tags:")
-        print(ollama_tags)
+    print(
+        f"Processed {len(processed_articles)} articles. Output written to {args.output}"
+    )
