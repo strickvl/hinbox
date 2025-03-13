@@ -43,23 +43,81 @@ def ensure_dir(directory):
         os.makedirs(directory)
 
 
+def load_existing_entities() -> Dict[str, Dict]:
+    """
+    Load existing entities from JSONL files if they exist.
+
+    Returns:
+        Dict[str, Dict]: Dictionary containing dictionaries of existing entities
+    """
+    people = {}
+    events = {}
+    locations = {}
+    organizations = {}
+
+    # Load people
+    if os.path.exists(PEOPLE_OUTPUT_PATH):
+        print(f"Loading existing people from {PEOPLE_OUTPUT_PATH}")
+        with open(PEOPLE_OUTPUT_PATH, "r") as f:
+            for line in f:
+                person = json.loads(line)
+                people[person["name"]] = person
+
+    # Load events
+    if os.path.exists(EVENTS_OUTPUT_PATH):
+        print(f"Loading existing events from {EVENTS_OUTPUT_PATH}")
+        with open(EVENTS_OUTPUT_PATH, "r") as f:
+            for line in f:
+                event = json.loads(line)
+                events[(event["title"], event.get("start_date", ""))] = event
+
+    # Load locations
+    if os.path.exists(LOCATIONS_OUTPUT_PATH):
+        print(f"Loading existing locations from {LOCATIONS_OUTPUT_PATH}")
+        with open(LOCATIONS_OUTPUT_PATH, "r") as f:
+            for line in f:
+                location = json.loads(line)
+                locations[(location["name"], location.get("type", ""))] = location
+
+    # Load organizations
+    if os.path.exists(ORGANIZATIONS_OUTPUT_PATH):
+        print(f"Loading existing organizations from {ORGANIZATIONS_OUTPUT_PATH}")
+        with open(ORGANIZATIONS_OUTPUT_PATH, "r") as f:
+            for line in f:
+                organization = json.loads(line)
+                organizations[(organization["name"], organization.get("type", ""))] = (
+                    organization
+                )
+
+    return {
+        "people": people,
+        "events": events,
+        "locations": locations,
+        "organizations": organizations,
+    }
+
+
 def process_articles(
-    input_path: str, limit: Optional[int] = None
+    input_path: str,
+    existing_entities: Optional[Dict[str, Dict]] = None,
+    limit: Optional[int] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Process articles from a JSONL file and extract entities.
 
     Args:
         input_path (str): Path to the input JSONL file
+        existing_entities (Optional[Dict[str, Dict]]): Dictionary containing dictionaries of existing entities
         limit (Optional[int]): Maximum number of articles to process
 
     Returns:
         Dict[str, List[Dict[str, Any]]]: Dictionary containing lists of extracted entities
     """
-    people = {}
-    events = {}
-    locations = {}
-    organizations = {}
+    # Initialize with existing entities if provided, otherwise start with empty dictionaries
+    people = existing_entities["people"] if existing_entities else {}
+    events = existing_entities["events"] if existing_entities else {}
+    locations = existing_entities["locations"] if existing_entities else {}
+    organizations = existing_entities["organizations"] if existing_entities else {}
 
     article_count = 0
 
@@ -91,14 +149,25 @@ def process_articles(
                     if person_name in people:
                         # Update existing person
                         existing_person = people[person_name]
-                        existing_person["articles"].append(
-                            {
-                                "article_id": article_id,
-                                "article_title": article_title,
-                                "article_url": article_url,
-                                "article_published_date": article_published_date,
-                            }
-                        )
+
+                        # Check if article already exists in the person's articles
+                        article_exists = False
+                        for existing_article in existing_person["articles"]:
+                            if existing_article.get("article_id") == article_id:
+                                article_exists = True
+                                break
+
+                        # Only add article if it doesn't already exist
+                        if not article_exists:
+                            existing_person["articles"].append(
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            )
+
                         # Keep the earliest extraction timestamp
                         existing_person["extraction_timestamp"] = min(
                             existing_person["extraction_timestamp"],
@@ -128,14 +197,25 @@ def process_articles(
                     if event_key in events:
                         # Update existing event
                         existing_event = events[event_key]
-                        existing_event["articles"].append(
-                            {
-                                "article_id": article_id,
-                                "article_title": article_title,
-                                "article_url": article_url,
-                                "article_published_date": article_published_date,
-                            }
-                        )
+
+                        # Check if article already exists in the event's articles
+                        article_exists = False
+                        for existing_article in existing_event["articles"]:
+                            if existing_article.get("article_id") == article_id:
+                                article_exists = True
+                                break
+
+                        # Only add article if it doesn't already exist
+                        if not article_exists:
+                            existing_event["articles"].append(
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            )
+
                         existing_event["extraction_timestamp"] = min(
                             existing_event["extraction_timestamp"], extraction_timestamp
                         )
@@ -168,14 +248,25 @@ def process_articles(
                     if location_key in locations:
                         # Update existing location
                         existing_location = locations[location_key]
-                        existing_location["articles"].append(
-                            {
-                                "article_id": article_id,
-                                "article_title": article_title,
-                                "article_url": article_url,
-                                "article_published_date": article_published_date,
-                            }
-                        )
+
+                        # Check if article already exists in the location's articles
+                        article_exists = False
+                        for existing_article in existing_location["articles"]:
+                            if existing_article.get("article_id") == article_id:
+                                article_exists = True
+                                break
+
+                        # Only add article if it doesn't already exist
+                        if not article_exists:
+                            existing_location["articles"].append(
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            )
+
                         existing_location["extraction_timestamp"] = min(
                             existing_location["extraction_timestamp"],
                             extraction_timestamp,
@@ -204,14 +295,25 @@ def process_articles(
                     if organization_key in organizations:
                         # Update existing organization
                         existing_organization = organizations[organization_key]
-                        existing_organization["articles"].append(
-                            {
-                                "article_id": article_id,
-                                "article_title": article_title,
-                                "article_url": article_url,
-                                "article_published_date": article_published_date,
-                            }
-                        )
+
+                        # Check if article already exists in the organization's articles
+                        article_exists = False
+                        for existing_article in existing_organization["articles"]:
+                            if existing_article.get("article_id") == article_id:
+                                article_exists = True
+                                break
+
+                        # Only add article if it doesn't already exist
+                        if not article_exists:
+                            existing_organization["articles"].append(
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            )
+
                         existing_organization["extraction_timestamp"] = min(
                             existing_organization["extraction_timestamp"],
                             extraction_timestamp,
@@ -310,9 +412,12 @@ def main():
     # Ensure output directory exists
     ensure_dir(args.output_dir)
 
-    # Process articles and extract entities
+    # Load existing entities if they exist
+    existing_entities = load_existing_entities()
+
+    # Process articles and extract entities, merging with existing entities
     print(f"Processing articles from {args.input}")
-    entities = process_articles(args.input, args.limit)
+    entities = process_articles(args.input, existing_entities, args.limit)
 
     # Write entities to files
     write_entities_to_files(entities)
