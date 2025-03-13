@@ -75,7 +75,7 @@ def gemini_extract_tags(article_text: str) -> ArticleTags:
         return ArticleTags(tags=[])
 
 
-def ollama_extract_tags(article_text: str, model: str = "qwq") -> ArticleTags:
+def ollama_extract_tags(article_text: str, model: str = "mistral-small") -> ArticleTags:
     """
     Extract article tags using Ollama models.
 
