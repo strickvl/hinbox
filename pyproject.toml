@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "hinbox"
 version = "0.1.0"
 description = "A database for tracking events at Guantanamo Bay"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "sqlmodel",
     "pydantic",
@@ -21,6 +21,7 @@ dependencies = [
     "instructor",
     "zenml>=0.74.0",
     "spacy>=3.8.4",
+    "python-fasthtml>=0.12.4",
 ]
 
 [project.optional-dependencies]
