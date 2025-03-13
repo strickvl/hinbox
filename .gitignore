@@ -180,3 +180,4 @@ drafts/
 # Ignore everything in the data folder and all subfolders
 data/
 .sesskey
+discovery_do_not_commit/
