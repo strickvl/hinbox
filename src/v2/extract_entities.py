@@ -10,7 +10,7 @@ import argparse
 import json
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 # Define paths
 PROCESSED_ARTICLES_PATH = "data/processed/processed_articles.jsonl"
