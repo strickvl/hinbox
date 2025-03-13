@@ -5,7 +5,7 @@ Constants used throughout the application.
 import os
 
 # Model names
-GEMINI_MODEL = "gemini/gemini-2.0-flash"
+GEMINI_MODEL = "openrouter/google/gemini-2.0-flash-001"
 OLLAMA_MODEL = "mistral-small"
 
 # API endpoints

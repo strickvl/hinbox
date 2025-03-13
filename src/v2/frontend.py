@@ -3,9 +3,10 @@ import json
 import os
 from urllib.parse import quote, unquote
 
+import markdown
+
 # We'll use FastHTML for building our small web server
 from fasthtml.common import *
-import markdown
 
 
 def transform_profile_text(text, articles):
