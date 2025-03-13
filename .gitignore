@@ -179,3 +179,4 @@ data/hinbox.db
 drafts/
 # Ignore everything in the data folder and all subfolders
 data/
+.sesskey
