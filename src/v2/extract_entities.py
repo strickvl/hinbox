@@ -56,10 +56,10 @@ def process_articles(
     Returns:
         Dict[str, List[Dict[str, Any]]]: Dictionary containing lists of extracted entities
     """
-    people = []
-    events = []
-    locations = []
-    organizations = []
+    people = {}
+    events = {}
+    locations = {}
+    organizations = {}
 
     article_count = 0
 
@@ -87,72 +87,158 @@ def process_articles(
 
                 # Process people
                 for person in metadata.get("people", []):
-                    people.append(
-                        {
-                            "article_id": article_id,
-                            "article_title": article_title,
-                            "article_url": article_url,
-                            "article_published_date": article_published_date,
-                            "name": person.get("name", ""),
+                    person_name = person.get("name", "")
+                    if person_name in people:
+                        # Update existing person
+                        existing_person = people[person_name]
+                        existing_person["articles"].append(
+                            {
+                                "article_id": article_id,
+                                "article_title": article_title,
+                                "article_url": article_url,
+                                "article_published_date": article_published_date,
+                            }
+                        )
+                        # Keep the earliest extraction timestamp
+                        existing_person["extraction_timestamp"] = min(
+                            existing_person["extraction_timestamp"],
+                            extraction_timestamp,
+                        )
+                    else:
+                        # Add new person
+                        people[person_name] = {
+                            "name": person_name,
                             "type": person.get("type", ""),
+                            "articles": [
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            ],
                             "extraction_timestamp": extraction_timestamp,
                         }
-                    )
 
                 # Process events
                 for event in metadata.get("events", []):
-                    events.append(
-                        {
-                            "article_id": article_id,
-                            "article_title": article_title,
-                            "article_url": article_url,
-                            "article_published_date": article_published_date,
-                            "title": event.get("title", ""),
+                    event_title = event.get("title", "")
+                    event_start_date = event.get("start_date", "")
+                    event_key = (event_title, event_start_date)
+                    if event_key in events:
+                        # Update existing event
+                        existing_event = events[event_key]
+                        existing_event["articles"].append(
+                            {
+                                "article_id": article_id,
+                                "article_title": article_title,
+                                "article_url": article_url,
+                                "article_published_date": article_published_date,
+                            }
+                        )
+                        existing_event["extraction_timestamp"] = min(
+                            existing_event["extraction_timestamp"], extraction_timestamp
+                        )
+                    else:
+                        # Add new event
+                        events[event_key] = {
+                            "title": event_title,
                             "description": event.get("description", ""),
                             "event_type": event.get("event_type", ""),
-                            "start_date": event.get("start_date", ""),
+                            "start_date": event_start_date,
                             "end_date": event.get("end_date", ""),
                             "is_fuzzy_date": event.get("is_fuzzy_date", False),
                             "tags": event.get("tags", []),
+                            "articles": [
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            ],
                             "extraction_timestamp": extraction_timestamp,
                         }
-                    )
 
                 # Process locations
                 for location in metadata.get("locations", []):
-                    locations.append(
-                        {
-                            "article_id": article_id,
-                            "article_title": article_title,
-                            "article_url": article_url,
-                            "article_published_date": article_published_date,
-                            "name": location.get("name", ""),
-                            "type": location.get("type", ""),
+                    location_name = location.get("name", "")
+                    location_type = location.get("type", "")
+                    location_key = (location_name, location_type)
+                    if location_key in locations:
+                        # Update existing location
+                        existing_location = locations[location_key]
+                        existing_location["articles"].append(
+                            {
+                                "article_id": article_id,
+                                "article_title": article_title,
+                                "article_url": article_url,
+                                "article_published_date": article_published_date,
+                            }
+                        )
+                        existing_location["extraction_timestamp"] = min(
+                            existing_location["extraction_timestamp"],
+                            extraction_timestamp,
+                        )
+                    else:
+                        # Add new location
+                        locations[location_key] = {
+                            "name": location_name,
+                            "type": location_type,
+                            "articles": [
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            ],
                             "extraction_timestamp": extraction_timestamp,
                         }
-                    )
 
                 # Process organizations
                 for organization in metadata.get("organizations", []):
-                    organizations.append(
-                        {
-                            "article_id": article_id,
-                            "article_title": article_title,
-                            "article_url": article_url,
-                            "article_published_date": article_published_date,
-                            "name": organization.get("name", ""),
-                            "type": organization.get("type", ""),
+                    organization_name = organization.get("name", "")
+                    organization_type = organization.get("type", "")
+                    organization_key = (organization_name, organization_type)
+                    if organization_key in organizations:
+                        # Update existing organization
+                        existing_organization = organizations[organization_key]
+                        existing_organization["articles"].append(
+                            {
+                                "article_id": article_id,
+                                "article_title": article_title,
+                                "article_url": article_url,
+                                "article_published_date": article_published_date,
+                            }
+                        )
+                        existing_organization["extraction_timestamp"] = min(
+                            existing_organization["extraction_timestamp"],
+                            extraction_timestamp,
+                        )
+                    else:
+                        # Add new organization
+                        organizations[organization_key] = {
+                            "name": organization_name,
+                            "type": organization_type,
+                            "articles": [
+                                {
+                                    "article_id": article_id,
+                                    "article_title": article_title,
+                                    "article_url": article_url,
+                                    "article_published_date": article_published_date,
+                                }
+                            ],
                             "extraction_timestamp": extraction_timestamp,
                         }
-                    )
 
             article_count += 1
 
     return {
-        "people": people,
-        "events": events,
-        "locations": locations,
-        "organizations": organizations,
+        "people": list(people.values()),
+        "events": list(events.values()),
+        "locations": list(locations.values()),
+        "organizations": list(organizations.values()),
     }
 
 
@@ -165,22 +251,22 @@ def write_entities_to_files(entities: Dict[str, List[Dict[str, Any]]]):
     """
     # Write people to file
     with open(PEOPLE_OUTPUT_PATH, "w") as f:
-        for person in entities["people"]:
+        for person in sorted(entities["people"], key=lambda x: x["name"]):
             f.write(json.dumps(person, cls=DateTimeEncoder) + "\n")
 
     # Write events to file
     with open(EVENTS_OUTPUT_PATH, "w") as f:
-        for event in entities["events"]:
+        for event in sorted(entities["events"], key=lambda x: x["title"]):
             f.write(json.dumps(event, cls=DateTimeEncoder) + "\n")
 
     # Write locations to file
     with open(LOCATIONS_OUTPUT_PATH, "w") as f:
-        for location in entities["locations"]:
+        for location in sorted(entities["locations"], key=lambda x: x["name"]):
             f.write(json.dumps(location, cls=DateTimeEncoder) + "\n")
 
     # Write organizations to file
     with open(ORGANIZATIONS_OUTPUT_PATH, "w") as f:
-        for organization in entities["organizations"]:
+        for organization in sorted(entities["organizations"], key=lambda x: x["name"]):
             f.write(json.dumps(organization, cls=DateTimeEncoder) + "\n")
 
 

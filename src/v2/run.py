@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import unicodedata
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Union
@@ -81,6 +82,29 @@ def model_to_dict(obj: Any) -> Union[Dict, List, Any]:
         return obj.value
     else:
         return obj
+
+
+def normalize_text(text: str) -> str:
+    """
+    Normalize text by removing accents and other diacritical marks.
+
+    Args:
+        text (str): The text to normalize
+
+    Returns:
+        str: The normalized text
+    """
+    if not text:
+        return ""
+
+    # Normalize to NFKD form (compatibility decomposition)
+    # This separates base characters from diacritical marks
+    normalized = unicodedata.normalize("NFKD", text)
+
+    # Remove diacritical marks by keeping only ASCII characters
+    result = "".join(c for c in normalized if not unicodedata.combining(c))
+
+    return result
 
 
 if __name__ == "__main__":
@@ -167,6 +191,13 @@ if __name__ == "__main__":
                 break
 
             loaded_entry = json.loads(line)
+
+            # Normalize title and content to remove accents
+            if "title" in loaded_entry:
+                loaded_entry["title"] = normalize_text(loaded_entry["title"])
+            if "content" in loaded_entry:
+                loaded_entry["content"] = normalize_text(loaded_entry["content"])
+
             article_id = loaded_entry.get("id", f"article_{article_count}")
             article_text = f"# Title: {loaded_entry.get('title')}\n\n# Article: {loaded_entry.get('content')}"
 
