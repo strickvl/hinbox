@@ -783,6 +783,7 @@ def main():
     processed_count = 0
 
     console.print(f"Opening articles file: {args.articles_path}")  # Debug file opening
+    model_type = "ollama" if args.local else "gemini"
     try:
         if not os.path.exists(args.articles_path):
             console.print(f"ERROR: Articles file not found at {args.articles_path}")
@@ -904,6 +905,7 @@ def main():
                         article_published_date,
                         article_content,
                         extraction_timestamp,
+                        model_type,
                     )
                     merge_organizations(
                         org_dicts,
@@ -914,6 +916,7 @@ def main():
                         article_published_date,
                         article_content,
                         extraction_timestamp,
+                        model_type,
                     )
                     merge_locations(
                         loc_dicts,
@@ -924,6 +927,7 @@ def main():
                         article_published_date,
                         article_content,
                         extraction_timestamp,
+                        model_type,
                     )
                     merge_events(
                         event_dicts,
@@ -934,6 +938,7 @@ def main():
                         article_published_date,
                         article_content,
                         extraction_timestamp,
+                        model_type,
                     )
                     processed_count += 1
                     console.print(f"Successfully processed article #{article_count}")
