@@ -37,6 +37,7 @@ from src.v2.organizations import (
     ollama_extract_organizations,
 )
 from src.v2.people import gemini_extract_people, ollama_extract_people
+from src.v2.relevance import gemini_check_relevance, ollama_check_relevance
 
 
 class DateTimeEncoder(json.JSONEncoder):
@@ -764,7 +765,7 @@ def main():
     args = parser.parse_args()
 
     console.print(
-        f"[bold blue]Arguments parsed:[/] limit={args.limit}, local={args.local}"
+        f"[bold blue]Arguments parsed:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}"
     )
 
     # Make sure the output directory for entity JSONL files exists
@@ -781,6 +782,7 @@ def main():
     # Read articles from the specified path
     article_count = 0
     processed_count = 0
+    skipped_relevance_count = 0
 
     console.print(f"Opening articles file: {args.articles_path}")  # Debug file opening
     model_type = "ollama" if args.local else "gemini"
@@ -815,6 +817,32 @@ def main():
                 if not article_content:
                     console.print("Warning: Article has no content, skipping")
                     continue
+
+                # Perform relevance check if requested
+                if args.relevance_check:
+                    console.print("Performing relevance check...")
+                    try:
+                        if args.local:
+                            relevance_result = ollama_check_relevance(
+                                article_content, model="qwq"
+                            )
+                        else:
+                            relevance_result = gemini_check_relevance(article_content)
+
+                        console.print(
+                            f"Relevance check result: {'[green]RELEVANT[/]' if relevance_result.is_relevant else '[red]NOT RELEVANT[/]'}"
+                        )
+                        console.print(f"Reason: {relevance_result.reason}")
+
+                        if not relevance_result.is_relevant:
+                            console.print("Skipping article as it's not relevant")
+                            skipped_relevance_count += 1
+                            continue
+                    except Exception as e:
+                        console.print(f"[red]Error during relevance check: {e}[/]")
+                        console.print(
+                            "Proceeding with extraction despite relevance check failure"
+                        )
 
                 print("Starting entity extraction...")
                 extraction_timestamp = datetime.now().isoformat()
@@ -954,7 +982,7 @@ def main():
     write_entities_to_files(entities)
 
     console.print(
-        f"\nProcessing complete. Articles read: {article_count}, processed: {processed_count}"
+        f"\nProcessing complete. Articles read: {article_count}, processed: {processed_count}, skipped due to relevance check: {skipped_relevance_count}"
     )
     console.print(f"Final entity counts:")
     console.print(f"- People: {len(entities['people'])}")
