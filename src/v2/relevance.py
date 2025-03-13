@@ -3,6 +3,8 @@ import litellm
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from src.v2.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
+
 # Ensure we have JSON schema validation enabled
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -19,9 +21,7 @@ class ArticleRelevance(BaseModel):
     )
 
 
-def gemini_check_relevance(
-    text: str, model: str = "gemini/gemini-2.0-flash"
-) -> ArticleRelevance:
+def gemini_check_relevance(text: str, model: str = GEMINI_MODEL) -> ArticleRelevance:
     """
     Check if an article is relevant to Guantanamo detention/prison using Gemini.
 
@@ -73,7 +73,7 @@ Return a boolean indicating relevance and a brief explanation.""",
     return result
 
 
-def ollama_check_relevance(text: str, model: str = "qwq") -> ArticleRelevance:
+def ollama_check_relevance(text: str, model: str = OLLAMA_MODEL) -> ArticleRelevance:
     """
     Check if an article is relevant to Guantanamo detention/prison using Ollama.
 
@@ -84,7 +84,7 @@ def ollama_check_relevance(text: str, model: str = "qwq") -> ArticleRelevance:
     Returns:
         ArticleRelevance object with is_relevant flag and reason
     """
-    client = OpenAI(base_url="http://192.168.178.175:11434/v1", api_key="ollama")
+    client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
 
     result = client.beta.chat.completions.parse(
         model=model,

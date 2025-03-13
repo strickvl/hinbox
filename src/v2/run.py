@@ -202,7 +202,7 @@ if __name__ == "__main__":
             article_text = f"# Title: {loaded_entry.get('title')}\n\n# Article: {loaded_entry.get('content')}"
 
             print(
-                f"Processing article {article_count+1}/{args.limit}: {loaded_entry.get('title')}"
+                f"Processing article {article_count + 1}/{args.limit}: {loaded_entry.get('title')}"
             )
 
             if args.show_article:
@@ -212,7 +212,9 @@ if __name__ == "__main__":
             try:
                 # Check relevance before processing
                 if args.local:
-                    relevance_result = ollama_check_relevance(article_text, model="qwq")
+                    relevance_result = ollama_check_relevance(
+                        article_text, model="mistral-small"
+                    )
                 else:
                     relevance_result = gemini_check_relevance(article_text)
 
@@ -237,7 +239,7 @@ if __name__ == "__main__":
                         if extract_people:
                             if args.local:
                                 people = ollama_extract_people(
-                                    article_text, model="qwq"
+                                    article_text, model="mistral-small"
                                 )
                                 metadata["people"] = model_to_dict(people)
                                 print(
@@ -253,7 +255,7 @@ if __name__ == "__main__":
                         if extract_places:
                             if args.local:
                                 locations = ollama_extract_locations(
-                                    article_text, model="qwq"
+                                    article_text, model="mistral-small"
                                 )
                                 metadata["locations"] = model_to_dict(locations)
                                 print(
@@ -269,7 +271,7 @@ if __name__ == "__main__":
                         if extract_orgs:
                             if args.local:
                                 orgs = ollama_extract_organizations(
-                                    article_text, model="qwq"
+                                    article_text, model="mistral-small"
                                 )
                                 metadata["organizations"] = model_to_dict(orgs)
                                 print(
@@ -285,7 +287,7 @@ if __name__ == "__main__":
                         if extract_events:
                             if args.local:
                                 events = ollama_extract_events(
-                                    article_text, model="qwq"
+                                    article_text, model="mistral-small"
                                 )
                                 metadata["events"] = model_to_dict(events)
                                 print(
@@ -301,7 +303,7 @@ if __name__ == "__main__":
                         if extract_tags:
                             if args.local:
                                 tags_result = ollama_extract_tags(
-                                    article_text, model="qwq"
+                                    article_text, model="mistral-small"
                                 )
                                 metadata["tags"] = model_to_dict(tags_result.tags)
                                 print(
@@ -329,7 +331,7 @@ if __name__ == "__main__":
                 processed_articles.append(loaded_entry)
 
             except Exception as e:
-                print(f"Error processing article {article_count+1}: {e}")
+                print(f"Error processing article {article_count + 1}: {e}")
                 # Add the article with error information
                 loaded_entry["metadata"] = {"relevance_check_error": str(e)}
                 loaded_entry["metadata_extraction_timestamp"] = (

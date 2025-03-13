@@ -6,6 +6,7 @@ import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
+from src.v2.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
 from src.v2.models import Organization, OrganizationType
 
 litellm.enable_json_schema_validation = True
@@ -40,7 +41,7 @@ def spacy_extract_organizations(text: str) -> List[Dict[str, Any]]:
 
 
 def gemini_extract_organizations(
-    text: str, model: str = "gemini/gemini-2.0-flash"
+    text: str, model: str = GEMINI_MODEL
 ) -> List[Dict[str, Any]]:
     """Extract organization entities from the provided text using Gemini."""
     client = instructor.from_litellm(litellm.completion)
@@ -85,9 +86,11 @@ Extract all organizations mentioned in the text and categorize them appropriatel
     return results
 
 
-def ollama_extract_organizations(text: str, model: str = "qwq") -> List[Dict[str, Any]]:
+def ollama_extract_organizations(
+    text: str, model: str = OLLAMA_MODEL
+) -> List[Dict[str, Any]]:
     """Extract organization entities from the provided text using Ollama."""
-    client = OpenAI(base_url="http://192.168.178.175:11434/v1", api_key="ollama")
+    client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
 
     results = client.beta.chat.completions.parse(
         model=model,

@@ -14,7 +14,22 @@ from typing import Any, Dict, List
 
 from pydantic import BaseModel
 from rich import print
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
 
+console = Console()
+
+# We'll not forcibly re-check relevance unless desired, but we keep the option in code.
+# Use constants from constants.py
+from src.v2.constants import (
+    ARTICLES_PATH,
+    EVENTS_OUTPUT_PATH,
+    LOCATIONS_OUTPUT_PATH,
+    ORGANIZATIONS_OUTPUT_PATH,
+    OUTPUT_DIR,
+    PEOPLE_OUTPUT_PATH,
+)
 from src.v2.events import gemini_extract_events, ollama_extract_events
 from src.v2.locations import gemini_extract_locations, ollama_extract_locations
 from src.v2.organizations import (
@@ -22,18 +37,6 @@ from src.v2.organizations import (
     ollama_extract_organizations,
 )
 from src.v2.people import gemini_extract_people, ollama_extract_people
-from src.v2.relevance import gemini_check_relevance, ollama_check_relevance
-
-# We'll not forcibly re-check relevance unless desired, but we keep the option in code.
-
-# Some constants, consistent with the existing codebase
-ARTICLES_PATH = "data/raw_sources/miami_herald_articles.jsonl"
-OUTPUT_DIR = "data/entities"
-
-PEOPLE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "people.jsonl")
-EVENTS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "events.jsonl")
-LOCATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "locations.jsonl")
-ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.jsonl")
 
 
 class DateTimeEncoder(json.JSONEncoder):
@@ -141,6 +144,78 @@ def write_entities_to_files(entities: Dict[str, Dict]):
             f.write(json.dumps(org_data, cls=DateTimeEncoder) + "\n")
 
 
+def write_entity_to_file(
+    entity_type: str, entity_key: Any, entity_data: Dict[str, Any]
+):
+    """
+    Write a single entity to its respective JSONL file.
+    This function appends or updates an entity in the appropriate file.
+
+    Args:
+        entity_type: One of "people", "events", "locations", "organizations"
+        entity_key: The key used to identify the entity (name for people, tuple for others)
+        entity_data: The entity data to write
+    """
+    # Determine the output path based on entity type
+    if entity_type == "people":
+        output_path = PEOPLE_OUTPUT_PATH
+    elif entity_type == "events":
+        output_path = EVENTS_OUTPUT_PATH
+    elif entity_type == "locations":
+        output_path = LOCATIONS_OUTPUT_PATH
+    elif entity_type == "organizations":
+        output_path = ORGANIZATIONS_OUTPUT_PATH
+    else:
+        raise ValueError(f"Unknown entity type: {entity_type}")
+
+    # Read all existing entities from the file
+    entities = []
+    entity_found = False
+
+    if os.path.exists(output_path):
+        with open(output_path, "r") as f:
+            for line in f:
+                entity = json.loads(line)
+                # Check if this is the entity we're updating
+                if entity_type == "people" and entity.get("name") == entity_key:
+                    entities.append(entity_data)
+                    entity_found = True
+                elif (
+                    entity_type == "events"
+                    and (entity.get("title"), entity.get("start_date", ""))
+                    == entity_key
+                ):
+                    entities.append(entity_data)
+                    entity_found = True
+                elif (
+                    entity_type in ["locations", "organizations"]
+                    and (entity.get("name"), entity.get("type", "")) == entity_key
+                ):
+                    entities.append(entity_data)
+                    entity_found = True
+                else:
+                    entities.append(entity)
+
+    # If the entity wasn't found, add it
+    if not entity_found:
+        entities.append(entity_data)
+
+    # Sort entities appropriately
+    if entity_type == "people":
+        entities.sort(key=lambda x: x["name"])
+    elif entity_type == "events":
+        entities.sort(key=lambda x: x["title"])
+    elif entity_type == "locations":
+        entities.sort(key=lambda x: x["name"])
+    elif entity_type == "organizations":
+        entities.sort(key=lambda x: x["name"])
+
+    # Write all entities back to the file
+    with open(output_path, "w") as f:
+        for entity in entities:
+            f.write(json.dumps(entity, cls=DateTimeEncoder) + "\n")
+
+
 def merge_people(
     extracted_people: List[Dict[str, Any]],
     entities: Dict[str, Dict],
@@ -148,18 +223,23 @@ def merge_people(
     article_title: str,
     article_url: str,
     article_published_date: Any,
+    article_content: str,
     extraction_timestamp: str,
+    model_type: str = "gemini",
 ):
     """
     For each person in `extracted_people`, check if they exist in `entities["people"]`.
-    If yes, append the article if not present.
-    If no, create new entry.
-    We do it exactly like extract_entities.py does.
+    If yes, append the article if not present and update profile.
+    If no, create new entry with initial profile.
     """
+    from src.v2.profiles import create_profile, update_profile
+
     for p in extracted_people:
         person_name = p.get("name", "")
         if not person_name:
             continue
+
+        entity_updated = False
 
         if person_name in entities["people"]:
             existing_person = entities["people"][person_name]
@@ -176,18 +256,77 @@ def merge_people(
                         "article_published_date": article_published_date,
                     }
                 )
+                entity_updated = True
+
+                # Update profile with new information
+                if "profile" in existing_person:
+                    console.print(
+                        f"\n[yellow]Updating profile for person:[/] {person_name}"
+                    )
+                    existing_person["profile"] = update_profile(
+                        "person",
+                        person_name,
+                        existing_person["profile"],
+                        article_content,
+                        article_id,
+                        model_type,
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_person["profile"]["text"]),
+                            title=f"Updated Profile: {person_name}",
+                            border_style="yellow",
+                        )
+                    )
+                else:
+                    console.print(
+                        f"\n[green]Creating initial profile for person:[/] {person_name}"
+                    )
+                    existing_person["profile"] = create_profile(
+                        "person", person_name, article_content, article_id, model_type
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_person["profile"]["text"]),
+                            title=f"New Profile: {person_name}",
+                            border_style="green",
+                        )
+                    )
+
             # Update extraction timestamp to earliest
             existing_timestamp = existing_person.get(
                 "extraction_timestamp", extraction_timestamp
             )
-            existing_person["extraction_timestamp"] = min(
-                existing_timestamp, extraction_timestamp
-            )
+            if existing_timestamp != min(existing_timestamp, extraction_timestamp):
+                existing_person["extraction_timestamp"] = min(
+                    existing_timestamp, extraction_timestamp
+                )
+                entity_updated = True
+
+            # Write the updated entity to file if it was modified
+            if entity_updated:
+                write_entity_to_file("people", person_name, existing_person)
+                console.print(
+                    f"[blue]Updated person entity saved to file:[/] {person_name}"
+                )
         else:
-            # Add new
-            entities["people"][person_name] = {
+            # Create new entry with initial profile
+            console.print(f"\n[green]Creating profile for new person:[/] {person_name}")
+            profile = create_profile(
+                "person", person_name, article_content, article_id, model_type
+            )
+            console.print(
+                Panel(
+                    Markdown(profile["text"]),
+                    title=f"New Profile: {person_name}",
+                    border_style="green",
+                )
+            )
+
+            new_person = {
                 "name": person_name,
                 "type": p.get("type", ""),
+                "profile": profile,
                 "articles": [
                     {
                         "article_id": article_id,
@@ -199,67 +338,11 @@ def merge_people(
                 "extraction_timestamp": extraction_timestamp,
             }
 
+            entities["people"][person_name] = new_person
 
-def merge_events(
-    extracted_events: List[Dict[str, Any]],
-    entities: Dict[str, Dict],
-    article_id: str,
-    article_title: str,
-    article_url: str,
-    article_published_date: Any,
-    extraction_timestamp: str,
-):
-    """
-    Merge events logic. Key by (title, start_date).
-    """
-    for e in extracted_events:
-        event_title = e.get("title", "")
-        event_start_date = e.get("start_date", "")
-        event_key = (event_title, event_start_date)
-        if not event_title:
-            continue
-
-        if event_key in entities["events"]:
-            existing_event = entities["events"][event_key]
-            # Check if article already in there
-            article_exists = any(
-                a.get("article_id") == article_id for a in existing_event["articles"]
-            )
-            if not article_exists:
-                existing_event["articles"].append(
-                    {
-                        "article_id": article_id,
-                        "article_title": article_title,
-                        "article_url": article_url,
-                        "article_published_date": article_published_date,
-                    }
-                )
-            existing_timestamp = existing_event.get(
-                "extraction_timestamp", extraction_timestamp
-            )
-            existing_event["extraction_timestamp"] = min(
-                existing_timestamp, extraction_timestamp
-            )
-        else:
-            # Add new
-            entities["events"][event_key] = {
-                "title": event_title,
-                "description": e.get("description", ""),
-                "event_type": e.get("event_type", ""),
-                "start_date": event_start_date,
-                "end_date": e.get("end_date", ""),
-                "is_fuzzy_date": e.get("is_fuzzy_date", False),
-                "tags": e.get("tags", []),
-                "articles": [
-                    {
-                        "article_id": article_id,
-                        "article_title": article_title,
-                        "article_url": article_url,
-                        "article_published_date": article_published_date,
-                    }
-                ],
-                "extraction_timestamp": extraction_timestamp,
-            }
+            # Write the new entity to file
+            write_entity_to_file("people", person_name, new_person)
+            console.print(f"[green]New person entity saved to file:[/] {person_name}")
 
 
 def merge_locations(
@@ -269,17 +352,22 @@ def merge_locations(
     article_title: str,
     article_url: str,
     article_published_date: Any,
+    article_content: str,
     extraction_timestamp: str,
+    model_type: str = "gemini",
 ):
-    """
-    Merge location logic. Key by (name, type).
-    """
+    """Merge location logic with profile handling."""
+    from src.v2.profiles import create_profile, update_profile
+
     for loc in extracted_locations:
         loc_name = loc.get("name", "")
         loc_type = loc.get("type", "")
         if not loc_name:
             continue
         location_key = (loc_name, loc_type)
+
+        entity_updated = False
+
         if location_key in entities["locations"]:
             existing_loc = entities["locations"][location_key]
             article_exists = any(
@@ -294,16 +382,76 @@ def merge_locations(
                         "article_published_date": article_published_date,
                     }
                 )
+                entity_updated = True
+
+                # Update profile with new information
+                if "profile" in existing_loc:
+                    console.print(
+                        f"\n[yellow]Updating profile for location:[/] {loc_name}"
+                    )
+                    existing_loc["profile"] = update_profile(
+                        "location",
+                        loc_name,
+                        existing_loc["profile"],
+                        article_content,
+                        article_id,
+                        model_type,
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_loc["profile"]["text"]),
+                            title=f"Updated Profile: {loc_name}",
+                            border_style="yellow",
+                        )
+                    )
+                else:
+                    console.print(
+                        f"\n[green]Creating initial profile for location:[/] {loc_name}"
+                    )
+                    existing_loc["profile"] = create_profile(
+                        "location", loc_name, article_content, article_id, model_type
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_loc["profile"]["text"]),
+                            title=f"New Profile: {loc_name}",
+                            border_style="green",
+                        )
+                    )
+
             existing_timestamp = existing_loc.get(
                 "extraction_timestamp", extraction_timestamp
             )
-            existing_loc["extraction_timestamp"] = min(
-                existing_timestamp, extraction_timestamp
-            )
+            if existing_timestamp != min(existing_timestamp, extraction_timestamp):
+                existing_loc["extraction_timestamp"] = min(
+                    existing_timestamp, extraction_timestamp
+                )
+                entity_updated = True
+
+            # Write the updated entity to file if it was modified
+            if entity_updated:
+                write_entity_to_file("locations", location_key, existing_loc)
+                console.print(
+                    f"[blue]Updated location entity saved to file:[/] {loc_name}"
+                )
         else:
-            entities["locations"][location_key] = {
+            # Create new entry with profile
+            console.print(f"\n[green]Creating profile for new location:[/] {loc_name}")
+            profile = create_profile(
+                "location", loc_name, article_content, article_id, model_type
+            )
+            console.print(
+                Panel(
+                    Markdown(profile["text"]),
+                    title=f"New Profile: {loc_name}",
+                    border_style="green",
+                )
+            )
+
+            new_location = {
                 "name": loc_name,
                 "type": loc_type,
+                "profile": profile,
                 "articles": [
                     {
                         "article_id": article_id,
@@ -315,6 +463,12 @@ def merge_locations(
                 "extraction_timestamp": extraction_timestamp,
             }
 
+            entities["locations"][location_key] = new_location
+
+            # Write the new entity to file
+            write_entity_to_file("locations", location_key, new_location)
+            console.print(f"[green]New location entity saved to file:[/] {loc_name}")
+
 
 def merge_organizations(
     extracted_orgs: List[Dict[str, Any]],
@@ -323,17 +477,22 @@ def merge_organizations(
     article_title: str,
     article_url: str,
     article_published_date: Any,
+    article_content: str,
     extraction_timestamp: str,
+    model_type: str = "gemini",
 ):
-    """
-    Merge organization logic. Key by (name, type).
-    """
+    """Merge organization logic with profile handling."""
+    from src.v2.profiles import create_profile, update_profile
+
     for org in extracted_orgs:
         org_name = org.get("name", "")
         org_type = org.get("type", "")
         if not org_name:
             continue
         org_key = (org_name, org_type)
+
+        entity_updated = False
+
         if org_key in entities["organizations"]:
             existing_org = entities["organizations"][org_key]
             article_exists = any(
@@ -348,16 +507,82 @@ def merge_organizations(
                         "article_published_date": article_published_date,
                     }
                 )
+                entity_updated = True
+
+                # Update profile with new information
+                if "profile" in existing_org:
+                    console.print(
+                        f"\n[yellow]Updating profile for organization:[/] {org_name}"
+                    )
+                    existing_org["profile"] = update_profile(
+                        "organization",
+                        org_name,
+                        existing_org["profile"],
+                        article_content,
+                        article_id,
+                        model_type,
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_org["profile"]["text"]),
+                            title=f"Updated Profile: {org_name}",
+                            border_style="yellow",
+                        )
+                    )
+                else:
+                    console.print(
+                        f"\n[green]Creating initial profile for organization:[/] {org_name}"
+                    )
+                    existing_org["profile"] = create_profile(
+                        "organization",
+                        org_name,
+                        article_content,
+                        article_id,
+                        model_type,
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_org["profile"]["text"]),
+                            title=f"New Profile: {org_name}",
+                            border_style="green",
+                        )
+                    )
+
             existing_timestamp = existing_org.get(
                 "extraction_timestamp", extraction_timestamp
             )
-            existing_org["extraction_timestamp"] = min(
-                existing_timestamp, extraction_timestamp
-            )
+            if existing_timestamp != min(existing_timestamp, extraction_timestamp):
+                existing_org["extraction_timestamp"] = min(
+                    existing_timestamp, extraction_timestamp
+                )
+                entity_updated = True
+
+            # Write the updated entity to file if it was modified
+            if entity_updated:
+                write_entity_to_file("organizations", org_key, existing_org)
+                console.print(
+                    f"[blue]Updated organization entity saved to file:[/] {org_name}"
+                )
         else:
-            entities["organizations"][org_key] = {
+            # Create new entry with profile
+            console.print(
+                f"\n[green]Creating profile for new organization:[/] {org_name}"
+            )
+            profile = create_profile(
+                "organization", org_name, article_content, article_id, model_type
+            )
+            console.print(
+                Panel(
+                    Markdown(profile["text"]),
+                    title=f"New Profile: {org_name}",
+                    border_style="green",
+                )
+            )
+
+            new_org = {
                 "name": org_name,
                 "type": org_type,
+                "profile": profile,
                 "articles": [
                     {
                         "article_id": article_id,
@@ -369,10 +594,148 @@ def merge_organizations(
                 "extraction_timestamp": extraction_timestamp,
             }
 
+            entities["organizations"][org_key] = new_org
+
+            # Write the new entity to file
+            write_entity_to_file("organizations", org_key, new_org)
+            console.print(
+                f"[green]New organization entity saved to file:[/] {org_name}"
+            )
+
+
+def merge_events(
+    extracted_events: List[Dict[str, Any]],
+    entities: Dict[str, Dict],
+    article_id: str,
+    article_title: str,
+    article_url: str,
+    article_published_date: Any,
+    article_content: str,
+    extraction_timestamp: str,
+    model_type: str = "gemini",
+):
+    """Merge events logic with profile handling."""
+    from src.v2.profiles import create_profile, update_profile
+
+    for e in extracted_events:
+        event_title = e.get("title", "")
+        event_start_date = e.get("start_date", "")
+        event_key = (event_title, event_start_date)
+        if not event_title:
+            continue
+
+        entity_updated = False
+
+        if event_key in entities["events"]:
+            existing_event = entities["events"][event_key]
+            article_exists = any(
+                a.get("article_id") == article_id for a in existing_event["articles"]
+            )
+            if not article_exists:
+                existing_event["articles"].append(
+                    {
+                        "article_id": article_id,
+                        "article_title": article_title,
+                        "article_url": article_url,
+                        "article_published_date": article_published_date,
+                    }
+                )
+                entity_updated = True
+
+                # Update profile with new information
+                if "profile" in existing_event:
+                    console.print(
+                        f"\n[yellow]Updating profile for event:[/] {event_title}"
+                    )
+                    existing_event["profile"] = update_profile(
+                        "event",
+                        event_title,
+                        existing_event["profile"],
+                        article_content,
+                        article_id,
+                        model_type,
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_event["profile"]["text"]),
+                            title=f"Updated Profile: {event_title}",
+                            border_style="yellow",
+                        )
+                    )
+                else:
+                    console.print(
+                        f"\n[green]Creating initial profile for event:[/] {event_title}"
+                    )
+                    existing_event["profile"] = create_profile(
+                        "event", event_title, article_content, article_id, model_type
+                    )
+                    console.print(
+                        Panel(
+                            Markdown(existing_event["profile"]["text"]),
+                            title=f"New Profile: {event_title}",
+                            border_style="green",
+                        )
+                    )
+
+            existing_timestamp = existing_event.get(
+                "extraction_timestamp", extraction_timestamp
+            )
+            if existing_timestamp != min(existing_timestamp, extraction_timestamp):
+                existing_event["extraction_timestamp"] = min(
+                    existing_timestamp, extraction_timestamp
+                )
+                entity_updated = True
+
+            # Write the updated entity to file if it was modified
+            if entity_updated:
+                write_entity_to_file("events", event_key, existing_event)
+                console.print(
+                    f"[blue]Updated event entity saved to file:[/] {event_title}"
+                )
+        else:
+            # Create new entry with profile
+            console.print(f"\n[green]Creating profile for new event:[/] {event_title}")
+            profile = create_profile(
+                "event", event_title, article_content, article_id, model_type
+            )
+            console.print(
+                Panel(
+                    Markdown(profile["text"]),
+                    title=f"New Profile: {event_title}",
+                    border_style="green",
+                )
+            )
+
+            new_event = {
+                "title": event_title,
+                "description": e.get("description", ""),
+                "event_type": e.get("event_type", ""),
+                "start_date": event_start_date,
+                "end_date": e.get("end_date", ""),
+                "is_fuzzy_date": e.get("is_fuzzy_date", False),
+                "tags": e.get("tags", []),
+                "profile": profile,
+                "articles": [
+                    {
+                        "article_id": article_id,
+                        "article_title": article_title,
+                        "article_url": article_url,
+                        "article_published_date": article_published_date,
+                    }
+                ],
+                "extraction_timestamp": extraction_timestamp,
+            }
+
+            entities["events"][event_key] = new_event
+
+            # Write the new entity to file
+            write_entity_to_file("events", event_key, new_event)
+            console.print(f"[green]New event entity saved to file:[/] {event_title}")
+
 
 def main():
     print("Starting script...")  # Basic debug
-    
+
     parser = argparse.ArgumentParser(
         description="Process articles, extract entities, and merge into data/entities/*.jsonl"
     )
@@ -399,37 +762,41 @@ def main():
         help="Path to the raw articles JSONL file",
     )
     args = parser.parse_args()
-    
-    print(f"Arguments parsed: limit={args.limit}, local={args.local}")  # Debug args
+
+    console.print(
+        f"[bold blue]Arguments parsed:[/] limit={args.limit}, local={args.local}"
+    )
 
     # Make sure the output directory for entity JSONL files exists
     ensure_dir(OUTPUT_DIR)
-    print(f"Ensured output directory exists: {OUTPUT_DIR}")  # Debug directory
+    console.print(f"Ensured output directory exists: {OUTPUT_DIR}")  # Debug directory
 
     # Load existing entities into dictionaries
-    print("Loading existing entities...")
+    console.print("Loading existing entities...")
     entities = load_existing_entities()
-    print(f"Loaded entities: {len(entities['people'])} people, {len(entities['events'])} events")
+    console.print(
+        f"Loaded entities: {len(entities['people'])} people, {len(entities['events'])} events"
+    )
 
     # Read articles from the specified path
     article_count = 0
     processed_count = 0
 
-    print(f"Opening articles file: {args.articles_path}")  # Debug file opening
+    console.print(f"Opening articles file: {args.articles_path}")  # Debug file opening
     try:
         if not os.path.exists(args.articles_path):
-            print(f"ERROR: Articles file not found at {args.articles_path}")
+            console.print(f"ERROR: Articles file not found at {args.articles_path}")
             return
-            
+
         with open(args.articles_path, "r") as f:
-            print("Successfully opened articles file")
+            console.print("Successfully opened articles file")
             for line in f:
                 if args.limit is not None and article_count >= args.limit:
-                    print(f"Reached limit of {args.limit} articles")
+                    console.print(f"Reached limit of {args.limit} articles")
                     break
 
                 article_count += 1
-                print(f"\nProcessing article #{article_count}")
+                console.print(f"\nProcessing article #{article_count}")
 
                 try:
                     article = json.loads(line)
@@ -438,14 +805,14 @@ def main():
                     article_url = article.get("url", "")
                     article_published_date = article.get("published_date", "")
                     article_content = article.get("content", "")
-                    
-                    print(f"Article title: {article_title}")
+
+                    console.print(f"Article title: {article_title}")
                 except Exception as e:
-                    print(f"Could not parse JSONL line: {e}")
+                    console.print(f"Could not parse JSONL line: {e}")
                     continue
 
                 if not article_content:
-                    print("Warning: Article has no content, skipping")
+                    console.print("Warning: Article has no content, skipping")
                     continue
 
                 print("Starting entity extraction...")
@@ -511,11 +878,23 @@ def main():
                 print("\nMerging extracted entities...")
                 try:
                     # Convert Pydantic models to dictionaries
-                    people_dicts = [p.model_dump() if hasattr(p, 'model_dump') else p.dict() for p in extracted_people]
-                    org_dicts = [o.model_dump() if hasattr(o, 'model_dump') else o.dict() for o in extracted_orgs]
-                    loc_dicts = [l.model_dump() if hasattr(l, 'model_dump') else l.dict() for l in extracted_locs]
-                    event_dicts = [e.model_dump() if hasattr(e, 'model_dump') else e.dict() for e in extracted_events]
-                    
+                    people_dicts = [
+                        p.model_dump() if hasattr(p, "model_dump") else p.dict()
+                        for p in extracted_people
+                    ]
+                    org_dicts = [
+                        o.model_dump() if hasattr(o, "model_dump") else o.dict()
+                        for o in extracted_orgs
+                    ]
+                    loc_dicts = [
+                        l.model_dump() if hasattr(l, "model_dump") else l.dict()
+                        for l in extracted_locs
+                    ]
+                    event_dicts = [
+                        e.model_dump() if hasattr(e, "model_dump") else e.dict()
+                        for e in extracted_events
+                    ]
+
                     merge_people(
                         people_dicts,
                         entities,
@@ -523,6 +902,7 @@ def main():
                         article_title,
                         article_url,
                         article_published_date,
+                        article_content,
                         extraction_timestamp,
                     )
                     merge_organizations(
@@ -532,6 +912,7 @@ def main():
                         article_title,
                         article_url,
                         article_published_date,
+                        article_content,
                         extraction_timestamp,
                     )
                     merge_locations(
@@ -541,6 +922,7 @@ def main():
                         article_title,
                         article_url,
                         article_published_date,
+                        article_content,
                         extraction_timestamp,
                     )
                     merge_events(
@@ -550,26 +932,31 @@ def main():
                         article_title,
                         article_url,
                         article_published_date,
+                        article_content,
                         extraction_timestamp,
                     )
                     processed_count += 1
-                    print(f"Successfully processed article #{article_count}")
+                    console.print(f"Successfully processed article #{article_count}")
                 except Exception as e:
-                    print(f"Error merging entities: {e}")
+                    console.print(f"Error merging entities: {e}")
 
     except Exception as e:
-        print(f"Error processing articles: {e}")
+        console.print(f"Error processing articles: {e}")
 
-    # Write final results
-    print("\nWriting extracted entities to files...")
+    # Write final results - this is now redundant since we write incrementally,
+    # but we'll keep it as a final verification step
+    console.print("\nVerifying all entities are saved to files...")
     write_entities_to_files(entities)
-    
-    print(f"\nProcessing complete. Articles read: {article_count}, processed: {processed_count}")
-    print(f"Final entity counts:")
-    print(f"- People: {len(entities['people'])}")
-    print(f"- Organizations: {len(entities['organizations'])}")
-    print(f"- Locations: {len(entities['locations'])}")
-    print(f"- Events: {len(entities['events'])}")
+
+    console.print(
+        f"\nProcessing complete. Articles read: {article_count}, processed: {processed_count}"
+    )
+    console.print(f"Final entity counts:")
+    console.print(f"- People: {len(entities['people'])}")
+    console.print(f"- Organizations: {len(entities['organizations'])}")
+    console.print(f"- Locations: {len(entities['locations'])}")
+    console.print(f"- Events: {len(entities['events'])}")
+
 
 if __name__ == "__main__":
     main()
