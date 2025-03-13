@@ -65,6 +65,9 @@ When identifying organizations, categorize them using the following organization
 - intergovernmental: International governmental bodies (e.g., UN, European Union)
 - other: Any other organization type not covered above
 
+Make extra sure when creating an organization that it's actually an organization and
+not a person.
+
 Extract all organizations mentioned in the text and categorize them appropriately.""",
             },
             {
@@ -103,6 +106,9 @@ When identifying organizations, categorize them using the following organization
 - government: Government entities and departments (e.g., US DoD, DoJ)
 - intergovernmental: International governmental bodies (e.g., UN, European Union)
 - other: Any other organization type not covered above
+
+Make extra sure when creating an organization that it's actually an organization and
+not a person.
 
 Extract all organizations mentioned in the text and categorize them appropriately.""",
             },
