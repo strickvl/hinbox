@@ -7,6 +7,27 @@ from urllib.parse import quote, unquote
 from fasthtml.common import *
 import markdown
 
+
+def transform_profile_text(text, articles):
+    import re
+
+    # Build a map from article_id to article_url
+    article_map = {}
+    for a in articles:
+        aid = a.get("article_id")
+        article_map[aid] = a.get("article_url", "#")
+
+    # We'll replace footnotes in the form ^[...] with links to the article URL
+    pattern = r"\^\[([0-9a-fA-F-]+)\]"
+
+    def replacer(match):
+        ref = match.group(1)
+        url = article_map.get(ref, "#")
+        return f'<sup><a href="{url}" target="_blank">{ref}</a></sup>'
+
+    return re.sub(pattern, replacer, text)
+
+
 DATA_DIR = "data/entities"
 
 # Filenames for each entity type
@@ -175,8 +196,9 @@ def show_person(key: str):
     typ = person.get("type", "N/A")
     profile = person.get("profile", {})
     text = profile.get("text", "")
+    text = profile.get("text", "")
+    transformed_text = transform_profile_text(text, person.get("articles", []))
     conf = profile.get("confidence", "(none)")
-    # Show articles if any
     articles = person.get("articles", [])
     art_list = []
     for art in articles:
@@ -190,7 +212,7 @@ def show_person(key: str):
         nav_bar(),
         H2(f"Person: {name}"),
         P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(text))),
+        Div(NotStr(markdown.markdown(transformed_text))),
         P(f"Confidence: {conf}"),
         H3("Articles"),
         Ul(*art_list),
@@ -228,6 +250,7 @@ def show_event(key: str):
     is_fuzzy = ev.get("is_fuzzy_date", False)
     profile = ev.get("profile", {})
     text = profile.get("text", "")
+    transformed_text = transform_profile_text(text, ev.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = ev.get("articles", [])
     art_list = []
@@ -248,7 +271,7 @@ def show_event(key: str):
         H3("Description"),
         P(desc),
         H3("Profile Text"),
-        Div(NotStr(markdown.markdown(text))),
+        Div(NotStr(markdown.markdown(transformed_text))),
         P(f"Confidence: {conf}"),
         H3("Articles"),
         Ul(*art_list),
@@ -284,6 +307,7 @@ def show_location(key: str):
     typ = loc.get("type", "N/A")
     profile = loc.get("profile", {})
     text = profile.get("text", "")
+    transformed_text = transform_profile_text(text, loc.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = loc.get("articles", [])
     art_list = []
@@ -298,7 +322,7 @@ def show_location(key: str):
         nav_bar(),
         H2(f"Location: {nm}"),
         P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(text))),
+        Div(NotStr(markdown.markdown(transformed_text))),
         P(f"Confidence: {conf}"),
         H3("Articles"),
         Ul(*art_list),
@@ -334,6 +358,7 @@ def show_org(key: str):
     typ = org.get("type", "N/A")
     profile = org.get("profile", {})
     text = profile.get("text", "")
+    transformed_text = transform_profile_text(text, org.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = org.get("articles", [])
     art_list = []
@@ -348,7 +373,7 @@ def show_org(key: str):
         nav_bar(),
         H2(f"Organization: {nm}"),
         P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(text))),
+        Div(NotStr(markdown.markdown(transformed_text))),
         P(f"Confidence: {conf}"),
         H3("Articles"),
         Ul(*art_list),
