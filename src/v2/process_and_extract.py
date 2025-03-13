@@ -25,7 +25,9 @@ console = Console()
 from src.v2.constants import (
     ARTICLES_PATH,
     EVENTS_OUTPUT_PATH,
+    GEMINI_MODEL,
     LOCATIONS_OUTPUT_PATH,
+    OLLAMA_MODEL,
     ORGANIZATIONS_OUTPUT_PATH,
     OUTPUT_DIR,
     PEOPLE_OUTPUT_PATH,
@@ -217,6 +219,14 @@ def write_entity_to_file(
             f.write(json.dumps(entity, cls=DateTimeEncoder) + "\n")
 
 
+def reload_entities() -> Dict[str, Dict]:
+    """
+    Reload all entity files to get the latest state.
+    This ensures we have the most up-to-date data when checking for duplicates.
+    """
+    return load_existing_entities()
+
+
 def merge_people(
     extracted_people: List[Dict[str, Any]],
     entities: Dict[str, Dict],
@@ -234,6 +244,10 @@ def merge_people(
     If no, create new entry with initial profile.
     """
     from src.v2.profiles import create_profile, update_profile
+
+    # Reload entities to get latest state
+    current_entities = reload_entities()
+    entities["people"] = current_entities["people"]
 
     for p in extracted_people:
         person_name = p.get("name", "")
@@ -360,6 +374,10 @@ def merge_locations(
     """Merge location logic with profile handling."""
     from src.v2.profiles import create_profile, update_profile
 
+    # Reload entities to get latest state
+    current_entities = reload_entities()
+    entities["locations"] = current_entities["locations"]
+
     for loc in extracted_locations:
         loc_name = loc.get("name", "")
         loc_type = loc.get("type", "")
@@ -484,6 +502,10 @@ def merge_organizations(
 ):
     """Merge organization logic with profile handling."""
     from src.v2.profiles import create_profile, update_profile
+
+    # Reload entities to get latest state
+    current_entities = reload_entities()
+    entities["organizations"] = current_entities["organizations"]
 
     for org in extracted_orgs:
         org_name = org.get("name", "")
@@ -617,6 +639,10 @@ def merge_events(
 ):
     """Merge events logic with profile handling."""
     from src.v2.profiles import create_profile, update_profile
+
+    # Reload entities to get latest state
+    current_entities = reload_entities()
+    entities["events"] = current_entities["events"]
 
     for e in extracted_events:
         event_title = e.get("title", "")
@@ -762,10 +788,15 @@ def main():
         default=ARTICLES_PATH,
         help="Path to the raw articles JSONL file",
     )
+    parser.add_argument(
+        "--force-reprocess",
+        action="store_true",
+        help="Process articles even if they've been processed before",
+    )
     args = parser.parse_args()
 
     console.print(
-        f"[bold blue]Arguments parsed:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}"
+        f"[bold blue]Arguments parsed:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}, force_reprocess={args.force_reprocess}"
     )
 
     # Make sure the output directory for entity JSONL files exists
@@ -783,20 +814,28 @@ def main():
     article_count = 0
     processed_count = 0
     skipped_relevance_count = 0
+    skipped_already_processed = 0
 
     console.print(f"Opening articles file: {args.articles_path}")  # Debug file opening
     model_type = "ollama" if args.local else "gemini"
+    specific_model = OLLAMA_MODEL if args.local else GEMINI_MODEL
     try:
         if not os.path.exists(args.articles_path):
             console.print(f"ERROR: Articles file not found at {args.articles_path}")
             return
 
-        with open(args.articles_path, "r") as f:
-            console.print("Successfully opened articles file")
-            for line in f:
+        # Create a temporary file to write processed articles
+        temp_file = args.articles_path + ".tmp"
+
+        with (
+            open(args.articles_path, "r") as input_file,
+            open(temp_file, "w") as output_file,
+        ):
+            for line in input_file:
                 if args.limit is not None and article_count >= args.limit:
-                    console.print(f"Reached limit of {args.limit} articles")
-                    break
+                    # Copy remaining unprocessed articles to temp file
+                    output_file.write(line)
+                    continue
 
                 article_count += 1
                 console.print(f"\nProcessing article #{article_count}")
@@ -809,14 +848,41 @@ def main():
                     article_published_date = article.get("published_date", "")
                     article_content = article.get("content", "")
 
+                    # Check if article has already been processed
+                    processing_metadata = article.get("processing_metadata", {})
+                    if not args.force_reprocess and processing_metadata.get(
+                        "processed"
+                    ):
+                        console.print(
+                            "[yellow]Article already processed, skipping...[/]"
+                        )
+                        skipped_already_processed += 1
+                        output_file.write(line)  # Write unchanged article
+                        continue
+
                     console.print(f"Article title: {article_title}")
                 except Exception as e:
                     console.print(f"Could not parse JSONL line: {e}")
+                    output_file.write(line)  # Write problematic line unchanged
                     continue
 
                 if not article_content:
                     console.print("Warning: Article has no content, skipping")
+                    output_file.write(line)  # Write unchanged article
                     continue
+
+                # Initialize or update processing metadata
+                if "processing_metadata" not in article:
+                    article["processing_metadata"] = {}
+
+                processing_metadata = article["processing_metadata"]
+                processing_metadata.update(
+                    {
+                        "processing_started": datetime.now().isoformat(),
+                        "model_type": model_type,
+                        "specific_model": specific_model,
+                    }
+                )
 
                 # Perform relevance check if requested
                 if args.relevance_check:
@@ -837,6 +903,9 @@ def main():
                         if not relevance_result.is_relevant:
                             console.print("Skipping article as it's not relevant")
                             skipped_relevance_count += 1
+                            output_file.write(
+                                json.dumps(article, cls=DateTimeEncoder) + "\n"
+                            )
                             continue
                     except Exception as e:
                         console.print(f"[red]Error during relevance check: {e}[/]")
@@ -968,13 +1037,40 @@ def main():
                         extraction_timestamp,
                         model_type,
                     )
+
+                    # Update processing metadata after successful processing
+                    processing_metadata.update(
+                        {
+                            "processed": True,
+                            "processing_completed": datetime.now().isoformat(),
+                            "entities_extracted": {
+                                "people": len(extracted_people),
+                                "organizations": len(extracted_orgs),
+                                "locations": len(extracted_locs),
+                                "events": len(extracted_events),
+                            },
+                        }
+                    )
+
+                    # Write processed article immediately
+                    output_file.write(json.dumps(article, cls=DateTimeEncoder) + "\n")
+
                     processed_count += 1
                     console.print(f"Successfully processed article #{article_count}")
                 except Exception as e:
                     console.print(f"Error merging entities: {e}")
+                    # Write the article with error information
+                    processing_metadata["error"] = str(e)
+                    output_file.write(json.dumps(article, cls=DateTimeEncoder) + "\n")
+
+        # Replace original file with processed file
+        os.replace(temp_file, args.articles_path)
 
     except Exception as e:
         console.print(f"Error processing articles: {e}")
+        # Clean up temp file if it exists
+        if os.path.exists(temp_file):
+            os.unlink(temp_file)
 
     # Write final results - this is now redundant since we write incrementally,
     # but we'll keep it as a final verification step
@@ -982,7 +1078,10 @@ def main():
     write_entities_to_files(entities)
 
     console.print(
-        f"\nProcessing complete. Articles read: {article_count}, processed: {processed_count}, skipped due to relevance check: {skipped_relevance_count}"
+        f"\nProcessing complete. Articles read: {article_count}, "
+        f"processed: {processed_count}, "
+        f"skipped due to relevance check: {skipped_relevance_count}, "
+        f"skipped already processed: {skipped_already_processed}"
     )
     console.print(f"Final entity counts:")
     console.print(f"- People: {len(entities['people'])}")

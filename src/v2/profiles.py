@@ -288,7 +288,7 @@ The updated profile should:
 Additionally, ensure the updated profile follows these Markdown formatting rules:
 - Use bullet points for lists.
 - Use *italics* for emphasis.
-- Include inline footnotes for every fact using the format: `fact text^[{article_id}]`.
+- Include inline footnotes for every fact using the format: `fact text^[{new_article_id}]`.
 - Combine footnotes for facts confirmed by multiple sources (e.g., `fact text^[abc123, def456]`).
 - Always include the article ID in the footnote.
 - Mark uncertainties with "reportedly" or "according to", and if needed, add a "## Conflicting Information" section.
@@ -368,7 +368,7 @@ The updated profile should:
 Additionally, ensure the updated profile adheres to these Markdown formatting rules:
 - Use bullet points for lists.
 - Use *italics* for emphasis.
-- Include inline footnotes for every fact using the format: `fact text^[{article_id}]`.
+- Include inline footnotes for every fact using the format: `fact text^[{new_article_id}]`.
 - Combine footnotes when facts are confirmed by multiple sources (e.g., `fact text^[abc123, def456]`).
 - Always include the article ID in the footnote.
 - Mark uncertainties with "reportedly" or "according to", and if needed, add a "## Conflicting Information" section.
