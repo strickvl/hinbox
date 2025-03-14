@@ -34,4 +34,4 @@ LOCATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "locations.parquet")
 ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.parquet")
 
 # Threshold for similarity matching
-SIMILARITY_THRESHOLD = 0.70
+SIMILARITY_THRESHOLD = 0.75

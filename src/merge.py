@@ -648,7 +648,7 @@ def merge_locations(
                 )
             else:
                 console.print(
-                    f"[red]The profiles do not match. Skipping merge for '{person_name}'[/red]"
+                    f"[red]The profiles do not match. Skipping merge for '{loc_name}'[/red]"
                 )
                 continue
 
