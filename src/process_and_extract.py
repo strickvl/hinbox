@@ -14,6 +14,8 @@ from typing import Any, Dict, List
 import pyarrow as pa
 import pyarrow.parquet as pq
 from rich import print
+
+from src.embeddings import embed_text
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -258,20 +260,23 @@ def merge_people(
                         f"\n[yellow]Updating profile for person:[/] {person_name}"
                     )
                     existing_person["profile"] = update_profile(
-                        "person",
-                        person_name,
-                        existing_person["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
-                    )
-                    console.print(
-                        Panel(
-                            Markdown(existing_person["profile"]["text"]),
-                            title=f"Updated Profile: {person_name}",
-                            border_style="yellow",
-                        )
-                    )
+                                  "person",
+                                  person_name,
+                                  existing_person["profile"],
+                                  article_content,
+                                  article_id,
+                                  model_type,
+                              )
+          # Embed updated profile text
+          existing_person["profile_embedding"] = embed_text(existing_person["profile"]["text"])
+          
+          console.print(
+              Panel(
+                  Markdown(existing_person["profile"]["text"]),
+                  title=f"Updated Profile: {person_name}",
+                  border_style="yellow",
+              )
+          )
                 else:
                     console.print(
                         f"\n[green]Creating initial profile for person:[/] {person_name}"
@@ -321,16 +326,20 @@ def merge_people(
                 "name": person_name,
                 "type": p.get("type", ""),
                 "profile": profile,
-                "articles": [
-                    {
-                        "article_id": article_id,
-                        "article_title": article_title,
-                        "article_url": article_url,
-                        "article_published_date": article_published_date,
-                    }
-                ],
-                "extraction_timestamp": extraction_timestamp,
-            }
+"articles": [
+    {
+        "article_id": article_id,
+        "article_title": article_title,
+        "article_url": article_url,
+        "article_published_date": article_published_date,
+    }
+],
+"profile_embedding": embed_text(profile["text"]),
+"extraction_timestamp": extraction_timestamp,
+}
+}
+}
+}
 
             entities["people"][person_name] = new_person
             write_entity_to_file("people", person_name, new_person)
@@ -379,20 +388,23 @@ def merge_locations(
                         f"\n[yellow]Updating profile for location:[/] {loc_name}"
                     )
                     existing_loc["profile"] = update_profile(
-                        "location",
-                        loc_name,
-                        existing_loc["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
-                    )
-                    console.print(
-                        Panel(
-                            Markdown(existing_loc["profile"]["text"]),
-                            title=f"Updated Profile: {loc_name}",
-                            border_style="yellow",
-                        )
-                    )
+                                  "location",
+                                  loc_name,
+                                  existing_loc["profile"],
+                                  article_content,
+                                  article_id,
+                                  model_type,
+                              )
+          # Embed updated profile text
+          existing_loc["profile_embedding"] = embed_text(existing_loc["profile"]["text"])
+          
+          console.print(
+              Panel(
+                  Markdown(existing_loc["profile"]["text"]),
+                  title=f"Updated Profile: {loc_name}",
+                  border_style="yellow",
+              )
+          )
                 else:
                     console.print(
                         f"\n[green]Creating initial profile for location:[/] {loc_name}"
@@ -499,20 +511,23 @@ def merge_organizations(
                         f"\n[yellow]Updating profile for organization:[/] {org_name}"
                     )
                     existing_org["profile"] = update_profile(
-                        "organization",
-                        org_name,
-                        existing_org["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
-                    )
-                    console.print(
-                        Panel(
-                            Markdown(existing_org["profile"]["text"]),
-                            title=f"Updated Profile: {org_name}",
-                            border_style="yellow",
-                        )
-                    )
+                                  "organization",
+                                  org_name,
+                                  existing_org["profile"],
+                                  article_content,
+                                  article_id,
+                                  model_type,
+                              )
+          # Embed updated profile text
+          existing_org["profile_embedding"] = embed_text(existing_org["profile"]["text"])
+          
+          console.print(
+              Panel(
+                  Markdown(existing_org["profile"]["text"]),
+                  title=f"Updated Profile: {org_name}",
+                  border_style="yellow",
+              )
+          )
                 else:
                     console.print(
                         f"\n[green]Creating initial profile for organization:[/] {org_name}"
@@ -627,20 +642,23 @@ def merge_events(
                         f"\n[yellow]Updating profile for event:[/] {event_title}"
                     )
                     existing_event["profile"] = update_profile(
-                        "event",
-                        event_title,
-                        existing_event["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
-                    )
-                    console.print(
-                        Panel(
-                            Markdown(existing_event["profile"]["text"]),
-                            title=f"Updated Profile: {event_title}",
-                            border_style="yellow",
-                        )
-                    )
+                                  "event",
+                                  event_title,
+                                  existing_event["profile"],
+                                  article_content,
+                                  article_id,
+                                  model_type,
+                              )
+          # Embed updated profile text
+          existing_event["profile_embedding"] = embed_text(existing_event["profile"]["text"])
+          
+          console.print(
+              Panel(
+                  Markdown(existing_event["profile"]["text"]),
+                  title=f"Updated Profile: {event_title}",
+                  border_style="yellow",
+              )
+          )
                 else:
                     console.print(
                         f"\n[green]Creating initial profile for event:[/] {event_title}"
