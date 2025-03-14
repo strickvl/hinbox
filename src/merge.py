@@ -79,11 +79,11 @@ Provide a detailed explanation for your decision, citing specific evidence from 
                     "role": "user",
                     "content": f"""I need to determine if these two profiles refer to the same entity:
 
-PROFILE FROM NEW ARTICLE:
+## PROFILE FROM NEW ARTICLE:
 Name: {new_name}
 Profile: {new_profile_text}
 
-EXISTING PROFILE IN DATABASE:
+## EXISTING PROFILE IN DATABASE:
 Name: {existing_name}
 Profile: {existing_profile_text}
 
@@ -633,6 +633,25 @@ def merge_locations(
         )
 
         if similar_key:
+            console.print(
+                f"[purple]Doing a final check to see if '{loc_name}' is the same as '{similar_key}'[/purple]..."
+            )
+            result = cloud_model_check_match(
+                loc_name,
+                similar_key,
+                proposed_profile_text,
+                entities["locations"][similar_key]["profile"]["text"],
+            )
+            if result.is_match:
+                console.print(
+                    f"[green]The profiles match! Merging '{loc_name}' with '{similar_key}'[/green]"
+                )
+            else:
+                console.print(
+                    f"[red]The profiles do not match. Skipping merge for '{person_name}'[/red]"
+                )
+                continue
+
             # We found a similar location - use that instead of creating a new one
             similar_name, similar_type = similar_key
             console.print(
@@ -816,6 +835,25 @@ def merge_organizations(
         )
 
         if similar_key:
+            console.print(
+                f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key}'[/purple]..."
+            )
+            result = cloud_model_check_match(
+                org_name,
+                similar_key,
+                proposed_profile_text,
+                entities["organizations"][similar_key]["profile"]["text"],
+            )
+            if result.is_match:
+                console.print(
+                    f"[green]The profiles match! Merging '{org_name}' with '{similar_key}'[/green]"
+                )
+            else:
+                console.print(
+                    f"[red]The profiles do not match. Skipping merge for '{org_name}'[/red]"
+                )
+                continue
+
             # We found a similar organization - use that instead of creating a new one
             similar_name, similar_type = similar_key
             console.print(
@@ -1000,6 +1038,25 @@ def merge_events(
         )
 
         if similar_key:
+            console.print(
+                f"[purple]Doing a final check to see if '{event_title}' is the same as '{similar_key}'[/purple]..."
+            )
+            result = cloud_model_check_match(
+                event_title,
+                similar_key,
+                proposed_profile_text,
+                entities["events"][similar_key]["profile"]["text"],
+            )
+            if result.is_match:
+                console.print(
+                    f"[green]The profiles match! Merging '{event_title}' with '{similar_key}'[/green]"
+                )
+            else:
+                console.print(
+                    f"[red]The profiles do not match. Skipping merge for '{event_title}'[/red]"
+                )
+                continue
+
             # We found a similar event - use that instead of creating a new one
             similar_title, similar_start_date = similar_key
             console.print(
