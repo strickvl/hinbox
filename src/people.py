@@ -70,6 +70,11 @@ When identifying people, categorize them using the following person types:
 Only use standard ASCII characters for the names that you extract.
 Extract all people mentioned in the text and categorize them appropriately.
 
+12. If you footnote or add refernces, use the following format:
+
+Normal text would go here^[source_id, source_id, ...].
+
+
 You MUST return each person as an object with 'name' and 'type' properties.
 For example:
 [
@@ -77,7 +82,13 @@ For example:
   {"name": "Jane Smith", "type": "lawyer"}
 ]
 
-Do NOT return strings like "John Doe (journalist)". Always use the proper object format.""",
+Do NOT return strings like "John Doe (journalist)". Always use the proper object
+format.
+
+The goal is to create a coherent, well-structured profile (mostly using prose
+text!) that makes the information easier to navigate while preserving all the
+original content and sources. Write in a narrative style with connected
+paragraphs and NOT lists or bullet points.""",
             },
             {
                 "role": "user",
@@ -115,7 +126,16 @@ When identifying people, categorize them using the following person types:
 
 Only use standard ASCII characters for the names that you extract.
 
-Extract all people mentioned in the text and categorize them appropriately.""",
+Extract all people mentioned in the text and categorize them appropriately.
+
+12. If you footnote or add refernces, use the following format:
+
+Normal text would go here^[source_id, source_id, ...].
+
+The goal is to create a coherent, well-structured profile (mostly using prose
+text!) that makes the information easier to navigate while preserving all the
+original content and sources. Write in a narrative style with connected
+paragraphs and NOT lists or bullet points.""",
             },
             {
                 "role": "user",
