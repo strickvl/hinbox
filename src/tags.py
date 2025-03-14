@@ -4,6 +4,12 @@ import instructor
 import litellm
 from openai import OpenAI
 
+from src.constants import (
+    OLLAMA_API_KEY,
+    OLLAMA_API_URL,
+    OLLAMA_MODEL,
+    get_ollama_model_name,
+)
 from src.models import ArticleTag, ArticleTags
 
 
@@ -75,7 +81,7 @@ def gemini_extract_tags(article_text: str) -> ArticleTags:
         return ArticleTags(tags=[])
 
 
-def ollama_extract_tags(article_text: str, model: str = "mistral-small") -> ArticleTags:
+def ollama_extract_tags(article_text: str, model: str = OLLAMA_MODEL) -> ArticleTags:
     """
     Extract article tags using Ollama models.
 
@@ -86,7 +92,7 @@ def ollama_extract_tags(article_text: str, model: str = "mistral-small") -> Arti
     Returns:
         ArticleTags object containing the extracted tags
     """
-    client = OpenAI(base_url="http://192.168.178.175:11434/v1", api_key="ollama")
+    client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
     instructor_client = instructor.from_openai(client)
 
     prompt = f"""
@@ -109,7 +115,7 @@ def ollama_extract_tags(article_text: str, model: str = "mistral-small") -> Arti
 
     try:
         results = client.beta.chat.completions.parse(
-            model=model,
+            model=get_ollama_model_name(model),  # Strip ollama/ prefix for API call
             response_format=ArticleTags,
             temperature=0,
             messages=[

@@ -1,3 +1,5 @@
+"""Extract people from article text."""
+
 from typing import Any, Dict, List
 
 import instructor
@@ -6,12 +8,17 @@ import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
-from src.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
+from src.constants import (
+    GEMINI_MODEL,
+    OLLAMA_API_KEY,
+    OLLAMA_API_URL,
+    OLLAMA_MODEL,
+    get_ollama_model_name,
+)
 from src.models import Person, PersonType
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
-# litellm._turn_on_debug()
 
 
 class ArticlePeople(BaseModel):
@@ -90,7 +97,7 @@ def ollama_extract_people(text: str, model: str = OLLAMA_MODEL) -> List[Dict[str
     client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
 
     results = client.beta.chat.completions.parse(
-        model=model,
+        model=get_ollama_model_name(model),  # Strip ollama/ prefix for API call
         response_format=ArticlePeople,
         temperature=0,
         messages=[

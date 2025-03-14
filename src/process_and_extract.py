@@ -24,8 +24,10 @@ console = Console()
 
 from src.constants import (
     ARTICLES_PATH,
+    CLOUD_EMBEDDING_MODEL,
     EVENTS_OUTPUT_PATH,
     GEMINI_MODEL,
+    LOCAL_EMBEDDING_MODEL,
     LOCATIONS_OUTPUT_PATH,
     OLLAMA_MODEL,
     ORGANIZATIONS_OUTPUT_PATH,
@@ -267,9 +269,15 @@ def merge_people(
                         article_id,
                         model_type,
                     )
-                    # Embed updated profile text
+                    # Embed updated profile text using appropriate model
+                    embedding_model = (
+                        LOCAL_EMBEDDING_MODEL
+                        if model_type == "ollama"
+                        else CLOUD_EMBEDDING_MODEL
+                    )
                     existing_person["profile_embedding"] = embed_text(
-                        existing_person["profile"]["text"]
+                        existing_person["profile"]["text"],
+                        model_name=embedding_model,
                     )
 
                     console.print(
@@ -394,9 +402,15 @@ def merge_locations(
                         article_id,
                         model_type,
                     )
-                    # Embed updated profile text
+                    # Embed updated profile text using appropriate model
+                    embedding_model = (
+                        LOCAL_EMBEDDING_MODEL
+                        if model_type == "ollama"
+                        else CLOUD_EMBEDDING_MODEL
+                    )
                     existing_loc["profile_embedding"] = embed_text(
-                        existing_loc["profile"]["text"]
+                        existing_loc["profile"]["text"],
+                        model_name=embedding_model,
                     )
 
                     console.print(
@@ -519,9 +533,15 @@ def merge_organizations(
                         article_id,
                         model_type,
                     )
-                    # Embed updated profile text
+                    # Embed updated profile text using appropriate model
+                    embedding_model = (
+                        LOCAL_EMBEDDING_MODEL
+                        if model_type == "ollama"
+                        else CLOUD_EMBEDDING_MODEL
+                    )
                     existing_org["profile_embedding"] = embed_text(
-                        existing_org["profile"]["text"]
+                        existing_org["profile"]["text"],
+                        model_name=embedding_model,
                     )
 
                     console.print(
@@ -652,9 +672,15 @@ def merge_events(
                         article_id,
                         model_type,
                     )
-                    # Embed updated profile text
+                    # Embed updated profile text using appropriate model
+                    embedding_model = (
+                        LOCAL_EMBEDDING_MODEL
+                        if model_type == "ollama"
+                        else CLOUD_EMBEDDING_MODEL
+                    )
                     existing_event["profile_embedding"] = embed_text(
-                        existing_event["profile"]["text"]
+                        existing_event["profile"]["text"],
+                        model_name=embedding_model,
                     )
 
                     console.print(

@@ -6,7 +6,13 @@ import litellm
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from src.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
+from src.constants import (
+    GEMINI_MODEL,
+    OLLAMA_API_KEY,
+    OLLAMA_API_URL,
+    OLLAMA_MODEL,
+    get_ollama_model_name,
+)
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
@@ -156,7 +162,7 @@ def generate_with_ollama(
     """
     client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
     result = client.beta.chat.completions.parse(
-        model=OLLAMA_MODEL,
+        model=get_ollama_model_name(OLLAMA_MODEL),  # Strip ollama/ prefix
         response_format=EntityProfile,
         temperature=0,
         messages=[
@@ -347,7 +353,7 @@ def update_with_ollama(
     """
     client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
     result = client.beta.chat.completions.parse(
-        model=OLLAMA_MODEL,
+        model=get_ollama_model_name(OLLAMA_MODEL),  # Strip ollama/ prefix
         response_format=EntityProfile,
         temperature=0,
         messages=[

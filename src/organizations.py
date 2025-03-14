@@ -6,7 +6,13 @@ import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
-from src.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
+from src.constants import (
+    GEMINI_MODEL,
+    OLLAMA_API_KEY,
+    OLLAMA_API_URL,
+    OLLAMA_MODEL,
+    get_ollama_model_name,
+)
 from src.models import Organization, OrganizationType
 
 litellm.enable_json_schema_validation = True
@@ -93,7 +99,7 @@ def ollama_extract_organizations(
     client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
 
     results = client.beta.chat.completions.parse(
-        model=model,
+        model=get_ollama_model_name(model),  # Strip ollama/ prefix for API call
         response_format=ArticleOrganizations,
         temperature=0,
         messages=[
