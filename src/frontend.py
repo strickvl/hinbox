@@ -4,8 +4,6 @@ from urllib.parse import quote, unquote
 
 import markdown
 import pyarrow.parquet as pq
-
-# We'll use FastHTML for building our small web server
 from fasthtml.common import *
 
 DATA_DIR = "data/entities"
@@ -30,6 +28,26 @@ people_data = load_parquet(PEOPLE_FILE)
 events_data = load_parquet(EVENTS_FILE)
 locations_data = load_parquet(LOCATIONS_FILE)
 orgs_data = load_parquet(ORGS_FILE)
+
+
+def transform_profile_text(text, articles):
+    import re
+
+    # Build a map from article_id to article_url
+    article_map = {}
+    for a in articles:
+        aid = a.get("article_id")
+        article_map[aid] = a.get("article_url", "#")
+
+    # We'll replace footnotes in the form ^[...] with links to the article URL
+    pattern = r"\^\[([0-9a-fA-F-]+)\]"
+
+    def replacer(match):
+        ref = match.group(1)
+        url = article_map.get(ref, "#")
+        return f'<sup><a href="{url}" target="_blank">{ref}</a></sup>'
+
+    return re.sub(pattern, replacer, text)
 
 
 # For each entity, we generate a "key" for referencing in routes
