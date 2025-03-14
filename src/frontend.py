@@ -1,65 +1,35 @@
 import hashlib
-import json
 import os
 from urllib.parse import quote, unquote
 
 import markdown
+import pyarrow.parquet as pq
 
 # We'll use FastHTML for building our small web server
 from fasthtml.common import *
 
-
-def transform_profile_text(text, articles):
-    import re
-
-    # Build a map from article_id to article_url
-    article_map = {}
-    for a in articles:
-        aid = a.get("article_id")
-        article_map[aid] = a.get("article_url", "#")
-
-    # We'll replace footnotes in the form ^[...] with links to the article URL
-    pattern = r"\^\[([0-9a-fA-F-]+)\]"
-
-    def replacer(match):
-        ref = match.group(1)
-        url = article_map.get(ref, "#")
-        return f'<sup><a href="{url}" target="_blank">{ref}</a></sup>'
-
-    return re.sub(pattern, replacer, text)
-
-
 DATA_DIR = "data/entities"
 
-# Filenames for each entity type
-PEOPLE_FILE = os.path.join(DATA_DIR, "people.jsonl")
-EVENTS_FILE = os.path.join(DATA_DIR, "events.jsonl")
-LOCATIONS_FILE = os.path.join(DATA_DIR, "locations.jsonl")
-ORGS_FILE = os.path.join(DATA_DIR, "organizations.jsonl")
-
-################################################################
-#                Load Data from JSONL at Startup
-################################################################
+# Filenames for each entity type (now using Parquet)
+PEOPLE_FILE = os.path.join(DATA_DIR, "people.parquet")
+EVENTS_FILE = os.path.join(DATA_DIR, "events.parquet")
+LOCATIONS_FILE = os.path.join(DATA_DIR, "locations.parquet")
+ORGS_FILE = os.path.join(DATA_DIR, "organizations.parquet")
 
 
-def load_jsonl(path: str):
-    """Load a JSONL file and return a list of dictionaries."""
+def load_parquet(path: str):
+    """Load a Parquet file and return a list of dictionaries."""
     if not os.path.exists(path):
         return []
-    data = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                data.append(json.loads(line))
-    return data
+    table = pq.read_table(path)
+    return table.to_pylist()
 
 
 # We'll store each entity in an in-memory dictionary for easy lookup by a unique key.
-people_data = load_jsonl(PEOPLE_FILE)
-events_data = load_jsonl(EVENTS_FILE)
-locations_data = load_jsonl(LOCATIONS_FILE)
-orgs_data = load_jsonl(ORGS_FILE)
+people_data = load_parquet(PEOPLE_FILE)
+events_data = load_parquet(EVENTS_FILE)
+locations_data = load_parquet(LOCATIONS_FILE)
+orgs_data = load_parquet(ORGS_FILE)
 
 
 # For each entity, we generate a "key" for referencing in routes
