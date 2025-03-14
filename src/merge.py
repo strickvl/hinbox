@@ -1,12 +1,17 @@
 from typing import Any, Dict, List, Optional, Tuple
 
+import instructor
+import litellm
 import numpy as np
+from pydantic import BaseModel
+from rich import print
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
 from src.constants import (
     CLOUD_EMBEDDING_MODEL,
+    GEMINI_MODEL,
     LOCAL_EMBEDDING_MODEL,
     SIMILARITY_THRESHOLD,
 )
@@ -15,6 +20,86 @@ from src.profiles import create_profile, update_profile
 from src.utils import write_entity_to_file
 
 console = Console()
+
+
+class MatchCheckResult(BaseModel):
+    is_match: bool
+    reason: str
+
+
+def cloud_model_check_match(
+    new_name: str,
+    existing_name: str,
+    new_profile_text: str,
+    existing_profile_text: str,
+    model: str = GEMINI_MODEL,
+) -> MatchCheckResult:
+    """
+    Check if a newly extracted profile refers to the same entity as an existing profile.
+
+    This function uses an LLM to determine if two profiles refer to the same person,
+    even when names might have variations or additional context is needed to establish identity.
+
+    Args:
+        new_name: The name extracted from the new article
+        existing_name: The name from an existing profile in our database
+        new_profile_text: The profile text generated from the new article
+        existing_profile_text: The existing profile text we're comparing against
+        model: The LLM model to use for comparison
+
+    Returns:
+        MatchCheckResult with is_match flag and detailed reasoning
+    """
+    client = instructor.from_litellm(litellm.completion)
+
+    try:
+        result = client.chat.completions.create(
+            model=model,
+            response_model=MatchCheckResult,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You are an expert analyst specializing in entity resolution for news articles about Guantánamo Bay.
+
+Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
+
+Consider the following when making your determination:
+1. Name variations: Different spellings, nicknames, titles, or partial names
+2. Contextual information: Role, affiliations, actions, and biographical details
+3. Temporal consistency: Whether the information in both profiles could apply to the same entity at different times
+4. Contradictions: Whether there are any clear contradictions that would make it impossible for these to be the same entity
+
+Even if names differ slightly, profiles may refer to the same entity if contextual details align.
+Conversely, identical names might refer to different entities if contextual details clearly diverge.
+
+Provide a detailed explanation for your decision, citing specific evidence from both profiles.""",
+                },
+                {
+                    "role": "user",
+                    "content": f"""I need to determine if these two profiles refer to the same entity:
+
+PROFILE FROM NEW ARTICLE:
+Name: {new_name}
+Profile: {new_profile_text}
+
+EXISTING PROFILE IN DATABASE:
+Name: {existing_name}
+Profile: {existing_profile_text}
+
+Are these profiles referring to the same entity? Provide your analysis.""",
+                },
+            ],
+            metadata={
+                "project_name": "hinbox",
+                "tags": ["dev", "entity_resolution"],
+            },
+        )
+        return result
+    except Exception as e:
+        print(f"Error with Gemini API: {e}")
+        # Return a default result indicating failure
+        return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
 
 
 def normalize_vector(vector: List[float]) -> np.ndarray:
@@ -353,6 +438,25 @@ def merge_people(
         )
 
         if similar_name:
+            console.print(
+                f"[purple]Doing a final check to see if '{person_name}' is the same as '{similar_name}'[/purple]..."
+            )
+            result = cloud_model_check_match(
+                person_name,
+                similar_name,
+                proposed_profile_text,
+                entities["people"][similar_name]["profile"]["text"],
+            )
+            if result.is_match:
+                console.print(
+                    f"[green]The profiles match! Merging '{person_name}' with '{similar_name}'[/green]"
+                )
+            else:
+                console.print(
+                    f"[red]The profiles do not match. Skipping merge for '{person_name}'[/red]"
+                )
+                continue
+
             # We found a similar person - use that instead of creating a new one
             console.print(
                 f"[blue]Merging '{person_name}' with existing person '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
