@@ -9,7 +9,7 @@ OLLAMA_MODEL = "ollama/mistral-small"  # Updated to include full path
 
 # Embedding model names
 CLOUD_EMBEDDING_MODEL = "jina_ai/jina-embeddings-v3"
-LOCAL_EMBEDDING_MODEL = "ollama/nomic-embed-text"
+LOCAL_EMBEDDING_MODEL = "huggingface/jinaai/jina-embeddings-v3"
 
 # API endpoints
 OLLAMA_API_URL = "http://192.168.178.175:11434/v1"
