@@ -9,7 +9,7 @@ GEMINI_MODEL = "gemini/gemini-2.0-flash"
 OLLAMA_MODEL = "ollama/mistral-small"  # Updated to include full path
 
 # Embedding model names
-CLOUD_EMBEDDING_MODEL = "openai/text-embedding-ada-002"
+CLOUD_EMBEDDING_MODEL = "openai/text-embedding-3-large"
 LOCAL_EMBEDDING_MODEL = "ollama/nomic-embed-text"
 
 # API endpoints
@@ -32,3 +32,6 @@ PEOPLE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "people.parquet")
 EVENTS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "events.parquet")
 LOCATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "locations.parquet")
 ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.parquet")
+
+# Threshold for similarity matching
+SIMILARITY_THRESHOLD = 0.9
