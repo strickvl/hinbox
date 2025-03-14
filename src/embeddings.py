@@ -2,9 +2,8 @@
 
 from typing import List
 
-
-from sentence_transformers import SentenceTransformer
 import numpy as np
+from sentence_transformers import SentenceTransformer
 
 # Example local model; you can adjust to your needs
 _model = SentenceTransformer("all-MiniLM-L6-v2")
