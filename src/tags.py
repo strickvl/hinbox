@@ -1,6 +1,5 @@
 import json
 
-import instructor
 import litellm
 from openai import OpenAI
 
@@ -93,7 +92,6 @@ def ollama_extract_tags(article_text: str, model: str = OLLAMA_MODEL) -> Article
         ArticleTags object containing the extracted tags
     """
     client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
-    instructor_client = instructor.from_openai(client)
 
     prompt = f"""
     You are an expert analyst specializing in articles about Guantánamo Bay detention camp.
