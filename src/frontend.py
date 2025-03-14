@@ -113,10 +113,13 @@ def nav_bar():
 @rt("/")
 def get():
     """Home route: show quick welcome and links to each entity type."""
-    return Container(
-        nav_bar(),
-        H1("Welcome to Guantánamo Entities Browser"),
-        P("Use the navigation above to browse the extracted entity data."),
+    return Titled(
+        "GTMO Browse - Home",
+        Container(
+            nav_bar(),
+            H1("Welcome to Guantánamo Entities Browser"),
+            P("Use the navigation above to browse the extracted entity data."),
+        ),
     )
 
 
@@ -148,7 +151,9 @@ def list_people():
     for k, person in people_index.items():
         link = A(person["name"], href=f"/people/{encode_key(k)}")
         items.append(Li(link))
-    return Container(nav_bar(), H2("People"), Ul(*items))
+    return Titled(
+        "GTMO Browse - People", Container(nav_bar(), H2("People"), Ul(*items))
+    )
 
 
 @rt("/people/{key:path}")
@@ -157,10 +162,13 @@ def show_person(key: str):
     actual_key = decode_key(key)
     person = people_index.get(actual_key)
     if not person:
-        return Container(
-            nav_bar(),
-            H2("Person not found"),
-            P(f"No person found for key: {actual_key}"),
+        return Titled(
+            "GTMO Browse - People - Not Found",
+            Container(
+                nav_bar(),
+                H2("Person not found"),
+                P(f"No person found for key: {actual_key}"),
+            ),
         )
     # Build detail info
     name = person.get("name", "N/A")
@@ -179,14 +187,17 @@ def show_person(key: str):
                 A("(link)", href=art.get("article_url", "#"), target="_blank"),
             )
         )
-    return Container(
-        nav_bar(),
-        H2(f"Person: {name}"),
-        P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+    return Titled(
+        f"GTMO Browse - People - {name}",
+        Container(
+            nav_bar(),
+            H2(f"Person: {name}"),
+            P(f"Type: {typ}"),
+            Div(NotStr(markdown.markdown(transformed_text))),
+            P(f"Confidence: {conf}"),
+            H3("Articles"),
+            Ul(*art_list),
+        ),
     )
 
 
@@ -202,7 +213,9 @@ def list_events():
     for k, e in events_index.items():
         link = A(e["title"], href=f"/events/{encode_key(k)}")
         items.append(Li(link))
-    return Container(nav_bar(), H2("Events"), Ul(*items))
+    return Titled(
+        "GTMO Browse - Events", Container(nav_bar(), H2("Events"), Ul(*items))
+    )
 
 
 @rt("/events/{key:path}")
@@ -210,8 +223,13 @@ def show_event(key: str):
     actual_key = decode_key(key)
     ev = events_index.get(actual_key)
     if not ev:
-        return Container(
-            nav_bar(), H2("Event not found"), P(f"No event found for key: {actual_key}")
+        return Titled(
+            "GTMO Browse - Events - Not Found",
+            Container(
+                nav_bar(),
+                H2("Event not found"),
+                P(f"No event found for key: {actual_key}"),
+            ),
         )
     title = ev.get("title", "N/A")
     event_type = ev.get("event_type", "N/A")
@@ -232,20 +250,23 @@ def show_event(key: str):
                 A("(link)", href=art.get("article_url", "#"), target="_blank"),
             )
         )
-    return Container(
-        nav_bar(),
-        H2(f"Event: {title}"),
-        P(f"Type: {event_type}"),
-        P(f"Start Date: {start}"),
-        P(f"End Date: {end if end else 'None'}"),
-        P(f"Is Fuzzy Date: {is_fuzzy}"),
-        H3("Description"),
-        P(desc),
-        H3("Profile Text"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+    return Titled(
+        f"GTMO Browse - Events - {title}",
+        Container(
+            nav_bar(),
+            H2(f"Event: {title}"),
+            P(f"Type: {event_type}"),
+            P(f"Start Date: {start}"),
+            P(f"End Date: {end if end else 'None'}"),
+            P(f"Is Fuzzy Date: {is_fuzzy}"),
+            H3("Description"),
+            P(desc),
+            H3("Profile Text"),
+            Div(NotStr(markdown.markdown(transformed_text))),
+            P(f"Confidence: {conf}"),
+            H3("Articles"),
+            Ul(*art_list),
+        ),
     )
 
 
@@ -261,7 +282,9 @@ def list_locations():
     for k, loc in locations_index.items():
         link = A(loc["name"], href=f"/locations/{encode_key(k)}")
         items.append(Li(link))
-    return Container(nav_bar(), H2("Locations"), Ul(*items))
+    return Titled(
+        "GTMO Browse - Locations", Container(nav_bar(), H2("Locations"), Ul(*items))
+    )
 
 
 @rt("/locations/{key:path}")
@@ -269,10 +292,13 @@ def show_location(key: str):
     actual_key = decode_key(key)
     loc = locations_index.get(actual_key)
     if not loc:
-        return Container(
-            nav_bar(),
-            H2("Location not found"),
-            P(f"No location found for key: {actual_key}"),
+        return Titled(
+            "GTMO Browse - Locations - Not Found",
+            Container(
+                nav_bar(),
+                H2("Location not found"),
+                P(f"No location found for key: {actual_key}"),
+            ),
         )
     nm = loc.get("name", "N/A")
     typ = loc.get("type", "N/A")
@@ -289,14 +315,17 @@ def show_location(key: str):
                 A("(link)", href=art.get("article_url", "#"), target="_blank"),
             )
         )
-    return Container(
-        nav_bar(),
-        H2(f"Location: {nm}"),
-        P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+    return Titled(
+        f"GTMO Browse - Locations - {nm}",
+        Container(
+            nav_bar(),
+            H2(f"Location: {nm}"),
+            P(f"Type: {typ}"),
+            Div(NotStr(markdown.markdown(transformed_text))),
+            P(f"Confidence: {conf}"),
+            H3("Articles"),
+            Ul(*art_list),
+        ),
     )
 
 
@@ -312,7 +341,10 @@ def list_orgs():
     for k, org in orgs_index.items():
         link = A(org["name"], href=f"/organizations/{encode_key(k)}")
         items.append(Li(link))
-    return Container(nav_bar(), H2("Organizations"), Ul(*items))
+    return Titled(
+        "GTMO Browse - Organizations",
+        Container(nav_bar(), H2("Organizations"), Ul(*items)),
+    )
 
 
 @rt("/organizations/{key:path}")
@@ -320,10 +352,13 @@ def show_org(key: str):
     actual_key = decode_key(key)
     org = orgs_index.get(actual_key)
     if not org:
-        return Container(
-            nav_bar(),
-            H2("Organization not found"),
-            P(f"No organization found for key: {actual_key}"),
+        return Titled(
+            "GTMO Browse - Organizations - Not Found",
+            Container(
+                nav_bar(),
+                H2("Organization not found"),
+                P(f"No organization found for key: {actual_key}"),
+            ),
         )
     nm = org.get("name", "N/A")
     typ = org.get("type", "N/A")
@@ -340,14 +375,17 @@ def show_org(key: str):
                 A("(link)", href=art.get("article_url", "#"), target="_blank"),
             )
         )
-    return Container(
-        nav_bar(),
-        H2(f"Organization: {nm}"),
-        P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+    return Titled(
+        f"GTMO Browse - Organizations - {nm}",
+        Container(
+            nav_bar(),
+            H2(f"Organization: {nm}"),
+            P(f"Type: {typ}"),
+            Div(NotStr(markdown.markdown(transformed_text))),
+            P(f"Confidence: {conf}"),
+            H3("Articles"),
+            Ul(*art_list),
+        ),
     )
 
 
