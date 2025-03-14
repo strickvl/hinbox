@@ -1,11 +1,33 @@
 """Module for computing embeddings of profile text."""
 
+import logging
 from typing import List, Optional
 
-import numpy as np
-from litellm import embedding
+from sentence_transformers import SentenceTransformer
 
-from src.constants import CLOUD_EMBEDDING_MODEL, LOCAL_EMBEDDING_MODEL
+# Initialize logger
+logger = logging.getLogger(__name__)
+
+# Global model instance to avoid reloading
+_model = None
+
+
+def get_model(
+    model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+) -> SentenceTransformer:
+    """Get or initialize the SentenceTransformer model.
+
+    Args:
+        model_name: The name of the model to load
+
+    Returns:
+        The loaded SentenceTransformer model
+    """
+    global _model
+    if _model is None:
+        logger.info(f"Loading embedding model: {model_name}")
+        _model = SentenceTransformer(model_name)
+    return _model
 
 
 def embed_text(
@@ -15,10 +37,9 @@ def embed_text(
 
     Args:
         text: The text to embed
-        model_name: The specific model to use for embedding. If None, uses LOCAL_EMBEDDING_MODEL
-                   or CLOUD_EMBEDDING_MODEL based on is_local
-        is_local: Whether to use a local embedding model (True) or cloud-based model (False).
-                 Only used if model_name is None.
+        model_name: The specific model to use for embedding. If None, uses the default
+                   SentenceTransformer model (all-MiniLM-L6-v2)
+        is_local: Kept for backward compatibility but no longer used
 
     Returns:
         A list of float32 values representing the embedding
@@ -26,12 +47,11 @@ def embed_text(
     if not text.strip():
         return []
 
-    # Determine which model to use
-    if model_name is None:
-        model_name = LOCAL_EMBEDDING_MODEL if is_local else CLOUD_EMBEDDING_MODEL
+    # just use all-MiniLM-L6-v2
+    st_model_name = "sentence-transformers/all-MiniLM-L6-v2"
+    model = get_model(st_model_name)
 
-    # Use LiteLLM for embedding with the selected model
-    response = embedding(model=model_name, input=[text])
-    embedding_vector = np.array(response["data"][0]["embedding"], dtype=np.float32)
+    embeddings = model.encode(text)
 
-    return embedding_vector.tolist()
+    # Convert to list of float values
+    return embeddings.tolist()
