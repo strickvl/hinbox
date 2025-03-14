@@ -233,6 +233,9 @@ def merge_people(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
+    embedding_model = (
+        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
+    )
     for p in extracted_people:
         person_name = p.get("name", "")
         if not person_name:
@@ -268,12 +271,6 @@ def merge_people(
                         article_content,
                         article_id,
                         model_type,
-                    )
-                    # Embed updated profile text using appropriate model
-                    embedding_model = (
-                        LOCAL_EMBEDDING_MODEL
-                        if model_type == "ollama"
-                        else CLOUD_EMBEDDING_MODEL
                     )
                     existing_person["profile_embedding"] = embed_text(
                         existing_person["profile"]["text"],
@@ -344,7 +341,9 @@ def merge_people(
                         "article_published_date": article_published_date,
                     }
                 ],
-                "profile_embedding": embed_text(profile["text"]),
+                "profile_embedding": embed_text(
+                    profile["text"], model_name=embedding_model
+                ),
                 "extraction_timestamp": extraction_timestamp,
             }
 
@@ -364,6 +363,9 @@ def merge_locations(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
+    embedding_model = (
+        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
+    )
     for loc in extracted_locations:
         loc_name = loc.get("name", "")
         loc_type = loc.get("type", "")
@@ -401,12 +403,6 @@ def merge_locations(
                         article_content,
                         article_id,
                         model_type,
-                    )
-                    # Embed updated profile text using appropriate model
-                    embedding_model = (
-                        LOCAL_EMBEDDING_MODEL
-                        if model_type == "ollama"
-                        else CLOUD_EMBEDDING_MODEL
                     )
                     existing_loc["profile_embedding"] = embed_text(
                         existing_loc["profile"]["text"],
@@ -495,6 +491,9 @@ def merge_organizations(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
+    embedding_model = (
+        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
+    )
     for org in extracted_orgs:
         org_name = org.get("name", "")
         org_type = org.get("type", "")
@@ -634,6 +633,9 @@ def merge_events(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
+    embedding_model = (
+        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
+    )
     for e in extracted_events:
         event_title = e.get("title", "")
         event_start_date = e.get("start_date", "")
