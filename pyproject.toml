@@ -8,10 +8,8 @@ version = "0.1.0"
 description = "A database for tracking events at Guantanamo Bay"
 requires-python = ">=3.10"
 dependencies = [
-    "sqlmodel",
     "pydantic",
     "pyclean",
-    "alembic",
     "requests",
     "tqdm>=4.67.1",
     "beautifulsoup4>=4.13.3",
@@ -19,7 +17,6 @@ dependencies = [
     "aiohttp>=3.11.12",
     "litellm",
     "instructor",
-    "zenml>=0.74.0",
     "spacy>=3.8.4",
     "python-fasthtml>=0.12.4",
     "markdown>=3.7",
