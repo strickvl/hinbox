@@ -8,6 +8,7 @@ from src.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_M
 # Ensure we have JSON schema validation enabled
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
+# litellm._turn_on_debug()
 
 
 class ArticleRelevance(BaseModel):
