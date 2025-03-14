@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import instructor
 import litellm
 import numpy as np
+from openai import OpenAI
 from pydantic import BaseModel
 from rich import print
 from rich.console import Console
@@ -13,7 +14,11 @@ from src.constants import (
     CLOUD_EMBEDDING_MODEL,
     CLOUD_MODEL,
     LOCAL_EMBEDDING_MODEL,
+    OLLAMA_API_KEY,
+    OLLAMA_API_URL,
+    OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
+    get_ollama_model_name,
 )
 from src.embeddings import embed_text
 from src.profiles import create_profile, update_profile
@@ -25,6 +30,76 @@ console = Console()
 class MatchCheckResult(BaseModel):
     is_match: bool
     reason: str
+
+
+def local_model_check_match(
+    new_name: str,
+    existing_name: str,
+    new_profile_text: str,
+    existing_profile_text: str,
+    model: str = OLLAMA_MODEL,
+) -> MatchCheckResult:
+    """
+    Check if a newly extracted profile refers to the same entity as an existing profile.
+
+    This function uses an LLM to determine if two profiles refer to the same person,
+    even when names might have variations or additional context is needed to establish identity.
+
+    Args:
+        new_name: The name extracted from the new article
+        existing_name: The name from an existing profile in our database
+        new_profile_text: The profile text generated from the new article
+        existing_profile_text: The existing profile text we're comparing against
+        model: The LLM model to use for comparison
+    """
+    try:
+        client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
+
+        results = client.beta.chat.completions.parse(
+            model=get_ollama_model_name(model),  # Strip ollama/ prefix for API call
+            response_format=MatchCheckResult,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You are an expert analyst specializing in entity
+                               resolution for news articles about Guantánamo Bay.
+
+                    Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
+
+                    Consider the following when making your determination:
+                    1. Name variations: Different spellings, nicknames, titles, or partial names
+                    2. Contextual information: Role, affiliations, actions, and biographical details
+                    3. Temporal consistency: Whether the information in both
+                    profiles could apply to the same entity at different times
+
+                    Provide a detailed explanation for your decision, citing specific evidence from both profiles.""",
+                },
+                {
+                    "role": "user",
+                    "content": f"""I need to determine if these two profiles refer to the same entity:
+
+## PROFILE FROM NEW ARTICLE:
+Name: {new_name}
+Profile: {new_profile_text}
+
+## EXISTING PROFILE IN DATABASE:
+Name: {existing_name}
+Profile: {existing_profile_text}
+
+Are these profiles referring to the same entity? Provide your analysis.""",
+                },
+            ],
+            metadata={
+                "project_name": "hinbox",
+                "tags": ["dev", "entity_resolution"],
+            },
+        )
+        return results.choices[0].message.parsed
+    except Exception as e:
+        print(f"Error with Ollama API: {e}")
+        # Return a default result indicating failure
+        return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
 
 
 def cloud_model_check_match(
@@ -441,12 +516,20 @@ def merge_people(
             console.print(
                 f"[purple]Doing a final check to see if '{person_name}' is the same as '{similar_name}'[/purple]..."
             )
-            result = cloud_model_check_match(
-                person_name,
-                similar_name,
-                proposed_profile_text,
-                entities["people"][similar_name]["profile"]["text"],
-            )
+            if model_type == "ollama":
+                result = local_model_check_match(
+                    person_name,
+                    similar_name,
+                    proposed_profile_text,
+                    entities["people"][similar_name]["profile"]["text"],
+                )
+            else:
+                result = cloud_model_check_match(
+                    person_name,
+                    similar_name,
+                    proposed_profile_text,
+                    entities["people"][similar_name]["profile"]["text"],
+                )
             if result.is_match:
                 console.print(
                     f"[green]The profiles match! Merging '{person_name}' with '{similar_name}'[/green]"
@@ -636,12 +719,20 @@ def merge_locations(
             console.print(
                 f"[purple]Doing a final check to see if '{loc_name}' is the same as '{similar_key}'[/purple]..."
             )
-            result = cloud_model_check_match(
-                loc_name,
-                similar_key,
-                proposed_profile_text,
-                entities["locations"][similar_key]["profile"]["text"],
-            )
+            if model_type == "ollama":
+                result = local_model_check_match(
+                    loc_name,
+                    similar_key,
+                    proposed_profile_text,
+                    entities["locations"][similar_key]["profile"]["text"],
+                )
+            else:
+                result = cloud_model_check_match(
+                    loc_name,
+                    similar_key,
+                    proposed_profile_text,
+                    entities["locations"][similar_key]["profile"]["text"],
+                )
             if result.is_match:
                 console.print(
                     f"[green]The profiles match! Merging '{loc_name}' with '{similar_key}'[/green]"
@@ -838,12 +929,20 @@ def merge_organizations(
             console.print(
                 f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key}'[/purple]..."
             )
-            result = cloud_model_check_match(
-                org_name,
-                similar_key,
-                proposed_profile_text,
-                entities["organizations"][similar_key]["profile"]["text"],
-            )
+            if model_type == "ollama":
+                result = local_model_check_match(
+                    org_name,
+                    similar_key,
+                    proposed_profile_text,
+                    entities["organizations"][similar_key]["profile"]["text"],
+                )
+            else:
+                result = cloud_model_check_match(
+                    org_name,
+                    similar_key,
+                    proposed_profile_text,
+                    entities["organizations"][similar_key]["profile"]["text"],
+                )
             if result.is_match:
                 console.print(
                     f"[green]The profiles match! Merging '{org_name}' with '{similar_key}'[/green]"
@@ -1041,12 +1140,20 @@ def merge_events(
             console.print(
                 f"[purple]Doing a final check to see if '{event_title}' is the same as '{similar_key}'[/purple]..."
             )
-            result = cloud_model_check_match(
-                event_title,
-                similar_key,
-                proposed_profile_text,
-                entities["events"][similar_key]["profile"]["text"],
-            )
+            if model_type == "ollama":
+                result = local_model_check_match(
+                    event_title,
+                    similar_key,
+                    proposed_profile_text,
+                    entities["events"][similar_key]["profile"]["text"],
+                )
+            else:
+                result = cloud_model_check_match(
+                    event_title,
+                    similar_key,
+                    proposed_profile_text,
+                    entities["events"][similar_key]["profile"]["text"],
+                )
             if result.is_match:
                 console.print(
                     f"[green]The profiles match! Merging '{event_title}' with '{similar_key}'[/green]"
