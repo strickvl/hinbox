@@ -4,12 +4,11 @@ Constants used throughout the application.
 
 import os
 
-# LLM model names
-GEMINI_MODEL = "gemini/gemini-2.0-flash"
+CLOUD_MODEL = "openrouter/anthropic/claude-3-5-haiku"
 OLLAMA_MODEL = "ollama/mistral-small"  # Updated to include full path
 
 # Embedding model names
-CLOUD_EMBEDDING_MODEL = "openai/text-embedding-3-large"
+CLOUD_EMBEDDING_MODEL = "jina_ai/jina-embeddings-v3"
 LOCAL_EMBEDDING_MODEL = "ollama/nomic-embed-text"
 
 # API endpoints

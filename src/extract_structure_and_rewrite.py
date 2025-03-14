@@ -4,7 +4,7 @@ import instructor
 import litellm
 from pydantic import BaseModel
 
-from src.constants import GEMINI_MODEL
+from src.constants import CLOUD_MODEL
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -23,7 +23,7 @@ ProfileType = Literal["person", "location", "organization", "event"]
 
 
 def restructure_text_with_headers(
-    original_text: str, headers: List[Header], model: str = GEMINI_MODEL
+    original_text: str, headers: List[Header], model: str = CLOUD_MODEL
 ) -> str:
     """
     Restructure the original text using the provided headers.
@@ -87,7 +87,7 @@ paragraphs and NOT lists or bullet points.
 
 
 def gemini_extract_headers(
-    text: str, profile_type: Optional[ProfileType] = None, model: str = GEMINI_MODEL
+    text: str, profile_type: Optional[ProfileType] = None, model: str = CLOUD_MODEL
 ) -> List[Dict[str, Any]]:
     """
     Extract structural headers from the provided text using Gemini.

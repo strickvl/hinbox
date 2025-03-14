@@ -18,8 +18,8 @@ from rich.console import Console
 
 from src.constants import (
     ARTICLES_PATH,
+    CLOUD_MODEL,
     EVENTS_OUTPUT_PATH,
-    GEMINI_MODEL,
     LOCATIONS_OUTPUT_PATH,
     OLLAMA_MODEL,
     ORGANIZATIONS_OUTPUT_PATH,
@@ -152,7 +152,7 @@ def main():
     entities = load_existing_entities()
 
     model_type = "ollama" if args.local else "gemini"
-    specific_model = OLLAMA_MODEL if args.local else GEMINI_MODEL
+    specific_model = OLLAMA_MODEL if args.local else CLOUD_MODEL
 
     # Check if articles parquet exists
     if not os.path.exists(args.articles_path):

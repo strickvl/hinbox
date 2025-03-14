@@ -4,7 +4,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from src.constants import (
-    GEMINI_MODEL,
+    CLOUD_MODEL,
     OLLAMA_API_KEY,
     OLLAMA_API_URL,
     OLLAMA_MODEL,
@@ -28,7 +28,7 @@ class ArticleRelevance(BaseModel):
     )
 
 
-def gemini_check_relevance(text: str, model: str = GEMINI_MODEL) -> ArticleRelevance:
+def gemini_check_relevance(text: str, model: str = CLOUD_MODEL) -> ArticleRelevance:
     """
     Check if an article is relevant to Guantanamo detention/prison using Gemini.
 

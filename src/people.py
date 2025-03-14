@@ -9,7 +9,7 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from src.constants import (
-    GEMINI_MODEL,
+    CLOUD_MODEL,
     OLLAMA_API_KEY,
     OLLAMA_API_URL,
     OLLAMA_MODEL,
@@ -46,7 +46,7 @@ def spacy_extract_people(text: str) -> List[Dict[str, Any]]:
     return people
 
 
-def gemini_extract_people(text: str, model: str = GEMINI_MODEL) -> List[Dict[str, Any]]:
+def gemini_extract_people(text: str, model: str = CLOUD_MODEL) -> List[Dict[str, Any]]:
     """Extract person entities from the provided text using Gemini."""
     client = instructor.from_litellm(litellm.completion)
 

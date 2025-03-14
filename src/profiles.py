@@ -7,7 +7,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from src.constants import (
-    GEMINI_MODEL,
+    CLOUD_MODEL,
     OLLAMA_API_KEY,
     OLLAMA_API_URL,
     OLLAMA_MODEL,
@@ -86,7 +86,7 @@ def generate_with_gemini(
     """
     client = instructor.from_litellm(litellm.completion)
     result = client.chat.completions.create(
-        model=GEMINI_MODEL,
+        model=CLOUD_MODEL,
         response_model=EntityProfile,
         temperature=0,
         messages=[
@@ -273,7 +273,7 @@ def update_with_gemini(
     """
     client = instructor.from_litellm(litellm.completion)
     result = client.chat.completions.create(
-        model=GEMINI_MODEL,
+        model=CLOUD_MODEL,
         response_model=EntityProfile,
         temperature=0,
         messages=[
