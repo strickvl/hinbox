@@ -13,9 +13,9 @@ OLLAMA_API_URL = "http://192.168.178.175:11434/v1"
 OLLAMA_API_KEY = "ollama"
 
 # File paths
-ARTICLES_PATH = "data/raw_sources/miami_herald_articles.jsonl"
+ARTICLES_PATH = "data/raw_sources/miami_herald_articles.parquet"
 OUTPUT_DIR = "data/entities"
-PROCESSED_ARTICLES_PATH = "data/processed/processed_articles.jsonl"
+PROCESSED_ARTICLES_PATH = "data/processed/processed_articles.parquet"
 
 PEOPLE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "people.parquet")
 EVENTS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "events.parquet")

@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
 Script merging logic from run.py and extract_entities.py, iterating over articles in
-data/raw_sources/miami_herald_articles.jsonl, extracting entities (people, events,
-locations, organizations) via the Gemini or local approach, then merging results
-into the data/entities/*.jsonl files as in extract_entities.py.
+data/raw_sources/miami_herald_articles.parquet, extracting entities (people, events,
+locations, organizations) via Gemini or local approach, then merging results
+into the data/entities/*.parquet files.
 """
 
 import argparse
-import json
 import os
 from datetime import datetime
 from typing import Any, Dict, List
@@ -21,8 +20,6 @@ from rich.panel import Panel
 
 console = Console()
 
-# We'll not forcibly re-check relevance unless desired, but we keep the option in code.
-# Use constants from constants.py
 from src.constants import (
     ARTICLES_PATH,
     EVENTS_OUTPUT_PATH,
@@ -35,11 +32,9 @@ from src.constants import (
 )
 from src.events import gemini_extract_events, ollama_extract_events
 from src.locations import gemini_extract_locations, ollama_extract_locations
-from src.organizations import (
-    gemini_extract_organizations,
-    ollama_extract_organizations,
-)
+from src.organizations import gemini_extract_organizations, ollama_extract_organizations
 from src.people import gemini_extract_people, ollama_extract_people
+from src.profiles import create_profile, update_profile
 from src.relevance import gemini_check_relevance, ollama_check_relevance
 
 
@@ -57,6 +52,8 @@ def load_existing_entities() -> Dict[str, Dict]:
     Returns a dict with keys: people, events, locations, organizations
     Each is a dictionary keyed by the relevant unique tuple or name.
     """
+    import pyarrow.parquet as pq
+
     people = {}
     events = {}
     locations = {}
@@ -102,27 +99,42 @@ def write_entities_to_files(entities: Dict[str, Dict]):
     """
     # People
     people_list = sorted(entities["people"].values(), key=lambda x: x["name"])
-    people_table = pa.Table.from_pylist(people_list)
-    pq.write_table(people_table, PEOPLE_OUTPUT_PATH)
+    if people_list:
+        people_table = pa.Table.from_pylist(people_list)
+        pq.write_table(people_table, PEOPLE_OUTPUT_PATH)
+    else:
+        # If empty, remove any existing file to avoid stale data
+        if os.path.exists(PEOPLE_OUTPUT_PATH):
+            os.remove(PEOPLE_OUTPUT_PATH)
 
     # Events
-    events_list = sorted(
-        entities["events"].values(), key=lambda x: x["title"]
-    )  # Sort by title
-    events_table = pa.Table.from_pylist(events_list)
-    pq.write_table(events_table, EVENTS_OUTPUT_PATH)
+    events_list = sorted(entities["events"].values(), key=lambda x: x["title"])
+    if events_list:
+        events_table = pa.Table.from_pylist(events_list)
+        pq.write_table(events_table, EVENTS_OUTPUT_PATH)
+    else:
+        if os.path.exists(EVENTS_OUTPUT_PATH):
+            os.remove(EVENTS_OUTPUT_PATH)
 
     # Locations
     locations_list = sorted(entities["locations"].values(), key=lambda x: x["name"])
-    locations_table = pa.Table.from_pylist(locations_list)
-    pq.write_table(locations_table, LOCATIONS_OUTPUT_PATH)
+    if locations_list:
+        locations_table = pa.Table.from_pylist(locations_list)
+        pq.write_table(locations_table, LOCATIONS_OUTPUT_PATH)
+    else:
+        if os.path.exists(LOCATIONS_OUTPUT_PATH):
+            os.remove(LOCATIONS_OUTPUT_PATH)
 
     # Organizations
     organizations_list = sorted(
         entities["organizations"].values(), key=lambda x: x["name"]
     )
-    organizations_table = pa.Table.from_pylist(organizations_list)
-    pq.write_table(organizations_table, ORGANIZATIONS_OUTPUT_PATH)
+    if organizations_list:
+        organizations_table = pa.Table.from_pylist(organizations_list)
+        pq.write_table(organizations_table, ORGANIZATIONS_OUTPUT_PATH)
+    else:
+        if os.path.exists(ORGANIZATIONS_OUTPUT_PATH):
+            os.remove(ORGANIZATIONS_OUTPUT_PATH)
 
 
 def write_entity_to_file(
@@ -130,14 +142,19 @@ def write_entity_to_file(
 ):
     """
     Write a single entity to its respective Parquet file. This function now uses
-    an append-only approach for simplicity, reading the existing data, adding the new
-    or updated entity, and rewriting the entire file.
+    an append/update approach for simplicity:
+      - reads existing data from the file
+      - updates or appends the entity
+      - writes it all back
 
     Args:
         entity_type: "people", "events", "locations", or "organizations"
         entity_key: Key to identify entity (name for people, tuple for others)
         entity_data: Entity data to write
     """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     if entity_type == "people":
         output_path = PEOPLE_OUTPUT_PATH
     elif entity_type == "events":
@@ -197,7 +214,6 @@ def write_entity_to_file(
 def reload_entities() -> Dict[str, Dict]:
     """
     Reload all entity files to get the latest state.
-    This ensures we have the most up-to-date data when checking for duplicates.
     """
     return load_existing_entities()
 
@@ -213,17 +229,6 @@ def merge_people(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
-    """
-    For each person in `extracted_people`, check if they exist in `entities["people"]`.
-    If yes, append the article if not present and update profile.
-    If no, create new entry with initial profile.
-    """
-    from src.profiles import create_profile, update_profile
-
-    # Reload entities to get latest state
-    current_entities = reload_entities()
-    entities["people"] = current_entities["people"]
-
     for p in extracted_people:
         person_name = p.get("name", "")
         if not person_name:
@@ -233,7 +238,6 @@ def merge_people(
 
         if person_name in entities["people"]:
             existing_person = entities["people"][person_name]
-            # Check if article already listed
             article_exists = any(
                 a.get("article_id") == article_id for a in existing_person["articles"]
             )
@@ -293,9 +297,9 @@ def merge_people(
                 )
                 entity_updated = True
 
-            # Write the updated entity to file if it was modified
             if entity_updated:
                 write_entity_to_file("people", person_name, existing_person)
+                entities["people"][person_name] = existing_person
                 console.print(
                     f"[blue]Updated person entity saved to file:[/] {person_name}"
                 )
@@ -329,8 +333,6 @@ def merge_people(
             }
 
             entities["people"][person_name] = new_person
-
-            # Write the new entity to file
             write_entity_to_file("people", person_name, new_person)
             console.print(f"[green]New person entity saved to file:[/] {person_name}")
 
@@ -346,13 +348,6 @@ def merge_locations(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
-    """Merge location logic with profile handling."""
-    from src.profiles import create_profile, update_profile
-
-    # Reload entities to get latest state
-    current_entities = reload_entities()
-    entities["locations"] = current_entities["locations"]
-
     for loc in extracted_locations:
         loc_name = loc.get("name", "")
         loc_type = loc.get("type", "")
@@ -378,7 +373,7 @@ def merge_locations(
                 )
                 entity_updated = True
 
-                # Update profile with new information
+                # Update profile
                 if "profile" in existing_loc:
                     console.print(
                         f"\n[yellow]Updating profile for location:[/] {loc_name}"
@@ -422,14 +417,14 @@ def merge_locations(
                 )
                 entity_updated = True
 
-            # Write the updated entity to file if it was modified
             if entity_updated:
                 write_entity_to_file("locations", location_key, existing_loc)
+                entities["locations"][location_key] = existing_loc
                 console.print(
                     f"[blue]Updated location entity saved to file:[/] {loc_name}"
                 )
         else:
-            # Create new entry with profile
+            # Create new entry
             console.print(f"\n[green]Creating profile for new location:[/] {loc_name}")
             profile = create_profile(
                 "location", loc_name, article_content, article_id, model_type
@@ -458,8 +453,6 @@ def merge_locations(
             }
 
             entities["locations"][location_key] = new_location
-
-            # Write the new entity to file
             write_entity_to_file("locations", location_key, new_location)
             console.print(f"[green]New location entity saved to file:[/] {loc_name}")
 
@@ -475,13 +468,6 @@ def merge_organizations(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
-    """Merge organization logic with profile handling."""
-    from src.profiles import create_profile, update_profile
-
-    # Reload entities to get latest state
-    current_entities = reload_entities()
-    entities["organizations"] = current_entities["organizations"]
-
     for org in extracted_orgs:
         org_name = org.get("name", "")
         org_type = org.get("type", "")
@@ -507,7 +493,7 @@ def merge_organizations(
                 )
                 entity_updated = True
 
-                # Update profile with new information
+                # Update profile
                 if "profile" in existing_org:
                     console.print(
                         f"\n[yellow]Updating profile for organization:[/] {org_name}"
@@ -555,14 +541,14 @@ def merge_organizations(
                 )
                 entity_updated = True
 
-            # Write the updated entity to file if it was modified
             if entity_updated:
                 write_entity_to_file("organizations", org_key, existing_org)
+                entities["organizations"][org_key] = existing_org
                 console.print(
                     f"[blue]Updated organization entity saved to file:[/] {org_name}"
                 )
         else:
-            # Create new entry with profile
+            # Create new entry
             console.print(
                 f"\n[green]Creating profile for new organization:[/] {org_name}"
             )
@@ -593,8 +579,6 @@ def merge_organizations(
             }
 
             entities["organizations"][org_key] = new_org
-
-            # Write the new entity to file
             write_entity_to_file("organizations", org_key, new_org)
             console.print(
                 f"[green]New organization entity saved to file:[/] {org_name}"
@@ -612,13 +596,6 @@ def merge_events(
     extraction_timestamp: str,
     model_type: str = "gemini",
 ):
-    """Merge events logic with profile handling."""
-    from src.profiles import create_profile, update_profile
-
-    # Reload entities to get latest state
-    current_entities = reload_entities()
-    entities["events"] = current_entities["events"]
-
     for e in extracted_events:
         event_title = e.get("title", "")
         event_start_date = e.get("start_date", "")
@@ -644,7 +621,7 @@ def merge_events(
                 )
                 entity_updated = True
 
-                # Update profile with new information
+                # Update profile
                 if "profile" in existing_event:
                     console.print(
                         f"\n[yellow]Updating profile for event:[/] {event_title}"
@@ -688,14 +665,14 @@ def merge_events(
                 )
                 entity_updated = True
 
-            # Write the updated entity to file if it was modified
             if entity_updated:
                 write_entity_to_file("events", event_key, existing_event)
+                entities["events"][event_key] = existing_event
                 console.print(
                     f"[blue]Updated event entity saved to file:[/] {event_title}"
                 )
         else:
-            # Create new entry with profile
+            # Create new entry
             console.print(f"\n[green]Creating profile for new event:[/] {event_title}")
             profile = create_profile(
                 "event", event_title, article_content, article_id, model_type
@@ -729,17 +706,15 @@ def merge_events(
             }
 
             entities["events"][event_key] = new_event
-
-            # Write the new entity to file
             write_entity_to_file("events", event_key, new_event)
             console.print(f"[green]New event entity saved to file:[/] {event_title}")
 
 
 def main():
-    print("Starting script...")  # Basic debug
+    print("Starting script...")
 
     parser = argparse.ArgumentParser(
-        description="Process articles, extract entities, and merge into data/entities/*.jsonl"
+        description="Process articles from a Parquet file and extract entities."
     )
     parser.add_argument(
         "--local",
@@ -755,13 +730,13 @@ def main():
     parser.add_argument(
         "--relevance-check",
         action="store_true",
-        help="If specified, we do a relevance check on each article. If not relevant, skip extraction.",
+        help="Perform a relevance check on each article before extraction",
     )
     parser.add_argument(
         "--articles-path",
         type=str,
         default=ARTICLES_PATH,
-        help="Path to the raw articles JSONL file",
+        help="Path to the raw articles Parquet file",
     )
     parser.add_argument(
         "--force-reprocess",
@@ -771,292 +746,261 @@ def main():
     args = parser.parse_args()
 
     console.print(
-        f"[bold blue]Arguments parsed:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}, force_reprocess={args.force_reprocess}"
+        f"[bold blue]Arguments:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}, force_reprocess={args.force_reprocess}"
     )
 
-    # Make sure the output directory for entity JSONL files exists
     ensure_dir(OUTPUT_DIR)
-    console.print(f"Ensured output directory exists: {OUTPUT_DIR}")  # Debug directory
 
-    # Load existing entities into dictionaries
-    console.print("Loading existing entities...")
+    # Load existing entities
+    console.print("[green]Loading existing entities...[/green]")
     entities = load_existing_entities()
-    console.print(
-        f"Loaded entities: {len(entities['people'])} people, {len(entities['events'])} events"
-    )
 
-    # Read articles from the specified path
-    article_count = 0
+    model_type = "ollama" if args.local else "gemini"
+    specific_model = OLLAMA_MODEL if args.local else GEMINI_MODEL
+
+    # Check if articles parquet exists
+    if not os.path.exists(args.articles_path):
+        console.print(
+            f"[red]ERROR: Articles file not found at {args.articles_path}[/red]"
+        )
+        return
+
+    # Read entire Parquet into memory
+    try:
+        table = pq.read_table(args.articles_path)
+        rows = table.to_pylist()
+    except Exception as e:
+        console.print(f"[red]Failed to read Parquet file: {e}[/red]")
+        return
+
+    article_count = len(rows)
     processed_count = 0
     skipped_relevance_count = 0
     skipped_already_processed = 0
 
-    console.print(f"Opening articles file: {args.articles_path}")  # Debug file opening
-    model_type = "ollama" if args.local else "gemini"
-    specific_model = OLLAMA_MODEL if args.local else GEMINI_MODEL
-    try:
-        if not os.path.exists(args.articles_path):
-            console.print(f"ERROR: Articles file not found at {args.articles_path}")
-            return
+    console.print(f"Loaded {article_count} articles from {args.articles_path}")
 
-        # Create a temporary file to write processed articles
-        temp_file = args.articles_path + ".tmp"
+    processed_rows = []
+    row_index = 0
 
-        with (
-            open(args.articles_path, "r") as input_file,
-            open(temp_file, "w") as output_file,
-        ):
-            for line in input_file:
-                if args.limit is not None and article_count >= args.limit:
-                    # Copy remaining unprocessed articles to temp file
-                    output_file.write(line)
+    for row in rows:
+        if row_index >= args.limit:
+            # We've hit the limit; keep the rest unmodified
+            processed_rows.append(row)
+            row_index += 1
+            continue
+
+        row_index += 1
+        console.print(f"\n[bold]Processing article #{row_index}[/bold]")
+
+        article_id = row.get("id", f"article_{row_index}")
+        article_title = row.get("title", "")
+        article_url = row.get("url", "")
+        article_published_date = row.get("published_date", "")
+        article_content = row.get("content", "")
+
+        # Initialize or check processing_metadata
+        if "processing_metadata" not in row:
+            row["processing_metadata"] = {}
+        processing_metadata = row["processing_metadata"]
+
+        # Skip if already processed and not forced
+        if processing_metadata.get("processed") and not args.force_reprocess:
+            console.print("[yellow]Article already processed, skipping...[/yellow]")
+            skipped_already_processed += 1
+            processed_rows.append(row)
+            continue
+
+        if not article_content:
+            console.print(
+                "[yellow]Article has no content, skipping extraction[/yellow]"
+            )
+            processed_rows.append(row)
+            continue
+
+        # Mark that we started processing
+        processing_metadata["processing_started"] = datetime.now().isoformat()
+        processing_metadata["model_type"] = model_type
+        processing_metadata["specific_model"] = specific_model
+
+        # Relevance check
+        if args.relevance_check:
+            console.print("[cyan]Performing relevance check...[/cyan]")
+            try:
+                if args.local:
+                    relevance_result = ollama_check_relevance(
+                        article_content, model="qwq"
+                    )
+                else:
+                    relevance_result = gemini_check_relevance(article_content)
+                if not relevance_result.is_relevant:
+                    console.print("[red]Skipping article as it's not relevant[/red]")
+                    processing_metadata["processed"] = False
+                    processing_metadata["reason"] = relevance_result.reason
+                    skipped_relevance_count += 1
+                    processed_rows.append(row)
                     continue
-
-                article_count += 1
-                console.print(f"\nProcessing article #{article_count}")
-
-                try:
-                    article = json.loads(line)
-                    article_id = article.get("id", f"article_{article_count}")
-                    article_title = article.get("title", "")
-                    article_url = article.get("url", "")
-                    article_published_date = article.get("published_date", "")
-                    article_content = article.get("content", "")
-
-                    # Check if article has already been processed
-                    processing_metadata = article.get("processing_metadata", {})
-                    if not args.force_reprocess and processing_metadata.get(
-                        "processed"
-                    ):
-                        console.print(
-                            "[yellow]Article already processed, skipping...[/]"
-                        )
-                        skipped_already_processed += 1
-                        output_file.write(line)  # Write unchanged article
-                        continue
-
-                    console.print(f"Article title: {article_title}")
-                except Exception as e:
-                    console.print(f"Could not parse JSONL line: {e}")
-                    output_file.write(line)  # Write problematic line unchanged
-                    continue
-
-                if not article_content:
-                    console.print("Warning: Article has no content, skipping")
-                    output_file.write(line)  # Write unchanged article
-                    continue
-
-                # Initialize or update processing metadata
-                if "processing_metadata" not in article:
-                    article["processing_metadata"] = {}
-
-                processing_metadata = article["processing_metadata"]
-                processing_metadata.update(
-                    {
-                        "processing_started": datetime.now().isoformat(),
-                        "model_type": model_type,
-                        "specific_model": specific_model,
-                    }
+                else:
+                    console.print("[green]Article is relevant[/green]")
+            except Exception as e:
+                console.print(f"[red]Error during relevance check: {e}[/red]")
+                console.print(
+                    "[yellow]Proceeding with extraction despite error[/yellow]"
                 )
 
-                # Perform relevance check if requested
-                if args.relevance_check:
-                    console.print("Performing relevance check...")
-                    try:
-                        if args.local:
-                            relevance_result = ollama_check_relevance(
-                                article_content, model="qwq"
-                            )
-                        else:
-                            relevance_result = gemini_check_relevance(article_content)
+        extraction_timestamp = datetime.now().isoformat()
 
-                        console.print(
-                            f"Relevance check result: {'[green]RELEVANT[/]' if relevance_result.is_relevant else '[red]NOT RELEVANT[/]'}"
-                        )
-                        console.print(f"Reason: {relevance_result.reason}")
+        # Extract people
+        try:
+            console.print("[blue]Extracting people...[/blue]")
+            if args.local:
+                extracted_people = ollama_extract_people(article_content, model="qwq")
+            else:
+                extracted_people = gemini_extract_people(article_content)
+        except Exception as e:
+            console.print(f"[red]Error extracting people: {e}[/red]")
+            extracted_people = []
 
-                        if not relevance_result.is_relevant:
-                            console.print("Skipping article as it's not relevant")
-                            skipped_relevance_count += 1
-                            output_file.write(json.dumps(article) + "\n")
-                            continue
-                    except Exception as e:
-                        console.print(f"[red]Error during relevance check: {e}[/]")
-                        console.print(
-                            "Proceeding with extraction despite relevance check failure"
-                        )
+        # Extract organizations
+        try:
+            console.print("[blue]Extracting organizations...[/blue]")
+            if args.local:
+                extracted_orgs = ollama_extract_organizations(
+                    article_content, model="qwq"
+                )
+            else:
+                extracted_orgs = gemini_extract_organizations(article_content)
+        except Exception as e:
+            console.print(f"[red]Error extracting organizations: {e}[/red]")
+            extracted_orgs = []
 
-                print("Starting entity extraction...")
-                extraction_timestamp = datetime.now().isoformat()
+        # Extract locations
+        try:
+            console.print("[blue]Extracting locations...[/blue]")
+            if args.local:
+                extracted_locs = ollama_extract_locations(article_content, model="qwq")
+            else:
+                extracted_locs = gemini_extract_locations(article_content)
+        except Exception as e:
+            console.print(f"[red]Error extracting locations: {e}[/red]")
+            extracted_locs = []
 
-                # Extract people
-                try:
-                    print("Extracting people...")
-                    if args.local:
-                        extracted_people = ollama_extract_people(
-                            article_content, model="qwq"
-                        )
-                    else:
-                        extracted_people = gemini_extract_people(article_content)
-                    print(f"Found {len(extracted_people)} people")
-                except Exception as e:
-                    print(f"Error extracting people: {e}")
-                    extracted_people = []
+        # Extract events
+        try:
+            console.print("[blue]Extracting events...[/blue]")
+            if args.local:
+                extracted_events = ollama_extract_events(article_content, model="qwq")
+            else:
+                extracted_events = gemini_extract_events(article_content)
+        except Exception as e:
+            console.print(f"[red]Error extracting events: {e}[/red]")
+            extracted_events = []
 
-                # Extract organizations
-                try:
-                    print("\nExtracting organizations...")
-                    if args.local:
-                        extracted_orgs = ollama_extract_organizations(
-                            article_content, model="qwq"
-                        )
-                    else:
-                        extracted_orgs = gemini_extract_organizations(article_content)
-                    print(f"Found {len(extracted_orgs)} organizations")
-                except Exception as e:
-                    print(f"Error extracting organizations: {e}")
-                    extracted_orgs = []
+        # Convert Pydantic to dict if needed
+        def to_dict_list(items):
+            dicts = []
+            for obj in items:
+                # pydantic models have model_dump() or dict()
+                if hasattr(obj, "model_dump"):
+                    dicts.append(obj.model_dump())
+                elif hasattr(obj, "dict"):
+                    dicts.append(obj.dict())
+                else:
+                    dicts.append(obj)
+            return dicts
 
-                # Extract locations
-                try:
-                    print("\nExtracting locations...")
-                    if args.local:
-                        extracted_locs = ollama_extract_locations(
-                            article_content, model="qwq"
-                        )
-                    else:
-                        extracted_locs = gemini_extract_locations(article_content)
-                    print(f"Found {len(extracted_locs)} locations")
-                except Exception as e:
-                    print(f"Error extracting locations: {e}")
-                    extracted_locs = []
+        people_dicts = to_dict_list(extracted_people)
+        org_dicts = to_dict_list(extracted_orgs)
+        loc_dicts = to_dict_list(extracted_locs)
+        event_dicts = to_dict_list(extracted_events)
 
-                # Extract events
-                try:
-                    print("\nExtracting events...")
-                    if args.local:
-                        extracted_events = ollama_extract_events(
-                            article_content, model="qwq"
-                        )
-                    else:
-                        extracted_events = gemini_extract_events(article_content)
-                    print(f"Found {len(extracted_events)} events")
-                except Exception as e:
-                    print(f"Error extracting events: {e}")
-                    extracted_events = []
+        console.print("[magenta]\nMerging extracted entities...[/magenta]")
+        try:
+            merge_people(
+                people_dicts,
+                entities,
+                article_id,
+                article_title,
+                article_url,
+                article_published_date,
+                article_content,
+                extraction_timestamp,
+                model_type,
+            )
+            merge_organizations(
+                org_dicts,
+                entities,
+                article_id,
+                article_title,
+                article_url,
+                article_published_date,
+                article_content,
+                extraction_timestamp,
+                model_type,
+            )
+            merge_locations(
+                loc_dicts,
+                entities,
+                article_id,
+                article_title,
+                article_url,
+                article_published_date,
+                article_content,
+                extraction_timestamp,
+                model_type,
+            )
+            merge_events(
+                event_dicts,
+                entities,
+                article_id,
+                article_title,
+                article_url,
+                article_published_date,
+                article_content,
+                extraction_timestamp,
+                model_type,
+            )
 
-                # Now merge all extracted entities
-                print("\nMerging extracted entities...")
-                try:
-                    # Convert Pydantic models to dictionaries
-                    people_dicts = [
-                        p.model_dump() if hasattr(p, "model_dump") else p.dict()
-                        for p in extracted_people
-                    ]
-                    org_dicts = [
-                        o.model_dump() if hasattr(o, "model_dump") else o.dict()
-                        for o in extracted_orgs
-                    ]
-                    loc_dicts = [
-                        l.model_dump() if hasattr(l, "model_dump") else l.dict()
-                        for l in extracted_locs
-                    ]
-                    event_dicts = [
-                        e.model_dump() if hasattr(e, "model_dump") else e.dict()
-                        for e in extracted_events
-                    ]
+            processing_metadata["processed"] = True
+            processing_metadata["processing_completed"] = datetime.now().isoformat()
+            processing_metadata["entities_extracted"] = {
+                "people": len(people_dicts),
+                "organizations": len(org_dicts),
+                "locations": len(loc_dicts),
+                "events": len(event_dicts),
+            }
 
-                    merge_people(
-                        people_dicts,
-                        entities,
-                        article_id,
-                        article_title,
-                        article_url,
-                        article_published_date,
-                        article_content,
-                        extraction_timestamp,
-                        model_type,
-                    )
-                    merge_organizations(
-                        org_dicts,
-                        entities,
-                        article_id,
-                        article_title,
-                        article_url,
-                        article_published_date,
-                        article_content,
-                        extraction_timestamp,
-                        model_type,
-                    )
-                    merge_locations(
-                        loc_dicts,
-                        entities,
-                        article_id,
-                        article_title,
-                        article_url,
-                        article_published_date,
-                        article_content,
-                        extraction_timestamp,
-                        model_type,
-                    )
-                    merge_events(
-                        event_dicts,
-                        entities,
-                        article_id,
-                        article_title,
-                        article_url,
-                        article_published_date,
-                        article_content,
-                        extraction_timestamp,
-                        model_type,
-                    )
+            processed_rows.append(row)
+            processed_count += 1
+            console.print(f"[green]Successfully processed article #{row_index}[/green]")
+        except Exception as e:
+            console.print(f"[red]Error merging entities: {e}[/red]")
+            processing_metadata["error"] = str(e)
+            processed_rows.append(row)
 
-                    # Update processing metadata after successful processing
-                    processing_metadata.update(
-                        {
-                            "processed": True,
-                            "processing_completed": datetime.now().isoformat(),
-                            "entities_extracted": {
-                                "people": len(extracted_people),
-                                "organizations": len(extracted_orgs),
-                                "locations": len(extracted_locs),
-                                "events": len(extracted_events),
-                            },
-                        }
-                    )
-
-                    # Write processed article immediately
-                    output_file.write(json.dumps(article) + "\n")
-
-                    processed_count += 1
-                    console.print(f"Successfully processed article #{article_count}")
-                except Exception as e:
-                    console.print(f"Error merging entities: {e}")
-                    # Write the article with error information
-                    processing_metadata["error"] = str(e)
-                    output_file.write(json.dumps(article) + "\n")
-
-        # Replace original file with processed file
+    # Write updated articles to a temp parquet file
+    temp_file = args.articles_path + ".tmp.parquet"
+    try:
+        new_table = pa.Table.from_pylist(processed_rows)
+        pq.write_table(new_table, temp_file)
         os.replace(temp_file, args.articles_path)
-
     except Exception as e:
-        console.print(f"Error processing articles: {e}")
-        # Clean up temp file if it exists
+        console.print(f"[red]Could not write updated articles to parquet: {e}[/red]")
         if os.path.exists(temp_file):
-            os.unlink(temp_file)
+            os.remove(temp_file)
 
-    # Write final results - this is now redundant since we write incrementally,
-    # but we'll keep it as a final verification step
-    console.print("\nVerifying all entities are saved to files...")
+    # Write final entity sets to their parquet files
+    console.print("[green]\nSaving updated entity tables...[/green]")
     write_entities_to_files(entities)
 
     console.print(
-        f"\nProcessing complete. Articles read: {article_count}, "
+        f"\n[bold]Processing complete[/bold]. "
+        f"Articles read: {article_count}, "
         f"processed: {processed_count}, "
-        f"skipped due to relevance check: {skipped_relevance_count}, "
-        f"skipped already processed: {skipped_already_processed}"
+        f"skipped (relevance): {skipped_relevance_count}, "
+        f"skipped (already processed): {skipped_already_processed}"
     )
-    console.print(f"Final entity counts:")
+    console.print(f"\nFinal entity counts:")
     console.print(f"- People: {len(entities['people'])}")
     console.print(f"- Organizations: {len(entities['organizations'])}")
     console.print(f"- Locations: {len(entities['locations'])}")
