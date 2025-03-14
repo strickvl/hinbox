@@ -11,7 +11,7 @@ from rich.panel import Panel
 
 from src.constants import (
     CLOUD_EMBEDDING_MODEL,
-    GEMINI_MODEL,
+    CLOUD_MODEL,
     LOCAL_EMBEDDING_MODEL,
     SIMILARITY_THRESHOLD,
 )
@@ -32,7 +32,7 @@ def cloud_model_check_match(
     existing_name: str,
     new_profile_text: str,
     existing_profile_text: str,
-    model: str = GEMINI_MODEL,
+    model: str = CLOUD_MODEL,
 ) -> MatchCheckResult:
     """
     Check if a newly extracted profile refers to the same entity as an existing profile.
