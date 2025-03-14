@@ -6,7 +6,7 @@ import litellm
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from src.v2.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
+from src.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True

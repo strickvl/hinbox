@@ -12,7 +12,8 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List
 
-from pydantic import BaseModel
+import pyarrow as pa
+import pyarrow.parquet as pq
 from rich import print
 from rich.console import Console
 from rich.markdown import Markdown
@@ -22,7 +23,7 @@ console = Console()
 
 # We'll not forcibly re-check relevance unless desired, but we keep the option in code.
 # Use constants from constants.py
-from src.v2.constants import (
+from src.constants import (
     ARTICLES_PATH,
     EVENTS_OUTPUT_PATH,
     GEMINI_MODEL,
@@ -32,25 +33,14 @@ from src.v2.constants import (
     OUTPUT_DIR,
     PEOPLE_OUTPUT_PATH,
 )
-from src.v2.events import gemini_extract_events, ollama_extract_events
-from src.v2.locations import gemini_extract_locations, ollama_extract_locations
-from src.v2.organizations import (
+from src.events import gemini_extract_events, ollama_extract_events
+from src.locations import gemini_extract_locations, ollama_extract_locations
+from src.organizations import (
     gemini_extract_organizations,
     ollama_extract_organizations,
 )
-from src.v2.people import gemini_extract_people, ollama_extract_people
-from src.v2.relevance import gemini_check_relevance, ollama_check_relevance
-
-
-class DateTimeEncoder(json.JSONEncoder):
-    """Custom JSON encoder to handle datetime objects."""
-
-    def default(self, obj):
-        if isinstance(obj, datetime):
-            return obj.isoformat()
-        if isinstance(obj, BaseModel):
-            return obj.dict()
-        return super().default(obj)
+from src.people import gemini_extract_people, ollama_extract_people
+from src.relevance import gemini_check_relevance, ollama_check_relevance
 
 
 def ensure_dir(directory: str):
@@ -63,7 +53,7 @@ def ensure_dir(directory: str):
 
 def load_existing_entities() -> Dict[str, Dict]:
     """
-    Load existing entities from JSONL files if they exist.
+    Load existing entities from Parquet files if they exist.
     Returns a dict with keys: people, events, locations, organizations
     Each is a dictionary keyed by the relevant unique tuple or name.
     """
@@ -74,34 +64,27 @@ def load_existing_entities() -> Dict[str, Dict]:
 
     # People
     if os.path.exists(PEOPLE_OUTPUT_PATH):
-        with open(PEOPLE_OUTPUT_PATH, "r") as f:
-            for line in f:
-                person = json.loads(line)
-                people[person["name"]] = person
+        people_table = pq.read_table(PEOPLE_OUTPUT_PATH)
+        for p in people_table.to_pylist():
+            people[p["name"]] = p
 
     # Events
     if os.path.exists(EVENTS_OUTPUT_PATH):
-        with open(EVENTS_OUTPUT_PATH, "r") as f:
-            for line in f:
-                event = json.loads(line)
-                # We key events by (title, start_date) as in extract_entities.py
-                events[(event["title"], event.get("start_date", ""))] = event
+        events_table = pq.read_table(EVENTS_OUTPUT_PATH)
+        for e in events_table.to_pylist():
+            events[(e["title"], e.get("start_date", ""))] = e
 
     # Locations
     if os.path.exists(LOCATIONS_OUTPUT_PATH):
-        with open(LOCATIONS_OUTPUT_PATH, "r") as f:
-            for line in f:
-                location = json.loads(line)
-                # We key locations by (name, type)
-                locations[(location["name"], location.get("type", ""))] = location
+        locations_table = pq.read_table(LOCATIONS_OUTPUT_PATH)
+        for l in locations_table.to_pylist():
+            locations[(l["name"], l.get("type", ""))] = l
 
     # Organizations
     if os.path.exists(ORGANIZATIONS_OUTPUT_PATH):
-        with open(ORGANIZATIONS_OUTPUT_PATH, "r") as f:
-            for line in f:
-                org = json.loads(line)
-                # We key organizations by (name, type)
-                organizations[(org["name"], org.get("type", ""))] = org
+        orgs_table = pq.read_table(ORGANIZATIONS_OUTPUT_PATH)
+        for o in orgs_table.to_pylist():
+            organizations[(o["name"], o.get("type", ""))] = o
 
     return {
         "people": people,
@@ -113,53 +96,48 @@ def load_existing_entities() -> Dict[str, Dict]:
 
 def write_entities_to_files(entities: Dict[str, Dict]):
     """
-    Write updated entities back to JSONL files.
+    Write updated entities back to Parquet files.
     The incoming 'entities' has keys: people, events, locations, organizations
     Each is a dict, so we need to convert them to a list and sort them, etc.
     """
     # People
-    with open(PEOPLE_OUTPUT_PATH, "w") as f:
-        # sort by name
-        for person_key in sorted(entities["people"].keys()):
-            person_data = entities["people"][person_key]
-            f.write(json.dumps(person_data, cls=DateTimeEncoder) + "\n")
+    people_list = sorted(entities["people"].values(), key=lambda x: x["name"])
+    people_table = pa.Table.from_pylist(people_list)
+    pq.write_table(people_table, PEOPLE_OUTPUT_PATH)
 
     # Events
-    with open(EVENTS_OUTPUT_PATH, "w") as f:
-        # sort by event title
-        sorted_keys = sorted(entities["events"].keys(), key=lambda k: k[0])
-        for event_key in sorted_keys:
-            event_data = entities["events"][event_key]
-            f.write(json.dumps(event_data, cls=DateTimeEncoder) + "\n")
+    events_list = sorted(
+        entities["events"].values(), key=lambda x: x["title"]
+    )  # Sort by title
+    events_table = pa.Table.from_pylist(events_list)
+    pq.write_table(events_table, EVENTS_OUTPUT_PATH)
 
     # Locations
-    with open(LOCATIONS_OUTPUT_PATH, "w") as f:
-        sorted_keys = sorted(entities["locations"].keys(), key=lambda k: k[0])
-        for loc_key in sorted_keys:
-            loc_data = entities["locations"][loc_key]
-            f.write(json.dumps(loc_data, cls=DateTimeEncoder) + "\n")
+    locations_list = sorted(entities["locations"].values(), key=lambda x: x["name"])
+    locations_table = pa.Table.from_pylist(locations_list)
+    pq.write_table(locations_table, LOCATIONS_OUTPUT_PATH)
 
     # Organizations
-    with open(ORGANIZATIONS_OUTPUT_PATH, "w") as f:
-        sorted_keys = sorted(entities["organizations"].keys(), key=lambda k: k[0])
-        for org_key in sorted_keys:
-            org_data = entities["organizations"][org_key]
-            f.write(json.dumps(org_data, cls=DateTimeEncoder) + "\n")
+    organizations_list = sorted(
+        entities["organizations"].values(), key=lambda x: x["name"]
+    )
+    organizations_table = pa.Table.from_pylist(organizations_list)
+    pq.write_table(organizations_table, ORGANIZATIONS_OUTPUT_PATH)
 
 
 def write_entity_to_file(
     entity_type: str, entity_key: Any, entity_data: Dict[str, Any]
 ):
     """
-    Write a single entity to its respective JSONL file.
-    This function appends or updates an entity in the appropriate file.
+    Write a single entity to its respective Parquet file. This function now uses
+    an append-only approach for simplicity, reading the existing data, adding the new
+    or updated entity, and rewriting the entire file.
 
     Args:
-        entity_type: One of "people", "events", "locations", "organizations"
-        entity_key: The key used to identify the entity (name for people, tuple for others)
-        entity_data: The entity data to write
+        entity_type: "people", "events", "locations", or "organizations"
+        entity_key: Key to identify entity (name for people, tuple for others)
+        entity_data: Entity data to write
     """
-    # Determine the output path based on entity type
     if entity_type == "people":
         output_path = PEOPLE_OUTPUT_PATH
     elif entity_type == "events":
@@ -171,37 +149,35 @@ def write_entity_to_file(
     else:
         raise ValueError(f"Unknown entity type: {entity_type}")
 
-    # Read all existing entities from the file
     entities = []
     entity_found = False
 
     if os.path.exists(output_path):
-        with open(output_path, "r") as f:
-            for line in f:
-                entity = json.loads(line)
-                # Check if this is the entity we're updating
-                if entity_type == "people" and entity.get("name") == entity_key:
-                    entities.append(entity_data)
-                    entity_found = True
-                elif (
-                    entity_type == "events"
-                    and (entity.get("title"), entity.get("start_date", ""))
-                    == entity_key
-                ):
-                    entities.append(entity_data)
-                    entity_found = True
-                elif (
-                    entity_type in ["locations", "organizations"]
-                    and (entity.get("name"), entity.get("type", "")) == entity_key
-                ):
-                    entities.append(entity_data)
-                    entity_found = True
-                else:
-                    entities.append(entity)
+        table = pq.read_table(output_path)
+        entities = table.to_pylist()
 
-    # If the entity wasn't found, add it
+        for i, entity in enumerate(entities):
+            if entity_type == "people" and entity.get("name") == entity_key:
+                entities[i] = entity_data  # Update existing entity
+                entity_found = True
+                break
+            elif (
+                entity_type == "events"
+                and (entity.get("title"), entity.get("start_date", "")) == entity_key
+            ):
+                entities[i] = entity_data
+                entity_found = True
+                break
+            elif (
+                entity_type in ["locations", "organizations"]
+                and (entity.get("name"), entity.get("type", "")) == entity_key
+            ):
+                entities[i] = entity_data
+                entity_found = True
+                break
+
     if not entity_found:
-        entities.append(entity_data)
+        entities.append(entity_data)  # Append new entity
 
     # Sort entities appropriately
     if entity_type == "people":
@@ -213,10 +189,9 @@ def write_entity_to_file(
     elif entity_type == "organizations":
         entities.sort(key=lambda x: x["name"])
 
-    # Write all entities back to the file
-    with open(output_path, "w") as f:
-        for entity in entities:
-            f.write(json.dumps(entity, cls=DateTimeEncoder) + "\n")
+    # Write all entities back to file
+    new_table = pa.Table.from_pylist(entities)
+    pq.write_table(new_table, output_path)
 
 
 def reload_entities() -> Dict[str, Dict]:
@@ -243,7 +218,7 @@ def merge_people(
     If yes, append the article if not present and update profile.
     If no, create new entry with initial profile.
     """
-    from src.v2.profiles import create_profile, update_profile
+    from src.profiles import create_profile, update_profile
 
     # Reload entities to get latest state
     current_entities = reload_entities()
@@ -372,7 +347,7 @@ def merge_locations(
     model_type: str = "gemini",
 ):
     """Merge location logic with profile handling."""
-    from src.v2.profiles import create_profile, update_profile
+    from src.profiles import create_profile, update_profile
 
     # Reload entities to get latest state
     current_entities = reload_entities()
@@ -501,7 +476,7 @@ def merge_organizations(
     model_type: str = "gemini",
 ):
     """Merge organization logic with profile handling."""
-    from src.v2.profiles import create_profile, update_profile
+    from src.profiles import create_profile, update_profile
 
     # Reload entities to get latest state
     current_entities = reload_entities()
@@ -638,7 +613,7 @@ def merge_events(
     model_type: str = "gemini",
 ):
     """Merge events logic with profile handling."""
-    from src.v2.profiles import create_profile, update_profile
+    from src.profiles import create_profile, update_profile
 
     # Reload entities to get latest state
     current_entities = reload_entities()
@@ -903,9 +878,7 @@ def main():
                         if not relevance_result.is_relevant:
                             console.print("Skipping article as it's not relevant")
                             skipped_relevance_count += 1
-                            output_file.write(
-                                json.dumps(article, cls=DateTimeEncoder) + "\n"
-                            )
+                            output_file.write(json.dumps(article) + "\n")
                             continue
                     except Exception as e:
                         console.print(f"[red]Error during relevance check: {e}[/]")
@@ -1053,7 +1026,7 @@ def main():
                     )
 
                     # Write processed article immediately
-                    output_file.write(json.dumps(article, cls=DateTimeEncoder) + "\n")
+                    output_file.write(json.dumps(article) + "\n")
 
                     processed_count += 1
                     console.print(f"Successfully processed article #{article_count}")
@@ -1061,7 +1034,7 @@ def main():
                     console.print(f"Error merging entities: {e}")
                     # Write the article with error information
                     processing_metadata["error"] = str(e)
-                    output_file.write(json.dumps(article, cls=DateTimeEncoder) + "\n")
+                    output_file.write(json.dumps(article) + "\n")
 
         # Replace original file with processed file
         os.replace(temp_file, args.articles_path)

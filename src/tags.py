@@ -4,7 +4,7 @@ import instructor
 import litellm
 from openai import OpenAI
 
-from src.v2.models import ArticleTag, ArticleTags
+from src.models import ArticleTag, ArticleTags
 
 
 def gemini_extract_tags(article_text: str) -> ArticleTags:

@@ -6,8 +6,8 @@ import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
-from src.v2.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
-from src.v2.models import Person, PersonType
+from src.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
+from src.models import Person, PersonType
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]

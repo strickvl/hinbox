@@ -17,7 +17,7 @@ ARTICLES_PATH = "data/raw_sources/miami_herald_articles.jsonl"
 OUTPUT_DIR = "data/entities"
 PROCESSED_ARTICLES_PATH = "data/processed/processed_articles.jsonl"
 
-PEOPLE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "people.jsonl")
-EVENTS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "events.jsonl")
-LOCATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "locations.jsonl")
-ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.jsonl")
+PEOPLE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "people.parquet")
+EVENTS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "events.parquet")
+LOCATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "locations.parquet")
+ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.parquet")

@@ -4,7 +4,7 @@ import instructor
 import litellm
 from pydantic import BaseModel
 
-from src.v2.constants import GEMINI_MODEL
+from src.constants import GEMINI_MODEL
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]

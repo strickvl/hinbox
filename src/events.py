@@ -5,8 +5,8 @@ import litellm
 from openai import OpenAI
 from pydantic import BaseModel
 
-from src.v2.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
-from src.v2.models import Event
+from src.constants import GEMINI_MODEL, OLLAMA_API_KEY, OLLAMA_API_URL, OLLAMA_MODEL
+from src.models import Event
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
