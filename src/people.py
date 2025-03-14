@@ -11,6 +11,7 @@ from src.models import Person, PersonType
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
+# litellm._turn_on_debug()
 
 
 class ArticlePeople(BaseModel):
@@ -60,7 +61,16 @@ When identifying people, categorize them using the following person types:
 - other: Any other type of person not covered by the above categories
 
 Only use standard ASCII characters for the names that you extract.
-Extract all people mentioned in the text and categorize them appropriately.""",
+Extract all people mentioned in the text and categorize them appropriately.
+
+You MUST return each person as an object with 'name' and 'type' properties.
+For example:
+[
+  {"name": "John Doe", "type": "journalist"},
+  {"name": "Jane Smith", "type": "lawyer"}
+]
+
+Do NOT return strings like "John Doe (journalist)". Always use the proper object format.""",
             },
             {
                 "role": "user",
@@ -107,3 +117,10 @@ Extract all people mentioned in the text and categorize them appropriately.""",
         ],
     )
     return results.choices[0].message.parsed.people
+
+
+if __name__ == "__main__":
+    text = "John Doe is a journalist at the New York Times. He is friends with Jane Smith, who is a lawyer at the same newspaper."
+
+    print(gemini_extract_people(text))
+    # print(ollama_extract_people(text))
