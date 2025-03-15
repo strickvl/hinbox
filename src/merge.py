@@ -1065,7 +1065,7 @@ def merge_organizations(
 
         if similar_key:
             console.print(
-                f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key}'[/purple]..."
+                f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key[0]}'[/purple]..."
             )
             if model_type == "ollama":
                 result = local_model_check_match(
