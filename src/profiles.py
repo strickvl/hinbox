@@ -441,6 +441,19 @@ New Article (ID: {new_article_id}):
             console.print("[yellow]Falling back to existing profile[/yellow]")
             return existing_profile, history
 
+        # Convert final_result to a dict
+        updated_profile_dict = final_result.model_dump()
+        # Ensure there's a non-empty "text" field to avoid KeyError later
+        if "text" not in updated_profile_dict or not isinstance(
+            updated_profile_dict["text"], str
+        ):
+            console.print(
+                f"[red]Profile updated but no valid 'text' found. Using fallback text for {entity_name}.[/red]"
+            )
+            updated_profile_dict["text"] = (
+                f"Profile update for {entity_name} is incomplete^[{new_article_id}]"
+            )
+
         updated_profile_dict = final_result.model_dump()
         # Merge old and new sources
         old_sources = existing_profile.get("sources", [])

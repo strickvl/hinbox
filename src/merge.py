@@ -1067,19 +1067,33 @@ def merge_organizations(
             console.print(
                 f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key[0]}'[/purple]..."
             )
+            # First, ensure existing_org["profile"] is a dict with "text" to avoid KeyError
+            existing_profile_dict = entities["organizations"][similar_key].get(
+                "profile", {}
+            )
+            if (
+                not isinstance(existing_profile_dict, dict)
+                or "text" not in existing_profile_dict
+            ):
+                console.print(
+                    f"[red]Existing organization '{similar_key}' profile is missing 'text'—cannot finalize check.[/red]"
+                )
+                # We'll treat it as if it doesn't match, or we can skip it:
+                continue
+
             if model_type == "ollama":
                 result = local_model_check_match(
                     org_name,
                     similar_key,
                     proposed_profile_text,
-                    entities["organizations"][similar_key]["profile"]["text"],
+                    existing_profile_dict["text"],
                 )
             else:
                 result = cloud_model_check_match(
                     org_name,
                     similar_key,
                     proposed_profile_text,
-                    entities["organizations"][similar_key]["profile"]["text"],
+                    existing_profile_dict["text"],
                 )
             if result.is_match:
                 console.print(
