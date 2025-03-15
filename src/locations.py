@@ -23,27 +23,6 @@ class ArticleLocations(BaseModel):
     locations: List[Place]
 
 
-def spacy_extract_locations(text: str) -> List[Dict[str, Any]]:
-    """Extract location entities from the provided text using spaCy."""
-    nlp = spacy.load("en_core_web_lg")
-
-    # Process the text
-    doc = nlp(text)
-
-    # Extract location entities (GPE: countries, cities, etc. and LOC: non-GPE locations)
-    locations = []
-    seen_locations = set()  # Track locations we've already added
-
-    for ent in doc.ents:
-        if ent.label_ in ["GPE", "LOC"]:
-            # Only add if we haven't seen this location name before
-            if ent.text not in seen_locations:
-                locations.append(Place(name=ent.text, type=PlaceType.OTHER))
-                seen_locations.add(ent.text)
-
-    return locations
-
-
 def gemini_extract_locations(
     text: str, model: str = CLOUD_MODEL
 ) -> List[Dict[str, Any]]:

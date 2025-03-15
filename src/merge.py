@@ -863,7 +863,7 @@ def merge_locations(
                 continue
 
             # We found a similar location - use that instead of creating a new one
-            similar_name, similar_type = similar_key
+            similar_name, _ = similar_key
             console.print(
                 f"[blue]Merging location '{loc_name}' with existing location '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
             )
@@ -1106,7 +1106,7 @@ def merge_organizations(
                 continue
 
             # We found a similar organization - use that instead of creating a new one
-            similar_name, similar_type = similar_key
+            similar_name, _ = similar_key
             console.print(
                 f"[blue]Merging organization '{org_name}' with existing organization '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
             )
@@ -1340,7 +1340,7 @@ def merge_events(
                 continue
 
             # We found a similar event - use that instead of creating a new one
-            similar_title, similar_start_date = similar_key
+            similar_title, _ = similar_key
             console.print(
                 f"[blue]Merging event '{event_title}' with existing event '[bold]{similar_title}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
             )
