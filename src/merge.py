@@ -854,7 +854,7 @@ def merge_locations(
                 )
             if result.is_match:
                 console.print(
-                    f"[green]The profiles match! Merging '{loc_name}' with '{similar_key}'[/green]"
+                    f"[green]The profiles match! Merging '{loc_name}' with '{similar_key[0]}'[/green]"
                 )
             else:
                 console.print(
@@ -1097,7 +1097,7 @@ def merge_organizations(
                 )
             if result.is_match:
                 console.print(
-                    f"[green]The profiles match! Merging '{org_name}' with '{similar_key}'[/green]"
+                    f"[green]The profiles match! Merging '{org_name}' with '{similar_key[0]}'[/green]"
                 )
             else:
                 console.print(
