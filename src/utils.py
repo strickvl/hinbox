@@ -29,6 +29,31 @@ litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
 
 
+def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Recursively remove or transform fields that are incompatible with Arrow from
+    an entity dictionary. Specifically, we remove/serialize any LLM response objects
+    in reflection_history.
+    """
+    # Create a shallow copy so we don't mutate the original
+    sanitized = dict(entity)
+
+    # If there's a reflection_history field, strip or convert the "response" object
+    if "reflection_history" in sanitized and isinstance(
+        sanitized["reflection_history"], list
+    ):
+        for iteration in sanitized["reflection_history"]:
+            # Convert iteration to a dict if needed
+            if isinstance(iteration, dict):
+                # If there's a 'response' field that's not arrow-compatible, replace it or string-ify it
+                if "response" in iteration:
+                    # We'll store a string representation or just clear it out
+                    iteration["response"] = str(iteration["response"])
+
+    # Return the sanitized dict
+    return sanitized
+
+
 def write_entity_to_file(
     entity_type: str, entity_key: Any, entity_data: Dict[str, Any]
 ):
@@ -44,6 +69,66 @@ def write_entity_to_file(
         entity_key: Key to identify entity (name for people, tuple for others)
         entity_data: Entity data to write
     """
+    if entity_type == "people":
+        output_path = PEOPLE_OUTPUT_PATH
+    elif entity_type == "events":
+        output_path = EVENTS_OUTPUT_PATH
+    elif entity_type == "locations":
+        output_path = LOCATIONS_OUTPUT_PATH
+    elif entity_type == "organizations":
+        output_path = ORGANIZATIONS_OUTPUT_PATH
+    else:
+        raise ValueError(f"Unknown entity type: {entity_type}")
+
+    # Sanitize incoming entity data to avoid storing objects that PyArrow can't handle
+    entity_data = sanitize_for_parquet(entity_data)
+
+    entities = []
+    entity_found = False
+
+    if os.path.exists(output_path):
+        table = pq.read_table(output_path)
+        entities = table.to_pylist()
+
+        # Sanitize existing entities from file
+        for i, existing_entity in enumerate(entities):
+            existing_entity = sanitize_for_parquet(existing_entity)
+            entities[i] = existing_entity
+
+        for i, entity in enumerate(entities):
+            if entity_type == "people" and entity.get("name") == entity_key:
+                entities[i] = entity_data  # Update existing entity
+                entity_found = True
+                break
+            elif (
+                entity_type == "events"
+                and (entity.get("title"), entity.get("start_date", "")) == entity_key
+            ):
+                entities[i] = entity_data
+                entity_found = True
+                break
+            elif (
+                entity_type in ["locations", "organizations"]
+                and (entity.get("name"), entity.get("type", "")) == entity_key
+            ):
+                entities[i] = entity_data
+                entity_found = True
+                break
+
+    if not entity_found:
+        entities.append(entity_data)  # Append new entity
+
+    # Sort entities appropriately
+    if entity_type == "people":
+        entities.sort(key=lambda x: x["name"])
+    elif entity_type == "events":
+        entities.sort(key=lambda x: (x.get("start_date", ""), x.get("title", "")))
+    elif entity_type in ["locations", "organizations"]:
+        entities.sort(key=lambda x: (x.get("name", ""), x.get("type", "")))
+
+    # Convert to PyArrow table and write to Parquet
+    table = pa.Table.from_pylist(entities)
+    pq.write_table(table, output_path)
     if entity_type == "people":
         output_path = PEOPLE_OUTPUT_PATH
     elif entity_type == "events":
