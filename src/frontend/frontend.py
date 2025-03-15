@@ -125,9 +125,10 @@ app, rt = fast_app()
 
 
 def nav_bar():
-    """Returns an FT component with a nav bar linking to the 4 entity types."""
+    """Returns an FT component with a nav bar linking to the 5 entity types."""
     # We'll generate a simple nav bar with anchors
     return Nav(
+        A("Home", href="/"),
         A("People", href="/people"),
         A("Events", href="/events"),
         A("Locations", href="/locations"),
