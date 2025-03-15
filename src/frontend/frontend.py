@@ -14,6 +14,7 @@ EVENTS_FILE = os.path.join(DATA_DIR, "events.parquet")
 LOCATIONS_FILE = os.path.join(DATA_DIR, "locations.parquet")
 ORGS_FILE = os.path.join(DATA_DIR, "organizations.parquet")
 
+
 def load_parquet(path: str):
     """Load a Parquet file and return a list of dictionaries."""
     if not os.path.exists(path):
@@ -21,11 +22,13 @@ def load_parquet(path: str):
     table = pq.read_table(path)
     return table.to_pylist()
 
+
 # In-memory loaded data
 people_data = load_parquet(PEOPLE_FILE)
 events_data = load_parquet(EVENTS_FILE)
 locations_data = load_parquet(LOCATIONS_FILE)
 orgs_data = load_parquet(ORGS_FILE)
+
 
 def transform_profile_text(text, articles):
     import re
@@ -54,10 +57,12 @@ def transform_profile_text(text, articles):
 
     return re.sub(pattern, replacer, text)
 
+
 # For each entity, we generate a "key" for referencing in routes
 def make_person_key(person: dict) -> str:
     """Use the person's name as the key"""
     return person.get("name", "")
+
 
 def make_event_key(event: dict) -> str:
     """Use a short hash for uniqueness, based on title##start_date."""
@@ -67,6 +72,7 @@ def make_event_key(event: dict) -> str:
     h = hashlib.md5(combined.encode()).hexdigest()[:6]
     return f"{title} ({h})"
 
+
 def make_location_key(loc: dict) -> str:
     nm = loc.get("name", "")
     t = loc.get("type", "")
@@ -74,12 +80,14 @@ def make_location_key(loc: dict) -> str:
     h = hashlib.md5(combined.encode()).hexdigest()[:6]
     return f"{nm} ({h})"
 
+
 def make_org_key(org: dict) -> str:
     nm = org.get("name", "")
     t = org.get("type", "")
     combined = f"{nm}##{t}"
     h = hashlib.md5(combined.encode()).hexdigest()[:6]
     return f"{nm} ({h})"
+
 
 # Build indexes/dicts for easy retrieval
 people_index = {}
@@ -108,12 +116,15 @@ for o in orgs_data:
 
 app, rt = fast_app()
 
+
 def encode_key(k: str) -> str:
     """Encode the entity key so it can be used in a URL."""
     return quote(k, safe="")
 
+
 def decode_key(k: str) -> str:
     return unquote(k)
+
 
 def nav_bar():
     """Returns an FT component with a top nav bar."""
@@ -123,9 +134,15 @@ def nav_bar():
         A("Events", href="/events"),
         A("Locations", href="/locations"),
         A("Organizations", href="/organizations"),
-        Button("About", cls="secondary", style="margin-left:auto;", onclick="alert('Not implemented');"),
-        style="display:flex; gap:1em; margin-bottom:1em; align-items:center;"
+        Button(
+            "About",
+            cls="secondary",
+            style="margin-left:auto;",
+            onclick="alert('Not implemented');",
+        ),
+        style="display:flex; gap:1em; margin-bottom:1em; align-items:center;",
     )
+
 
 def main_layout(page_title: str, filter_panel, content):
     """
@@ -140,18 +157,26 @@ def main_layout(page_title: str, filter_panel, content):
             nav_bar(),
             # We'll wrap the filter panel and the main content in a side-by-side arrangement
             Div(
-                Div(filter_panel, style="flex:0 0 220px; border-right:1px solid #ccc; padding-right:1em;"),
+                Div(
+                    filter_panel,
+                    style="flex:0 0 220px; border-right:1px solid #ccc; padding-right:1em;",
+                ),
                 Div(content, style="flex:1; padding-left:1em;"),
-                style="display:flex; gap:1em;"
+                style="display:flex; gap:1em;",
             ),
-        )
+        ),
     )
+
 
 ################################################################
 #              Filter Panels (PLACEHOLDERS)
 ################################################################
 
-def people_filter_panel():
+
+def people_filter_panel(q: str = "", selected_types: list[str] = None):
+    if selected_types is None:
+        selected_types = []
+
     possible_types = set()
     for p in people_index.values():
         t = p.get("type", "").strip()
@@ -161,20 +186,34 @@ def people_filter_panel():
     for pt in sorted(possible_types):
         checks.append(
             Div(
-                Input(type="checkbox", name="type", value=pt),
-                Label(pt)
+                Input(
+                    type="checkbox",
+                    name="type",
+                    value=pt,
+                    checked="checked" if pt.lower() in selected_types else None,
+                ),
+                Label(pt),
             )
         )
     return Form(
         H3("People Filters"),
         *checks,
-        Label("Search: ", Input(type="text", name="q", placeholder="Name...")),
+        Label("Search: ", Input(type="text", name="q", value=q, placeholder="Name...")),
         Button("Apply Filters", type="submit"),
         method="get",
-        action="/people"
+        action="/people",
     )
 
-def events_filter_panel():
+
+def events_filter_panel(
+    q: str = "",
+    selected_types: list[str] = None,
+    start_date: str = "",
+    end_date: str = "",
+):
+    if selected_types is None:
+        selected_types = []
+
     possible_types = set()
     for e in events_index.values():
         t = e.get("event_type", "").strip()
@@ -184,8 +223,13 @@ def events_filter_panel():
     for et in sorted(possible_types):
         checks.append(
             Div(
-                Input(type="checkbox", name="etype", value=et),
-                Label(et)
+                Input(
+                    type="checkbox",
+                    name="etype",
+                    value=et,
+                    checked="checked" if et.lower() in selected_types else None,
+                ),
+                Label(et),
             )
         )
     return Form(
@@ -193,14 +237,26 @@ def events_filter_panel():
         P("Event Type:"),
         *checks,
         P("Date Range:"),
-        Label("From:", Input(type="date", name="start_date")),
-        Label("To:", Input(type="date", name="end_date")),
+        Label(
+            "From:",
+            Input(
+                type="date", name="start_date", value=start_date if start_date else None
+            ),
+        ),
+        Label(
+            "To:",
+            Input(type="date", name="end_date", value=end_date if end_date else None),
+        ),
         Button("Apply Filters", type="submit"),
         method="get",
-        action="/events"
+        action="/events",
     )
 
-def locations_filter_panel():
+
+def locations_filter_panel(q: str = "", selected_types: list[str] = None):
+    if selected_types is None:
+        selected_types = []
+
     possible_types = set()
     for loc in locations_index.values():
         t = loc.get("type", "").strip()
@@ -210,20 +266,32 @@ def locations_filter_panel():
     for lt in sorted(possible_types):
         checks.append(
             Div(
-                Input(type="checkbox", name="loc_type", value=lt),
-                Label(lt)
+                Input(
+                    type="checkbox",
+                    name="loc_type",
+                    value=lt,
+                    checked="checked" if lt.lower() in selected_types else None,
+                ),
+                Label(lt),
             )
         )
     return Form(
         H3("Locations Filters"),
         *checks,
-        Label("Search: ", Input(type="text", name="q", placeholder="Location name...")),
+        Label(
+            "Search: ",
+            Input(type="text", name="q", value=q, placeholder="Location name..."),
+        ),
         Button("Apply Filters", type="submit"),
         method="get",
-        action="/locations"
+        action="/locations",
     )
 
-def organizations_filter_panel():
+
+def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
+    if selected_types is None:
+        selected_types = []
+
     possible_types = set()
     for org in orgs_index.values():
         t = org.get("type", "").strip()
@@ -233,22 +301,32 @@ def organizations_filter_panel():
     for ot in sorted(possible_types):
         checks.append(
             Div(
-                Input(type="checkbox", name="org_type", value=ot),
-                Label(ot)
+                Input(
+                    type="checkbox",
+                    name="org_type",
+                    value=ot,
+                    checked="checked" if ot.lower() in selected_types else None,
+                ),
+                Label(ot),
             )
         )
     return Form(
         H3("Organization Filters"),
         *checks,
-        Label("Search: ", Input(type="text", name="q", placeholder="Organization name...")),
+        Label(
+            "Search: ",
+            Input(type="text", name="q", value=q, placeholder="Organization name..."),
+        ),
         Button("Apply Filters", type="submit"),
         method="get",
-        action="/organizations"
+        action="/organizations",
     )
+
 
 ################################################################
 #             HOME
 ################################################################
+
 
 @rt("/")
 def get_home():
@@ -257,18 +335,20 @@ def get_home():
         "GTMO Browse - Home",
         nav_bar(),
         H1("Welcome to Guantánamo Entities Browser"),
-        P("Use the navigation above to browse the extracted entity data.")
+        P("Use the navigation above to browse the extracted entity data."),
     )
+
 
 ################################################################
 #              People
 ################################################################
 
+
 @rt("/people")
 def list_people(request):
     q = request.query_params.get("q", "").strip().lower()
-    selected_types = request.query_params.getlist("type")
-    selected_types = [t.strip().lower() for t in selected_types if t.strip()]
+    selected_types_raw = request.query_params.getlist("type")
+    selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
 
     filtered_items = []
     for k, person in people_index.items():
@@ -285,12 +365,13 @@ def list_people(request):
         link = A(person["name"], href=f"/people/{encode_key(k)}")
         filtered_items.append(Li(link))
 
-    content = Div(
-        H2("People"),
-        Ul(*filtered_items),
-        style="margin-top:1em;"
+    content = Div(H2("People"), Ul(*filtered_items), style="margin-top:1em;")
+    return main_layout(
+        "GTMO Browse - People",
+        people_filter_panel(q=q, selected_types=selected_types),
+        content,
     )
-    return main_layout("GTMO Browse - People", people_filter_panel(), content)
+
 
 @rt("/people/{key:path}")
 def show_person(key: str):
@@ -336,12 +417,14 @@ def show_person(key: str):
     return main_layout(
         f"GTMO Browse - People - {name}",
         Div("No filters for detail pages."),
-        detail_content
+        detail_content,
     )
+
 
 ################################################################
 #              Events
 ################################################################
+
 
 @rt("/events")
 @rt("/events")
@@ -349,7 +432,8 @@ def list_events(request):
     import arrow
 
     def parse_dt(dt):
-        if not dt: return None
+        if not dt:
+            return None
         try:
             return arrow.get(dt)
         except:
@@ -357,8 +441,8 @@ def list_events(request):
 
     # gather query filters
     q = request.query_params.get("q", "").strip().lower()
-    selected_types = request.query_params.getlist("etype")
-    selected_types = [t.strip().lower() for t in selected_types if t.strip()]
+    selected_types_raw = request.query_params.getlist("etype")
+    selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
     start_q = request.query_params.get("start_date", "")
     end_q = request.query_params.get("end_date", "")
 
@@ -370,7 +454,7 @@ def list_events(request):
 
     # filter by type, date range, optional search on title
     filtered = []
-    for (k, startdt, ev) in all_rows:
+    for k, startdt, ev in all_rows:
         evtype = ev.get("event_type", "").strip().lower()
         title_lower = ev.get("title", "").strip().lower()
 
@@ -405,22 +489,18 @@ def list_events(request):
     filtered.sort(key=lambda x: (x[1].timestamp() if x[1] else 0))
 
     items = []
-    for (k, startdt, ev) in filtered:
+    for k, startdt, ev in filtered:
         start_str = startdt.format("YYYY-MM-DD") if startdt else "Unknown"
         link = A(ev["title"], href=f"/events/{encode_key(k)}")
-        items.append(
-            Li(
-                f"{start_str} — ",
-                link
-            )
-        )
+        items.append(Li(f"{start_str} — ", link))
 
-    content = Div(
-        H2("Events"),
-        Ul(*items),
-        style="margin-top:1em;"
+    content = Div(H2("Events"), Ul(*items), style="margin-top:1em;")
+    return main_layout(
+        "GTMO Browse - Events",
+        events_filter_panel(q, selected_types, start_q, end_q),
+        content,
     )
-    return main_layout("GTMO Browse - Events", events_filter_panel(), content)
+
 
 @rt("/events/{key:path}")
 def show_event(key: str):
@@ -430,7 +510,7 @@ def show_event(key: str):
         return main_layout(
             "GTMO Browse - Events - Not Found",
             Div("No filters for detail pages."),
-            Div(H2("Event not found"), P(f"No event found for key: {actual_key}"))
+            Div(H2("Event not found"), P(f"No event found for key: {actual_key}")),
         )
     title = ev.get("title", "N/A")
     event_type = ev.get("event_type", "N/A")
@@ -466,19 +546,24 @@ def show_event(key: str):
         H3("Articles"),
         Ul(*art_list),
     )
-    return main_layout(f"GTMO Browse - Events - {title}", Div("No filters for detail pages."), detail_content)
+    return main_layout(
+        f"GTMO Browse - Events - {title}",
+        Div("No filters for detail pages."),
+        detail_content,
+    )
+
 
 ################################################################
 #              Locations
 ################################################################
 
+
 @rt("/locations")
 @rt("/locations")
 def list_locations(request):
-
     q = request.query_params.get("q", "").strip().lower()
-    selected_types = request.query_params.getlist("loc_type")
-    selected_types = [t.strip().lower() for t in selected_types if t.strip()]
+    selected_types_raw = request.query_params.getlist("loc_type")
+    selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
 
     filtered_items = []
     for k, loc in locations_index.items():
@@ -493,12 +578,13 @@ def list_locations(request):
         link = A(loc["name"], href=f"/locations/{encode_key(k)}")
         filtered_items.append(Li(link))
 
-    content = Div(
-        H2("Locations"),
-        Ul(*filtered_items),
-        style="margin-top:1em;"
+    content = Div(H2("Locations"), Ul(*filtered_items), style="margin-top:1em;")
+    return main_layout(
+        "GTMO Browse - Locations",
+        locations_filter_panel(q=q, selected_types=selected_types),
+        content,
     )
-    return main_layout("GTMO Browse - Locations", locations_filter_panel(), content)
+
 
 @rt("/locations/{key:path}")
 def show_location(key: str):
@@ -508,7 +594,9 @@ def show_location(key: str):
         return main_layout(
             "GTMO Browse - Locations - Not Found",
             Div("No filters for detail pages."),
-            Div(H2("Location not found"), P(f"No location found for key: {actual_key}"))
+            Div(
+                H2("Location not found"), P(f"No location found for key: {actual_key}")
+            ),
         )
     nm = loc.get("name", "N/A")
     typ = loc.get("type", "N/A")
@@ -534,19 +622,24 @@ def show_location(key: str):
         H3("Articles"),
         Ul(*art_list),
     )
-    return main_layout(f"GTMO Browse - Locations - {nm}", Div("No filters for detail pages."), detail_content)
+    return main_layout(
+        f"GTMO Browse - Locations - {nm}",
+        Div("No filters for detail pages."),
+        detail_content,
+    )
+
 
 ################################################################
 #              Organizations
 ################################################################
 
+
 @rt("/organizations")
 @rt("/organizations")
 def list_orgs(request):
-
     q = request.query_params.get("q", "").strip().lower()
-    selected_types = request.query_params.getlist("org_type")
-    selected_types = [t.strip().lower() for t in selected_types if t.strip()]
+    selected_types_raw = request.query_params.getlist("org_type")
+    selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
 
     filtered_items = []
     for k, org in orgs_index.items():
@@ -561,12 +654,13 @@ def list_orgs(request):
         link = A(org["name"], href=f"/organizations/{encode_key(k)}")
         filtered_items.append(Li(link))
 
-    content = Div(
-        H2("Organizations"),
-        Ul(*filtered_items),
-        style="margin-top:1em;"
+    content = Div(H2("Organizations"), Ul(*filtered_items), style="margin-top:1em;")
+    return main_layout(
+        "GTMO Browse - Organizations",
+        organizations_filter_panel(q=q, selected_types=selected_types),
+        content,
     )
-    return main_layout("GTMO Browse - Organizations", organizations_filter_panel(), content)
+
 
 @rt("/organizations/{key:path}")
 def show_org(key: str):
@@ -576,7 +670,10 @@ def show_org(key: str):
         return main_layout(
             "GTMO Browse - Organizations - Not Found",
             Div("No filters for detail pages."),
-            Div(H2("Organization not found"), P(f"No organization found for key: {actual_key}"))
+            Div(
+                H2("Organization not found"),
+                P(f"No organization found for key: {actual_key}"),
+            ),
         )
     nm = org.get("name", "N/A")
     typ = org.get("type", "N/A")
@@ -602,7 +699,12 @@ def show_org(key: str):
         H3("Articles"),
         Ul(*art_list),
     )
-    return main_layout(f"GTMO Browse - Organizations - {nm}", Div("No filters for detail pages."), detail_content)
+    return main_layout(
+        f"GTMO Browse - Organizations - {nm}",
+        Div("No filters for detail pages."),
+        detail_content,
+    )
+
 
 ################################################################
 #              Run
