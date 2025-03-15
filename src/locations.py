@@ -2,7 +2,6 @@ from typing import Any, Dict, List
 
 import instructor
 import litellm
-import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -13,7 +12,7 @@ from src.constants import (
     OLLAMA_MODEL,
     get_ollama_model_name,
 )
-from src.models import Place, PlaceType
+from src.models import Place
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
