@@ -4,7 +4,7 @@ Constants used throughout the application.
 
 import os
 
-CLOUD_MODEL = "gemini/gemini-2.0-flash-lite"
+CLOUD_MODEL = "gemini/gemini-2.0-flash"
 OLLAMA_MODEL = "ollama/mistral-small"  # Updated to include full path
 
 # Embedding model names
