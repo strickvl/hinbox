@@ -912,10 +912,7 @@ def merge_organizations(
 
         entity_updated = False
 
-        # Generate embedding for the organization name and type
-        org_context = f"Name: {org_name}\nType: {org_type}"
-        org_embedding = embed_text(org_context, model_name=embedding_model)
-
+        # Generate embedding for the organization name and type (unused org_embedding removed)
         # Find similar organization using embeddings
         proposed_profile_text = create_profile(
             "organization", org_name, article_content, article_id, model_type

@@ -145,7 +145,7 @@ def generate_profile_with_reflection(
         )
 
     # Enhanced system prompt emphasizing requirements
-    system_prompt = f"""You are an expert at creating profiles for entities mentioned in news articles.
+    custom_system_prompt = f"""You are an expert at creating profiles for entities mentioned in news articles.
 
 Your task is to create a comprehensive profile for a {entity_type} named "{entity_name}" based solely on the provided article text.
 
@@ -167,7 +167,7 @@ John Smith is a military officer^[abc123] who oversees operations at Guantánamo
 ```
 """
 
-    # Use iterative_improve to generate and refine the profile
+    # Use iterative_improve to generate and refine the profile, passing in the custom system prompt
     final_result, history = iterative_improve(
         prompt=f"Article text:\n\n{article_text}\n\nCreate a profile for {entity_type} '{entity_name}'. Article ID: {article_id}",
         response_model=EntityProfile,
@@ -176,6 +176,7 @@ John Smith is a military officer^[abc123] who oversees operations at Guantánamo
         else GenerationMode.LOCAL,
         max_iterations=max_iterations,
         metadata={"project_name": "hinbox", "tags": ["profile_generation"]},
+        system_prompt=custom_system_prompt,
     )
 
     if final_result is None:

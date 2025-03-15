@@ -410,6 +410,7 @@ def iterative_improve(
     temperature: int = 0,
     evaluation_temperature: int = 0,
     metadata: Dict[str, Any] = None,
+    system_prompt: str = None,
 ) -> Tuple[BaseModel, List[Dict[str, Any]]]:
     """
     Iteratively improve an LLM response until it meets the requirements or
@@ -445,18 +446,24 @@ def iterative_improve(
 
     history = []
 
-    # System prompt for the generator
-    system_prompt = """
+    # Default system prompts for the generator
+    default_system_prompt = """
     You are an expert assistant tasked with fulfilling the user's request precisely.
     Provide a high-quality response that addresses all requirements in the prompt.
     """
 
-    # For subsequent iterations, we'll enhance the system prompt with feedback
-    feedback_system_prompt = """
+    # For subsequent iterations, we enhance the system prompt with feedback
+    default_feedback_system_prompt = """
     You are an expert assistant tasked with fulfilling the user's request precisely.
     Your previous response needed improvement. Please address the feedback and provide
     a better response that fully satisfies all requirements.
     """
+
+    # Use the custom system prompt if provided, otherwise fall back
+    if system_prompt is None:
+        system_prompt = default_system_prompt
+
+    feedback_system_prompt = default_feedback_system_prompt
 
     # Initial generation
     generation_fn = (
