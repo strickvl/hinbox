@@ -6,6 +6,7 @@ import markdown
 import pyarrow.parquet as pq
 from fasthtml.common import *
 
+# ----- Constants -----
 DATA_DIR = "data/entities"
 
 # Filenames for each entity type (using Parquet)
@@ -15,6 +16,7 @@ LOCATIONS_FILE = os.path.join(DATA_DIR, "locations.parquet")
 ORGS_FILE = os.path.join(DATA_DIR, "organizations.parquet")
 
 
+# ----- Data Loading -----
 def load_parquet(path: str):
     """Load a Parquet file and return a list of dictionaries."""
     if not os.path.exists(path):
@@ -30,7 +32,9 @@ locations_data = load_parquet(LOCATIONS_FILE)
 orgs_data = load_parquet(ORGS_FILE)
 
 
+# ----- Text Processing -----
 def transform_profile_text(text, articles):
+    """Replace footnote references with links to articles."""
     import re
 
     # Build a map from article_id to article_url
@@ -39,7 +43,7 @@ def transform_profile_text(text, articles):
         aid = a.get("article_id")
         article_map[aid] = a.get("article_url", "#")
 
-    # We'll replace footnotes in the form ^[...] with links to the article URL,
+    # Replace footnotes in the form ^[...] with links to the article URL,
     # replacing the raw UUID with a sequential number for unobtrusive display.
     pattern = r"\^\[([0-9a-fA-F-]+)\]"
 
@@ -58,6 +62,7 @@ def transform_profile_text(text, articles):
     return re.sub(pattern, replacer, text)
 
 
+# ----- Entity Key Generation -----
 # For each entity, we generate a "key" for referencing in routes
 def make_person_key(person: dict) -> str:
     """Use the person's name as the key"""
@@ -90,55 +95,211 @@ def make_org_key(org: dict) -> str:
 
 
 # Build indexes/dicts for easy retrieval
-people_index = {}
-for p in people_data:
-    k = make_person_key(p)
-    people_index[k] = p
+people_index = {make_person_key(p): p for p in people_data}
+events_index = {make_event_key(e): e for e in events_data}
+locations_index = {make_location_key(l): l for l in locations_data}
+orgs_index = {make_org_key(o): o for o in orgs_data}
 
-events_index = {}
-for e in events_data:
-    k = make_event_key(e)
-    events_index[k] = e
-
-locations_index = {}
-for l in locations_data:
-    k = make_location_key(l)
-    locations_index[k] = l
-
-orgs_index = {}
-for o in orgs_data:
-    k = make_org_key(o)
-    orgs_index[k] = o
-
-################################################################
-#              Utility
-################################################################
-
+# ----- FastHTML Setup -----
 app, rt = fast_app()
 
+# ----- Global Styles -----
+STYLES = Style("""
+    :root {
+        --primary: #004080;
+        --primary-light: #3374a5;
+        --secondary: #6c757d;
+        --background: #f8f9fa;
+        --sidebar: #f0f2f5;
+        --text: #333;
+        --text-light: #6c757d;
+        --border: #dee2e6;
+        --card: #fff;
+        --highlight: #e8f4f8;
+        --danger: #dc3545;
+        --success: #28a745;
+        --warning: #ffc107;
+        --info: #17a2b8;
+    }
+    body {
+        background-color: var(--background);
+        color: var(--text);
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    }
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+    nav {
+        border-radius: 8px;
+        background-color: var(--primary);
+        padding: 12px 20px;
+        margin-bottom: 1.5em;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    nav a {
+        color: white !important;
+        margin-right: 20px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: opacity 0.2s;
+        padding: 8px 12px;
+        border-radius: 4px;
+    }
+    nav a:hover {
+        background-color: var(--primary-light);
+        opacity: 0.9;
+    }
+    nav button {
+        background-color: white !important;
+        color: var(--primary) !important;
+    }
+    .filter-panel {
+        background-color: var(--sidebar);
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .filter-panel h3 {
+        margin-top: 0;
+        color: var(--primary);
+        border-bottom: 2px solid var(--primary-light);
+        padding-bottom: 8px;
+        margin-bottom: 15px;
+    }
+    .filter-panel h4 {
+        color: var(--text);
+        margin: 15px 0 10px 0;
+        font-size: 1rem;
+    }
+    .filter-panel label {
+        display: inline-flex;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+    .filter-panel input[type="checkbox"] {
+        margin-right: 8px;
+    }
+    .filter-panel button {
+        width: 100%;
+        margin-top: 15px;
+    }
+    .content-area {
+        background-color: var(--card);
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .content-area h2 {
+        color: var(--primary);
+        margin-top: 0;
+        border-bottom: 2px solid var(--border);
+        padding-bottom: 10px;
+        margin-bottom: 20px;
+    }
+    .content-area ul {
+        padding-left: 20px;
+    }
+    .content-area li {
+        margin-bottom: 10px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        transition: background-color 0.2s;
+    }
+    .content-area li:hover {
+        background-color: var(--highlight);
+    }
+    .content-area a {
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 500;
+    }
+    .content-area a:hover {
+        text-decoration: underline;
+    }
+    .entity-detail h2 {
+        color: var(--primary);
+        margin-bottom: 15px;
+    }
+    .entity-detail h3 {
+        color: var(--primary);
+        margin: 25px 0 10px 0;
+        border-top: 1px solid var(--border);
+        padding-top: 15px;
+    }
+    .entity-detail p {
+        margin-bottom: 15px;
+        line-height: 1.5;
+    }
+    .tag {
+        display: inline-block;
+        background-color: var(--primary-light);
+        color: white;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        margin-right: 5px;
+        margin-bottom: 5px;
+    }
+    .search-box {
+        margin-top: 15px;
+        margin-bottom: 15px;
+    }
+    .search-box input {
+        width: 100%;
+        padding: 8px 12px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+    }
+    .date-range {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-bottom: 15px;
+    }
+    .empty-state {
+        text-align: center;
+        padding: 30px;
+        color: var(--text-light);
+    }
+    .article-list {
+        margin-top: 15px;
+    }
+    .article-list li {
+        padding: 10px;
+        border-bottom: 1px solid var(--border);
+    }
+    .article-list li:last-child {
+        border-bottom: none;
+    }
+""")
 
+
+# ----- Utility Functions -----
 def encode_key(k: str) -> str:
     """Encode the entity key so it can be used in a URL."""
     return quote(k, safe="")
 
 
 def decode_key(k: str) -> str:
+    """Decode the entity key from a URL."""
     return unquote(k)
 
 
 def nav_bar():
     """Returns an FT component with a top nav bar."""
     return Nav(
-        A("Home", href="/"),
-        A("People", href="/people"),
-        A("Events", href="/events"),
-        A("Locations", href="/locations"),
-        A("Organizations", href="/organizations"),
+        A("Home", href="/", hx_boost="true"),
+        A("People", href="/people", hx_boost="true"),
+        A("Events", href="/events", hx_boost="true"),
+        A("Locations", href="/locations", hx_boost="true"),
+        A("Organizations", href="/organizations", hx_boost="true"),
         Button(
             "About",
             cls="secondary",
             style="margin-left:auto;",
-            onclick="alert('Not implemented');",
+            onclick="alert('Guantánamo Entities Browser helps researchers explore entities mentioned in documents related to the Guantánamo Bay detention camp.');",
         ),
         style="display:flex; gap:1em; margin-bottom:1em; align-items:center;",
     )
@@ -154,26 +315,44 @@ def main_layout(page_title: str, filter_panel, content):
     return Titled(
         page_title,
         Container(
+            STYLES,
             nav_bar(),
             # We'll wrap the filter panel and the main content in a side-by-side arrangement
             Div(
                 Div(
                     filter_panel,
-                    style="flex:0 0 220px; border-right:1px solid #ccc; padding-right:1em;",
+                    cls="filter-panel",
+                    style="flex:0 0 220px;",
                 ),
-                Div(content, style="flex:1; padding-left:1em;"),
-                style="display:flex; gap:1em;",
+                Div(content, cls="content-area", style="flex:1; margin-left:20px;"),
+                style="display:flex; gap:20px;",
             ),
         ),
     )
 
 
-################################################################
-#              Filter Panels (PLACEHOLDERS)
-################################################################
+def format_article_list(articles):
+    """Create a consistent formatting for article lists."""
+    if not articles:
+        return Div("No articles associated with this entity.", cls="empty-state")
+
+    art_list = []
+    for art in articles:
+        art_list.append(
+            Li(
+                f"{art.get('article_title', 'Untitled')} ",
+                A("(View Source)", href=art.get("article_url", "#"), target="_blank"),
+                style="display:flex; justify-content:space-between; align-items:center;",
+            )
+        )
+
+    return Ul(*art_list, cls="article-list")
 
 
-def people_filter_panel(q: str = "", selected_types: list[str] = None, selected_tags: list[str] = None):
+# ----- Filter Panels -----
+def people_filter_panel(
+    q: str = "", selected_types: list[str] = None, selected_tags: list[str] = None
+):
     if selected_types is None:
         selected_types = []
     if selected_tags is None:
@@ -202,6 +381,7 @@ def people_filter_panel(q: str = "", selected_types: list[str] = None, selected_
                     checked="checked" if pt.lower() in selected_types else None,
                 ),
                 Label(pt),
+                style="margin-bottom:8px;",
             )
         )
 
@@ -216,17 +396,26 @@ def people_filter_panel(q: str = "", selected_types: list[str] = None, selected_
                     checked="checked" if tg.lower() in selected_tags else None,
                 ),
                 Label(tg),
+                style="margin-bottom:8px;",
             )
         )
 
     return Form(
         H3("People Filters"),
-        H4("Types"),
-        *type_checks,
-        H4("Tags"),
-        *tag_checks,
-        Label("Search: ", Input(type="text", name="q", value=q, placeholder="Name...")),
-        Button("Apply Filters", type="submit"),
+        Div(H4("Person Types"), *type_checks) if type_checks else "",
+        Div(H4("Tags"), *tag_checks) if tag_checks else "",
+        Div(
+            Label("Search: "),
+            Input(
+                type="text",
+                name="q",
+                value=q,
+                placeholder="Search by name...",
+                style="width:100%; margin-top:5px;",
+            ),
+            cls="search-box",
+        ),
+        Button("Apply Filters", type="submit", cls="primary"),
         method="get",
         action="/people",
     )
@@ -246,6 +435,7 @@ def events_filter_panel(
         t = e.get("event_type", "").strip()
         if t:
             possible_types.add(t)
+
     checks = []
     for et in sorted(possible_types):
         checks.append(
@@ -257,24 +447,45 @@ def events_filter_panel(
                     checked="checked" if et.lower() in selected_types else None,
                 ),
                 Label(et),
+                style="margin-bottom:8px;",
             )
         )
+
     return Form(
         H3("Event Filters"),
-        P("Event Type:"),
-        *checks,
-        P("Date Range:"),
-        Label(
-            "From:",
-            Input(
-                type="date", name="start_date", value=start_date if start_date else None
+        Div(H4("Event Types"), *checks) if checks else "",
+        Div(
+            H4("Date Range"),
+            Div(
+                Label("From:"),
+                Input(
+                    type="date",
+                    name="start_date",
+                    value=start_date if start_date else None,
+                ),
+                style="margin-bottom:10px;",
             ),
+            Div(
+                Label("To:"),
+                Input(
+                    type="date", name="end_date", value=end_date if end_date else None
+                ),
+                style="margin-bottom:10px;",
+            ),
+            cls="date-range",
         ),
-        Label(
-            "To:",
-            Input(type="date", name="end_date", value=end_date if end_date else None),
+        Div(
+            Label("Search: "),
+            Input(
+                type="text",
+                name="q",
+                value=q,
+                placeholder="Search by title...",
+                style="width:100%; margin-top:5px;",
+            ),
+            cls="search-box",
         ),
-        Button("Apply Filters", type="submit"),
+        Button("Apply Filters", type="submit", cls="primary"),
         method="get",
         action="/events",
     )
@@ -289,6 +500,7 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
         t = loc.get("type", "").strip()
         if t:
             possible_types.add(t)
+
     checks = []
     for lt in sorted(possible_types):
         checks.append(
@@ -300,16 +512,25 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
                     checked="checked" if lt.lower() in selected_types else None,
                 ),
                 Label(lt),
+                style="margin-bottom:8px;",
             )
         )
+
     return Form(
-        H3("Locations Filters"),
-        *checks,
-        Label(
-            "Search: ",
-            Input(type="text", name="q", value=q, placeholder="Location name..."),
+        H3("Location Filters"),
+        Div(H4("Location Types"), *checks) if checks else "",
+        Div(
+            Label("Search: "),
+            Input(
+                type="text",
+                name="q",
+                value=q,
+                placeholder="Search by name...",
+                style="width:100%; margin-top:5px;",
+            ),
+            cls="search-box",
         ),
-        Button("Apply Filters", type="submit"),
+        Button("Apply Filters", type="submit", cls="primary"),
         method="get",
         action="/locations",
     )
@@ -324,6 +545,7 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
         t = org.get("type", "").strip()
         if t:
             possible_types.add(t)
+
     checks = []
     for ot in sorted(possible_types):
         checks.append(
@@ -335,42 +557,115 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
                     checked="checked" if ot.lower() in selected_types else None,
                 ),
                 Label(ot),
+                style="margin-bottom:8px;",
             )
         )
+
     return Form(
         H3("Organization Filters"),
-        *checks,
-        Label(
-            "Search: ",
-            Input(type="text", name="q", value=q, placeholder="Organization name..."),
+        Div(H4("Organization Types"), *checks) if checks else "",
+        Div(
+            Label("Search: "),
+            Input(
+                type="text",
+                name="q",
+                value=q,
+                placeholder="Search by name...",
+                style="width:100%; margin-top:5px;",
+            ),
+            cls="search-box",
         ),
-        Button("Apply Filters", type="submit"),
+        Button("Apply Filters", type="submit", cls="primary"),
         method="get",
         action="/organizations",
     )
 
 
-################################################################
-#             HOME
-################################################################
-
-
+# ----- Homepage -----
 @rt("/")
 def get_home():
     """Home route: show quick welcome and links to each entity type."""
     return Titled(
         "GTMO Browse - Home",
-        nav_bar(),
-        H1("Welcome to Guantánamo Entities Browser"),
-        P("Use the navigation above to browse the extracted entity data."),
+        Container(
+            STYLES,
+            nav_bar(),
+            Div(
+                H1(
+                    "Guantánamo Entities Browser",
+                    style="color:var(--primary); margin-bottom:30px; text-align:center;",
+                ),
+                Div(
+                    Div(
+                        H2("Browse Entities"),
+                        P(
+                            "Explore entities extracted from documents related to Guantánamo Bay."
+                        ),
+                        style="text-align:center; margin-bottom:30px;",
+                    ),
+                    Div(
+                        Div(
+                            H3("People", style="color:var(--primary);"),
+                            P(
+                                "Browse detainees, officials, legal representatives, and other individuals."
+                            ),
+                            A(
+                                "View People →",
+                                href="/people",
+                                cls="primary",
+                                style="display:inline-block; margin-top:10px;",
+                            ),
+                            style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
+                        ),
+                        Div(
+                            H3("Events", style="color:var(--primary);"),
+                            P(
+                                "Timeline of hearings, transfers, policy changes, and other significant events."
+                            ),
+                            A(
+                                "View Events →",
+                                href="/events",
+                                cls="primary",
+                                style="display:inline-block; margin-top:10px;",
+                            ),
+                            style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
+                        ),
+                        Div(
+                            H3("Locations", style="color:var(--primary);"),
+                            P(
+                                "Explore detention facilities, courtrooms, and other relevant locations."
+                            ),
+                            A(
+                                "View Locations →",
+                                href="/locations",
+                                cls="primary",
+                                style="display:inline-block; margin-top:10px;",
+                            ),
+                            style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
+                        ),
+                        Div(
+                            H3("Organizations", style="color:var(--primary);"),
+                            P(
+                                "Agencies, military units, legal teams, and other organizations involved."
+                            ),
+                            A(
+                                "View Organizations →",
+                                href="/organizations",
+                                cls="primary",
+                                style="display:inline-block; margin-top:10px;",
+                            ),
+                            style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
+                        ),
+                        style="display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:20px;",
+                    ),
+                    cls="content-area",
+                ),
+            ),
+        ),
     )
 
 
-################################################################
-#              People
-################################################################
-
-
+# ----- People -----
 @rt("/people")
 def list_people(request):
     q = request.query_params.get("q", "").strip().lower()
@@ -384,7 +679,9 @@ def list_people(request):
     for k, person in people_index.items():
         ptype = person.get("type", "").strip().lower()
         pname = person.get("name", "").strip().lower()
-        p_tags = [tg.strip().lower() for tg in person.get("profile", {}).get("tags", [])]
+        p_tags = [
+            tg.strip().lower() for tg in person.get("profile", {}).get("tags", [])
+        ]
 
         # if there's a type filter, skip if not matching
         if selected_types and ptype not in selected_types:
@@ -398,13 +695,33 @@ def list_people(request):
             if not set(p_tags).intersection(selected_tags):
                 continue
 
-        link = A(person["name"], href=f"/people/{encode_key(k)}")
-        filtered_items.append(Li(link))
+        # Display type badge for each person
+        type_badge = ""
+        if person.get("type"):
+            type_badge = Span(person.get("type"), cls="tag")
 
-    content = Div(H2("People"), Ul(*filtered_items), style="margin-top:1em;")
+        link = A(person["name"], href=f"/people/{encode_key(k)}")
+        filtered_items.append(Li(link, " ", type_badge))
+
+    content = Div(
+        H2("People"),
+        Div(
+            f"{len(filtered_items)} people found",
+            style="margin-bottom:15px; color:var(--text-light);",
+        ),
+        Ul(*filtered_items)
+        if filtered_items
+        else Div(
+            "No people match your filters. Try adjusting your criteria.",
+            cls="empty-state",
+        ),
+    )
+
     return main_layout(
         "GTMO Browse - People",
-        people_filter_panel(q=q, selected_types=selected_types, selected_tags=selected_tags),
+        people_filter_panel(
+            q=q, selected_types=selected_types, selected_tags=selected_tags
+        ),
         content,
     )
 
@@ -418,11 +735,18 @@ def show_person(key: str):
         return Titled(
             "GTMO Browse - People - Not Found",
             Container(
+                STYLES,
                 nav_bar(),
-                H2("Person not found"),
-                P(f"No person found for key: {actual_key}"),
+                Div(
+                    H2("Person not found", style="color:var(--danger);"),
+                    P(f"No person found with the name: {actual_key}"),
+                    A("← Back to People", href="/people", cls="primary"),
+                    cls="content-area",
+                    style="max-width:800px; margin:0 auto;",
+                ),
             ),
         )
+
     name = person.get("name", "N/A")
     typ = person.get("type", "N/A")
     profile = person.get("profile", {})
@@ -430,39 +754,56 @@ def show_person(key: str):
     transformed_text = transform_profile_text(text, person.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = person.get("articles", [])
-    art_list = []
-    for art in articles:
-        art_list.append(
-            Li(
-                f"Article ID: {art.get('article_id', '')}, Title: {art.get('article_title', 'N/A')} ",
-                A("(link)", href=art.get("article_url", "#"), target="_blank"),
-            )
-        )
+
+    # Create tags display
+    tags = profile.get("tags", [])
+    tag_elements = []
+    for tag in tags:
+        if tag.strip():
+            tag_elements.append(Span(tag, cls="tag"))
 
     detail_content = Div(
         H2(f"Person: {name}"),
-        P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+        Div(
+            Span(f"Type: ", style="font-weight:bold;"),
+            Span(typ, cls="tag"),
+            style="margin-bottom:15px;",
+        ),
+        Div(*tag_elements, style="margin-bottom:20px;") if tag_elements else "",
+        H3("Profile Information"),
+        Div(
+            NotStr(markdown.markdown(transformed_text))
+            if transformed_text
+            else "No detailed profile information available for this person.",
+            cls="profile-text",
+        ),
+        Div(
+            Span("AI Confidence: ", style="font-weight:bold;"),
+            Span(conf, style="font-style:italic;"),
+            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
+        ),
+        H3("Related Articles"),
+        format_article_list(articles),
+        cls="entity-detail",
     )
 
-    # We can wrap detail pages in the same layout.
-    # We'll pass an empty filter panel or minimal placeholder for detail pages.
     return main_layout(
         f"GTMO Browse - People - {name}",
-        Div("No filters for detail pages."),
+        Div(
+            H3("Navigation"),
+            A(
+                "← Back to People",
+                href="/people",
+                cls="primary",
+                style="display:block; margin-bottom:10px;",
+            ),
+            style="margin-bottom:20px;",
+        ),
         detail_content,
     )
 
 
-################################################################
-#              Events
-################################################################
-
-
-@rt("/events")
+# ----- Events -----
 @rt("/events")
 def list_events(request):
     import arrow
@@ -527,10 +868,42 @@ def list_events(request):
     items = []
     for k, startdt, ev in filtered:
         start_str = startdt.format("YYYY-MM-DD") if startdt else "Unknown"
-        link = A(ev["title"], href=f"/events/{encode_key(k)}")
-        items.append(Li(f"{start_str} — ", link))
+        event_type = ev.get("event_type", "")
 
-    content = Div(H2("Events"), Ul(*items), style="margin-top:1em;")
+        # Display type badge for each event
+        type_badge = ""
+        if event_type:
+            type_badge = Span(event_type, cls="tag")
+
+        link = A(ev["title"], href=f"/events/{encode_key(k)}")
+        items.append(
+            Li(
+                Div(
+                    Span(
+                        start_str,
+                        style="font-weight:bold; margin-right:10px; color:var(--primary);",
+                    ),
+                    link,
+                    style="display:flex; align-items:center;",
+                ),
+                Div(type_badge, style="margin-top:5px;") if type_badge else "",
+            )
+        )
+
+    content = Div(
+        H2("Events"),
+        Div(
+            f"{len(filtered)} events found",
+            style="margin-bottom:15px; color:var(--text-light);",
+        ),
+        Ul(*items)
+        if items
+        else Div(
+            "No events match your filters. Try adjusting your criteria.",
+            cls="empty-state",
+        ),
+    )
+
     return main_layout(
         "GTMO Browse - Events",
         events_filter_panel(q, selected_types, start_q, end_q),
@@ -546,8 +919,13 @@ def show_event(key: str):
         return main_layout(
             "GTMO Browse - Events - Not Found",
             Div("No filters for detail pages."),
-            Div(H2("Event not found"), P(f"No event found for key: {actual_key}")),
+            Div(
+                H2("Event not found", style="color:var(--danger);"),
+                P(f"No event found with the key: {actual_key}"),
+                A("← Back to Events", href="/events", cls="primary"),
+            ),
         )
+
     title = ev.get("title", "N/A")
     event_type = ev.get("event_type", "N/A")
     start = ev.get("start_date", "")
@@ -559,42 +937,73 @@ def show_event(key: str):
     transformed_text = transform_profile_text(text, ev.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = ev.get("articles", [])
-    art_list = []
-    for art in articles:
-        art_list.append(
-            Li(
-                f"Article ID: {art.get('article_id', '')}, Title: {art.get('article_title', 'N/A')} ",
-                A("(link)", href=art.get("article_url", "#"), target="_blank"),
-            )
-        )
 
     detail_content = Div(
         H2(f"Event: {title}"),
-        P(f"Type: {event_type}"),
-        P(f"Start Date: {start}"),
-        P(f"End Date: {end if end else 'None'}"),
-        P(f"Is Fuzzy Date: {is_fuzzy}"),
+        Div(
+            Span("Type: ", style="font-weight:bold;"),
+            Span(event_type, cls="tag"),
+            style="margin-bottom:15px;",
+        ),
+        Div(
+            Div(
+                Span("Start Date: ", style="font-weight:bold;"),
+                Span(start if start else "Unknown"),
+                style="margin-bottom:5px;",
+            ),
+            Div(
+                Span("End Date: ", style="font-weight:bold;"),
+                Span(end if end else "N/A"),
+                style="margin-bottom:5px;",
+            ),
+            Div(
+                Span("Date Precision: ", style="font-weight:bold;"),
+                Span("Approximate" if is_fuzzy else "Exact"),
+                style="font-style:italic; color:var(--text-light);",
+            ),
+            style="margin-bottom:20px; padding:10px; background:var(--highlight); border-radius:5px;",
+        ),
         H3("Description"),
-        P(desc),
-        H3("Profile Text"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+        P(desc)
+        if desc
+        else P(
+            "No description available.",
+            style="font-style:italic; color:var(--text-light);",
+        ),
+        H3("Profile Information"),
+        Div(
+            NotStr(markdown.markdown(transformed_text))
+            if transformed_text
+            else "No detailed profile information available for this event.",
+            cls="profile-text",
+        ),
+        Div(
+            Span("AI Confidence: ", style="font-weight:bold;"),
+            Span(conf, style="font-style:italic;"),
+            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
+        ),
+        H3("Related Articles"),
+        format_article_list(articles),
+        cls="entity-detail",
     )
+
     return main_layout(
         f"GTMO Browse - Events - {title}",
-        Div("No filters for detail pages."),
+        Div(
+            H3("Navigation"),
+            A(
+                "← Back to Events",
+                href="/events",
+                cls="primary",
+                style="display:block; margin-bottom:10px;",
+            ),
+            style="margin-bottom:20px;",
+        ),
         detail_content,
     )
 
 
-################################################################
-#              Locations
-################################################################
-
-
-@rt("/locations")
+# ----- Locations -----
 @rt("/locations")
 def list_locations(request):
     q = request.query_params.get("q", "").strip().lower()
@@ -611,10 +1020,28 @@ def list_locations(request):
         if q and q not in lname:
             continue
 
-        link = A(loc["name"], href=f"/locations/{encode_key(k)}")
-        filtered_items.append(Li(link))
+        # Display type badge for each location
+        type_badge = ""
+        if loc.get("type"):
+            type_badge = Span(loc.get("type"), cls="tag")
 
-    content = Div(H2("Locations"), Ul(*filtered_items), style="margin-top:1em;")
+        link = A(loc["name"], href=f"/locations/{encode_key(k)}")
+        filtered_items.append(Li(link, " ", type_badge))
+
+    content = Div(
+        H2("Locations"),
+        Div(
+            f"{len(filtered_items)} locations found",
+            style="margin-bottom:15px; color:var(--text-light);",
+        ),
+        Ul(*filtered_items)
+        if filtered_items
+        else Div(
+            "No locations match your filters. Try adjusting your criteria.",
+            cls="empty-state",
+        ),
+    )
+
     return main_layout(
         "GTMO Browse - Locations",
         locations_filter_panel(q=q, selected_types=selected_types),
@@ -631,9 +1058,12 @@ def show_location(key: str):
             "GTMO Browse - Locations - Not Found",
             Div("No filters for detail pages."),
             Div(
-                H2("Location not found"), P(f"No location found for key: {actual_key}")
+                H2("Location not found", style="color:var(--danger);"),
+                P(f"No location found with the key: {actual_key}"),
+                A("← Back to Locations", href="/locations", cls="primary"),
             ),
         )
+
     nm = loc.get("name", "N/A")
     typ = loc.get("type", "N/A")
     profile = loc.get("profile", {})
@@ -641,36 +1071,48 @@ def show_location(key: str):
     transformed_text = transform_profile_text(text, loc.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = loc.get("articles", [])
-    art_list = []
-    for art in articles:
-        art_list.append(
-            Li(
-                f"Article ID: {art.get('article_id', '')}, Title: {art.get('article_title', 'N/A')} ",
-                A("(link)", href=art.get("article_url", "#"), target="_blank"),
-            )
-        )
 
     detail_content = Div(
         H2(f"Location: {nm}"),
-        P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+        Div(
+            Span("Type: ", style="font-weight:bold;"),
+            Span(typ, cls="tag"),
+            style="margin-bottom:20px;",
+        ),
+        H3("Profile Information"),
+        Div(
+            NotStr(markdown.markdown(transformed_text))
+            if transformed_text
+            else "No detailed profile information available for this location.",
+            cls="profile-text",
+        ),
+        Div(
+            Span("AI Confidence: ", style="font-weight:bold;"),
+            Span(conf, style="font-style:italic;"),
+            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
+        ),
+        H3("Related Articles"),
+        format_article_list(articles),
+        cls="entity-detail",
     )
+
     return main_layout(
         f"GTMO Browse - Locations - {nm}",
-        Div("No filters for detail pages."),
+        Div(
+            H3("Navigation"),
+            A(
+                "← Back to Locations",
+                href="/locations",
+                cls="primary",
+                style="display:block; margin-bottom:10px;",
+            ),
+            style="margin-bottom:20px;",
+        ),
         detail_content,
     )
 
 
-################################################################
-#              Organizations
-################################################################
-
-
-@rt("/organizations")
+# ----- Organizations -----
 @rt("/organizations")
 def list_orgs(request):
     q = request.query_params.get("q", "").strip().lower()
@@ -687,10 +1129,28 @@ def list_orgs(request):
         if q and q not in oname:
             continue
 
-        link = A(org["name"], href=f"/organizations/{encode_key(k)}")
-        filtered_items.append(Li(link))
+        # Display type badge for each organization
+        type_badge = ""
+        if org.get("type"):
+            type_badge = Span(org.get("type"), cls="tag")
 
-    content = Div(H2("Organizations"), Ul(*filtered_items), style="margin-top:1em;")
+        link = A(org["name"], href=f"/organizations/{encode_key(k)}")
+        filtered_items.append(Li(link, " ", type_badge))
+
+    content = Div(
+        H2("Organizations"),
+        Div(
+            f"{len(filtered_items)} organizations found",
+            style="margin-bottom:15px; color:var(--text-light);",
+        ),
+        Ul(*filtered_items)
+        if filtered_items
+        else Div(
+            "No organizations match your filters. Try adjusting your criteria.",
+            cls="empty-state",
+        ),
+    )
+
     return main_layout(
         "GTMO Browse - Organizations",
         organizations_filter_panel(q=q, selected_types=selected_types),
@@ -707,10 +1167,12 @@ def show_org(key: str):
             "GTMO Browse - Organizations - Not Found",
             Div("No filters for detail pages."),
             Div(
-                H2("Organization not found"),
-                P(f"No organization found for key: {actual_key}"),
+                H2("Organization not found", style="color:var(--danger);"),
+                P(f"No organization found with the key: {actual_key}"),
+                A("← Back to Organizations", href="/organizations", cls="primary"),
             ),
         )
+
     nm = org.get("name", "N/A")
     typ = org.get("type", "N/A")
     profile = org.get("profile", {})
@@ -718,33 +1180,47 @@ def show_org(key: str):
     transformed_text = transform_profile_text(text, org.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = org.get("articles", [])
-    art_list = []
-    for art in articles:
-        art_list.append(
-            Li(
-                f"Article ID: {art.get('article_id', '')}, Title: {art.get('article_title', 'N/A')} ",
-                A("(link)", href=art.get("article_url", "#"), target="_blank"),
-            )
-        )
 
     detail_content = Div(
         H2(f"Organization: {nm}"),
-        P(f"Type: {typ}"),
-        Div(NotStr(markdown.markdown(transformed_text))),
-        P(f"Confidence: {conf}"),
-        H3("Articles"),
-        Ul(*art_list),
+        Div(
+            Span("Type: ", style="font-weight:bold;"),
+            Span(typ, cls="tag"),
+            style="margin-bottom:20px;",
+        ),
+        H3("Profile Information"),
+        Div(
+            NotStr(markdown.markdown(transformed_text))
+            if transformed_text
+            else "No detailed profile information available for this organization.",
+            cls="profile-text",
+        ),
+        Div(
+            Span("AI Confidence: ", style="font-weight:bold;"),
+            Span(conf, style="font-style:italic;"),
+            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
+        ),
+        H3("Related Articles"),
+        format_article_list(articles),
+        cls="entity-detail",
     )
+
     return main_layout(
         f"GTMO Browse - Organizations - {nm}",
-        Div("No filters for detail pages."),
+        Div(
+            H3("Navigation"),
+            A(
+                "← Back to Organizations",
+                href="/organizations",
+                cls="primary",
+                style="display:block; margin-bottom:10px;",
+            ),
+            style="margin-bottom:20px;",
+        ),
         detail_content,
     )
 
 
-################################################################
-#              Run
-################################################################
-
+# ----- Run -----
 if __name__ == "__main__":
     serve()
