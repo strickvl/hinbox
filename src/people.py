@@ -4,7 +4,6 @@ from typing import Any, Dict, List
 
 import instructor
 import litellm
-import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -15,7 +14,7 @@ from src.constants import (
     OLLAMA_MODEL,
     get_ollama_model_name,
 )
-from src.models import Person, PersonType
+from src.models import Person
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -23,27 +22,6 @@ litellm.callbacks = ["braintrust"]
 
 class ArticlePeople(BaseModel):
     people: List[Person]
-
-
-def spacy_extract_people(text: str) -> List[Dict[str, Any]]:
-    """Extract person entities from the provided text using spaCy."""
-    nlp = spacy.load("en_core_web_lg")
-
-    # Process the text
-    doc = nlp(text)
-
-    # Extract person entities
-    people = []
-    seen_people = set()  # Track people we've already added
-
-    for ent in doc.ents:
-        if ent.label_ == "PERSON":
-            # Only add if we haven't seen this person name before
-            if ent.text not in seen_people:
-                people.append(Person(name=ent.text, type=PersonType.OTHER))
-                seen_people.add(ent.text)
-
-    return people
 
 
 def gemini_extract_people(text: str, model: str = CLOUD_MODEL) -> List[Dict[str, Any]]:

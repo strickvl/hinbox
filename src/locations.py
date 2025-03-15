@@ -2,7 +2,6 @@ from typing import Any, Dict, List
 
 import instructor
 import litellm
-import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -13,7 +12,7 @@ from src.constants import (
     OLLAMA_MODEL,
     get_ollama_model_name,
 )
-from src.models import Place, PlaceType
+from src.models import Place
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -21,27 +20,6 @@ litellm.callbacks = ["braintrust"]
 
 class ArticleLocations(BaseModel):
     locations: List[Place]
-
-
-def spacy_extract_locations(text: str) -> List[Dict[str, Any]]:
-    """Extract location entities from the provided text using spaCy."""
-    nlp = spacy.load("en_core_web_lg")
-
-    # Process the text
-    doc = nlp(text)
-
-    # Extract location entities (GPE: countries, cities, etc. and LOC: non-GPE locations)
-    locations = []
-    seen_locations = set()  # Track locations we've already added
-
-    for ent in doc.ents:
-        if ent.label_ in ["GPE", "LOC"]:
-            # Only add if we haven't seen this location name before
-            if ent.text not in seen_locations:
-                locations.append(Place(name=ent.text, type=PlaceType.OTHER))
-                seen_locations.add(ent.text)
-
-    return locations
 
 
 def gemini_extract_locations(

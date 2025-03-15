@@ -99,13 +99,6 @@ def write_entities_to_files(entities: Dict[str, Dict]):
             write_entity_to_file(entity_type, entity_key, entity_data)
 
 
-def reload_entities() -> Dict[str, Dict]:
-    """
-    Reload all entity files to get the latest state.
-    """
-    return load_existing_entities()
-
-
 def main():
     print("Starting script...")
 

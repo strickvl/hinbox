@@ -2,7 +2,6 @@ from typing import Any, Dict, List
 
 import instructor
 import litellm
-import spacy
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -13,7 +12,7 @@ from src.constants import (
     OLLAMA_MODEL,
     get_ollama_model_name,
 )
-from src.models import Organization, OrganizationType
+from src.models import Organization
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
@@ -21,29 +20,6 @@ litellm.callbacks = ["braintrust"]
 
 class ArticleOrganizations(BaseModel):
     organizations: List[Organization]
-
-
-def spacy_extract_organizations(text: str) -> List[Dict[str, Any]]:
-    """Extract organization entities from the provided text using spaCy."""
-    nlp = spacy.load("en_core_web_lg")
-
-    # Process the text
-    doc = nlp(text)
-
-    # Extract organization entities
-    organizations = []
-    seen_organizations = set()  # Track organizations we've already added
-
-    for ent in doc.ents:
-        if ent.label_ == "ORG":
-            # Only add if we haven't seen this organization name before
-            if ent.text not in seen_organizations:
-                organizations.append(
-                    Organization(name=ent.text, type=OrganizationType.OTHER)
-                )
-                seen_organizations.add(ent.text)
-
-    return organizations
 
 
 def gemini_extract_organizations(

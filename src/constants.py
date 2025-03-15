@@ -25,7 +25,6 @@ def get_ollama_model_name(model: str) -> str:
 # File paths
 ARTICLES_PATH = "data/raw_sources/miami_herald_articles.parquet"
 OUTPUT_DIR = "data/entities"
-PROCESSED_ARTICLES_PATH = "data/processed/processed_articles.parquet"
 
 PEOPLE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "people.parquet")
 EVENTS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "events.parquet")
