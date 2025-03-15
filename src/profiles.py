@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Dict, List
 
 import instructor
@@ -13,6 +14,7 @@ from src.constants import (
     OLLAMA_MODEL,
     get_ollama_model_name,
 )
+from src.utils import GenerationMode, ReflectionResult, iterative_improve
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
@@ -41,6 +43,154 @@ class EntityProfile(BaseModel):
     )
 
 
+class ProfileValidation(BaseModel):
+    """Model for validating generated profiles"""
+
+    is_valid: bool = Field(
+        ..., description="Whether the profile meets all requirements"
+    )
+    reason: str = Field(..., description="Explanation of validation result")
+    suggestions: List[str] = Field(
+        default_factory=list, description="Suggestions for improvement if invalid"
+    )
+
+
+def validate_profile(profile: Dict) -> ProfileValidation:
+    """
+    Validate a generated profile against defined criteria.
+
+    Checks:
+    1. Required sections present
+    2. Citation format correct
+    3. Reasonable confidence score
+    """
+    issues = []
+    suggestions = []
+
+    # Check text exists and isn't too short
+    text = profile.get("text", "")
+    if not text or len(text.strip()) < 50:  # Basic sanity check
+        issues.append("Profile text is missing or too short")
+        suggestions.append("Expand the profile with more details from the source")
+
+    # Check for required sections (flexible - looks for any section headers)
+    if not any(line.startswith("#") for line in text.split("\n")):
+        issues.append("No sections found in profile")
+        suggestions.append("Add relevant sections like 'Background', 'Role', etc.")
+
+    # Check citation format
+    citation_pattern = r"\^\[([^\]]+)\]"
+    citations = re.findall(citation_pattern, text)
+    if not citations:
+        issues.append("No citations found")
+        suggestions.append("Add citations in the format: fact^[article_id]")
+    else:
+        # Check citation format
+        invalid_citations = [
+            c
+            for c in citations
+            if "," in c and not c.replace(" ", "").replace(",", "").isalnum()
+        ]
+        if invalid_citations:
+            issues.append("Invalid citation format found")
+            suggestions.append(
+                "Use only article IDs in citations, e.g. fact^[abc123] or fact^[abc123, def456]"
+            )
+
+    # Check confidence score
+    confidence = profile.get("confidence", 0)
+    if not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+        issues.append("Invalid confidence score")
+        suggestions.append("Provide confidence score between 0 and 1")
+
+    # Check tags exist
+    tags = profile.get("tags", [])
+    if not tags:
+        issues.append("No tags provided")
+        suggestions.append("Add relevant tags for the profile")
+
+    # Check sources exist
+    sources = profile.get("sources", [])
+    if not sources:
+        issues.append("No sources listed")
+        suggestions.append("Include source article IDs")
+
+    is_valid = len(issues) == 0
+    reason = "Profile meets all requirements" if is_valid else "; ".join(issues)
+
+    return ProfileValidation(is_valid=is_valid, reason=reason, suggestions=suggestions)
+
+
+def generate_profile_with_reflection(
+    entity_type: str,
+    entity_name: str,
+    article_text: str,
+    article_id: str,
+    model_type: str = "gemini",
+    max_iterations: int = 3,
+) -> Dict:
+    """
+    Generate a profile with reflection and improvement.
+    Uses iterative_improve from utils.py.
+    """
+
+    def _validate_response(response: EntityProfile) -> ReflectionResult:
+        """Validate the generated profile and return reflection result."""
+        validation = validate_profile(response.model_dump())
+        return ReflectionResult(
+            result=validation.is_valid,
+            reason=validation.reason,
+            feedback_for_improvement="\n".join(validation.suggestions),
+        )
+
+    # Enhanced system prompt emphasizing requirements
+    system_prompt = f"""You are an expert at creating profiles for entities mentioned in news articles.
+
+Your task is to create a comprehensive profile for a {entity_type} named "{entity_name}" based solely on the provided article text.
+
+The profile MUST:
+1. Be organized with clear section headers (e.g., ### Background, ### Role)
+2. Include citations for every fact using format: fact^[article_id]
+3. For multiple sources use format: fact^[id1, id2]
+4. Include relevant tags/keywords
+5. Provide a confidence score (0-1)
+6. Only include factual information from the source
+
+Example format:
+```
+John Smith is a military officer^[abc123] who oversees operations at Guantánamo Bay^[abc123, def456].
+
+### Background
+* Previously served in Afghanistan^[abc123]
+* Extensive experience in detention operations^[abc123, def456]
+```
+"""
+
+    # Use iterative_improve to generate and refine the profile
+    final_result, history = iterative_improve(
+        prompt=f"Article text:\n\n{article_text}\n\nCreate a profile for {entity_type} '{entity_name}'. Article ID: {article_id}",
+        response_model=EntityProfile,
+        generation_mode=GenerationMode.CLOUD
+        if model_type == "gemini"
+        else GenerationMode.LOCAL,
+        max_iterations=max_iterations,
+        metadata={"project_name": "hinbox", "tags": ["profile_generation"]},
+    )
+
+    if final_result is None:
+        # Fallback to basic profile if all iterations fail
+        return {
+            "text": f"Profile generation failed for {entity_name}^[{article_id}]",
+            "tags": [],
+            "confidence": 0.0,
+            "sources": [article_id],
+        }
+
+    result_dict = final_result.model_dump()
+    result_dict["sources"] = [article_id]
+    return result_dict
+
+
 def generate_profile(
     entity_type: str,
     entity_name: str,
@@ -50,23 +200,15 @@ def generate_profile(
 ) -> Dict:
     """
     Generate a profile for an entity based on article text using structured extraction.
-
-    Args:
-        entity_type: Type of entity (e.g., person, organization, location, event)
-        entity_name: The name of the entity
-        article_text: Text of the article to extract information from
-        article_id: The article ID to use as source
-        model_type: Model to use ("gemini" or "ollama")
-
-    Returns:
-        Dict representation of the structured profile.
+    Now uses reflection pattern for validation and improvement.
     """
-    if model_type == "gemini":
-        logger.info("Generating profile using Gemini model")
-        return generate_with_gemini(entity_type, entity_name, article_text, article_id)
-    else:
-        logger.info("Generating profile using Ollama model")
-        return generate_with_ollama(entity_type, entity_name, article_text, article_id)
+    return generate_profile_with_reflection(
+        entity_type=entity_type,
+        entity_name=entity_name,
+        article_text=article_text,
+        article_id=article_id,
+        model_type=model_type,
+    )
 
 
 def generate_with_gemini(

@@ -200,6 +200,9 @@ def main():
             row["processing_metadata"] = {}
         processing_metadata = row["processing_metadata"]
 
+        # Initialize reflection metadata
+        processing_metadata["reflection_attempts"] = {}
+
         # Skip if already processed and not forced
         if processing_metadata.get("processed") and not args.force_reprocess:
             console.print("[yellow]Article already processed, skipping...[/yellow]")
@@ -246,16 +249,28 @@ def main():
 
         extraction_timestamp = datetime.now().isoformat()
 
-        # Extract people
+        # Extract people with reflection tracking
         try:
             console.print("[blue]Extracting people...[/blue]")
             if args.local:
                 extracted_people = ollama_extract_people(article_content, model="qwq")
             else:
                 extracted_people = gemini_extract_people(article_content)
+
+            # Track reflection attempts for people - just record success for now
+            # since we don't have direct access to reflection history
+            processing_metadata["reflection_attempts"]["people"] = {
+                "attempts": 1,  # Basic tracking for now
+                "success": bool(extracted_people),
+                "timestamp": datetime.now().isoformat(),
+            }
         except Exception as e:
             console.print(f"[red]Error extracting people: {e}[/red]")
             extracted_people = []
+            processing_metadata["reflection_attempts"]["people"] = {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
 
         # Extract organizations
         try:
@@ -266,9 +281,19 @@ def main():
                 )
             else:
                 extracted_orgs = gemini_extract_organizations(article_content)
+
+            processing_metadata["reflection_attempts"]["organizations"] = {
+                "attempts": 1,
+                "success": bool(extracted_orgs),
+                "timestamp": datetime.now().isoformat(),
+            }
         except Exception as e:
             console.print(f"[red]Error extracting organizations: {e}[/red]")
             extracted_orgs = []
+            processing_metadata["reflection_attempts"]["organizations"] = {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
 
         # Extract locations
         try:
@@ -277,9 +302,19 @@ def main():
                 extracted_locs = ollama_extract_locations(article_content, model="qwq")
             else:
                 extracted_locs = gemini_extract_locations(article_content)
+
+            processing_metadata["reflection_attempts"]["locations"] = {
+                "attempts": 1,
+                "success": bool(extracted_locs),
+                "timestamp": datetime.now().isoformat(),
+            }
         except Exception as e:
             console.print(f"[red]Error extracting locations: {e}[/red]")
             extracted_locs = []
+            processing_metadata["reflection_attempts"]["locations"] = {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+            }
 
         # Extract events
         try:
@@ -288,6 +323,12 @@ def main():
                 extracted_events = ollama_extract_events(article_content, model="qwq")
             else:
                 extracted_events = gemini_extract_events(article_content)
+
+            processing_metadata["reflection_attempts"]["events"] = {
+                "attempts": 1,
+                "success": bool(extracted_events),
+                "timestamp": datetime.now().isoformat(),
+            }
         except Exception as e:
             console.print(f"[red]Error extracting events: {e}[/red]")
             extracted_events = []

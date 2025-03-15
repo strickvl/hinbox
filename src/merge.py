@@ -499,179 +499,169 @@ def merge_people(
 
         entity_updated = False
 
-        # Generate embedding for the person name and type
-        proposed_profile_text = create_profile(
-            "person", person_name, article_content, article_id, model_type
-        ).get("text")
-        proposed_person_embedding = embed_text(
-            proposed_profile_text, model_name=embedding_model
-        )
-
-        # Find similar person using embeddings
-        similar_name, similarity_score = find_similar_person(
-            person_name, proposed_person_embedding, entities, similarity_threshold
-        )
-
-        if similar_name:
-            console.print(
-                f"[purple]Doing a final check to see if '{person_name}' is the same as '{similar_name}'[/purple]..."
+        try:
+            # Generate embedding for the person name and type
+            proposed_profile = create_profile(
+                "person", person_name, article_content, article_id, model_type
             )
-            if model_type == "ollama":
-                result = local_model_check_match(
-                    person_name,
-                    similar_name,
-                    proposed_profile_text,
-                    entities["people"][similar_name]["profile"]["text"],
-                )
-            else:
-                result = cloud_model_check_match(
-                    person_name,
-                    similar_name,
-                    proposed_profile_text,
-                    entities["people"][similar_name]["profile"]["text"],
-                )
-            if result.is_match:
+            if not proposed_profile or not proposed_profile.get("text"):
                 console.print(
-                    f"[green]The profiles match! Merging '{person_name}' with '{similar_name}'[/green]"
-                )
-            else:
-                console.print(
-                    f"[red]The profiles do not match. Skipping merge for '{person_name}'[/red]"
+                    f"[red]Failed to generate profile for {person_name}[/red]"
                 )
                 continue
 
-            # We found a similar person - use that instead of creating a new one
-            console.print(
-                f"[blue]Merging '{person_name}' with existing person '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
+            proposed_profile_text = proposed_profile.get("text", "")
+            proposed_person_embedding = embed_text(
+                proposed_profile_text, model_name=embedding_model
             )
 
-            # Use the existing person's name as the key
-            existing_person = entities["people"][similar_name]
-
-            # Check if this article is already associated with the person
-            article_exists = any(
-                a.get("article_id") == article_id for a in existing_person["articles"]
+            # Find similar person using embeddings
+            similar_name, similarity_score = find_similar_person(
+                person_name, proposed_person_embedding, entities, similarity_threshold
             )
 
-            if not article_exists:
-                existing_person["articles"].append(
-                    {
-                        "article_id": article_id,
-                        "article_title": article_title,
-                        "article_url": article_url,
-                        "article_published_date": article_published_date,
-                    }
+            if similar_name:
+                console.print(
+                    f"[purple]Doing a final check to see if '{person_name}' is the same as '{similar_name}'[/purple]..."
                 )
-                entity_updated = True
 
-                # Update profile with new information
-                if "profile" in existing_person:
+                existing_profile = entities["people"][similar_name].get("profile", {})
+                existing_profile_text = existing_profile.get("text", "")
+                if not existing_profile_text:
                     console.print(
-                        f"\n[yellow]Updating profile for person:[/] {similar_name}"
+                        f"[red]No existing profile text for {similar_name}[/red]"
                     )
-                    existing_person["profile"] = update_profile(
-                        "person",
+                    continue
+
+                if model_type == "ollama":
+                    result = local_model_check_match(
+                        person_name,
                         similar_name,
-                        existing_person["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
+                        proposed_profile_text,
+                        existing_profile_text,
                     )
-                    existing_person["profile_embedding"] = embed_text(
-                        existing_person["profile"]["text"],
-                        model_name=embedding_model,
+                else:
+                    result = cloud_model_check_match(
+                        person_name,
+                        similar_name,
+                        proposed_profile_text,
+                        existing_profile_text,
                     )
 
+                if result.is_match:
                     console.print(
-                        Panel(
-                            Markdown(existing_person["profile"]["text"]),
-                            title=f"Updated Profile: {similar_name}",
-                            border_style="yellow",
-                        )
+                        f"[green]The profiles match! Merging '{person_name}' with '{similar_name}'[/green]"
                     )
                 else:
                     console.print(
-                        f"\n[green]Creating initial profile for person:[/] {similar_name}"
+                        f"[red]The profiles do not match. Skipping merge for '{person_name}'[/red]"
                     )
-                    existing_person["profile"] = create_profile(
-                        "person", similar_name, article_content, article_id, model_type
-                    )
-                    existing_person["profile_embedding"] = embed_text(
-                        existing_person["profile"]["text"],
-                        model_name=embedding_model,
-                    )
-                    console.print(
-                        Panel(
-                            Markdown(existing_person["profile"]["text"]),
-                            title=f"New Profile: {similar_name}",
-                            border_style="green",
-                        )
-                    )
+                    continue
 
-                # Store alternative names if they differ
-                if person_name != similar_name:
-                    if "alternative_names" not in existing_person:
-                        existing_person["alternative_names"] = []
-
-                    if person_name not in existing_person["alternative_names"]:
-                        existing_person["alternative_names"].append(person_name)
-                        console.print(
-                            f"[blue]Added alternative name: '{person_name}' for '{similar_name}'[/blue]"
-                        )
-                        entity_updated = True
-
-            # Update extraction timestamp to earliest
-            existing_timestamp = existing_person.get(
-                "extraction_timestamp", extraction_timestamp
-            )
-            if existing_timestamp != min(existing_timestamp, extraction_timestamp):
-                existing_person["extraction_timestamp"] = min(
-                    existing_timestamp, extraction_timestamp
-                )
-                entity_updated = True
-
-            if entity_updated:
-                write_entity_to_file("people", similar_name, existing_person)
-                entities["people"][similar_name] = existing_person
+                # We found a similar person - use that instead of creating a new one
                 console.print(
-                    f"[blue]Updated person entity saved to file:[/] {similar_name}"
+                    f"[blue]Merging '{person_name}' with existing person '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
                 )
-        else:
-            # No similar person found - create new entry with initial profile
-            console.print(f"\n[green]Creating profile for new person:[/] {person_name}")
-            profile = create_profile(
-                "person", person_name, article_content, article_id, model_type
-            )
-            console.print(
-                Panel(
-                    Markdown(profile["text"]),
-                    title=f"New Profile: {person_name}",
-                    border_style="green",
+
+                # Use the existing person's name as the key
+                existing_person = entities["people"][similar_name]
+
+                # Check if this article is already associated with the person
+                article_exists = any(
+                    a.get("article_id") == article_id
+                    for a in existing_person["articles"]
                 )
-            )
 
-            profile_embedding = embed_text(profile["text"], model_name=embedding_model)
+                if not article_exists:
+                    existing_person["articles"].append(
+                        {
+                            "article_id": article_id,
+                            "article_title": article_title,
+                            "article_url": article_url,
+                            "article_published_date": article_published_date,
+                        }
+                    )
+                    entity_updated = True
 
-            new_person = {
-                "name": person_name,
-                "type": p.get("type", ""),
-                "profile": profile,
-                "articles": [
-                    {
-                        "article_id": article_id,
-                        "article_title": article_title,
-                        "article_url": article_url,
-                        "article_published_date": article_published_date,
-                    }
-                ],
-                "profile_embedding": profile_embedding,
-                "extraction_timestamp": extraction_timestamp,
-                "alternative_names": [],  # Initialize empty list for alternative names
-            }
+                    # Update profile with new information
+                    if "profile" in existing_person:
+                        console.print(
+                            f"\n[yellow]Updating profile for person:[/] {similar_name}"
+                        )
+                        existing_person["profile"] = update_profile(
+                            "person",
+                            similar_name,
+                            existing_person["profile"],
+                            article_content,
+                            article_id,
+                            model_type,
+                        )
+                        existing_person["profile_embedding"] = embed_text(
+                            existing_person["profile"]["text"],
+                            model_name=embedding_model,
+                        )
 
-            entities["people"][person_name] = new_person
-            write_entity_to_file("people", person_name, new_person)
-            console.print(f"[green]New person entity saved to file:[/] {person_name}")
+                        console.print(
+                            Panel(
+                                Markdown(existing_person["profile"]["text"]),
+                                title=f"Updated Profile: {similar_name}",
+                                border_style="yellow",
+                            )
+                        )
+                    else:
+                        console.print(
+                            f"\n[green]Creating initial profile for person:[/] {similar_name}"
+                        )
+                        existing_person["profile"] = create_profile(
+                            "person",
+                            similar_name,
+                            article_content,
+                            article_id,
+                            model_type,
+                        )
+                        existing_person["profile_embedding"] = embed_text(
+                            existing_person["profile"]["text"],
+                            model_name=embedding_model,
+                        )
+                        console.print(
+                            Panel(
+                                Markdown(existing_person["profile"]["text"]),
+                                title=f"New Profile: {similar_name}",
+                                border_style="green",
+                            )
+                        )
+
+                    # Store alternative names if they differ
+                    if person_name != similar_name:
+                        if "alternative_names" not in existing_person:
+                            existing_person["alternative_names"] = []
+
+                        if person_name not in existing_person["alternative_names"]:
+                            existing_person["alternative_names"].append(person_name)
+                            console.print(
+                                f"[blue]Added alternative name: '{person_name}' for '{similar_name}'[/blue]"
+                            )
+                            entity_updated = True
+
+                # Update extraction timestamp to earliest
+                existing_timestamp = existing_person.get(
+                    "extraction_timestamp", extraction_timestamp
+                )
+                if existing_timestamp != min(existing_timestamp, extraction_timestamp):
+                    existing_person["extraction_timestamp"] = min(
+                        existing_timestamp, extraction_timestamp
+                    )
+                    entity_updated = True
+
+                if entity_updated:
+                    write_entity_to_file("people", similar_name, existing_person)
+                    entities["people"][similar_name] = existing_person
+                    console.print(
+                        f"[blue]Updated person entity saved to file:[/] {similar_name}"
+                    )
+        except Exception as e:
+            console.print(f"[red]Error processing person {person_name}: {str(e)}[/red]")
+            continue
 
 
 def merge_locations(
@@ -803,10 +793,6 @@ def merge_locations(
                         article_content,
                         article_id,
                         model_type,
-                    )
-                    existing_loc["profile_embedding"] = embed_text(
-                        existing_loc["profile"]["text"],
-                        model_name=embedding_model,
                     )
                     console.print(
                         Panel(
