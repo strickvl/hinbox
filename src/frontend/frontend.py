@@ -173,18 +173,27 @@ def main_layout(page_title: str, filter_panel, content):
 ################################################################
 
 
-def people_filter_panel(q: str = "", selected_types: list[str] = None):
+def people_filter_panel(q: str = "", selected_types: list[str] = None, selected_tags: list[str] = None):
     if selected_types is None:
         selected_types = []
+    if selected_tags is None:
+        selected_tags = []
 
     possible_types = set()
+    possible_tags = set()
     for p in people_index.values():
         t = p.get("type", "").strip()
         if t:
             possible_types.add(t)
-    checks = []
+        p_tags = p.get("profile", {}).get("tags", [])
+        for tg in p_tags:
+            tg_str = tg.strip()
+            if tg_str:
+                possible_tags.add(tg_str)
+
+    type_checks = []
     for pt in sorted(possible_types):
-        checks.append(
+        type_checks.append(
             Div(
                 Input(
                     type="checkbox",
@@ -195,9 +204,27 @@ def people_filter_panel(q: str = "", selected_types: list[str] = None):
                 Label(pt),
             )
         )
+
+    tag_checks = []
+    for tg in sorted(possible_tags):
+        tag_checks.append(
+            Div(
+                Input(
+                    type="checkbox",
+                    name="tag",
+                    value=tg,
+                    checked="checked" if tg.lower() in selected_tags else None,
+                ),
+                Label(tg),
+            )
+        )
+
     return Form(
         H3("People Filters"),
-        *checks,
+        H4("Types"),
+        *type_checks,
+        H4("Tags"),
+        *tag_checks,
         Label("Search: ", Input(type="text", name="q", value=q, placeholder="Name...")),
         Button("Apply Filters", type="submit"),
         method="get",
@@ -350,10 +377,14 @@ def list_people(request):
     selected_types_raw = request.query_params.getlist("type")
     selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
 
+    selected_tags_raw = request.query_params.getlist("tag")
+    selected_tags = [t.strip().lower() for t in selected_tags_raw if t.strip()]
+
     filtered_items = []
     for k, person in people_index.items():
         ptype = person.get("type", "").strip().lower()
         pname = person.get("name", "").strip().lower()
+        p_tags = [tg.strip().lower() for tg in person.get("profile", {}).get("tags", [])]
 
         # if there's a type filter, skip if not matching
         if selected_types and ptype not in selected_types:
@@ -361,6 +392,11 @@ def list_people(request):
         # optional search
         if q and q not in pname:
             continue
+        # tag filter
+        if selected_tags:
+            # Must have intersection with selected_tags
+            if not set(p_tags).intersection(selected_tags):
+                continue
 
         link = A(person["name"], href=f"/people/{encode_key(k)}")
         filtered_items.append(Li(link))
@@ -368,7 +404,7 @@ def list_people(request):
     content = Div(H2("People"), Ul(*filtered_items), style="margin-top:1em;")
     return main_layout(
         "GTMO Browse - People",
-        people_filter_panel(q=q, selected_types=selected_types),
+        people_filter_panel(q=q, selected_types=selected_types, selected_tags=selected_tags),
         content,
     )
 
