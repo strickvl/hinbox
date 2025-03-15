@@ -152,9 +152,11 @@ def main_layout(page_title: str, filter_panel, content):
 ################################################################
 
 def people_filter_panel():
-    # For demonstration, we create a simple checkboxes list for people types
-    # We'll guess some possible types, but in reality you'd gather them from the data
-    possible_types = {"Detainee", "Military Personnel", "Lawyer", "Journalist"}
+    possible_types = set()
+    for p in people_index.values():
+        t = p.get("type", "").strip()
+        if t:
+            possible_types.add(t)
     checks = []
     for pt in sorted(possible_types):
         checks.append(
@@ -169,12 +171,15 @@ def people_filter_panel():
         Label("Search: ", Input(type="text", name="q", placeholder="Name...")),
         Button("Apply Filters", type="submit"),
         method="get",
-        action="/people"  # reloading the same page with the chosen filters
+        action="/people"
     )
 
 def events_filter_panel():
-    # Filter by event type & date range placeholders
-    possible_types = {"Hearing", "Transfer", "CourtSession", "Misc"}
+    possible_types = set()
+    for e in events_index.values():
+        t = e.get("event_type", "").strip()
+        if t:
+            possible_types.add(t)
     checks = []
     for et in sorted(possible_types):
         checks.append(
@@ -196,8 +201,11 @@ def events_filter_panel():
     )
 
 def locations_filter_panel():
-    # Filter by location type
-    possible_types = {"Country", "Facility", "Unknown", "Base"}
+    possible_types = set()
+    for loc in locations_index.values():
+        t = loc.get("type", "").strip()
+        if t:
+            possible_types.add(t)
     checks = []
     for lt in sorted(possible_types):
         checks.append(
@@ -216,8 +224,11 @@ def locations_filter_panel():
     )
 
 def organizations_filter_panel():
-    # Filter by org type
-    possible_types = {"NGO", "Military", "GovAgency", "Unknown"}
+    possible_types = set()
+    for org in orgs_index.values():
+        t = org.get("type", "").strip()
+        if t:
+            possible_types.add(t)
     checks = []
     for ot in sorted(possible_types):
         checks.append(
