@@ -2,7 +2,7 @@
 set -x
 
 # Initialize default source directories
-default_src="data notebooks ."
+default_src="data ."
 # Initialize SRC as an empty string
 SRC=""
 
