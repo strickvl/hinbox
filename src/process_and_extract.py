@@ -353,6 +353,7 @@ def main():
 
         console.print("[magenta]\nMerging extracted entities...[/magenta]")
         try:
+            # Merge calls:
             merge_people(
                 people_dicts,
                 entities,
@@ -397,6 +398,12 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+
+            # Because reflection histories are stored in each entity, we can
+            # also keep a record here if desired. For example, we can gather them:
+            # (Not strictly necessary, but can be done if we want an overview at the article level.)
+            # For now, let's just mark that reflection-based profile generation was used.
+            processing_metadata["reflection_used"] = True
 
             processing_metadata["processed"] = True
             processing_metadata["processing_completed"] = datetime.now().isoformat()

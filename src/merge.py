@@ -588,7 +588,7 @@ def merge_people(
                         console.print(
                             f"\n[yellow]Updating profile for person:[/] {similar_name}"
                         )
-                        existing_person["profile"] = update_profile(
+                        updated_profile, reflection_history = update_profile(
                             "person",
                             similar_name,
                             existing_person["profile"],
@@ -596,14 +596,18 @@ def merge_people(
                             article_id,
                             model_type,
                         )
+                        existing_person["profile"] = updated_profile
                         existing_person["profile_embedding"] = embed_text(
-                            existing_person["profile"]["text"],
+                            updated_profile["text"],
                             model_name=embedding_model,
                         )
+                        # Store reflection iteration history for debugging
+                        existing_person.setdefault("reflection_history", [])
+                        existing_person["reflection_history"].extend(reflection_history)
 
                         console.print(
                             Panel(
-                                Markdown(existing_person["profile"]["text"]),
+                                Markdown(updated_profile["text"]),
                                 title=f"Updated Profile: {similar_name}",
                                 border_style="yellow",
                             )
@@ -612,20 +616,25 @@ def merge_people(
                         console.print(
                             f"\n[green]Creating initial profile for person:[/] {similar_name}"
                         )
-                        existing_person["profile"] = create_profile(
+                        new_profile, reflection_history = create_profile(
                             "person",
                             similar_name,
                             article_content,
                             article_id,
                             model_type,
                         )
+                        existing_person["profile"] = new_profile
                         existing_person["profile_embedding"] = embed_text(
-                            existing_person["profile"]["text"],
+                            new_profile["text"],
                             model_name=embedding_model,
                         )
+                        # Store reflection iteration history
+                        existing_person.setdefault("reflection_history", [])
+                        existing_person["reflection_history"].extend(reflection_history)
+
                         console.print(
                             Panel(
-                                Markdown(existing_person["profile"]["text"]),
+                                Markdown(new_profile["text"]),
                                 title=f"New Profile: {similar_name}",
                                 border_style="green",
                             )
@@ -763,7 +772,7 @@ def merge_locations(
                     console.print(
                         f"\n[yellow]Updating profile for location:[/] {similar_name}"
                     )
-                    existing_loc["profile"] = update_profile(
+                    updated_profile, reflection_history = update_profile(
                         "location",
                         similar_name,
                         existing_loc["profile"],
@@ -771,14 +780,17 @@ def merge_locations(
                         article_id,
                         model_type,
                     )
+                    existing_loc["profile"] = updated_profile
                     existing_loc["profile_embedding"] = embed_text(
-                        existing_loc["profile"]["text"],
+                        updated_profile["text"],
                         model_name=embedding_model,
                     )
+                    existing_loc.setdefault("reflection_history", [])
+                    existing_loc["reflection_history"].extend(reflection_history)
 
                     console.print(
                         Panel(
-                            Markdown(existing_loc["profile"]["text"]),
+                            Markdown(updated_profile["text"]),
                             title=f"Updated Profile: {similar_name}",
                             border_style="yellow",
                         )
@@ -787,16 +799,24 @@ def merge_locations(
                     console.print(
                         f"\n[green]Creating initial profile for location:[/] {similar_name}"
                     )
-                    existing_loc["profile"] = create_profile(
+                    new_profile, reflection_history = create_profile(
                         "location",
                         similar_name,
                         article_content,
                         article_id,
                         model_type,
                     )
+                    existing_loc["profile"] = new_profile
+                    existing_loc["profile_embedding"] = embed_text(
+                        new_profile["text"],
+                        model_name=embedding_model,
+                    )
+                    existing_loc.setdefault("reflection_history", [])
+                    existing_loc["reflection_history"].extend(reflection_history)
+
                     console.print(
                         Panel(
-                            Markdown(existing_loc["profile"]["text"]),
+                            Markdown(new_profile["text"]),
                             title=f"New Profile: {similar_name}",
                             border_style="green",
                         )
@@ -969,7 +989,7 @@ def merge_organizations(
                     console.print(
                         f"\n[yellow]Updating profile for organization:[/] {similar_name}"
                     )
-                    existing_org["profile"] = update_profile(
+                    updated_profile, reflection_history = update_profile(
                         "organization",
                         similar_name,
                         existing_org["profile"],
@@ -977,15 +997,17 @@ def merge_organizations(
                         article_id,
                         model_type,
                     )
-                    # Embed updated profile text using appropriate model
+                    existing_org["profile"] = updated_profile
                     existing_org["profile_embedding"] = embed_text(
-                        existing_org["profile"]["text"],
+                        updated_profile["text"],
                         model_name=embedding_model,
                     )
+                    existing_org.setdefault("reflection_history", [])
+                    existing_org["reflection_history"].extend(reflection_history)
 
                     console.print(
                         Panel(
-                            Markdown(existing_org["profile"]["text"]),
+                            Markdown(updated_profile["text"]),
                             title=f"Updated Profile: {similar_name}",
                             border_style="yellow",
                         )
@@ -994,16 +1016,24 @@ def merge_organizations(
                     console.print(
                         f"\n[green]Creating initial profile for organization:[/] {similar_name}"
                     )
-                    existing_org["profile"] = create_profile(
+                    new_profile, reflection_history = create_profile(
                         "organization",
                         similar_name,
                         article_content,
                         article_id,
                         model_type,
                     )
+                    existing_org["profile"] = new_profile
+                    existing_org["profile_embedding"] = embed_text(
+                        new_profile["text"],
+                        model_name=embedding_model,
+                    )
+                    existing_org.setdefault("reflection_history", [])
+                    existing_org["reflection_history"].extend(reflection_history)
+
                     console.print(
                         Panel(
-                            Markdown(existing_org["profile"]["text"]),
+                            Markdown(new_profile["text"]),
                             title=f"New Profile: {similar_name}",
                             border_style="green",
                         )
@@ -1180,7 +1210,7 @@ def merge_events(
                     console.print(
                         f"\n[yellow]Updating profile for event:[/] {similar_title}"
                     )
-                    existing_event["profile"] = update_profile(
+                    updated_profile, reflection_history = update_profile(
                         "event",
                         similar_title,
                         existing_event["profile"],
@@ -1188,14 +1218,17 @@ def merge_events(
                         article_id,
                         model_type,
                     )
+                    existing_event["profile"] = updated_profile
                     existing_event["profile_embedding"] = embed_text(
-                        existing_event["profile"]["text"],
+                        updated_profile["text"],
                         model_name=embedding_model,
                     )
+                    existing_event.setdefault("reflection_history", [])
+                    existing_event["reflection_history"].extend(reflection_history)
 
                     console.print(
                         Panel(
-                            Markdown(existing_event["profile"]["text"]),
+                            Markdown(updated_profile["text"]),
                             title=f"Updated Profile: {similar_title}",
                             border_style="yellow",
                         )
@@ -1204,16 +1237,24 @@ def merge_events(
                     console.print(
                         f"\n[green]Creating initial profile for event:[/] {similar_title}"
                     )
-                    existing_event["profile"] = create_profile(
+                    new_profile, reflection_history = create_profile(
                         "event",
                         similar_title,
                         article_content,
                         article_id,
                         model_type,
                     )
+                    existing_event["profile"] = new_profile
+                    existing_event["profile_embedding"] = embed_text(
+                        new_profile["text"],
+                        model_name=embedding_model,
+                    )
+                    existing_event.setdefault("reflection_history", [])
+                    existing_event["reflection_history"].extend(reflection_history)
+
                     console.print(
                         Panel(
-                            Markdown(existing_event["profile"]["text"]),
+                            Markdown(new_profile["text"]),
                             title=f"New Profile: {similar_title}",
                             border_style="green",
                         )

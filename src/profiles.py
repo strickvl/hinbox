@@ -128,10 +128,11 @@ def generate_profile_with_reflection(
     article_id: str,
     model_type: str = "gemini",
     max_iterations: int = 3,
-) -> Dict:
+) -> (Dict, list):
     """
     Generate a profile with reflection and improvement.
     Uses iterative_improve from utils.py.
+    Returns a tuple: (final_profile_dict, improvement_history).
     """
 
     def _validate_response(response: EntityProfile) -> ReflectionResult:
@@ -179,16 +180,18 @@ John Smith is a military officer^[abc123] who oversees operations at Guantánamo
 
     if final_result is None:
         # Fallback to basic profile if all iterations fail
-        return {
+        fallback_profile = {
             "text": f"Profile generation failed for {entity_name}^[{article_id}]",
             "tags": [],
             "confidence": 0.0,
             "sources": [article_id],
         }
+        return fallback_profile, history
 
     result_dict = final_result.model_dump()
     result_dict["sources"] = [article_id]
-    return result_dict
+
+    return result_dict, history
 
 
 def generate_profile(
@@ -197,18 +200,20 @@ def generate_profile(
     article_text: str,
     article_id: str,
     model_type: str = "gemini",
-) -> Dict:
+) -> (Dict, list):
     """
     Generate a profile for an entity based on article text using structured extraction.
     Now uses reflection pattern for validation and improvement.
+    Returns (profile_dict, improvement_history).
     """
-    return generate_profile_with_reflection(
+    profile_dict, improvement_history = generate_profile_with_reflection(
         entity_type=entity_type,
         entity_name=entity_name,
         article_text=article_text,
         article_id=article_id,
         model_type=model_type,
     )
+    return profile_dict, improvement_history
 
 
 def generate_with_gemini(
@@ -366,31 +371,65 @@ def update_profile(
     new_article_text: str,
     new_article_id: str,
     model_type: str = "gemini",
-) -> Dict:
+) -> (Dict, list):
     """
-    Update an existing profile with new information from an article using structured extraction.
+    Update an existing profile with new information from an article using iterative reflection.
 
-    Args:
-        entity_type: The type of entity (person, organization, location, event)
-        entity_name: The name of the entity
-        existing_profile: The current structured profile (as a dict)
-        new_article_text: The text of the new article to extract additional information from
-        new_article_id: The new article ID to add to the sources
-        model_type: The model to use ("gemini" or "ollama")
-
-    Returns:
-        Dict containing the updated structured profile.
+    We treat the existing profile text plus the new article text as input for improvement.
+    Returns (updated_profile, improvement_history).
     """
-    if model_type == "gemini":
-        logger.info("Updating profile using Gemini model")
-        return update_with_gemini(
-            entity_type, entity_name, existing_profile, new_article_text, new_article_id
-        )
-    else:
-        logger.info("Updating profile using Ollama model")
-        return update_with_ollama(
-            entity_type, entity_name, existing_profile, new_article_text, new_article_id
-        )
+
+    # We'll build a combined prompt that includes the existing profile text and the new article text,
+    # instructing the LLM to integrate them into a new updated profile with the same formatting rules.
+    system_prompt = f"""You are an expert at updating profiles for a {entity_type} named "{entity_name}" with new information from news articles.
+
+The final updated profile must:
+1. Incorporate new relevant factual information from the new article.
+2. Retain existing valid information from the old profile.
+3. Resolve contradictions by preferring newer details.
+4. Include inline citations in the format: fact^[id]
+5. Provide a confidence score (0-1), relevant tags, and a well-structured, sectioned layout.
+
+Existing Profile (already validated):
+----------------
+{existing_profile.get("text", "")}
+
+Existing Tags: {existing_profile.get("tags", [])}
+Existing Confidence: {existing_profile.get("confidence", 0.0)}
+Existing Sources: {existing_profile.get("sources", [])}
+
+New Article (ID: {new_article_id}):
+----------------
+{new_article_text}
+"""
+
+    # For the iterative process, we treat the entire text above as the 'prompt' so the LLM merges them.
+    from src.utils import GenerationMode, iterative_improve
+
+    generation_mode = (
+        GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
+    )
+
+    # We'll use the same EntityProfile structure for the updated profile.
+    final_result, history = iterative_improve(
+        prompt=system_prompt,
+        response_model=EntityProfile,
+        generation_mode=generation_mode,
+        max_iterations=3,
+        metadata={"project_name": "hinbox", "tags": ["profile_update"]},
+    )
+
+    if final_result is None:
+        # If it fails, just return existing_profile as fallback
+        return existing_profile, history
+
+    updated_profile_dict = final_result.model_dump()
+    # Merge old and new sources
+    old_sources = existing_profile.get("sources", [])
+    all_sources = list(set(old_sources + [new_article_id]))
+    updated_profile_dict["sources"] = all_sources
+
+    return updated_profile_dict, history
 
 
 def update_with_gemini(
@@ -555,20 +594,12 @@ def create_profile(
     article_text: str,
     article_id: str,
     model_type: str = "gemini",
-) -> Dict:
+) -> (Dict, list):
     """
     Create an initial profile for an entity based on article text using structured extraction.
-
-    Args:
-        entity_type: The type of entity (person, organization, location, event)
-        entity_name: The name of the entity
-        article_text: The article text to extract information from
-        article_id: The article ID to use as source
-        model_type: The model to use ("gemini" or "ollama")
-
-    Returns:
-        Dict containing the structured profile.
+    Returns (profile_dict, improvement_history).
     """
-    return generate_profile(
+    profile_dict, improvement_history = generate_profile(
         entity_type, entity_name, article_text, article_id, model_type
     )
+    return profile_dict, improvement_history
