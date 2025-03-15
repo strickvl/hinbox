@@ -353,7 +353,6 @@ def main():
 
         console.print("[magenta]\nMerging extracted entities...[/magenta]")
         try:
-            # Merge calls:
             merge_people(
                 people_dicts,
                 entities,

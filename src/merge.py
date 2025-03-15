@@ -477,6 +477,35 @@ def find_similar_event(
     return None, None
 
 
+def _extract_profile_text(
+    profile_response: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Extract profile text from either a simple dict or nested API response.
+
+    Args:
+        profile_response: Response from create_profile() which could be either:
+            - A simple dict with 'text' key
+            - A nested API response with parsed content
+
+    Returns:
+        Dict with 'text' and other fields, or None if text cannot be extracted
+    """
+    if not profile_response:
+        return None
+
+    # Handle simple dict case
+    if isinstance(profile_response, dict):
+        if "text" in profile_response:
+            return profile_response
+        if "choices" in profile_response and len(profile_response["choices"]) > 0:
+            message = profile_response["choices"][0].get("message", {})
+            if "parsed" in message:
+                return message["parsed"]
+
+    return None
+
+
 def merge_people(
     extracted_people: List[Dict[str, Any]],
     entities: Dict[str, Dict],
@@ -492,30 +521,53 @@ def merge_people(
     embedding_model = (
         LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
     )
+    console.print(
+        f"\n[bold blue]Starting merge_people with {len(extracted_people)} people to process[/bold blue]"
+    )
+    console.print(f"Using model: {model_type}, embedding model: {embedding_model}")
+
     for p in extracted_people:
         person_name = p.get("name", "")
         if not person_name:
+            console.print("[red]Skipping person with empty name[/red]")
             continue
 
+        console.print(f"\n[yellow]Processing person: {person_name}[/yellow]")
         entity_updated = False
 
         try:
-            # Generate embedding for the person name and type
-            proposed_profile = create_profile(
+            console.print(
+                f"[cyan]Attempting to create profile for {person_name}...[/cyan]"
+            )
+            proposed_profile, reflection_history = create_profile(
                 "person", person_name, article_content, article_id, model_type
             )
+
+            # Extract profile text from response
+            console.print("[cyan]Extracting profile text from response...[/cyan]")
+            proposed_profile = _extract_profile_text(proposed_profile)
             if not proposed_profile or not proposed_profile.get("text"):
                 console.print(
-                    f"[red]Failed to generate profile for {person_name}[/red]"
+                    f"[red]Failed to generate profile for {person_name}. Profile data: {proposed_profile}[/red]"
                 )
                 continue
 
+            # Generate embedding for the person name and type
             proposed_profile_text = proposed_profile.get("text", "")
+            console.print(
+                f"[cyan]Generating embedding for profile text (length: {len(proposed_profile_text)})[/cyan]"
+            )
             proposed_person_embedding = embed_text(
                 proposed_profile_text, model_name=embedding_model
             )
+            console.print(
+                f"[cyan]Generated embedding of size: {len(proposed_person_embedding)}[/cyan]"
+            )
 
             # Find similar person using embeddings
+            console.print(
+                f"[cyan]Searching for similar person with similarity threshold: {similarity_threshold}[/cyan]"
+            )
             similar_name, similarity_score = find_similar_person(
                 person_name, proposed_person_embedding, entities, similarity_threshold
             )
@@ -533,6 +585,7 @@ def merge_people(
                     )
                     continue
 
+                console.print("[cyan]Performing model-based match check...[/cyan]")
                 if model_type == "ollama":
                     result = local_model_check_match(
                         person_name,
@@ -547,6 +600,10 @@ def merge_people(
                         proposed_profile_text,
                         existing_profile_text,
                     )
+
+                console.print(
+                    f"[cyan]Match check result: {result.is_match} - {result.reason}[/cyan]"
+                )
 
                 if result.is_match:
                     console.print(
@@ -573,6 +630,9 @@ def merge_people(
                 )
 
                 if not article_exists:
+                    console.print(
+                        f"[cyan]Adding new article reference for {similar_name}[/cyan]"
+                    )
                     existing_person["articles"].append(
                         {
                             "article_id": article_id,
@@ -597,6 +657,9 @@ def merge_people(
                             model_type,
                         )
                         existing_person["profile"] = updated_profile
+                        console.print(
+                            "[cyan]Generating new embedding for updated profile...[/cyan]"
+                        )
                         existing_person["profile_embedding"] = embed_text(
                             updated_profile["text"],
                             model_name=embedding_model,
@@ -624,6 +687,9 @@ def merge_people(
                             model_type,
                         )
                         existing_person["profile"] = new_profile
+                        console.print(
+                            "[cyan]Generating embedding for new profile...[/cyan]"
+                        )
                         existing_person["profile_embedding"] = embed_text(
                             new_profile["text"],
                             model_name=embedding_model,
@@ -663,14 +729,63 @@ def merge_people(
                     entity_updated = True
 
                 if entity_updated:
+                    console.print(
+                        f"[cyan]Writing updated entity to file for {similar_name}...[/cyan]"
+                    )
                     write_entity_to_file("people", similar_name, existing_person)
                     entities["people"][similar_name] = existing_person
                     console.print(
                         f"[blue]Updated person entity saved to file:[/] {similar_name}"
                     )
+            else:
+                # No similar person found - create new entry
+                console.print(
+                    f"\n[green]Creating new person entry for:[/] {person_name}"
+                )
+                new_profile, reflection_history = create_profile(
+                    "person",
+                    person_name,
+                    article_content,
+                    article_id,
+                    model_type,
+                )
+
+                profile_embedding = embed_text(
+                    new_profile["text"], model_name=embedding_model
+                )
+
+                new_person = {
+                    "name": person_name,
+                    "profile": new_profile,
+                    "articles": [
+                        {
+                            "article_id": article_id,
+                            "article_title": article_title,
+                            "article_url": article_url,
+                            "article_published_date": article_published_date,
+                        }
+                    ],
+                    "profile_embedding": profile_embedding,
+                    "extraction_timestamp": extraction_timestamp,
+                    "alternative_names": [],
+                    "reflection_history": reflection_history,
+                }
+
+                entities["people"][person_name] = new_person
+                write_entity_to_file("people", person_name, new_person)
+                console.print(
+                    f"[green]New person entity saved to file:[/] {person_name}"
+                )
+
         except Exception as e:
-            console.print(f"[red]Error processing person {person_name}: {str(e)}[/red]")
+            console.print(f"[red]Error processing person {person_name}:[/red]")
+            console.print(f"[red]Error details: {str(e)}[/red]")
+            import traceback
+
+            console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
             continue
+
+    console.print("\n[bold green]Completed merge_people function[/bold green]")
 
 
 def merge_locations(
@@ -698,9 +813,20 @@ def merge_locations(
         entity_updated = False
 
         # Generate embedding for the location name and type
-        proposed_profile_text = create_profile(
+        proposed_profile, reflection_history = create_profile(
             "location", loc_name, article_content, article_id, model_type
-        ).get("text")
+        )
+        # Extract profile text from response
+        proposed_profile = _extract_profile_text(proposed_profile)
+        proposed_profile_text = (
+            proposed_profile.get("text") if proposed_profile else None
+        )
+        if not proposed_profile_text:
+            console.print(
+                f"[red]Failed to generate profile for location {loc_name}[/red]"
+            )
+            continue
+
         proposed_location_embedding = embed_text(
             proposed_profile_text, model_name=embedding_model
         )
@@ -853,7 +979,7 @@ def merge_locations(
         else:
             # No similar location found - create new entry
             console.print(f"\n[green]Creating profile for new location:[/] {loc_name}")
-            profile = create_profile(
+            profile, reflection_history = create_profile(
                 "location", loc_name, article_content, article_id, model_type
             )
             console.print(
@@ -881,6 +1007,7 @@ def merge_locations(
                 "profile_embedding": profile_embedding,
                 "extraction_timestamp": extraction_timestamp,
                 "alternative_names": [],  # Initialize empty list for alternative names
+                "reflection_history": reflection_history,  # Store the reflection history
             }
 
             entities["locations"][location_key] = new_location
@@ -912,14 +1039,26 @@ def merge_organizations(
 
         entity_updated = False
 
-        # Generate embedding for the organization name and type (unused org_embedding removed)
-        # Find similar organization using embeddings
-        proposed_profile_text = create_profile(
+        # Generate embedding for the organization name and type
+        proposed_profile, reflection_history = create_profile(
             "organization", org_name, article_content, article_id, model_type
-        ).get("text")
+        )
+        # Extract profile text from response
+        proposed_profile = _extract_profile_text(proposed_profile)
+        proposed_profile_text = (
+            proposed_profile.get("text") if proposed_profile else None
+        )
+        if not proposed_profile_text:
+            console.print(
+                f"[red]Failed to generate profile for organization {org_name}[/red]"
+            )
+            continue
+
         proposed_organization_embedding = embed_text(
             proposed_profile_text, model_name=embedding_model
         )
+
+        # Find similar organization using embeddings
         similar_key, similarity_score = find_similar_organization(
             org_name,
             org_type,
@@ -1069,7 +1208,7 @@ def merge_organizations(
             console.print(
                 f"\n[green]Creating profile for new organization:[/] {org_name}"
             )
-            profile = create_profile(
+            profile, reflection_history = create_profile(
                 "organization", org_name, article_content, article_id, model_type
             )
             console.print(
@@ -1097,6 +1236,7 @@ def merge_organizations(
                 "profile_embedding": profile_embedding,
                 "extraction_timestamp": extraction_timestamp,
                 "alternative_names": [],  # Initialize empty list for alternative names
+                "reflection_history": reflection_history,  # Store the reflection history
             }
 
             entities["organizations"][org_key] = new_org
@@ -1132,9 +1272,20 @@ def merge_events(
         entity_updated = False
 
         # Generate embedding for the event title and type
-        proposed_profile_text = create_profile(
+        proposed_profile, reflection_history = create_profile(
             "event", event_title, article_content, article_id, model_type
-        ).get("text")
+        )
+        # Extract profile text from response
+        proposed_profile = _extract_profile_text(proposed_profile)
+        proposed_profile_text = (
+            proposed_profile.get("text") if proposed_profile else None
+        )
+        if not proposed_profile_text:
+            console.print(
+                f"[red]Failed to generate profile for event {event_title}[/red]"
+            )
+            continue
+
         proposed_event_embedding = embed_text(
             proposed_profile_text, model_name=embedding_model
         )
@@ -1292,7 +1443,7 @@ def merge_events(
         else:
             # Create new entry
             console.print(f"\n[green]Creating profile for new event:[/] {event_title}")
-            profile = create_profile(
+            profile, reflection_history = create_profile(
                 "event", event_title, article_content, article_id, model_type
             )
             console.print(
@@ -1325,6 +1476,7 @@ def merge_events(
                 ],
                 "extraction_timestamp": extraction_timestamp,
                 "alternative_titles": [],  # Initialize empty list for alternative titles
+                "reflection_history": reflection_history,  # Store the reflection history
             }
 
             entities["events"][event_key] = new_event

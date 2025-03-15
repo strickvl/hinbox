@@ -6,6 +6,7 @@ import instructor
 import litellm
 from openai import OpenAI
 from pydantic import BaseModel, Field
+from rich.console import Console
 
 from src.constants import (
     CLOUD_MODEL,
@@ -21,6 +22,7 @@ litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
 
 logger = logging.getLogger(__name__)
+console = Console()
 
 
 class EntityProfile(BaseModel):
@@ -379,10 +381,20 @@ def update_profile(
     We treat the existing profile text plus the new article text as input for improvement.
     Returns (updated_profile, improvement_history).
     """
+    console.print(f"\n[cyan]Updating profile for {entity_type} '{entity_name}'[/cyan]")
+    console.print(f"[cyan]Using model: {model_type}[/cyan]")
+    console.print(f"[cyan]New article ID: {new_article_id}[/cyan]")
+    console.print(
+        f"[cyan]Existing profile length: {len(existing_profile.get('text', ''))} characters[/cyan]"
+    )
+    console.print(
+        f"[cyan]New article text length: {len(new_article_text)} characters[/cyan]"
+    )
 
-    # We'll build a combined prompt that includes the existing profile text and the new article text,
-    # instructing the LLM to integrate them into a new updated profile with the same formatting rules.
-    system_prompt = f"""You are an expert at updating profiles for a {entity_type} named "{entity_name}" with new information from news articles.
+    try:
+        # We'll build a combined prompt that includes the existing profile text and the new article text,
+        # instructing the LLM to integrate them into a new updated profile with the same formatting rules.
+        system_prompt = f"""You are an expert at updating profiles for a {entity_type} named "{entity_name}" with new information from news articles.
 
 The final updated profile must:
 1. Incorporate new relevant factual information from the new article.
@@ -404,33 +416,59 @@ New Article (ID: {new_article_id}):
 {new_article_text}
 """
 
-    # For the iterative process, we treat the entire text above as the 'prompt' so the LLM merges them.
-    from src.utils import GenerationMode, iterative_improve
+        console.print("[cyan]Starting iterative improvement process...[/cyan]")
 
-    generation_mode = (
-        GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
-    )
+        # For the iterative process, we treat the entire text above as the 'prompt' so the LLM merges them.
+        from src.utils import GenerationMode, iterative_improve
 
-    # We'll use the same EntityProfile structure for the updated profile.
-    final_result, history = iterative_improve(
-        prompt=system_prompt,
-        response_model=EntityProfile,
-        generation_mode=generation_mode,
-        max_iterations=3,
-        metadata={"project_name": "hinbox", "tags": ["profile_update"]},
-    )
+        generation_mode = (
+            GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
+        )
 
-    if final_result is None:
-        # If it fails, just return existing_profile as fallback
-        return existing_profile, history
+        # We'll use the same EntityProfile structure for the updated profile.
+        final_result, history = iterative_improve(
+            prompt=system_prompt,
+            response_model=EntityProfile,
+            generation_mode=generation_mode,
+            max_iterations=3,
+            metadata={"project_name": "hinbox", "tags": ["profile_update"]},
+        )
 
-    updated_profile_dict = final_result.model_dump()
-    # Merge old and new sources
-    old_sources = existing_profile.get("sources", [])
-    all_sources = list(set(old_sources + [new_article_id]))
-    updated_profile_dict["sources"] = all_sources
+        if final_result is None:
+            console.print(
+                f"[red]Failed to generate updated profile for {entity_name}[/red]"
+            )
+            console.print("[yellow]Falling back to existing profile[/yellow]")
+            return existing_profile, history
 
-    return updated_profile_dict, history
+        updated_profile_dict = final_result.model_dump()
+        # Merge old and new sources
+        old_sources = existing_profile.get("sources", [])
+        all_sources = list(set(old_sources + [new_article_id]))
+        updated_profile_dict["sources"] = all_sources
+
+        console.print(f"[green]Successfully updated profile for {entity_name}[/green]")
+        console.print(
+            f"[cyan]New profile length: {len(updated_profile_dict.get('text', ''))} characters[/cyan]"
+        )
+        console.print(
+            f"[cyan]New confidence score: {updated_profile_dict.get('confidence', 0.0)}[/cyan]"
+        )
+        console.print(
+            f"[cyan]Number of tags: {len(updated_profile_dict.get('tags', []))}[/cyan]"
+        )
+        console.print(f"[cyan]Total sources: {len(all_sources)}[/cyan]")
+        console.print(f"[cyan]Improvement iterations: {len(history)}[/cyan]")
+
+        return updated_profile_dict, history
+
+    except Exception as e:
+        console.print(f"[red]Error updating profile for {entity_name}:[/red]")
+        console.print(f"[red]Error details: {str(e)}[/red]")
+        import traceback
+
+        console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
+        raise
 
 
 def update_with_gemini(
@@ -600,7 +638,37 @@ def create_profile(
     Create an initial profile for an entity based on article text using structured extraction.
     Returns (profile_dict, improvement_history).
     """
-    profile_dict, improvement_history = generate_profile(
-        entity_type, entity_name, article_text, article_id, model_type
-    )
-    return profile_dict, improvement_history
+    console.print(f"\n[cyan]Creating profile for {entity_type} '{entity_name}'[/cyan]")
+    console.print(f"[cyan]Using model: {model_type}[/cyan]")
+    console.print(f"[cyan]Article ID: {article_id}[/cyan]")
+    console.print(f"[cyan]Article text length: {len(article_text)} characters[/cyan]")
+
+    try:
+        profile_dict, improvement_history = generate_profile(
+            entity_type, entity_name, article_text, article_id, model_type
+        )
+
+        console.print(
+            f"[green]Successfully generated profile for {entity_name}[/green]"
+        )
+        console.print(
+            f"[cyan]Profile length: {len(profile_dict.get('text', ''))} characters[/cyan]"
+        )
+        console.print(
+            f"[cyan]Confidence score: {profile_dict.get('confidence', 0.0)}[/cyan]"
+        )
+        console.print(
+            f"[cyan]Number of tags: {len(profile_dict.get('tags', []))}[/cyan]"
+        )
+        console.print(
+            f"[cyan]Improvement iterations: {len(improvement_history)}[/cyan]"
+        )
+
+        return profile_dict, improvement_history
+    except Exception as e:
+        console.print(f"[red]Error creating profile for {entity_name}:[/red]")
+        console.print(f"[red]Error details: {str(e)}[/red]")
+        import traceback
+
+        console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
+        raise
