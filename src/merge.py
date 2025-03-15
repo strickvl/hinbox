@@ -742,21 +742,15 @@ def merge_people(
                 console.print(
                     f"\n[green]Creating new person entry for:[/] {person_name}"
                 )
-                new_profile, reflection_history = create_profile(
-                    "person",
-                    person_name,
-                    article_content,
-                    article_id,
-                    model_type,
-                )
 
-                profile_embedding = embed_text(
-                    new_profile["text"], model_name=embedding_model
-                )
+                # We already have proposed_profile, reflection_history, and proposed_person_embedding
+                # so we simply reuse them instead of calling create_profile() again.
+                profile_embedding = proposed_person_embedding
+                reflection_history = reflection_history or []
 
                 new_person = {
                     "name": person_name,
-                    "profile": new_profile,
+                    "profile": proposed_profile,
                     "articles": [
                         {
                             "article_id": article_id,
@@ -979,9 +973,13 @@ def merge_locations(
         else:
             # No similar location found - create new entry
             console.print(f"\n[green]Creating profile for new location:[/] {loc_name}")
-            profile, reflection_history = create_profile(
-                "location", loc_name, article_content, article_id, model_type
-            )
+
+            # Reuse the proposed_profile, reflection_history, and proposed_location_embedding
+            profile = proposed_profile
+            profile_embedding = proposed_location_embedding
+            reflection_history = reflection_history or []
+
+            # Optionally display the newly generated profile text
             console.print(
                 Panel(
                     Markdown(profile["text"]),
@@ -989,8 +987,6 @@ def merge_locations(
                     border_style="green",
                 )
             )
-
-            profile_embedding = embed_text(profile["text"], model_name=embedding_model)
 
             new_location = {
                 "name": loc_name,
@@ -1006,8 +1002,8 @@ def merge_locations(
                 ],
                 "profile_embedding": profile_embedding,
                 "extraction_timestamp": extraction_timestamp,
-                "alternative_names": [],  # Initialize empty list for alternative names
-                "reflection_history": reflection_history,  # Store the reflection history
+                "alternative_names": [],
+                "reflection_history": reflection_history,
             }
 
             entities["locations"][location_key] = new_location
@@ -1208,9 +1204,12 @@ def merge_organizations(
             console.print(
                 f"\n[green]Creating profile for new organization:[/] {org_name}"
             )
-            profile, reflection_history = create_profile(
-                "organization", org_name, article_content, article_id, model_type
-            )
+
+            # Reuse the proposed_profile, reflection_history, and proposed_organization_embedding
+            profile = proposed_profile
+            profile_embedding = proposed_organization_embedding
+            reflection_history = reflection_history or []
+
             console.print(
                 Panel(
                     Markdown(profile["text"]),
@@ -1218,8 +1217,6 @@ def merge_organizations(
                     border_style="green",
                 )
             )
-
-            profile_embedding = embed_text(profile["text"], model_name=embedding_model)
 
             new_org = {
                 "name": org_name,
@@ -1235,8 +1232,8 @@ def merge_organizations(
                 ],
                 "profile_embedding": profile_embedding,
                 "extraction_timestamp": extraction_timestamp,
-                "alternative_names": [],  # Initialize empty list for alternative names
-                "reflection_history": reflection_history,  # Store the reflection history
+                "alternative_names": [],
+                "reflection_history": reflection_history,
             }
 
             entities["organizations"][org_key] = new_org
@@ -1443,9 +1440,12 @@ def merge_events(
         else:
             # Create new entry
             console.print(f"\n[green]Creating profile for new event:[/] {event_title}")
-            profile, reflection_history = create_profile(
-                "event", event_title, article_content, article_id, model_type
-            )
+
+            # Reuse the proposed_profile, reflection_history, and proposed_event_embedding
+            profile = proposed_profile
+            profile_embedding = proposed_event_embedding
+            reflection_history = reflection_history or []
+
             console.print(
                 Panel(
                     Markdown(profile["text"]),
@@ -1453,8 +1453,6 @@ def merge_events(
                     border_style="green",
                 )
             )
-
-            profile_embedding = embed_text(profile["text"], model_name=embedding_model)
 
             new_event = {
                 "title": event_title,
@@ -1475,8 +1473,8 @@ def merge_events(
                     }
                 ],
                 "extraction_timestamp": extraction_timestamp,
-                "alternative_titles": [],  # Initialize empty list for alternative titles
-                "reflection_history": reflection_history,  # Store the reflection history
+                "alternative_titles": [],
+                "reflection_history": reflection_history,
             }
 
             entities["events"][event_key] = new_event
