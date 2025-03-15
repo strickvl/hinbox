@@ -39,13 +39,21 @@ def transform_profile_text(text, articles):
         aid = a.get("article_id")
         article_map[aid] = a.get("article_url", "#")
 
-    # We'll replace footnotes in the form ^[...] with links to the article URL
+    # We'll replace footnotes in the form ^[...] with links to the article URL,
+    # replacing the raw UUID with a sequential number for unobtrusive display.
     pattern = r"\^\[([0-9a-fA-F-]+)\]"
+
+    marker_map = {}
+    marker_counter = [1]  # Using a list to allow modification in the nested function
 
     def replacer(match):
         ref = match.group(1)
         url = article_map.get(ref, "#")
-        return f'<sup><a href="{url}" target="_blank">{ref}</a></sup>'
+        if ref not in marker_map:
+            marker_map[ref] = str(marker_counter[0])
+            marker_counter[0] += 1
+        marker = marker_map[ref]
+        return f'<sup><a href="{url}" target="_blank">{marker}</a></sup>'
 
     return re.sub(pattern, replacer, text)
 
