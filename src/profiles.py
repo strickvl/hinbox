@@ -197,6 +197,7 @@ New Article (ID: {new_article_id}):
             return existing_profile, history
 
         # Convert final_result to a dict
+        updated_profile_dict = final_result.model_dump()
 
         # Ensure there's a non-empty "text" field to avoid KeyError later
         if "text" not in updated_profile_dict or not isinstance(
@@ -209,7 +210,6 @@ New Article (ID: {new_article_id}):
                 f"Profile update for {entity_name} is incomplete^[{new_article_id}]"
             )
 
-        updated_profile_dict = final_result.model_dump()
         # Merge old and new sources
         old_sources = existing_profile.get("sources", [])
         all_sources = list(set(old_sources + [new_article_id]))

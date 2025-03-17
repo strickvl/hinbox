@@ -346,6 +346,10 @@ def reflect_and_check(
     1. Whether all requirements in the prompt were addressed
     2. The quality and correctness of the output
     3. If there are any errors, omissions, or misunderstandings
+    4. Whether the text includes proper inline citations (e.g. ^[article_id]) if the prompt requires footnotes
+    5. Whether the profile text is sufficiently detailed (e.g., at least a few sentences long)
+
+    If the output is missing footnotes when required, is too short, or ignores key instructions, you must fail it.
     
     Provide honest, critical feedback for improvement when necessary.
     """
@@ -362,7 +366,12 @@ def reflect_and_check(
     {output_json_str}
     ```
     
-    Please evaluate if this output meets all the requirements in the original prompt.
+    Please evaluate if this output meets all requirements, including:
+    - Proper use of inline footnotes (like ^[article_id]) if requested
+    - A sufficiently detailed 'text' section (not just a short phrase)
+    - Inclusion of confidence scores, tags, or any other mandated fields
+    
+    If any requirement is missing, mark result=false and provide feedback for improvement.
     """
 
     # Use appropriate generation function based on mode

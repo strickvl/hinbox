@@ -70,10 +70,11 @@ def local_model_check_match(
                     Consider the following when making your determination:
                     1. Name variations: Different spellings, nicknames, titles, or partial names
                     2. Contextual information: Role, affiliations, actions, and biographical details
-                    3. Temporal consistency: Whether the information in both
-                    profiles could apply to the same entity at different times
+                    3. Temporal consistency: Whether the information in both profiles could apply to the same entity at different times
+                    4. Sub-location rule: If one location is a smaller subset (e.g., a camp within Guantánamo Bay), it is NOT the same as the larger location.
 
-                    Provide a detailed explanation for your decision, citing specific evidence from both profiles.""",
+                    Provide a detailed explanation for your decision, citing specific evidence from both profiles. If one is a sub-location or facility inside a bigger one, do NOT merge them.
+                    """,
                 },
                 {
                     "role": "user",
@@ -110,10 +111,9 @@ def cloud_model_check_match(
     model: str = CLOUD_MODEL,
 ) -> MatchCheckResult:
     """
-    Check if a newly extracted profile refers to the same entity as an existing profile.
-
-    This function uses an LLM to determine if two profiles refer to the same person,
-    even when names might have variations or additional context is needed to establish identity.
+    Check if a newly extracted profile refers to the same entity as an existing profile,
+    using a cloud-based LLM. This function specifically ensures sub-locations
+    are not merged with their larger locations.
 
     Args:
         new_name: The name extracted from the new article
@@ -125,6 +125,53 @@ def cloud_model_check_match(
     Returns:
         MatchCheckResult with is_match flag and detailed reasoning
     """
+    client = instructor.from_litellm(litellm.completion)
+
+    try:
+        result = client.chat.completions.create(
+            model=model,
+            response_model=MatchCheckResult,
+            temperature=0,
+            messages=[
+                {
+                    "role": "system",
+                    "content": """You are an expert analyst specializing in entity resolution for news articles about Guantánamo Bay.
+
+Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
+
+Consider the following when making your determination:
+1. Name variations: Different spellings, nicknames, titles, or partial names
+2. Contextual information: Role, affiliations, actions, and biographical details
+3. Temporal consistency: Whether the information in both profiles could apply to the same entity at different times
+4. Sub-location rule: If one location is a smaller subset (e.g., a camp within Guantánamo Bay), it is NOT the same as the larger location.
+
+Provide a detailed explanation for your decision, citing specific evidence from both profiles. If one is a sub-location or facility inside a bigger one, do NOT merge them.
+""",
+                },
+                {
+                    "role": "user",
+                    "content": f"""I need to determine if these two profiles refer to the same entity:
+
+## PROFILE FROM NEW ARTICLE:
+Name: {new_name}
+Profile: {new_profile_text}
+
+## EXISTING PROFILE IN DATABASE:
+Name: {existing_name}
+Profile: {existing_profile_text}
+
+Are these profiles referring to the same entity? Provide your analysis.""",
+                },
+            ],
+            metadata={
+                "project_name": "hinbox",
+                "tags": ["dev", "entity_resolution"],
+            },
+        )
+        return result
+    except Exception as e:
+        print(f"Error with Gemini API: {e}")
+        return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
     client = instructor.from_litellm(litellm.completion)
 
     try:
@@ -1261,7 +1308,7 @@ def merge_events(
             "event", event_title, article_content, article_id, model_type
         )
         # Extract profile text from response
-        proposed_profile = _extract_profile_text(proposed_profile)
+        proposed_profile = extract_profile_text(proposed_profile)
         proposed_profile_text = (
             proposed_profile.get("text") if proposed_profile else None
         )

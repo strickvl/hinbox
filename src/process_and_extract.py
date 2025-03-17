@@ -345,6 +345,7 @@ def main():
         event_dicts = to_dict_list(extracted_events)
 
         console.print("[magenta]\nMerging extracted entities...[/magenta]")
+        # Merge people
         try:
             merge_people(
                 people_dicts,
@@ -357,6 +358,12 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+        except Exception as e:
+            console.print(f"[red]Error merging people: {e}[/red]")
+            processing_metadata["error_people"] = str(e)
+
+        # Merge organizations
+        try:
             merge_organizations(
                 org_dicts,
                 entities,
@@ -368,6 +375,12 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+        except Exception as e:
+            console.print(f"[red]Error merging organizations: {e}[/red]")
+            processing_metadata["error_organizations"] = str(e)
+
+        # Merge locations
+        try:
             merge_locations(
                 loc_dicts,
                 entities,
@@ -379,6 +392,12 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+        except Exception as e:
+            console.print(f"[red]Error merging locations: {e}[/red]")
+            processing_metadata["error_locations"] = str(e)
+
+        # Merge events
+        try:
             merge_events(
                 event_dicts,
                 entities,
@@ -390,29 +409,25 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
-
-            # Because reflection histories are stored in each entity, we can
-            # also keep a record here if desired. For example, we can gather them:
-            # (Not strictly necessary, but can be done if we want an overview at the article level.)
-            # For now, let's just mark that reflection-based profile generation was used.
-            processing_metadata["reflection_used"] = True
-
-            processing_metadata["processed"] = True
-            processing_metadata["processing_completed"] = datetime.now().isoformat()
-            processing_metadata["entities_extracted"] = {
-                "people": len(people_dicts),
-                "organizations": len(org_dicts),
-                "locations": len(loc_dicts),
-                "events": len(event_dicts),
-            }
-
-            processed_rows.append(row)
-            processed_count += 1
-            console.print(f"[green]Successfully processed article #{row_index}[/green]")
         except Exception as e:
-            console.print(f"[red]Error merging entities: {e}[/red]")
-            processing_metadata["error"] = str(e)
-            processed_rows.append(row)
+            console.print(f"[red]Error merging events: {e}[/red]")
+            processing_metadata["error_events"] = str(e)
+
+        # Because reflection histories are stored in each entity, we can
+        # also keep a record here if desired.
+        processing_metadata["reflection_used"] = True
+        processing_metadata["processed"] = True
+        processing_metadata["processing_completed"] = datetime.now().isoformat()
+        processing_metadata["entities_extracted"] = {
+            "people": len(people_dicts),
+            "organizations": len(org_dicts),
+            "locations": len(loc_dicts),
+            "events": len(event_dicts),
+        }
+
+        processed_rows.append(row)
+        processed_count += 1
+        console.print(f"[green]Successfully processed article #{row_index}[/green]")
 
     # Write updated articles to a temp parquet file
     temp_file = args.articles_path + ".tmp.parquet"
