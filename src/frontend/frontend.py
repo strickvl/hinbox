@@ -290,11 +290,11 @@ def decode_key(k: str) -> str:
 def nav_bar():
     """Returns an FT component with a top nav bar."""
     return Nav(
-        A("Home", href="/", hx_boost="true"),
-        A("People", href="/people", hx_boost="true"),
-        A("Events", href="/events", hx_boost="true"),
-        A("Locations", href="/locations", hx_boost="true"),
-        A("Organizations", href="/organizations", hx_boost="true"),
+        A("Home", href="/"),
+        A("People", href="/people"),
+        A("Events", href="/events"),
+        A("Locations", href="/locations"),
+        A("Organizations", href="/organizations"),
         Button(
             "About",
             cls="secondary",
@@ -379,6 +379,11 @@ def people_filter_panel(
                     name="type",
                     value=pt,
                     checked="checked" if pt.lower() in selected_types else None,
+                    hx_trigger="change",
+                    hx_get="/people",
+                    hx_target=".content-area",
+                    hx_swap="innerHTML",
+                    hx_include="[name='type'], [name='tag']",
                 ),
                 Label(pt),
                 style="margin-bottom:8px;",
@@ -394,6 +399,11 @@ def people_filter_panel(
                     name="tag",
                     value=tg,
                     checked="checked" if tg.lower() in selected_tags else None,
+                    hx_trigger="change",
+                    hx_get="/people",
+                    hx_target=".content-area",
+                    hx_swap="innerHTML",
+                    hx_include="[name='type'], [name='tag']",
                 ),
                 Label(tg),
                 style="margin-bottom:8px;",
@@ -445,6 +455,11 @@ def events_filter_panel(
                     name="etype",
                     value=et,
                     checked="checked" if et.lower() in selected_types else None,
+                    hx_trigger="change",
+                    hx_get="/events",
+                    hx_target=".content-area",
+                    hx_swap="innerHTML",
+                    hx_include="[name='etype']",
                 ),
                 Label(et),
                 style="margin-bottom:8px;",
@@ -510,6 +525,11 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
                     name="loc_type",
                     value=lt,
                     checked="checked" if lt.lower() in selected_types else None,
+                    hx_trigger="change",
+                    hx_get="/locations",
+                    hx_target=".content-area",
+                    hx_swap="innerHTML",
+                    hx_include="[name='loc_type']",
                 ),
                 Label(lt),
                 style="margin-bottom:8px;",
@@ -555,6 +575,11 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
                     name="org_type",
                     value=ot,
                     checked="checked" if ot.lower() in selected_types else None,
+                    hx_trigger="change",
+                    hx_get="/organizations",
+                    hx_target=".content-area",
+                    hx_swap="innerHTML",
+                    hx_include="[name='org_type']",
                 ),
                 Label(ot),
                 style="margin-bottom:8px;",
@@ -718,13 +743,17 @@ def list_people(request):
         ),
     )
 
-    return main_layout(
-        "GTMO Browse - People",
-        people_filter_panel(
-            q=q, selected_types=selected_types, selected_tags=selected_tags
-        ),
-        content,
-    )
+    is_htmx = request.headers.get("HX-Request") == "true"
+    if is_htmx:
+        return content
+    else:
+        return main_layout(
+            "GTMO Browse - People",
+            people_filter_panel(
+                q=q, selected_types=selected_types, selected_tags=selected_tags
+            ),
+            content,
+        )
 
 
 @rt("/people/{key:path}")
@@ -906,11 +935,15 @@ def list_events(request):
         ),
     )
 
-    return main_layout(
-        "GTMO Browse - Events",
-        events_filter_panel(q, selected_types, start_q, end_q),
-        content,
-    )
+    is_htmx = request.headers.get("HX-Request") == "true"
+    if is_htmx:
+        return content
+    else:
+        return main_layout(
+            "GTMO Browse - Events",
+            events_filter_panel(q, selected_types, start_q, end_q),
+            content,
+        )
 
 
 @rt("/events/{key:path}")
@@ -1045,11 +1078,15 @@ def list_locations(request):
         ),
     )
 
-    return main_layout(
-        "GTMO Browse - Locations",
-        locations_filter_panel(q=q, selected_types=selected_types),
-        content,
-    )
+    is_htmx = request.headers.get("HX-Request") == "true"
+    if is_htmx:
+        return content
+    else:
+        return main_layout(
+            "GTMO Browse - Locations",
+            locations_filter_panel(q=q, selected_types=selected_types),
+            content,
+        )
 
 
 @rt("/locations/{key:path}")
@@ -1155,11 +1192,15 @@ def list_orgs(request):
         ),
     )
 
-    return main_layout(
-        "GTMO Browse - Organizations",
-        organizations_filter_panel(q=q, selected_types=selected_types),
-        content,
-    )
+    is_htmx = request.headers.get("HX-Request") == "true"
+    if is_htmx:
+        return content
+    else:
+        return main_layout(
+            "GTMO Browse - Organizations",
+            organizations_filter_panel(q=q, selected_types=selected_types),
+            content,
+        )
 
 
 @rt("/organizations/{key:path}")
