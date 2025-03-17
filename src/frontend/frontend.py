@@ -273,10 +273,43 @@ STYLES = Style("""
     .article-list li:last-child {
         border-bottom: none;
     }
+
+    /* New chip styling for toggles */
+    .filter-chip {
+        display: inline-block;
+        font-size: 0.8rem;
+        padding: 3px 6px;
+        border-radius: 16px;
+        border: 1px solid #ddd;
+        transition: transform 0.2s, color 0.2s;
+        user-select: none;
+        margin-right: 5px;
+        margin-bottom: 5px;
+        cursor: pointer;
+    }
+    .filter-chip:hover {
+        transform: scale(1.05);
+    }
+    .filter-chip.selected {
+        background-color: #ffe98e !important; /* a distinct color for selected */
+        box-shadow: 0 0 0 1px var(--primary-light);
+        color: #000;
+        border: 1px solid var(--primary-light);
+    }
 """)
 
 
 # ----- Utility Functions -----
+
+import random
+
+def random_pastel_color():
+    """Generate a pastel-ish random RGB color."""
+    r = random.randint(128, 230)
+    g = random.randint(128, 230)
+    b = random.randint(128, 230)
+    return f"rgb({r},{g},{b})"
+
 def encode_key(k: str) -> str:
     """Encode the entity key so it can be used in a URL."""
     return quote(k, safe="")
@@ -370,50 +403,56 @@ def people_filter_panel(
             if tg_str:
                 possible_tags.add(tg_str)
 
-    type_checks = []
+    type_chips = []
     for pt in sorted(possible_types):
-        type_checks.append(
-            Div(
-                Input(
-                    type="checkbox",
-                    name="type",
-                    value=pt,
-                    checked="checked" if pt.lower() in selected_types else None,
-                    hx_trigger="change",
-                    hx_get="/people",
-                    hx_target=".content-area",
-                    hx_swap="innerHTML",
-                    hx_include="[name='type'], [name='tag']",
-                ),
-                Label(pt),
-                style="margin-bottom:8px;",
-            )
+        selected = pt.lower() in selected_types
+        chip_label = Label(
+            Input(
+                type="checkbox",
+                name="type",
+                value=pt,
+                checked="checked" if selected else None,
+                style="display:none;",
+                onchange="this.parentElement.classList.toggle('selected', this.checked);",
+                hx_trigger="change",
+                hx_get="/people",
+                hx_target=".content-area",
+                hx_swap="innerHTML",
+                hx_include="[name='type'], [name='tag']",
+            ),
+            pt.capitalize(),
+            cls=f"filter-chip{' selected' if selected else ''}",
+            style=f"background-color: {random_pastel_color()};"
         )
+        type_chips.append(chip_label)
 
-    tag_checks = []
+    tag_chips = []
     for tg in sorted(possible_tags):
-        tag_checks.append(
-            Div(
-                Input(
-                    type="checkbox",
-                    name="tag",
-                    value=tg,
-                    checked="checked" if tg.lower() in selected_tags else None,
-                    hx_trigger="change",
-                    hx_get="/people",
-                    hx_target=".content-area",
-                    hx_swap="innerHTML",
-                    hx_include="[name='type'], [name='tag']",
-                ),
-                Label(tg),
-                style="margin-bottom:8px;",
-            )
+        selected_t = tg.lower() in selected_tags
+        chip_label = Label(
+            Input(
+                type="checkbox",
+                name="tag",
+                value=tg,
+                checked="checked" if selected_t else None,
+                style="display:none;",
+                onchange="this.parentElement.classList.toggle('selected', this.checked);",
+                hx_trigger="change",
+                hx_get="/people",
+                hx_target=".content-area",
+                hx_swap="innerHTML",
+                hx_include="[name='type'], [name='tag']",
+            ),
+            tg.capitalize(),
+            cls=f"filter-chip{' selected' if selected_t else ''}",
+            style=f"background-color: {random_pastel_color()};",
         )
+        tag_chips.append(chip_label)
 
     return Form(
         H3("People Filters"),
-        Div(H4("Person Types"), *type_checks) if type_checks else "",
-        Div(H4("Tags"), *tag_checks) if tag_checks else "",
+        Div(H4("Person Types"), *type_chips, style="margin-bottom:15px;") if type_chips else "",
+        Div(H4("Tags"), *tag_chips, style="margin-bottom:15px;") if tag_chips else "",
         Div(
             Label("Search: "),
             Input(
@@ -437,6 +476,11 @@ def events_filter_panel(
     start_date: str = "",
     end_date: str = "",
 ):
+    """
+    Replaces checkbox inputs with interactive chips.
+    Each chip is a hidden checkbox for form submission + a styled Label.
+    Clicking the label toggles the hidden checkbox, triggering the same HTMX update.
+    """
     if selected_types is None:
         selected_types = []
 
@@ -446,29 +490,36 @@ def events_filter_panel(
         if t:
             possible_types.add(t)
 
-    checks = []
+    chips = []
     for et in sorted(possible_types):
-        checks.append(
-            Div(
-                Input(
-                    type="checkbox",
-                    name="etype",
-                    value=et,
-                    checked="checked" if et.lower() in selected_types else None,
-                    hx_trigger="change",
-                    hx_get="/events",
-                    hx_target=".content-area",
-                    hx_swap="innerHTML",
-                    hx_include="[name='etype']",
-                ),
-                Label(et),
-                style="margin-bottom:8px;",
-            )
+        selected = et.lower() in selected_types
+        # We store the event_type in a hidden checkbox, but style the label as a chip
+        chip_label = Label(
+            Input(
+                type="checkbox",
+                name="etype",
+                value=et,
+                checked="checked" if selected else None,
+                style="display:none;",
+                onchange="this.parentElement.classList.toggle('selected', this.checked);",
+                hx_trigger="change",
+                hx_get="/events",
+                hx_target=".content-area",
+                hx_swap="innerHTML",
+                hx_include="[name='etype']"
+            ),
+            et.capitalize(),
+            cls=f"filter-chip{' selected' if selected else ''}",
+            style=f"background-color: {random_pastel_color()};",
         )
-
+        chips.append(chip_label)
     return Form(
         H3("Event Filters"),
-        Div(H4("Event Types"), *checks) if checks else "",
+        Div(
+            H4("Event Types"),
+            *chips,
+            style="margin-bottom:15px;"
+        ) if chips else "",
         Div(
             H4("Date Range"),
             Div(
@@ -516,29 +567,32 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
         if t:
             possible_types.add(t)
 
-    checks = []
+    chips = []
     for lt in sorted(possible_types):
-        checks.append(
-            Div(
-                Input(
-                    type="checkbox",
-                    name="loc_type",
-                    value=lt,
-                    checked="checked" if lt.lower() in selected_types else None,
-                    hx_trigger="change",
-                    hx_get="/locations",
-                    hx_target=".content-area",
-                    hx_swap="innerHTML",
-                    hx_include="[name='loc_type']",
-                ),
-                Label(lt),
-                style="margin-bottom:8px;",
-            )
+        selected = lt.lower() in selected_types
+        chip_label = Label(
+            Input(
+                type="checkbox",
+                name="loc_type",
+                value=lt,
+                checked="checked" if selected else None,
+                style="display:none;",
+                onchange="this.parentElement.classList.toggle('selected', this.checked);",
+                hx_trigger="change",
+                hx_get="/locations",
+                hx_target=".content-area",
+                hx_swap="innerHTML",
+                hx_include="[name='loc_type']",
+            ),
+            lt.capitalize(),
+            cls=f"filter-chip{' selected' if selected else ''}",
+            style=f"background-color: {random_pastel_color()};",
         )
+        chips.append(chip_label)
 
     return Form(
         H3("Location Filters"),
-        Div(H4("Location Types"), *checks) if checks else "",
+        Div(H4("Location Types"), *chips, style="margin-bottom:15px;") if chips else "",
         Div(
             Label("Search: "),
             Input(
@@ -566,29 +620,32 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
         if t:
             possible_types.add(t)
 
-    checks = []
+    chips = []
     for ot in sorted(possible_types):
-        checks.append(
-            Div(
-                Input(
-                    type="checkbox",
-                    name="org_type",
-                    value=ot,
-                    checked="checked" if ot.lower() in selected_types else None,
-                    hx_trigger="change",
-                    hx_get="/organizations",
-                    hx_target=".content-area",
-                    hx_swap="innerHTML",
-                    hx_include="[name='org_type']",
-                ),
-                Label(ot),
-                style="margin-bottom:8px;",
-            )
+        selected = ot.lower() in selected_types
+        chip_label = Label(
+            Input(
+                type="checkbox",
+                name="org_type",
+                value=ot,
+                checked="checked" if selected else None,
+                style="display:none;",
+                onchange="this.parentElement.classList.toggle('selected', this.checked);",
+                hx_trigger="change",
+                hx_get="/organizations",
+                hx_target=".content-area",
+                hx_swap="innerHTML",
+                hx_include="[name='org_type']",
+            ),
+            ot.capitalize(),
+            cls=f"filter-chip{' selected' if selected else ''}",
+            style=f"background-color: {random_pastel_color()};",
         )
+        chips.append(chip_label)
 
     return Form(
         H3("Organization Filters"),
-        Div(H4("Organization Types"), *checks) if checks else "",
+        Div(H4("Organization Types"), *chips, style="margin-bottom:15px;") if chips else "",
         Div(
             Label("Search: "),
             Input(
