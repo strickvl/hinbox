@@ -22,7 +22,7 @@ from src.constants import (
 )
 from src.embeddings import embed_text
 from src.profiles import create_profile, update_profile
-from src.utils import write_entity_to_file
+from src.utils import extract_profile_text, write_entity_to_file
 
 console = Console()
 
@@ -477,33 +477,7 @@ def find_similar_event(
     return None, None
 
 
-def _extract_profile_text(
-    profile_response: Optional[Dict[str, Any]],
-) -> Optional[Dict[str, Any]]:
-    """
-    Extract profile text from either a simple dict or nested API response.
-
-    Args:
-        profile_response: Response from create_profile() which could be either:
-            - A simple dict with 'text' key
-            - A nested API response with parsed content
-
-    Returns:
-        Dict with 'text' and other fields, or None if text cannot be extracted
-    """
-    if not profile_response:
-        return None
-
-    # Handle simple dict case
-    if isinstance(profile_response, dict):
-        if "text" in profile_response:
-            return profile_response
-        if "choices" in profile_response and len(profile_response["choices"]) > 0:
-            message = profile_response["choices"][0].get("message", {})
-            if "parsed" in message:
-                return message["parsed"]
-
-    return None
+# (Removed)
 
 
 def merge_people(
@@ -545,7 +519,7 @@ def merge_people(
 
             # Extract profile text from response
             console.print("[cyan]Extracting profile text from response...[/cyan]")
-            proposed_profile = _extract_profile_text(proposed_profile)
+            proposed_profile = extract_profile_text(proposed_profile)
             if not proposed_profile or not proposed_profile.get("text"):
                 console.print(
                     f"[red]Failed to generate profile for {person_name}. Profile data: {proposed_profile}[/red]"
@@ -811,7 +785,7 @@ def merge_locations(
             "location", loc_name, article_content, article_id, model_type
         )
         # Extract profile text from response
-        proposed_profile = _extract_profile_text(proposed_profile)
+        proposed_profile = extract_profile_text(proposed_profile)
         proposed_profile_text = (
             proposed_profile.get("text") if proposed_profile else None
         )
@@ -1040,13 +1014,13 @@ def merge_organizations(
             "organization", org_name, article_content, article_id, model_type
         )
         # Extract profile text from response
-        proposed_profile = _extract_profile_text(proposed_profile)
+        proposed_profile = extract_profile_text(proposed_profile)
         proposed_profile_text = (
             proposed_profile.get("text") if proposed_profile else None
         )
         if not proposed_profile_text:
             console.print(
-                f"[red]Failed to generate profile for organization {org_name}[/red]"
+                f"[red]Failed to generate profile for event {event_title}[/red]"
             )
             continue
 

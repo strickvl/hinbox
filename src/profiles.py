@@ -5,7 +5,7 @@ import litellm
 from pydantic import BaseModel, Field
 from rich.console import Console
 
-from src.utils import GenerationMode, iterative_improve
+from src.utils import GenerationMode, extract_profile_text, iterative_improve
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
@@ -259,6 +259,9 @@ def create_profile(
         profile_dict, improvement_history = generate_profile(
             entity_type, entity_name, article_text, article_id, model_type
         )
+
+        # Extract the actual text from nested/parsed fields before logging
+        profile_dict = extract_profile_text(profile_dict)
 
         console.print(
             f"[green]Successfully generated profile for {entity_name}[/green]"

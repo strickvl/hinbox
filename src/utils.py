@@ -4,7 +4,7 @@ Utility functions for the hinbox project.
 
 import os
 from enum import Enum
-from typing import Any, Dict, List, Tuple, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 import instructor
 import litellm
@@ -27,6 +27,35 @@ from src.constants import (
 
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
+
+
+def extract_profile_text(
+    profile_response: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Extract profile text from either a simple dict or nested API response.
+
+    Args:
+        profile_response: Response from create_profile() which could be either:
+            - A simple dict with 'text' key
+            - A nested API response with parsed content
+
+    Returns:
+        Dict with 'text' and other fields, or None if text cannot be extracted
+    """
+    if not profile_response:
+        return None
+
+    # Handle simple dict case
+    if isinstance(profile_response, dict):
+        if "text" in profile_response:
+            return profile_response
+        if "choices" in profile_response and len(profile_response["choices"]) > 0:
+            message = profile_response["choices"][0].get("message", {})
+            if "parsed" in message:
+                return message["parsed"]
+
+    return None
 
 
 def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
