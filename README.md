@@ -47,6 +47,18 @@ Process 5 articles using Ollama and only extract people and organizations:
 python src/v2/run.py --local --people --orgs
 ```
 
+### Reset Processing Status (`scripts/reset_processing_status.py`)
+
+A utility script to reset the processing status of articles in the Parquet file. This is useful when you want to reprocess all articles from scratch.
+
+#### Usage
+
+```bash
+python scripts/reset_processing_status.py
+```
+
+The script reads the Miami Herald articles Parquet file, sets the 'processed' flag to False for all articles in their processing_metadata, and saves the changes back to the file. This effectively marks all articles as unprocessed, allowing them to be processed again by the article processing script.
+
 ### Entity Extraction (`src/v2/extract_entities.py`)
 
 This script reads the processed articles from a JSONL file and extracts people, events, locations, and organizations into separate JSONL files for easier analysis.
@@ -109,4 +121,4 @@ This project uses Python 3.9+ and requires the following packages:
 
 1. Process raw articles using `src/v2/run.py`
 2. Extract entities from processed articles using `src/v2/extract_entities.py`
-3. Analyze the extracted entities as needed 
+3. Analyze the extracted entities as needed
