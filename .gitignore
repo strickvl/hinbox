@@ -181,3 +181,6 @@ drafts/
 data/
 .sesskey
 discovery_do_not_commit/
+
+# Macfuse or SSH-related files
+._*
