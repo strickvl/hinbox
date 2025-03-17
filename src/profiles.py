@@ -197,7 +197,7 @@ New Article (ID: {new_article_id}):
             return existing_profile, history
 
         # Convert final_result to a dict
-        updated_profile_dict = final_result.model_dump()
+
         # Ensure there's a non-empty "text" field to avoid KeyError later
         if "text" not in updated_profile_dict or not isinstance(
             updated_profile_dict["text"], str
