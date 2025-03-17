@@ -5,7 +5,7 @@ Constants used throughout the application.
 import os
 
 CLOUD_MODEL = "gemini/gemini-2.0-flash"
-OLLAMA_MODEL = "ollama/mistral-small"  # Updated to include full path
+OLLAMA_MODEL = "ollama/gemma3:27b"  # Updated to include full path
 
 # Embedding model names
 CLOUD_EMBEDDING_MODEL = "jina_ai/jina-embeddings-v3"
