@@ -301,14 +301,20 @@ STYLES = Style("""
 
 # ----- Utility Functions -----
 
-import random
 
-def random_pastel_color():
-    """Generate a pastel-ish random RGB color."""
-    r = random.randint(128, 230)
-    g = random.randint(128, 230)
-    b = random.randint(128, 230)
+def random_pastel_color(label: str) -> str:
+    """Generate a stable pastel-ish RGB color from a label."""
+    import hashlib
+
+    digest = hashlib.md5(label.encode("utf-8")).hexdigest()
+    # Convert part of the hex to an integer seed
+    seed = int(digest[:6], 16)
+    # Derive each channel from seed, ensuring each stays in [128..230]
+    r = 128 + (seed % 103)
+    g = 128 + ((seed // 103) % 103)
+    b = 128 + ((seed // (103 * 103)) % 103)
     return f"rgb({r},{g},{b})"
+
 
 def encode_key(k: str) -> str:
     """Encode the entity key so it can be used in a URL."""
@@ -422,7 +428,7 @@ def people_filter_panel(
             ),
             pt.capitalize(),
             cls=f"filter-chip{' selected' if selected else ''}",
-            style=f"background-color: {random_pastel_color()};"
+            style=f"background-color: {random_pastel_color(pt)};",
         )
         type_chips.append(chip_label)
 
@@ -445,13 +451,15 @@ def people_filter_panel(
             ),
             tg.capitalize(),
             cls=f"filter-chip{' selected' if selected_t else ''}",
-            style=f"background-color: {random_pastel_color()};",
+            style=f"background-color: {random_pastel_color(tg)};",
         )
         tag_chips.append(chip_label)
 
     return Form(
         H3("People Filters"),
-        Div(H4("Person Types"), *type_chips, style="margin-bottom:15px;") if type_chips else "",
+        Div(H4("Person Types"), *type_chips, style="margin-bottom:15px;")
+        if type_chips
+        else "",
         Div(H4("Tags"), *tag_chips, style="margin-bottom:15px;") if tag_chips else "",
         Div(
             Label("Search: "),
@@ -506,20 +514,16 @@ def events_filter_panel(
                 hx_get="/events",
                 hx_target=".content-area",
                 hx_swap="innerHTML",
-                hx_include="[name='etype']"
+                hx_include="[name='etype']",
             ),
             et.capitalize(),
             cls=f"filter-chip{' selected' if selected else ''}",
-            style=f"background-color: {random_pastel_color()};",
+            style=f"background-color: {random_pastel_color(et)};",
         )
         chips.append(chip_label)
     return Form(
         H3("Event Filters"),
-        Div(
-            H4("Event Types"),
-            *chips,
-            style="margin-bottom:15px;"
-        ) if chips else "",
+        Div(H4("Event Types"), *chips, style="margin-bottom:15px;") if chips else "",
         Div(
             H4("Date Range"),
             Div(
@@ -586,7 +590,7 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
             ),
             lt.capitalize(),
             cls=f"filter-chip{' selected' if selected else ''}",
-            style=f"background-color: {random_pastel_color()};",
+            style=f"background-color: {random_pastel_color(lt)};",
         )
         chips.append(chip_label)
 
@@ -639,13 +643,15 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
             ),
             ot.capitalize(),
             cls=f"filter-chip{' selected' if selected else ''}",
-            style=f"background-color: {random_pastel_color()};",
+            style=f"background-color: {random_pastel_color(ot)};",
         )
         chips.append(chip_label)
 
     return Form(
         H3("Organization Filters"),
-        Div(H4("Organization Types"), *chips, style="margin-bottom:15px;") if chips else "",
+        Div(H4("Organization Types"), *chips, style="margin-bottom:15px;")
+        if chips
+        else "",
         Div(
             Label("Search: "),
             Input(
