@@ -684,15 +684,16 @@ def list_people(request):
         ]
 
         # if there's a type filter, skip if not matching
-        if selected_types and ptype not in selected_types:
-            continue
+        if selected_types:
+            if not set(selected_types).issubset({ptype}):
+                continue
         # optional search
         if q and q not in pname:
             continue
         # tag filter
         if selected_tags:
-            # Must have intersection with selected_tags
-            if not set(p_tags).intersection(selected_tags):
+            # Must have all selected_tags
+            if not set(selected_tags).issubset(set(p_tags)):
                 continue
 
         # Display type badge for each person
@@ -837,8 +838,9 @@ def list_events(request):
 
         # date checks
         keep = True
-        if selected_types and evtype not in selected_types:
-            keep = False
+        if selected_types:
+            if not set(selected_types).issubset({evtype}):
+                keep = False
 
         if q and q not in title_lower:
             keep = False
@@ -1015,8 +1017,9 @@ def list_locations(request):
         ltype = loc.get("type", "").strip().lower()
         lname = loc.get("name", "").strip().lower()
 
-        if selected_types and ltype not in selected_types:
-            continue
+        if selected_types:
+            if not set(selected_types).issubset({ltype}):
+                continue
         if q and q not in lname:
             continue
 
@@ -1124,8 +1127,9 @@ def list_orgs(request):
         otype = org.get("type", "").strip().lower()
         oname = org.get("name", "").strip().lower()
 
-        if selected_types and otype not in selected_types:
-            continue
+        if selected_types:
+            if not set(selected_types).issubset({otype}):
+                continue
         if q and q not in oname:
             continue
 
