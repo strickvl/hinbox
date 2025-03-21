@@ -403,7 +403,7 @@ def people_filter_panel(
         t = p.get("type", "").strip()
         if t:
             possible_types.add(t)
-        p_tags = p.get("profile", {}).get("tags", [])
+        p_tags = p.get("profile", {}).get("tags") or []
         for tg in p_tags:
             tg_str = tg.strip()
             if tg_str:
@@ -768,7 +768,7 @@ def list_people(request):
         ptype = person.get("type", "").strip().lower()
         pname = person.get("name", "").strip().lower()
         p_tags = [
-            tg.strip().lower() for tg in person.get("profile", {}).get("tags", [])
+            tg.strip().lower() for tg in (person.get("profile", {}).get("tags") or [])
         ]
 
         # if there's a type filter, skip if not matching
@@ -849,7 +849,7 @@ def show_person(key: str):
     articles = person.get("articles", [])
 
     # Create tags display
-    tags = profile.get("tags", [])
+    tags = profile.get("tags") or []
     tag_elements = []
     for tag in tags:
         if tag.strip():
