@@ -1,6 +1,6 @@
 import logging
 
-from fasthtml.common import H3, H4, A, Button, Div, Form, Input, Label
+from fasthtml.common import H3, H4, Button, Div, Form, Input, Label
 
 log = logging.getLogger(__name__)
 
@@ -81,11 +81,11 @@ def people_filter_panel(
         tag_chips.append(chip_label)
 
     return Div(
-        A(
+        Button(
             "Clear Filters",
-            href="/people",
-            cls="button secondary",
-            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
+            cls="contrast outline",
+            onclick="window.location.href='/people'",
+            style="width:100%; margin-bottom:15px; font-weight:bold;",
         ),
         Form(
             H3("People Filters"),
@@ -158,11 +158,11 @@ def events_filter_panel(
         chips.append(chip_label)
 
     return Div(
-        A(
+        Button(
             "Clear Filters",
-            href="/events",
-            cls="button secondary",
-            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
+            cls="contrast outline",
+            onclick="window.location.href='/events'",
+            style="width:100%; margin-bottom:15px; font-weight:bold;",
         ),
         Form(
             H3("Event Filters"),
@@ -249,11 +249,11 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
         chips.append(chip_label)
 
     return Div(
-        A(
+        Button(
             "Clear Filters",
-            href="/locations",
-            cls="button secondary",
-            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
+            cls="contrast outline",
+            onclick="window.location.href='/locations'",
+            style="width:100%; margin-bottom:15px; font-weight:bold;",
         ),
         Form(
             H3("Location Filters"),
@@ -323,11 +323,11 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
         chips.append(chip_label)
 
     return Div(
-        A(
+        Button(
             "Clear Filters",
-            href="/organizations",
-            cls="button secondary",
-            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
+            cls="contrast outline",
+            onclick="window.location.href='/organizations'",
+            style="width:100%; margin-bottom:15px; font-weight:bold;",
         ),
         Form(
             H3("Organization Filters"),
