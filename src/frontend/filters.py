@@ -1,4 +1,8 @@
-from fasthtml.common import H3, H4, Button, Div, Form, Input, Label
+import logging
+
+from fasthtml.common import H3, H4, A, Button, Div, Form, Input, Label
+
+log = logging.getLogger(__name__)
 
 from .utils import random_pastel_color
 
@@ -6,6 +10,10 @@ from .utils import random_pastel_color
 def people_filter_panel(
     q: str = "", selected_types: list[str] = None, selected_tags: list[str] = None
 ):
+    """
+    Builds a People filter panel with checkboxes for 'type' & 'tag', plus a text search.
+    Includes a 'Clear Filters' link to reset all filters. Styled more visibly.
+    """
     from .data_access import people_index
 
     if selected_types is None:
@@ -15,11 +23,12 @@ def people_filter_panel(
 
     possible_types = set()
     possible_tags = set()
+
     for p in people_index.values():
         t = p.get("type", "").strip()
         if t:
             possible_types.add(t)
-        p_tags = p.get("profile", {}).get("tags", [])
+        p_tags = (p.get("profile") or {}).get("tags") or []
         for tg in p_tags:
             tg_str = tg.strip()
             if tg_str:
@@ -71,26 +80,36 @@ def people_filter_panel(
         )
         tag_chips.append(chip_label)
 
-    return Form(
-        H3("People Filters"),
-        Div(H4("Person Types"), *type_chips, style="margin-bottom:15px;")
-        if type_chips
-        else "",
-        Div(H4("Tags"), *tag_chips, style="margin-bottom:15px;") if tag_chips else "",
-        Div(
-            Label("Search: "),
-            Input(
-                type="text",
-                name="q",
-                value=q,
-                placeholder="Search by name...",
-                style="width:100%; margin-top:5px;",
-            ),
-            cls="search-box",
+    return Div(
+        A(
+            "Clear Filters",
+            href="/people",
+            cls="button secondary",
+            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
         ),
-        Button("Apply Filters", type="submit", cls="primary"),
-        method="get",
-        action="/people",
+        Form(
+            H3("People Filters"),
+            Div(H4("Person Types"), *type_chips, style="margin-bottom:15px;")
+            if type_chips
+            else "",
+            Div(H4("Tags"), *tag_chips, style="margin-bottom:15px;")
+            if tag_chips
+            else "",
+            Div(
+                Label("Search: "),
+                Input(
+                    type="text",
+                    name="q",
+                    value=q,
+                    placeholder="Search by name...",
+                    style="width:100%; margin-top:5px;",
+                ),
+                cls="search-box",
+            ),
+            Button("Apply Filters", type="submit", cls="primary"),
+            method="get",
+            action="/people",
+        ),
     )
 
 
@@ -100,8 +119,10 @@ def events_filter_panel(
     start_date: str = "",
     end_date: str = "",
 ):
-    from fasthtml.common import H3, H4, Button, Div, Form, Input, Label
-
+    """
+    Builds an Events filter panel with checkboxes for 'event_type', optional date range, text search,
+    and a clearly visible 'Clear Filters' link at the top.
+    """
     from .data_access import events_index
 
     if selected_types is None:
@@ -112,8 +133,6 @@ def events_filter_panel(
         t = e.get("event_type", "").strip()
         if t:
             possible_types.add(t)
-
-    from .utils import random_pastel_color
 
     chips = []
     for et in sorted(possible_types):
@@ -138,49 +157,63 @@ def events_filter_panel(
         )
         chips.append(chip_label)
 
-    return Form(
-        H3("Event Filters"),
-        Div(H4("Event Types"), *chips, style="margin-bottom:15px;") if chips else "",
-        Div(
-            H4("Date Range"),
-            Div(
-                Label("From:"),
-                Input(
-                    type="date",
-                    name="start_date",
-                    value=start_date if start_date else None,
-                ),
-                style="margin-bottom:10px;",
-            ),
-            Div(
-                Label("To:"),
-                Input(
-                    type="date", name="end_date", value=end_date if end_date else None
-                ),
-                style="margin-bottom:10px;",
-            ),
-            cls="date-range",
+    return Div(
+        A(
+            "Clear Filters",
+            href="/events",
+            cls="button secondary",
+            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
         ),
-        Div(
-            Label("Search: "),
-            Input(
-                type="text",
-                name="q",
-                value=q,
-                placeholder="Search by title...",
-                style="width:100%; margin-top:5px;",
+        Form(
+            H3("Event Filters"),
+            Div(H4("Event Types"), *chips, style="margin-bottom:15px;")
+            if chips
+            else "",
+            Div(
+                H4("Date Range"),
+                Div(
+                    Label("From:"),
+                    Input(
+                        type="date",
+                        name="start_date",
+                        value=start_date if start_date else None,
+                    ),
+                    style="margin-bottom:10px;",
+                ),
+                Div(
+                    Label("To:"),
+                    Input(
+                        type="date",
+                        name="end_date",
+                        value=end_date if end_date else None,
+                    ),
+                    style="margin-bottom:10px;",
+                ),
+                cls="date-range",
             ),
-            cls="search-box",
+            Div(
+                Label("Search: "),
+                Input(
+                    type="text",
+                    name="q",
+                    value=q,
+                    placeholder="Search by title...",
+                    style="width:100%; margin-top:5px;",
+                ),
+                cls="search-box",
+            ),
+            Button("Apply Filters", type="submit", cls="primary"),
+            method="get",
+            action="/events",
         ),
-        Button("Apply Filters", type="submit", cls="primary"),
-        method="get",
-        action="/events",
     )
 
 
 def locations_filter_panel(q: str = "", selected_types: list[str] = None):
-    from fasthtml.common import H3, H4, Button, Div, Form, Input, Label
-
+    """
+    Builds a Locations filter panel with checkboxes for 'type', plus optional text search,
+    and a very visible 'Clear Filters' link at the top.
+    """
     from .data_access import locations_index
 
     if selected_types is None:
@@ -191,8 +224,6 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
         t = loc.get("type", "").strip()
         if t:
             possible_types.add(t)
-
-    from .utils import random_pastel_color
 
     chips = []
     for lt in sorted(possible_types):
@@ -217,29 +248,46 @@ def locations_filter_panel(q: str = "", selected_types: list[str] = None):
         )
         chips.append(chip_label)
 
-    return Form(
-        H3("Location Filters"),
-        Div(H4("Location Types"), *chips, style="margin-bottom:15px;") if chips else "",
-        Div(
-            Label("Search: "),
-            Input(
-                type="text",
-                name="q",
-                value=q,
-                placeholder="Search by name...",
-                style="width:100%; margin-top:5px;",
-            ),
-            cls="search-box",
+    return Div(
+        A(
+            "Clear Filters",
+            href="/locations",
+            cls="button secondary",
+            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
         ),
-        Button("Apply Filters", type="submit", cls="primary"),
-        method="get",
-        action="/locations",
+        Form(
+            H3("Location Filters"),
+            Div(H4("Location Types"), *chips, style="margin-bottom:15px;")
+            if chips
+            else "",
+            Div(
+                Label("Search: "),
+                Input(
+                    type="text",
+                    name="q",
+                    value=q,
+                    placeholder="Search by name...",
+                    style="width:100%; margin-top:5px;",
+                ),
+                cls="search-box",
+            ),
+            Button("Apply Filters", type="submit", cls="primary"),
+            method="get",
+            action="/locations",
+        ),
     )
 
 
 def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
-    from fasthtml.common import H3, H4, Button, Div, Form, Input, Label
-
+    """
+    Builds an Organizations filter panel with checkboxes for 'type', plus optional text search.
+    Also includes a big red 'Clear Filters' link at the top to reset all filters.
+    """
+    log.warning(
+        "filters.py organizations_filter_panel CALLED with q=%s; selected_types=%s",
+        q,
+        selected_types,
+    )
     from .data_access import orgs_index
 
     if selected_types is None:
@@ -250,8 +298,6 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
         t = org.get("type", "").strip()
         if t:
             possible_types.add(t)
-
-    from .utils import random_pastel_color
 
     chips = []
     for ot in sorted(possible_types):
@@ -276,23 +322,31 @@ def organizations_filter_panel(q: str = "", selected_types: list[str] = None):
         )
         chips.append(chip_label)
 
-    return Form(
-        H3("Organization Filters"),
-        Div(H4("Organization Types"), *chips, style="margin-bottom:15px;")
-        if chips
-        else "",
-        Div(
-            Label("Search: "),
-            Input(
-                type="text",
-                name="q",
-                value=q,
-                placeholder="Search by name...",
-                style="width:100%; margin-top:5px;",
-            ),
-            cls="search-box",
+    return Div(
+        A(
+            "Clear Filters",
+            href="/organizations",
+            cls="button secondary",
+            style="display:block; margin-bottom:15px; background-color:#e35a5a; color:white; font-weight:bold;",
         ),
-        Button("Apply Filters", type="submit", cls="primary"),
-        method="get",
-        action="/organizations",
+        Form(
+            H3("Organization Filters"),
+            Div(H4("Organization Types"), *chips, style="margin-bottom:15px;")
+            if chips
+            else "",
+            Div(
+                Label("Search: "),
+                Input(
+                    type="text",
+                    name="q",
+                    value=q,
+                    placeholder="Search by name...",
+                    style="width:100%; margin-top:5px;",
+                ),
+                cls="search-box",
+            ),
+            Button("Apply Filters", type="submit", cls="primary"),
+            method="get",
+            action="/organizations",
+        ),
     )
