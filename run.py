@@ -13,15 +13,15 @@ import sys
 
 def run_command(cmd):
     """Run a command and handle errors."""
-    print(f"\n=� Running: {' '.join(cmd)}\n")
+    print(f"\n🚀 Running: {' '.join(cmd)}\n")
     try:
         result = subprocess.run(cmd, check=True)
         return result.returncode
     except subprocess.CalledProcessError as e:
-        print(f"\nL Error: Command failed with exit code {e.returncode}")
+        print(f"\n❌ Error: Command failed with exit code {e.returncode}")
         return e.returncode
     except KeyboardInterrupt:
-        print("\n\n�  Process interrupted by user")
+        print("\n\n⚠️  Process interrupted by user")
         return 1
 
 
@@ -134,7 +134,7 @@ Examples:
         return run_command(cmd)
 
     elif args.command == "reset":
-        print("�  This will reset the processing status of all articles.")
+        print("⚠️  This will reset the processing status of all articles.")
         response = input("Are you sure? (y/N): ")
         if response.lower() == "y":
             return run_command([sys.executable, "scripts/reset_processing_status.py"])
@@ -143,9 +143,9 @@ Examples:
             return 0
 
     elif args.command in ["frontend", "web", "ui"]:
-        print("< Starting web interface...")
+        print("🌐 Starting web interface...")
         print("Open http://localhost:5001 in your browser")
-        return run_command([sys.executable, "-m", "src.frontend"])
+        return run_command([sys.executable, "src/frontend/frontend.py"])
 
     elif args.command == "fetch-miami":
         return run_command([sys.executable, "scripts/get_miami_herald_articles.py"])

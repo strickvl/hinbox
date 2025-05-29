@@ -699,10 +699,6 @@ def main():
         total_reflection_attempts = processing_metadata["reflection_summary"][
             "total_attempts"
         ]
-        successful_attempts = processing_metadata["reflection_summary"][
-            "successful_attempts"
-        ]
-        failed_attempts = processing_metadata["reflection_summary"]["failed_attempts"]
 
         # Store extraction counts and processing time
         processing_metadata["entities_extracted"] = {
