@@ -18,7 +18,7 @@ from src.constants import (
     get_ollama_model_name,
 )
 from src.logging_config import get_logger
-from src.utils_logging import (
+from src.utils.logging import (
     log_iterative_complete,
     log_iterative_start,
 )

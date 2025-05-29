@@ -58,7 +58,7 @@ stats: check
 
 # Process a single article (useful for testing)
 process-one:
-    python -m src.process_and_extract --limit 1
+    python -m src.process_and_extract --limit 1 --force
 
 # Process articles with verbose output
 process-verbose:

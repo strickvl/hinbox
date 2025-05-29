@@ -5,7 +5,7 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Type
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.config_loader import get_domain_config
 
@@ -16,12 +16,31 @@ def create_person_model(domain: str = "guantanamo") -> Type[BaseModel]:
     config = get_domain_config(domain)
     person_types = config.get_entity_types("people")
 
-    # Create enum for person types
+    # Create enum for person types with custom schema
     PersonType = Enum("PersonType", {ptype.upper(): ptype for ptype in person_types})
 
     class Person(BaseModel):
         name: str
-        type: PersonType
+        type: PersonType = Field(..., json_schema_extra={"enum": person_types})
+
+        @classmethod
+        def model_json_schema(
+            cls, by_alias: bool = True, ref_template: str = "#/$defs/{model}"
+        ) -> Dict[str, Any]:
+            schema = super().model_json_schema(
+                by_alias=by_alias, ref_template=ref_template
+            )
+            # Replace PersonType schema with simple enum
+            if "type" in schema.get("properties", {}):
+                schema["properties"]["type"] = {
+                    "type": "string",
+                    "enum": person_types,
+                    "title": "Type",
+                }
+            # Clean up $defs to avoid const fields
+            if "$defs" in schema:
+                schema["$defs"] = {}
+            return schema
 
     return Person
 
@@ -32,14 +51,33 @@ def create_organization_model(domain: str = "guantanamo") -> Type[BaseModel]:
     config = get_domain_config(domain)
     org_types = config.get_entity_types("organizations")
 
-    # Create enum for organization types
+    # Create enum for organization types with custom schema
     OrganizationType = Enum(
         "OrganizationType", {otype.upper(): otype for otype in org_types}
     )
 
     class Organization(BaseModel):
         name: str
-        type: OrganizationType
+        type: OrganizationType = Field(..., json_schema_extra={"enum": org_types})
+
+        @classmethod
+        def model_json_schema(
+            cls, by_alias: bool = True, ref_template: str = "#/$defs/{model}"
+        ) -> Dict[str, Any]:
+            schema = super().model_json_schema(
+                by_alias=by_alias, ref_template=ref_template
+            )
+            # Replace OrganizationType schema with simple enum
+            if "type" in schema.get("properties", {}):
+                schema["properties"]["type"] = {
+                    "type": "string",
+                    "enum": org_types,
+                    "title": "Type",
+                }
+            # Clean up $defs to avoid const fields
+            if "$defs" in schema:
+                schema["$defs"] = {}
+            return schema
 
     return Organization
 
@@ -50,14 +88,33 @@ def create_location_model(domain: str = "guantanamo") -> Type[BaseModel]:
     config = get_domain_config(domain)
     location_types = config.get_entity_types("locations")
 
-    # Create enum for location types
+    # Create enum for location types with custom schema
     LocationType = Enum(
         "LocationType", {ltype.upper(): ltype for ltype in location_types}
     )
 
     class Location(BaseModel):
         name: str
-        type: LocationType
+        type: LocationType = Field(..., json_schema_extra={"enum": location_types})
+
+        @classmethod
+        def model_json_schema(
+            cls, by_alias: bool = True, ref_template: str = "#/$defs/{model}"
+        ) -> Dict[str, Any]:
+            schema = super().model_json_schema(
+                by_alias=by_alias, ref_template=ref_template
+            )
+            # Replace LocationType schema with simple enum
+            if "type" in schema.get("properties", {}):
+                schema["properties"]["type"] = {
+                    "type": "string",
+                    "enum": location_types,
+                    "title": "Type",
+                }
+            # Clean up $defs to avoid const fields
+            if "$defs" in schema:
+                schema["$defs"] = {}
+            return schema
 
     return Location
 
@@ -68,7 +125,7 @@ def create_event_model(domain: str = "guantanamo") -> Type[BaseModel]:
     config = get_domain_config(domain)
     event_types = config.get_entity_types("events")
 
-    # Create enum for event types
+    # Create enum for event types with custom schema
     EventType = Enum("EventType", {etype.upper(): etype for etype in event_types})
 
     # Try to get event tags if they exist
@@ -83,19 +140,48 @@ def create_event_model(domain: str = "guantanamo") -> Type[BaseModel]:
         else:
             # Fallback - create a minimal tag enum
             EventTag = Enum("EventTag", {"OTHER": "other"})
+            event_tags = ["other"]
 
     except Exception:
         # Fallback if no tags are defined
         EventTag = Enum("EventTag", {"OTHER": "other"})
+        event_tags = ["other"]
 
     class Event(BaseModel):
         title: str
         description: str
-        event_type: EventType
+        event_type: EventType = Field(..., json_schema_extra={"enum": event_types})
         start_date: datetime
         end_date: Optional[datetime] = None
         is_fuzzy_date: bool = False
-        tags: List[EventTag] = []
+        tags: List[EventTag] = Field(default_factory=list)
+
+        @classmethod
+        def model_json_schema(
+            cls, by_alias: bool = True, ref_template: str = "#/$defs/{model}"
+        ) -> Dict[str, Any]:
+            schema = super().model_json_schema(
+                by_alias=by_alias, ref_template=ref_template
+            )
+            # Replace EventType schema with simple enum
+            if "event_type" in schema.get("properties", {}):
+                schema["properties"]["event_type"] = {
+                    "type": "string",
+                    "enum": event_types,
+                    "title": "Event Type",
+                }
+            # Replace tags schema with simple string array (VertexAI doesn't like enum in array items)
+            if "tags" in schema.get("properties", {}):
+                schema["properties"]["tags"] = {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "title": "Tags",
+                    "default": [],
+                }
+            # Clean up $defs to avoid const fields
+            if "$defs" in schema:
+                schema["$defs"] = {}
+            return schema
 
     return Event
 

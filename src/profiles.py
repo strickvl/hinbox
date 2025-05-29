@@ -5,8 +5,19 @@ import litellm
 from pydantic import BaseModel, Field
 from rich.console import Console
 
-from src.constants import BRAINTRUST_PROJECT_ID, BRAINTRUST_PROJECT_NAME
-from src.utils_compat import GenerationMode, extract_profile_text, iterative_improve
+from src.constants import (
+    BRAINTRUST_PROJECT_ID,
+    BRAINTRUST_PROJECT_NAME,
+    CLOUD_MODEL,
+    OLLAMA_MODEL,
+)
+from src.utils.llm import (
+    GenerationMode,
+    cloud_generation,
+    iterative_improve,
+    local_generation,
+)
+from src.utils.profiles import extract_profile_text
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
@@ -84,17 +95,72 @@ John Smith is a military officer^[abc123] who oversees operations at Guantánamo
 ```
 """
 
-    # Use iterative_improve to generate and refine the profile, passing in the custom system prompt
-    final_result, history = iterative_improve(
-        prompt=f"Article text:\n\n{article_text}\n\nCreate a profile for {entity_type} '{entity_name}'. Article ID: {article_id}",
+    # Build messages for the new iterative_improve signature
+    generation_messages = [
+        {"role": "system", "content": custom_system_prompt},
+        {
+            "role": "user",
+            "content": f"Article text:\n\n{article_text}\n\nCreate a profile for {entity_type} '{entity_name}'. Article ID: {article_id}",
+        },
+    ]
+
+    reflection_prompt = """Check if this profile meets all requirements including:
+    - Proper use of inline footnotes (like ^[article_id]) 
+    - A sufficiently detailed 'text' section (not just a short phrase)
+    - Inclusion of confidence scores, tags, and source references
+    
+    If any requirement is missing, mark result=false and provide feedback for improvement."""
+
+    # Generate initial profile text for iterative improvement
+    mode = GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
+    if mode == GenerationMode.CLOUD:
+        initial_response = cloud_generation(
+            messages=generation_messages,
+            response_model=EntityProfile,
+            model=CLOUD_MODEL,
+            temperature=0,
+        )
+    else:
+        initial_response = local_generation(
+            messages=generation_messages,
+            response_model=EntityProfile,
+            model=OLLAMA_MODEL,
+            temperature=0,
+        )
+
+    # Convert to text for iterative improvement
+    initial_text = initial_response.model_dump_json() if initial_response else "{}"
+
+    # Use iterative_improve to refine the profile
+    result = iterative_improve(
+        initial_text=initial_text,
+        generation_messages=generation_messages,
+        reflection_prompt=reflection_prompt,
         response_model=EntityProfile,
-        generation_mode=GenerationMode.CLOUD
-        if model_type == "gemini"
-        else GenerationMode.LOCAL,
         max_iterations=max_iterations,
-        metadata=_build_metadata("profile_generation"),
-        system_prompt=custom_system_prompt,
+        mode=mode,
     )
+
+    # Extract final result
+    final_text = result.get("text", "{}")
+    history = result.get("reflection_history", [])
+
+    # Parse the final result
+    try:
+        import json
+
+        if final_text.strip():
+            if final_text.strip().startswith("{"):
+                data = json.loads(final_text)
+                final_result = EntityProfile(**data)
+            else:
+                final_result = EntityProfile(
+                    text=final_text, tags=[], confidence=0.8, sources=[article_id]
+                )
+        else:
+            final_result = None
+    except:
+        final_result = None
 
     if final_result is None:
         # Fallback to basic profile if all iterations fail

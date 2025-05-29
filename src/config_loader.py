@@ -91,7 +91,21 @@ class DomainConfig:
         categories = self.load_categories(entity_category)
 
         # Handle different possible structures
-        if f"{entity_category}_types" in categories:
+        # Map plural entity categories to their singular forms
+        singular_map = {
+            "people": "person",
+            "events": "event",
+            "organizations": "organization",
+            "locations": "location",
+        }
+
+        # First try singular form (event_types, person_types, etc.)
+        singular = singular_map.get(entity_category, entity_category.rstrip("s"))
+        entity_type_key = f"{singular}_types"
+        if entity_type_key in categories:
+            return list(categories[entity_type_key].keys())
+        # Then try with original name (events_types, etc.)
+        elif f"{entity_category}_types" in categories:
             return list(categories[f"{entity_category}_types"].keys())
         elif "types" in categories:
             return list(categories["types"].keys())

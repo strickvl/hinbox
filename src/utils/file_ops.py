@@ -73,6 +73,16 @@ def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
                 # Convert single values to list
                 sanitized[field] = [sanitized[field]]
 
+            # Convert enum values in lists to strings (for tags)
+            if field == "tags" and sanitized[field]:
+                converted_tags = []
+                for tag in sanitized[field]:
+                    if hasattr(tag, "value"):
+                        converted_tags.append(tag.value)
+                    else:
+                        converted_tags.append(str(tag))
+                sanitized[field] = converted_tags
+
     # Ensure numeric fields are properly typed
     numeric_fields = ["confidence", "similarity_score"]
     for field in numeric_fields:
@@ -82,13 +92,15 @@ def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
             except (ValueError, TypeError):
                 sanitized[field] = 0.0
 
-    # Handle event_type field - convert enum to string
-    if "event_type" in sanitized and sanitized["event_type"] is not None:
-        # If it's an enum or has a value attribute, extract the string value
-        if hasattr(sanitized["event_type"], "value"):
-            sanitized["event_type"] = sanitized["event_type"].value
-        else:
-            sanitized["event_type"] = str(sanitized["event_type"])
+    # Handle enum fields - convert enum to string
+    enum_fields = ["event_type", "type"]
+    for field in enum_fields:
+        if field in sanitized and sanitized[field] is not None:
+            # If it's an enum or has a value attribute, extract the string value
+            if hasattr(sanitized[field], "value"):
+                sanitized[field] = sanitized[field].value
+            else:
+                sanitized[field] = str(sanitized[field])
 
     # Handle datetime fields - convert to string
     datetime_fields = ["start_date", "end_date"]
