@@ -10,19 +10,26 @@ def transform_profile_text(text, articles):
         aid = a.get("article_id")
         article_map[aid] = a.get("article_url", "#")
 
-    pattern = r"\^\[([0-9a-fA-F-]+)\]"
+    pattern = r"\^\[([0-9a-fA-F-,\s]+)\]"
 
     marker_map = {}
     marker_counter = [1]  # Using a list so it can be updated in replacer
 
     def replacer(match):
-        ref = match.group(1)
-        url = article_map.get(ref, "#")
-        if ref not in marker_map:
-            marker_map[ref] = str(marker_counter[0])
-            marker_counter[0] += 1
-        marker = marker_map[ref]
-        return f'<sup><a href="{url}" target="_blank">{marker}</a></sup>'
+        refs_str = match.group(1)
+        # Handle multiple comma-separated references
+        refs = [r.strip() for r in refs_str.split(",")]
+
+        markers = []
+        for ref in refs:
+            if ref not in marker_map:
+                marker_map[ref] = str(marker_counter[0])
+                marker_counter[0] += 1
+            marker = marker_map[ref]
+            url = article_map.get(ref, "#")
+            markers.append(f'<a href="{url}" target="_blank">{marker}</a>')
+
+        return f"<sup>{','.join(markers)}</sup>"
 
     return re.sub(pattern, replacer, text)
 

@@ -4,35 +4,76 @@ from fasthtml.common import A, Button, Div, Link, Nav, Option, Select, fast_app
 
 from src.config_loader import DomainConfig
 
-# Use absolute path to static files
-static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
-app, rt = fast_app(static_path=static_dir)
+# Setup static files - use absolute path from project root
+static_path = os.path.abspath("src/frontend/static")
+app, rt = fast_app(static_path=static_path)
 
-# CSS is now served from static/styles.css
+# Try to serve CSS from static, but include full styles as fallback
 STYLES_LINK = Link(rel="stylesheet", href="/static/styles.css")
 
-# Fallback inline styles for critical CSS
+# Load full CSS content as fallback
 from fasthtml.common import Style
 
-FALLBACK_STYLES = Style("""
-    /* Critical fallback styles - only essential CSS variables */
-    :root {
-        --primary: #004080;
-        --background: #f8f9fa;
-        --text: #333;
-        --card: #fff;
-    }
-    body {
-        background-color: var(--background);
-        color: var(--text);
-        font-family: system-ui, sans-serif;
-    }
-    .container {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 20px;
-    }
-""")
+try:
+    with open(static_path + "/styles.css", "r") as f:
+        css_content = f.read()
+    FALLBACK_STYLES = Style(css_content)
+except:
+    # Ultimate fallback if file can't be read
+    FALLBACK_STYLES = Style("""
+        :root {
+            --primary: #004080;
+            --primary-light: #3374a5;
+            --secondary: #6c757d;
+            --background: #f8f9fa;
+            --sidebar: #f0f2f5;
+            --text: #333;
+            --text-light: #6c757d;
+            --border: #dee2e6;
+            --card: #fff;
+            --highlight: #e8f4f8;
+        }
+        body {
+            background-color: var(--background);
+            color: var(--text);
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        nav {
+            border-radius: 8px;
+            background-color: var(--primary);
+            padding: 12px 20px;
+            margin-bottom: 1.5em;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        nav a {
+            color: white !important;
+            margin-right: 20px;
+            font-weight: 600;
+            text-decoration: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+        }
+        nav a:hover {
+            background-color: var(--primary-light);
+        }
+        .filter-panel {
+            background-color: var(--sidebar);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .content-area {
+            background-color: var(--card);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+    """)
 
 
 # Domain management
@@ -102,7 +143,6 @@ def nav_bar(current_domain="guantanamo"):
             style="margin-left:auto;",
             onclick=f"alert('Entity Browser helps researchers explore entities mentioned in documents related to {get_domain_description(current_domain)}.');",
         ),
-        style="display:flex; gap:1em; margin-bottom:1em; align-items:center;",
     )
 
 
@@ -186,12 +226,12 @@ def main_layout(
                 Div(
                     filter_panel,
                     cls="filter-panel",
-                    style="flex:0 0 220px; background-color: var(--sidebar); padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);",
+                    style="flex:0 0 220px;",
                 ),
                 Div(
                     content,
                     cls="content-area",
-                    style="flex:1; margin-left:20px; background-color: var(--card); border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);",
+                    style="flex:1; margin-left:20px;",
                 ),
                 style="display:flex; gap:20px;",
             ),

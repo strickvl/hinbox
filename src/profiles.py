@@ -73,26 +73,31 @@ def generate_profile_with_reflection(
     """
 
     # Enhanced system prompt emphasizing requirements
-    custom_system_prompt = f"""You are an expert at creating profiles for entities mentioned in news articles.
+    custom_system_prompt = f"""You are an expert at creating detailed profiles for entities mentioned in news articles.
 
-Your task is to create a comprehensive profile for a {entity_type} named "{entity_name}" based solely on the provided article text.
+Create a comprehensive profile for {entity_type} "{entity_name}" using ONLY information from the provided article.
 
-The profile MUST:
-1. Be organized with clear section headers (e.g., ### Background, ### Role)
-2. Include citations for every fact using format: fact^[article_id]
-3. For multiple sources use format: fact^[id1, id2]
-4. Include relevant tags/keywords
-5. Provide a confidence score (0-1)
-6. Only include factual information from the source
+CRITICAL REQUIREMENTS:
+1. Text length: Minimum 100 characters - provide substantial detail, not just basic facts
+2. Citations: Use smart citation strategy to reduce repetition:
+   - Group related facts in paragraphs, cite once per paragraph: paragraph content^[{article_id}]
+   - For multiple sources use: fact^[{article_id},other_id]
+   - Don't cite every sentence - cite logical groupings of information
+3. Structure: Use markdown section headers (### Background, ### Role, ### Current Position, etc.)
+4. Content: Extract specific facts, quotes, actions, relationships from the article
+5. Tags: Include at least 2 relevant descriptive tags/keywords
+6. Confidence: Score 0.0-1.0 based on information quality and completeness
+7. JSON output: Return valid JSON with "text", "tags", "confidence", "sources" fields
 
-Example format:
-```
-John Smith is a military officer^[abc123] who oversees operations at Guantánamo Bay^[abc123, def456].
+EXAMPLE FORMAT:
+{{
+  "text": "John Smith is a military officer who currently oversees detention operations at Guantánamo Bay. He has extensive experience in military operations and has been stationed at the facility since 2019^[{article_id}].\\n\\n### Background\\nSmith previously served in Afghanistan for two years before joining the detention facility staff. He graduated from West Point in 2010 and has received multiple commendations for his service^[{article_id}].\\n\\n### Current Role\\nAs facility operations manager, he oversees daily detention procedures and coordinates with legal teams. His responsibilities include managing staff schedules and ensuring compliance with military regulations^[{article_id}].",
+  "tags": ["military", "detention-operations", "guantanamo"],
+  "confidence": 0.9,
+  "sources": ["{article_id}"]
+}}
 
-### Background
-* Previously served in Afghanistan^[abc123]
-* Extensive experience in detention operations^[abc123, def456]
-```
+Remember: Group facts logically with strategic citations, use section headers, make it detailed and substantial.
 """
 
     # Build messages for the new iterative_improve signature
@@ -104,12 +109,28 @@ John Smith is a military officer^[abc123] who oversees operations at Guantánamo
         },
     ]
 
-    reflection_prompt = """Check if this profile meets all requirements including:
-    - Proper use of inline footnotes (like ^[article_id]) 
-    - A sufficiently detailed 'text' section (not just a short phrase)
-    - Inclusion of confidence scores, tags, and source references
-    
-    If any requirement is missing, mark result=false and provide feedback for improvement."""
+    reflection_prompt = f"""You are evaluating a profile for {entity_type} "{entity_name}". Check if it meets ALL requirements:
+
+REQUIRED CRITERIA:
+1. Text length: Minimum 100 characters (current profile should be substantial, not just a name)
+2. Citations: Must have citations but use smart strategy:
+   - At least one citation per paragraph/section
+   - Format: ^[{article_id}] or ^[{article_id},other_id] for multiple sources
+   - Don't need citation on every sentence, group logically
+3. Structure: Must have section headers (### Background, ### Role, etc.)
+4. Content: Must contain specific facts from the article, not generic information
+5. JSON format: Must be valid JSON with "text", "tags", "confidence", "sources" fields
+6. Tags: Must include at least 2 relevant tags
+7. Confidence: Must be between 0.0 and 1.0
+
+COMMON FAILURES:
+- No citations anywhere in text
+- Too short/generic text (under 100 chars)
+- No section headers
+- Invalid JSON structure
+- Empty or missing tags array
+
+Mark valid=true ONLY if ALL criteria are met. If any fail, mark valid=false and specify exactly which criteria failed."""
 
     # Generate initial profile text for iterative improvement
     mode = GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
