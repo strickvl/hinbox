@@ -1,15 +1,12 @@
-import os
-
 from fasthtml.common import A, Button, Div, Link, Nav, Option, Select, fast_app
 
 from src.config_loader import DomainConfig
 
-# Setup static files - use absolute path relative to this file
-static_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
-app, rt = fast_app(static_path=static_path)
-
-# Serve CSS from static files - no fallback to ensure we catch failures
-STYLES_LINK = Link(rel="stylesheet", href="/styles.css", type="text/css")
+# Use fast_app() for automatic setup with better defaults
+app, rt = fast_app(
+    static_path="src/frontend/static",
+    hdrs=(Link(rel="stylesheet", href="/styles.css", type="text/css"),),
+)
 
 
 # Domain management
@@ -123,7 +120,6 @@ def titled_with_domain_picker(page_title: str, current_domain: str, children):
             Meta(charset="utf-8"),
             Meta(name="viewport", content="width=device-width, initial-scale=1"),
             Title(page_title),
-            STYLES_LINK,
         ),
         Body(
             Div(
