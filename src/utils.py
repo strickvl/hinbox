@@ -2,6 +2,7 @@
 Utility functions for the hinbox project.
 """
 
+import json
 import os
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Type
@@ -24,8 +25,21 @@ from src.constants import (
     PEOPLE_OUTPUT_PATH,
     get_ollama_model_name,
 )
+from src.logging_config import get_logger
+from src.utils_logging import (
+    log_evaluation_result,
+    log_evaluation_start,
+    log_generation_attempt,
+    log_generation_result,
+    log_iterative_complete,
+    log_iterative_start,
+)
+
+# Get logger for this module
+logger = get_logger("utils")
 
 litellm.enable_json_schema_validation = True
+litellm.suppress_debug_info = True
 litellm.callbacks = ["braintrust"]
 
 
@@ -348,7 +362,8 @@ def reflect_and_check(
     3. If there are any errors, omissions, or misunderstandings
     4. Whether the text includes proper inline citations (e.g. ^[article_id]) if the prompt requires footnotes
     5. Whether the profile text is sufficiently detailed (e.g., at least a few sentences long)
-
+    6. Verify that the output includes a 'text' field of at least 50 characters. If not, mark the result as false.
+    
     If the output is missing footnotes when required, is too short, or ignores key instructions, you must fail it.
     
     Provide honest, critical feedback for improvement when necessary.
@@ -397,7 +412,37 @@ def reflect_and_check(
             metadata=metadata,
         )
 
-    return result
+    # Now parse the reflection result:
+    reflection_result = extract_reflection_result(result)
+
+    # Additional strict validation: check for a 'text' field in the user's raw output
+    try:
+        data = json.loads(output_json_str)
+        # Only enforce if it's a dict with a potential 'text' field
+        if isinstance(data, dict):
+            text_val = data.get("text", "")
+            if len(text_val) < 50:
+                reflection_result.result = False
+                reflection_result.reason = (
+                    f"Profile text is missing or too short (len={len(text_val)})"
+                )
+                reflection_result.feedback_for_improvement = (
+                    "Please include a 'text' field with at least 50 characters."
+                )
+        else:
+            reflection_result.result = False
+            reflection_result.reason = "Output is not a JSON object."
+            reflection_result.feedback_for_improvement = (
+                "Return valid JSON with a top-level 'text' field of sufficient length."
+            )
+    except Exception as e:
+        reflection_result.result = False
+        reflection_result.reason = f"Error parsing JSON: {str(e)}"
+        reflection_result.feedback_for_improvement = (
+            "Provide valid JSON with a 'text' field of adequate length."
+        )
+
+    return reflection_result
 
 
 def extract_reflection_result(response_obj) -> ReflectionResult:
@@ -567,6 +612,8 @@ def iterative_improve(
             "tags": ["iterative_improvement"],
         }
 
+    # Start timing the overall process
+    process_start_time = log_iterative_start(prompt, model, max_iterations)
     history = []
 
     # Default system prompts for the generator
@@ -597,6 +644,9 @@ def iterative_improve(
     current_system_prompt = system_prompt
 
     for iteration in range(max_iterations):
+        # Start timing this generation attempt
+        generation_start_time = log_generation_attempt(iteration, model)
+
         # Generate response
         try:
             response = generation_fn(
@@ -607,7 +657,14 @@ def iterative_improve(
                 temperature=temperature,
                 metadata={**metadata, "iteration": iteration},
             )
+            logger.debug(
+                f"Raw LLM response object (iteration {iteration + 1}): {response}"
+            )
+            log_generation_result(generation_start_time, iteration, True)
         except Exception as e:
+            # Log generation failure
+            log_generation_result(generation_start_time, iteration, False, str(e))
+
             history.append(
                 {
                     "iteration": iteration,
@@ -628,6 +685,70 @@ def iterative_improve(
             # Fallback for other response types
             response_str = str(response)
 
+        logger.debug(
+            f"LLM response (string) for iteration {iteration + 1}: {response_str}"
+        )
+
+        # STAGE 3: Optional post-validation before calling reflect_and_check
+        # STAGE 3: Optional post-validation before calling reflect_and_check
+        # Attempt to parse response_str as JSON. If invalid or too short 'text', we forcibly fail this iteration.
+        import json
+
+        try:
+            data = json.loads(response_str)  # parse the top-level JSON
+            text_val = ""
+
+            # If it has top-level "text", read that, else look deeper in choices->message->parsed->text
+            if isinstance(data, dict):
+                # 1) check if top-level 'text' exists
+                if "text" in data and isinstance(data["text"], str):
+                    text_val = data["text"]
+                else:
+                    # 2) if not, check in data["choices"][0]["message"]["parsed"]["text"]
+                    choices = data.get("choices", [])
+                    if len(choices) > 0:
+                        first_choice = choices[0]
+                        message = first_choice.get("message", {})
+                        parsed = message.get("parsed", {})
+                        if isinstance(parsed, dict):
+                            # finally get the text
+                            if "text" in parsed and isinstance(parsed["text"], str):
+                                text_val = parsed["text"]
+
+            logger.debug(f"Local post-validation: text length = {len(text_val)}")
+
+            if len(text_val) < 50:
+                logger.debug(
+                    "Forcing iteration fail because no valid text returned or text too short."
+                )
+                history.append(
+                    {
+                        "iteration": iteration,
+                        "response": response,
+                        "passed": False,
+                        "reason": "Locally forced fail (text < 50)",
+                        "feedback": "Add more detail to the 'text' field; at least 50 characters.",
+                    }
+                )
+                continue
+
+        except Exception as local_e:
+            logger.debug(f"JSON parse error in local post-validation: {local_e}")
+            logger.debug("Forcing iteration fail because invalid JSON returned.")
+            history.append(
+                {
+                    "iteration": iteration,
+                    "response": response,
+                    "passed": False,
+                    "reason": f"Locally forced fail (invalid JSON: {str(local_e)})",
+                    "feedback": "Return valid JSON with a 'text' field of >= 50 chars.",
+                }
+            )
+            continue
+
+        # Start timing the evaluation
+        evaluation_start_time = log_evaluation_start(iteration, evaluation_model)
+
         # Evaluate the response
         evaluation = reflect_and_check(
             input_prompt=prompt,
@@ -640,6 +761,15 @@ def iterative_improve(
 
         # Extract the reflection result
         reflection = extract_reflection_result(evaluation)
+
+        # Log evaluation result
+        log_evaluation_result(
+            evaluation_start_time,
+            iteration,
+            reflection.result,
+            reflection.reason,
+            reflection.feedback_for_improvement,
+        )
 
         # Record the iteration
         history.append(
@@ -670,6 +800,13 @@ def iterative_improve(
         
         Please provide an improved response.
         """
+
+    # Log completion of the iterative process
+    iterations_completed = len(history)
+    success = any(entry.get("passed", False) for entry in history)
+    log_iterative_complete(
+        process_start_time, iterations_completed, max_iterations, success
+    )
 
     # Return the best response (the last one that passed, or the final attempt)
     for entry in reversed(history):

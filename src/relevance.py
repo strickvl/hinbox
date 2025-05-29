@@ -14,6 +14,8 @@ from src.constants import (
 # Ensure we have JSON schema validation enabled
 litellm.enable_json_schema_validation = True
 litellm.callbacks = ["braintrust"]
+# Disable verbose logging
+litellm.suppress_debug_info = True
 # litellm._turn_on_debug()
 
 

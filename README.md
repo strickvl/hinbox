@@ -4,121 +4,182 @@ A tool for processing and extracting information from articles related to Guant�
 
 ## Overview
 
-This project processes articles to extract relevant information about Guantánamo Bay, including people, events, locations, and organizations mentioned in the articles. The processing is done in two main steps:
+This project processes articles to extract relevant information about Guantánamo Bay, including people, events, locations, and organizations mentioned in the articles. It uses LLMs (Gemini or local Ollama models) to analyze articles and build a knowledge base of entities.
 
-1. Extract information from raw articles using LLMs (Gemini or Ollama)
-2. Process the extracted information to create separate entity files
+## Quick Start
 
-## Scripts
-
-### Article Processing (`src/v2/run.py`)
-
-This script processes raw articles from a JSONL file, checks if they are relevant to Guantánamo Bay, and extracts information about people, events, locations, and organizations using either Gemini or Ollama LLMs.
-
-#### Usage
+The project provides a user-friendly CLI interface through `run.py`:
 
 ```bash
-python src/v2/run.py [options]
+# Process 5 articles with relevance checking
+./run.py process --relevance
+
+# Check article statistics
+./run.py check
+
+# Start the web interface to browse entities
+./run.py frontend
 ```
 
-#### Options
-
-- `--local`: Use only local models (Ollama) instead of Gemini
-- `--people`: Only extract and print people information
-- `--places`: Only extract and print location information
-- `--orgs`: Only extract and print organization information
-- `--events`: Only extract and print event information
-- `--tags`: Only extract and print article tags
-- `--show-article`: Show the article text during processing
-- `--limit N`: Limit the number of articles to process (default: 5)
-- `--output PATH`: Path to the output file (default: data/processed/processed_articles.jsonl)
-
-#### Example
-
-Process 10 articles using Gemini and extract all information:
-
-```bash
-python src/v2/run.py --limit 10
-```
-
-Process 5 articles using Ollama and only extract people and organizations:
-
-```bash
-python src/v2/run.py --local --people --orgs
-```
-
-### Reset Processing Status (`scripts/reset_processing_status.py`)
-
-A utility script to reset the processing status of articles in the Parquet file. This is useful when you want to reprocess all articles from scratch.
-
-#### Usage
-
-```bash
-python scripts/reset_processing_status.py
-```
-
-The script reads the Miami Herald articles Parquet file, sets the 'processed' flag to False for all articles in their processing_metadata, and saves the changes back to the file. This effectively marks all articles as unprocessed, allowing them to be processed again by the article processing script.
-
-### Entity Extraction (`src/v2/extract_entities.py`)
-
-This script reads the processed articles from a JSONL file and extracts people, events, locations, and organizations into separate JSONL files for easier analysis.
-
-#### Usage
-
-```bash
-python src/v2/extract_entities.py [options]
-```
-
-#### Options
-
-- `--input PATH`: Path to the input JSONL file (default: data/processed/processed_articles.jsonl)
-- `--output-dir DIR`: Directory to store output files (default: data/entities)
-- `--limit N`: Limit the number of articles to process (default: process all)
-
-#### Example
-
-Extract entities from all processed articles:
-
-```bash
-python src/v2/extract_entities.py
-```
-
-Extract entities from a specific file and save to a custom directory:
-
-```bash
-python src/v2/extract_entities.py --input custom_articles.jsonl --output-dir custom_entities
-```
-
-## Output Files
-
-The entity extraction script creates the following output files:
-
-- `data/entities/people.jsonl`: Information about people mentioned in the articles
-- `data/entities/events.jsonl`: Information about events mentioned in the articles
-- `data/entities/locations.jsonl`: Information about locations mentioned in the articles
-- `data/entities/organizations.jsonl`: Information about organizations mentioned in the articles
-
-Each entity includes information about the article it came from (ID, title, URL, published date) as well as entity-specific information.
-
-## Development
-
-### Dependencies
-
-This project uses Python 3.9+ and requires the following packages:
-- litellm
-- pydantic
-- rich
-
-### Setup
+## Installation
 
 1. Clone the repository
 2. Install dependencies using uv:
    ```bash
-   uv add litellm pydantic rich
+   uv sync
    ```
+3. Set up your API keys in environment variables:
+   - `GEMINI_API_KEY` for Google Gemini
+   - `OLLAMA_API_URL` for local Ollama (optional)
 
-### Workflow
+## Commands
 
-1. Process raw articles using `src/v2/run.py`
-2. Extract entities from processed articles using `src/v2/extract_entities.py`
-3. Analyze the extracted entities as needed
+### Process Articles
+
+Process articles from the parquet file and extract entities:
+
+```bash
+./run.py process [options]
+```
+
+Options:
+- `-n, --limit N`: Number of articles to process (default: 5)
+- `--local`: Use local models (Ollama/spaCy) instead of cloud APIs
+- `--relevance`: Perform relevance check before processing
+- `--force`: Force reprocessing of already processed articles
+- `--articles-path PATH`: Custom path to articles parquet file
+- `-v, --verbose`: Enable verbose logging
+
+Examples:
+```bash
+# Process 10 articles with relevance checking
+./run.py process -n 10 --relevance
+
+# Force reprocess using local models
+./run.py process --force --local
+
+# Process with verbose logging
+./run.py process -v --relevance
+```
+
+### Check Article Statistics
+
+Display statistics about articles in the database:
+
+```bash
+./run.py check [--sample]
+```
+
+Options:
+- `--sample`: Display a sample article
+
+### Web Interface
+
+Start the FastHTML web interface to browse extracted entities:
+
+```bash
+./run.py frontend
+# or
+./run.py web
+# or
+./run.py ui
+```
+
+The interface will be available at http://localhost:5001
+
+### Reset Processing Status
+
+Reset the processing status of all articles:
+
+```bash
+./run.py reset
+```
+
+This will prompt for confirmation before resetting.
+
+### Miami Herald Commands
+
+Fetch and import Miami Herald articles:
+
+```bash
+# Fetch new articles
+./run.py fetch-miami
+
+# Import articles from JSONL
+./run.py import-miami
+```
+
+## Project Structure
+
+```
+hinbox/
+├── run.py                 # Main CLI interface
+├── src/
+│   ├── process_and_extract.py  # Main processing script
+│   ├── merge.py           # Entity merging logic
+│   ├── people.py          # Person extraction
+│   ├── organizations.py   # Organization extraction
+│   ├── locations.py       # Location extraction
+│   ├── events.py          # Event extraction
+│   ├── relevance.py       # Relevance checking
+│   ├── profiles.py        # Entity profile generation
+│   ├── embeddings.py      # Text embedding utilities
+│   ├── logging_config.py  # Centralized logging
+│   └── frontend/          # Web interface
+├── data/
+│   ├── raw_sources/       # Raw article data
+│   │   └── miami_herald_articles.parquet
+│   └── entities/          # Extracted entities
+│       ├── people.parquet
+│       ├── organizations.parquet
+│       ├── locations.parquet
+│       └── events.parquet
+└── scripts/               # Utility scripts
+```
+
+## Output Files
+
+The processing creates parquet files for each entity type:
+
+- `data/entities/people.parquet`: People mentioned in articles
+- `data/entities/organizations.parquet`: Organizations mentioned
+- `data/entities/locations.parquet`: Locations referenced
+- `data/entities/events.parquet`: Events described
+
+Each entity includes:
+- Profile text generated by LLM
+- Source article information
+- Processing metadata
+- Embeddings for similarity matching
+
+## Features
+
+- **Intelligent Entity Extraction**: Uses LLMs to understand context and extract relevant entities
+- **Entity Deduplication**: Uses embeddings to identify and merge duplicate entities
+- **Relevance Filtering**: Only processes articles relevant to Guantánamo Bay
+- **Profile Generation**: Creates comprehensive profiles for each entity
+- **Web Interface**: Browse and search extracted entities
+- **Flexible Processing**: Support for both cloud (Gemini) and local (Ollama) models
+
+## Development
+
+### Running Tests
+
+```bash
+# Format code
+./scripts/format.sh
+
+# Run linting
+./scripts/lint.sh
+```
+
+### Logging
+
+The project uses a centralized logging system with Rich formatting. Log levels include:
+- `info`: General information
+- `warning`: Important notices
+- `error`: Error messages
+- `success`: Successful operations
+- `processing`: Processing status updates
+
+Enable verbose logging with the `-v` flag when processing articles.
