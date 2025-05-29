@@ -30,6 +30,3 @@ ruff check $SRC --select F401,F841 --fix --exclude "__init__.py" --isolated
 # sorts imports
 ruff check $SRC --select I --fix --ignore D
 ruff format $SRC
-
-# cleans up pycache and __pycache__ directories
-pyclean .
