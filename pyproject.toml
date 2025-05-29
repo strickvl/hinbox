@@ -23,7 +23,7 @@ dependencies = [
     "pyarrow>=19.0.1",
     "sentence-transformers>=3",
     "rapidfuzz>=3.12.0",
-    "numpy>2.0.0",
+    "numpy>=2.0.0,<3.0.0",
 ]
 
 [project.optional-dependencies]
