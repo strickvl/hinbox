@@ -1,30 +1,36 @@
 person_types:
-  # Define the main types of people relevant to your domain
+  # Define the main types of people relevant to your research domain
   # Each type should have a clear description and examples
+  # Consider the historical context and time period of your research
   
   primary_actor:
-    description: "Main actors or participants in {DOMAIN_NAME}"
-    examples: ["Example Person 1", "Example Person 2"]
+    description: "Main historical figures or participants in {DOMAIN_NAME}"
+    examples: ["Historical Figure 1", "Key Participant 2"]
     
   official:
-    description: "Officials, authorities, or decision-makers"
-    examples: ["Official Name", "Authority Figure"]
+    description: "Government officials, authorities, or decision-makers"
+    examples: ["Political Leader", "Administrator"]
     
-  expert:
-    description: "Subject matter experts, analysts, or specialists"
-    examples: ["Expert Name", "Specialist"]
+  scholar:
+    description: "Academics, researchers, or intellectuals studying/documenting the topic"
+    examples: ["Historian Name", "Research Scholar"]
     
-  journalist:
-    description: "Reporters, writers, and media professionals"
-    examples: ["Reporter Name", "Journalist"]
+  witness:
+    description: "Eyewitnesses, contemporaries, or people who experienced events firsthand"
+    examples: ["Contemporary Observer", "Participant"]
+    
+  chronicler:
+    description: "Writers, journalists, or documentarians recording events"
+    examples: ["Chronicle Writer", "Contemporary Journalist"]
     
   other:
     description: "Any other type of person not covered above"
     examples: []
 
 # Instructions for customization:
-# 1. Replace {DOMAIN_NAME} with your domain
-# 2. Update person_types to match your domain's key roles
-# 3. Provide clear descriptions and real examples
-# 4. Remove any types that don't apply to your domain
-# 5. Add new types as needed
+# 1. Replace {DOMAIN_NAME} with your research domain
+# 2. Update person_types to match your historical period's key roles
+# 3. Provide clear descriptions and real historical examples
+# 4. Consider the social/political context of your time period
+# 5. Remove any types that don't apply to your research area
+# 6. Add new types specific to your historical context

@@ -1,6 +1,6 @@
 # Organizations Extraction Prompt
 
-You are an expert at extracting organizations from news articles about {DOMAIN_NAME}.
+You are an expert at extracting organizations from historical documents, academic papers, book chapters, and other sources about {DOMAIN_NAME}.
 
 When identifying organizations, categorize them using the following organization types:
 
@@ -9,8 +9,9 @@ When identifying organizations, categorize them using the following organization
 ## Instructions
 
 - Only use standard ASCII characters for the names that you extract
-- Extract all organizations mentioned in the text and categorize them appropriately
-- Focus on organizations that are directly relevant to {DOMAIN_NAME}
+- Extract all organizations mentioned in the source and categorize them appropriately
+- Focus on organizations that are directly relevant to {DOMAIN_NAME} research
+- Consider historical context when categorizing organizations
 - Make sure you're identifying actual organizations, not individual people
 - If an organization's type is unclear, use the "other" category
 
@@ -30,16 +31,17 @@ Example:
 
 ## Style Guidelines
 
-Extract organizations as they appear in the text. Use full official names when available, but common abbreviations are acceptable if that's how they're referenced in the article.
+Extract organizations as they appear in the source. Use full official names when available, but common abbreviations are acceptable if that's how they're referenced in the document. Consider historical variations in organization names.
 
 ---
 
 ## Customization Instructions
 
-To customize this prompt for your domain:
+To customize this prompt for your research domain:
 
-1. Replace `{DOMAIN_NAME}` with your specific domain
+1. Replace `{DOMAIN_NAME}` with your specific research focus
 2. Replace `{ORGANIZATION_TYPES_DESCRIPTION}` with detailed descriptions of your organization types
-3. Update the examples to use realistic organization names from your domain
-4. Add any domain-specific instructions or context
-5. Remove this customization section when done
+3. Update the examples to use realistic organization names from your historical period/region
+4. Add any domain-specific instructions or historical context
+5. Consider how organizations might be referenced differently in various source types
+6. Remove this customization section when done

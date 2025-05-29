@@ -1,14 +1,18 @@
 # Hinbox
 
-Hinbox is a flexible, domain-configurable entity extraction system that processes news articles and extracts structured information about people, organizations, locations, and events. Originally designed for Guantánamo Bay coverage analysis, it now supports any domain through a simple configuration system.
+Hinbox is a flexible, domain-configurable entity extraction system designed for historians and researchers. It processes historical documents, academic papers, news articles, and book chapters to extract structured information about people, organizations, locations, and events. Originally designed for Guantánamo Bay coverage analysis, it now supports any historical or research domain through a simple configuration system.
 
 ## 🎯 Key Features
 
-- **Domain-Agnostic**: Configure for any topic (politics, sports, business, etc.)
-- **Multiple AI Models**: Support for both cloud (Gemini) and local (Ollama) models  
+- **Research-Focused**: Designed for historians, academics, and researchers
+- **Flexible Sources**: Process historical documents, academic papers, news articles, book chapters
+- **Domain-Agnostic**: Configure for any historical period, region, or research topic
+- **Multiple AI Models**: Support for both cloud (Gemini default, but supports
+  anything that `litellm` supports) and local (Ollama default, but works with
+  `litellm`) models  
 - **Entity Extraction**: Automatically extract people, organizations, locations, and events
-- **Smart Deduplication**: Uses embeddings to merge similar entities
-- **Web Interface**: FastHTML-based UI for exploring results
+- **Smart Deduplication**: Uses embeddings to merge similar entities across sources
+- **Web Interface**: FastHTML-based UI for exploring research findings
 - **Easy Setup**: Simple configuration files, no Python coding required
 
 ## 🚀 Quick Start
@@ -21,22 +25,22 @@ Hinbox is a flexible, domain-configurable entity extraction system that processe
 # OR: just domains
 ```
 
-### 2. Create a New Domain
+### 2. Create a New Research Domain
 ```bash
-./run.py init football
-# OR: just init football
+./run.py init palestine_food_history
+# OR: just init afghanistan_1980s
 ```
 
-### 3. Configure Your Domain
-Edit the generated files in `configs/football/`:
-- `config.yaml` - Domain settings and data paths
-- `prompts/*.md` - Extraction instructions (in plain English!)
-- `categories/*.yaml` - Entity type definitions
+### 3. Configure Your Research Domain
+Edit the generated files in `configs/palestine_food_history/`:
+- `config.yaml` - Research domain settings and data paths
+- `prompts/*.md` - Extraction instructions tailored to your sources
+- `categories/*.yaml` - Entity type definitions relevant to your research
 
-### 4. Process Articles
+### 4. Process Your Sources
 ```bash
-./run.py process --domain football --limit 5
-# OR: just process-domain football --limit 5
+./run.py process --domain palestine_food_history --limit 5
+# OR: just process-domain afghanistan_1980s --limit 5
 ```
 
 ### 5. Explore Results
@@ -78,51 +82,51 @@ Edit the generated files in `configs/football/`:
    ./run.py domains
    ```
 
-## 📁 Domain Examples
+## 📚 Research Domain Examples
 
-### Sports (Football)
+### History of Food in Palestine
 ```bash
-just init football
-# Edit configs/football/ to focus on:
-# - People: players, coaches, referees
-# - Organizations: teams, leagues, federations  
-# - Events: matches, transfers, tournaments
-# - Locations: stadiums, cities, countries
+just init palestine_food_history
+# Edit configs/palestine_food_history/ to focus on:
+# - People: farmers, traders, cookbook authors, anthropologists
+# - Organizations: agricultural cooperatives, food companies, research institutions
+# - Events: harvests, famines, recipe documentation, cultural exchanges
+# - Locations: villages, markets, agricultural regions, refugee camps
 ```
 
-### Business
+### Soviet-Afghan War (1980s)
 ```bash
-just init business
+just init afghanistan_1980s
 # Configure for:
-# - People: executives, investors, analysts
-# - Organizations: companies, funds, banks
-# - Events: mergers, earnings, launches
-# - Locations: headquarters, markets, regions
+# - People: military leaders, diplomats, journalists, mujahideen commanders
+# - Organizations: military units, intelligence agencies, NGOs, tribal groups
+# - Events: battles, negotiations, refugee movements, arms shipments
+# - Locations: provinces, military bases, refugee camps, border crossings
 ```
 
-### Politics
+### Medieval Trade Networks
 ```bash
-just init politics
+just init medieval_trade
 # Set up for:
-# - People: politicians, officials, activists
-# - Organizations: parties, governments, NGOs
-# - Events: elections, policies, debates
-# - Locations: capitals, districts, countries
+# - People: merchants, rulers, scholars, travelers
+# - Organizations: trading companies, guilds, monasteries, courts
+# - Events: trade agreements, diplomatic missions, market fairs
+# - Locations: trading posts, cities, trade routes, ports
 ```
 
 ## 🛠 Advanced Usage
 
-### Processing Articles
+### Processing Historical Sources
 ```bash
 # Process with different options
-./run.py process --domain football -n 20 --verbose
-just process-domain football --limit 10 --relevance
+./run.py process --domain afghanistan_1980s -n 20 --verbose
+just process-domain palestine_food_history --limit 10 --relevance
 
-# Use local models (requires Ollama)
-./run.py process --domain football --local
+# Use local models (requires Ollama) - useful for sensitive historical research
+./run.py process --domain medieval_trade --local
 
-# Force reprocessing
-./run.py process --domain football --force
+# Force reprocessing when you update your configuration
+./run.py process --domain afghanistan_1980s --force
 ```
 
 ### Web Interface
@@ -148,10 +152,10 @@ Explore extracted entities at http://localhost:5001
 
 ```
 configs/
-├── guantanamo/          # Example: Guantánamo Bay domain
-├── football/            # Your sports domain
-├── template/            # Template for new domains
-└── README.md           # Configuration guide
+├── guantanamo/              # Example: Guantánamo Bay research
+├── palestine_food_history/  # Your historical research domain
+├── template/                # Template for new research domains
+└── README.md               # Configuration guide
 
 src/
 ├── config_loader.py    # Domain configuration system
@@ -163,12 +167,12 @@ src/
 └── frontend/         # Web interface
 
 data/
-├── guantanamo/      # Guantánamo domain data
-│   ├── raw_sources/ # Input articles (Parquet format)
-│   └── entities/    # Extracted entities
-└── {domain}/        # Each domain has its own directory
-    ├── raw_sources/
-    └── entities/
+├── guantanamo/              # Guantánamo research data
+│   ├── raw_sources/         # Historical documents, articles
+│   └── entities/           # Extracted entities
+└── {research_domain}/      # Each research domain has its own directory
+    ├── raw_sources/        # Books, papers, articles, documents
+    └── entities/          # Research findings
 ```
 
 ## 🔧 Configuration
@@ -178,12 +182,12 @@ Each domain has its own `configs/{domain}/` directory with:
 
 **config.yaml** - Main settings:
 ```yaml
-domain: "football"
-description: "Football news and analysis"
+domain: "palestine_food_history"
+description: "Historical analysis of Palestinian food culture and agriculture"
 data_sources:
-  default_path: "data/football/raw_sources/football_articles.parquet"
+  default_path: "data/palestine_food_history/raw_sources/historical_sources.parquet"
 output:
-  directory: "data/football/entities"
+  directory: "data/palestine_food_history/entities"
 ```
 
 **categories/*.yaml** - Entity type definitions:
@@ -196,21 +200,25 @@ person_types:
 
 **prompts/*.md** - Extraction instructions (plain English!):
 ```markdown
-You are an expert at extracting people from football articles.
-Focus on players, coaches, and officials...
+You are an expert at extracting people from historical documents about Palestinian food culture.
+Focus on farmers, traders, cookbook authors, researchers, and community leaders...
 ```
 
 ### Data Format
-Articles should be in Parquet format with columns:
-- `title`, `content`, `url`, `published_date`
+Historical sources should be in Parquet format with columns:
+- `title`: Document/article title
+- `content`: Full text content  
+- `url`: Source URL (if applicable)
+- `published_date`: Publication/creation date
+- `source_type`: "book_chapter", "journal_article", "news_article", "archival_document", etc.
 
 ## 🏗 Architecture
 
 ### Processing Pipeline
 1. **Configuration Loading**: Read domain-specific settings
-2. **Article Loading**: Process Parquet files
-3. **Relevance Filtering**: Domain-specific content filtering  
-4. **Entity Extraction**: Extract people, organizations, locations, events
+2. **Source Loading**: Process historical documents in Parquet format
+3. **Relevance Filtering**: Domain-specific content filtering for research focus
+4. **Entity Extraction**: Extract people, organizations, locations, events from historical sources
 5. **Smart Deduplication**: Merge similar entities using embeddings
 6. **Profile Generation**: Create comprehensive entity profiles
 
@@ -256,5 +264,7 @@ For questions about:
 - **Issues**: Open a GitHub issue
 
 ---
+
+**Built for**: Historians, researchers, and academics working with large document collections
 
 **Built with**: Python, Pydantic, FastHTML, LiteLLM, Jina Embeddings

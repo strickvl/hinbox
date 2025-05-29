@@ -1,6 +1,6 @@
 # Events Extraction Prompt
 
-You are an expert at extracting events from news articles about {DOMAIN_NAME}.
+You are an expert at extracting events from historical documents, academic papers, book chapters, and other sources about {DOMAIN_NAME}.
 
 When identifying events, categorize them using the following event types:
 
@@ -9,10 +9,11 @@ When identifying events, categorize them using the following event types:
 ## Instructions
 
 - Only use standard ASCII characters for the names that you extract
-- Extract all significant events mentioned in the text and categorize them appropriately
-- Focus on events that are directly relevant to {DOMAIN_NAME}
+- Extract all significant events mentioned in the source and categorize them appropriately
+- Focus on events that are directly relevant to {DOMAIN_NAME} research
 - Include specific dates when available (use YYYY-MM-DD format)
 - Extract clear, discrete events rather than ongoing conditions
+- Consider the historical context and significance of events
 - If an event's type is unclear, use the "other" category
 
 ## Output Format
@@ -49,16 +50,17 @@ Example:
 - Use specific dates when mentioned in the article
 - For ongoing or unclear timing, set `is_fuzzy_date: true`
 - If only a year or month is mentioned, use the first day of that period
-- If no date is available, use the article's publication date
+- If no date is available, make a reasonable historical estimate based on context
 
 ---
 
 ## Customization Instructions
 
-To customize this prompt for your domain:
+To customize this prompt for your research domain:
 
-1. Replace `{DOMAIN_NAME}` with your specific domain
+1. Replace `{DOMAIN_NAME}` with your specific research focus
 2. Replace `{EVENT_TYPES_DESCRIPTION}` with detailed descriptions of your event types
-3. Update the examples to use realistic events from your domain
+3. Update the examples to use realistic events from your historical period/region
 4. Add any domain-specific date handling or tag instructions
-5. Remove this customization section when done
+5. Consider the types of events most relevant to your research questions
+6. Remove this customization section when done
