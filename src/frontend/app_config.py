@@ -15,149 +15,22 @@ STYLES_LINK = Link(rel="stylesheet", href="/static/styles.css")
 from fasthtml.common import Style
 
 FALLBACK_STYLES = Style("""
+    /* Critical fallback styles - only essential CSS variables */
     :root {
         --primary: #004080;
-        --primary-light: #3374a5;
-        --secondary: #6c757d;
         --background: #f8f9fa;
-        --sidebar: #f0f2f5;
         --text: #333;
-        --text-light: #6c757d;
-        --border: #dee2e6;
         --card: #fff;
-        --highlight: #e8f4f8;
     }
     body {
         background-color: var(--background);
         color: var(--text);
-        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        font-family: system-ui, sans-serif;
     }
     .container {
         max-width: 1200px;
         margin: 0 auto;
         padding: 20px;
-    }
-    nav {
-        border-radius: 8px;
-        background-color: var(--primary);
-        padding: 12px 20px;
-        margin-bottom: 1.5em;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    nav a {
-        color: white !important;
-        margin-right: 20px;
-        font-weight: 600;
-        text-decoration: none;
-        transition: opacity 0.2s;
-        padding: 8px 12px;
-        border-radius: 4px;
-    }
-    nav a:hover {
-        background-color: var(--primary-light);
-        opacity: 0.9;
-    }
-    nav button {
-        background-color: white !important;
-        color: var(--primary) !important;
-    }
-    .tag {
-        display: inline-block;
-        background-color: var(--primary-light);
-        color: white;
-        padding: 3px 8px;
-        border-radius: 12px;
-        font-size: 0.8rem;
-        margin-right: 5px;
-        margin-bottom: 5px;
-    }
-    .filter-panel {
-        background-color: var(--sidebar);
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .filter-panel h3 {
-        margin-top: 0;
-        color: var(--primary);
-        border-bottom: 2px solid var(--primary-light);
-        padding-bottom: 8px;
-        margin-bottom: 15px;
-    }
-    .filter-panel h4 {
-        color: var(--text);
-        margin: 15px 0 10px 0;
-        font-size: 1rem;
-    }
-    .filter-panel label {
-        display: inline-flex;
-        align-items: center;
-        margin-bottom: 8px;
-    }
-    .filter-panel input[type="checkbox"] {
-        margin-right: 8px;
-    }
-    .filter-panel button {
-        width: 100%;
-        margin-top: 15px;
-    }
-    .filter-chip {
-        display: inline-block;
-        font-size: 0.8rem;
-        padding: 3px 6px;
-        border-radius: 16px;
-        border: 1px solid #ddd;
-        transition: transform 0.2s, color 0.2s;
-        user-select: none;
-        margin-right: 5px;
-        margin-bottom: 5px;
-        cursor: pointer;
-    }
-    .filter-chip:hover {
-        transform: scale(1.05);
-    }
-    .filter-chip.selected {
-        background-color: #ffe98e !important;
-        box-shadow: 0 0 0 1px var(--primary-light);
-        color: #000;
-        border: 1px solid var(--primary-light);
-    }
-    .search-box {
-        margin-top: 15px;
-        margin-bottom: 15px;
-    }
-    .search-box input {
-        width: 100%;
-        padding: 8px 12px;
-        border-radius: 4px;
-        border: 1px solid var(--border);
-    }
-    .date-range {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        margin-bottom: 15px;
-    }
-    .content-area {
-        background-color: var(--card);
-        border-radius: 8px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .content-area h2 {
-        color: var(--primary);
-        margin-top: 0;
-        border-bottom: 2px solid var(--border);
-        padding-bottom: 10px;
-        margin-bottom: 20px;
-    }
-    .content-area a {
-        color: var(--primary);
-        text-decoration: none;
-        font-weight: 500;
-    }
-    .content-area a:hover {
-        text-decoration: underline;
     }
 """)
 
