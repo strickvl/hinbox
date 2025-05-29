@@ -31,7 +31,7 @@ from src.merge import merge_events, merge_locations, merge_organizations, merge_
 from src.organizations import gemini_extract_organizations, ollama_extract_organizations
 from src.people import gemini_extract_people, ollama_extract_people
 from src.relevance import gemini_check_relevance, ollama_check_relevance
-from src.utils import write_entity_to_file
+from src.utils.file_ops import write_entity_to_file
 
 # Get module-specific logger
 logger = get_logger("process_and_extract")
@@ -782,7 +782,9 @@ def main():
         for row in processed_rows:
             if (
                 "processing_metadata" in row
+                and row["processing_metadata"] is not None
                 and "reflection_summary" in row["processing_metadata"]
+                and row["processing_metadata"]["reflection_summary"] is not None
             ):
                 total_reflection_attempts += row["processing_metadata"][
                     "reflection_summary"

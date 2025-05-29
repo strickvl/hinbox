@@ -1,22 +1,13 @@
-import instructor
-import litellm
-from openai import OpenAI
+"""Check article relevance to Guantanamo Bay topics."""
+
 from pydantic import BaseModel, Field
 
-from src.constants import (
-    CLOUD_MODEL,
-    OLLAMA_API_KEY,
-    OLLAMA_API_URL,
-    OLLAMA_MODEL,
-    get_ollama_model_name,
+from src.constants import CLOUD_MODEL, OLLAMA_MODEL
+from src.utils.extraction import (
+    RELEVANCE_SYSTEM_PROMPT,
+    extract_entities_cloud,
+    extract_entities_local,
 )
-
-# Ensure we have JSON schema validation enabled
-litellm.enable_json_schema_validation = True
-litellm.callbacks = ["braintrust"]
-# Disable verbose logging
-litellm.suppress_debug_info = True
-# litellm._turn_on_debug()
 
 
 class ArticleRelevance(BaseModel):
@@ -41,45 +32,13 @@ def gemini_check_relevance(text: str, model: str = CLOUD_MODEL) -> ArticleReleva
     Returns:
         ArticleRelevance object with is_relevant flag and reason
     """
-    client = instructor.from_litellm(litellm.completion)
-
-    result = client.chat.completions.create(
-        model=model,
+    return extract_entities_cloud(
+        text=text,
+        system_prompt=RELEVANCE_SYSTEM_PROMPT,
         response_model=ArticleRelevance,
+        model=model,
         temperature=0,
-        messages=[
-            {
-                "role": "system",
-                "content": """You are an expert at determining whether news articles are relevant to the Guantánamo Bay detention facility, naval base, prisoner treatment, torture allegations, military tribunals, and related topics.
-
-Determine if the article is about Guantánamo Bay or closely related issues. Articles should be considered relevant if they discuss:
-- The Guantánamo Bay detention facility/prison
-- The Guantánamo naval base and military operations
-- Detainees or prisoners at Guantánamo
-- Legal proceedings related to Guantánamo detainees
-- Allegations of torture, mistreatment, or abuse at Guantánamo
-- Military commissions or tribunals for Guantánamo detainees
-- Hunger strikes, protests, or other actions by detainees
-- Policy decisions about the detention facility
-- Transfers or releases of detainees
-
-Articles should be considered NOT relevant if they primarily discuss:
-- Music festivals, tourism, or other non-military/detention activities at Guantánamo
-- Passing mentions of Guantánamo that aren't central to the article
-
-Return a boolean indicating relevance and a brief explanation.""",
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ],
-        metadata={
-            "project_name": "hinbox",  # for braintrust
-            "tags": ["dev"],
-        },
     )
-    return result
 
 
 def ollama_check_relevance(text: str, model: str = OLLAMA_MODEL) -> ArticleRelevance:
@@ -93,38 +52,10 @@ def ollama_check_relevance(text: str, model: str = OLLAMA_MODEL) -> ArticleRelev
     Returns:
         ArticleRelevance object with is_relevant flag and reason
     """
-    client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
-
-    result = client.beta.chat.completions.parse(
-        model=get_ollama_model_name(model),  # Strip ollama/ prefix
-        response_format=ArticleRelevance,
+    return extract_entities_local(
+        text=text,
+        system_prompt=RELEVANCE_SYSTEM_PROMPT,
+        response_model=ArticleRelevance,
+        model=model,
         temperature=0,
-        messages=[
-            {
-                "role": "system",
-                "content": """You are an expert at determining whether news articles are relevant to the Guantánamo Bay detention facility, naval base, prisoner treatment, torture allegations, military tribunals, and related topics.
-
-Determine if the article is about Guantánamo Bay or closely related issues. Articles should be considered relevant if they discuss:
-- The Guantánamo Bay detention facility/prison
-- The Guantánamo naval base and military operations
-- Detainees or prisoners at Guantánamo
-- Legal proceedings related to Guantánamo detainees
-- Allegations of torture, mistreatment, or abuse at Guantánamo
-- Military commissions or tribunals for Guantánamo detainees
-- Hunger strikes, protests, or other actions by detainees
-- Policy decisions about the detention facility
-- Transfers or releases of detainees
-
-Articles should be considered NOT relevant if they primarily discuss:
-- Music festivals, tourism, or other non-military/detention activities at Guantánamo
-- Passing mentions of Guantánamo that aren't central to the article
-
-Return a boolean indicating relevance and a brief explanation.""",
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ],
     )
-    return result.choices[0].message.parsed

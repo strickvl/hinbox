@@ -5,15 +5,26 @@ import litellm
 from pydantic import BaseModel, Field
 from rich.console import Console
 
-from src.utils import GenerationMode, extract_profile_text, iterative_improve
+from src.constants import BRAINTRUST_PROJECT_ID, BRAINTRUST_PROJECT_NAME
+from src.utils_compat import GenerationMode, extract_profile_text, iterative_improve
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
-litellm.callbacks = ["braintrust"]
+litellm.callbacks = ["braintrust", "langfuse"]
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+def _build_metadata(operation: str) -> Dict[str, any]:
+    """Build metadata dict with Braintrust configuration."""
+    metadata = {"tags": [operation]}
+    if BRAINTRUST_PROJECT_ID:
+        metadata["project_id"] = BRAINTRUST_PROJECT_ID
+    elif BRAINTRUST_PROJECT_NAME:
+        metadata["project_name"] = BRAINTRUST_PROJECT_NAME
+    return metadata
 
 
 class EntityProfile(BaseModel):
@@ -81,7 +92,7 @@ John Smith is a military officer^[abc123] who oversees operations at Guantánamo
         if model_type == "gemini"
         else GenerationMode.LOCAL,
         max_iterations=max_iterations,
-        metadata={"project_name": "hinbox", "tags": ["profile_generation"]},
+        metadata=_build_metadata("profile_generation"),
         system_prompt=custom_system_prompt,
     )
 
@@ -175,7 +186,7 @@ New Article (ID: {new_article_id}):
         console.print("[cyan]Starting iterative improvement process...[/cyan]")
 
         # For the iterative process, we treat the entire text above as the 'prompt' so the LLM merges them.
-        from src.utils import GenerationMode, iterative_improve
+        # Import already at module level
 
         generation_mode = (
             GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
@@ -187,7 +198,7 @@ New Article (ID: {new_article_id}):
             response_model=EntityProfile,
             generation_mode=generation_mode,
             max_iterations=3,
-            metadata={"project_name": "hinbox", "tags": ["profile_update"]},
+            metadata=_build_metadata("profile_update"),
         )
 
         if final_result is None:

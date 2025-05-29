@@ -4,9 +4,11 @@ All the old code has been split among data_access.py, utils.py, filters.py, app_
 We simply import them here to ensure everything is registered with 'app, rt'.
 """
 
+# Import and expose the app at module level for FastHTML serve() to find
 from .app_config import app
 
 # Import the routes so they get registered
+from .routes import events, home, locations, organizations, people  # noqa: F401
 
 # We only need to define the run logic if this file is run directly under -m syntax:
 if __name__ == "__main__":

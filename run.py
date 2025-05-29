@@ -114,7 +114,7 @@ Examples:
 
     # Execute commands
     if args.command == "process":
-        cmd = [sys.executable, "src/process_and_extract.py"]
+        cmd = [sys.executable, "-m", "src.process_and_extract"]
         if args.local:
             cmd.append("--local")
         if args.limit:
@@ -130,7 +130,7 @@ Examples:
         return run_command(cmd)
 
     elif args.command == "check":
-        cmd = [sys.executable, "scripts/check_articles_parquet.py"]
+        cmd = [sys.executable, "-m", "scripts.check_articles_parquet"]
         if args.sample:
             cmd.append("--sample")
         return run_command(cmd)
@@ -139,7 +139,9 @@ Examples:
         log("This will reset the processing status of all articles.", level="warning")
         response = input("Are you sure? (y/N): ")
         if response.lower() == "y":
-            return run_command([sys.executable, "scripts/reset_processing_status.py"])
+            return run_command(
+                [sys.executable, "-m", "scripts.reset_processing_status"]
+            )
         else:
             log("Reset cancelled.", level="info")
             return 0
@@ -147,13 +149,15 @@ Examples:
     elif args.command in ["frontend", "web", "ui"]:
         log("Starting web interface...", level="info")
         log("Open http://localhost:5001 in your browser", level="info")
-        return run_command([sys.executable, "src/frontend/frontend.py"])
+        return run_command([sys.executable, "-m", "src.frontend"])
 
     elif args.command == "fetch-miami":
-        return run_command([sys.executable, "scripts/get_miami_herald_articles.py"])
+        return run_command([sys.executable, "-m", "scripts.get_miami_herald_articles"])
 
     elif args.command == "import-miami":
-        return run_command([sys.executable, "scripts/import_miami_herald_articles.py"])
+        return run_command(
+            [sys.executable, "-m", "scripts.import_miami_herald_articles"]
+        )
 
     else:
         parser.print_help()

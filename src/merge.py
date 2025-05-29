@@ -1,9 +1,8 @@
+"""Entity merging and deduplication functionality."""
+
 from typing import Any, Dict, List, Optional, Tuple
 
-import instructor
-import litellm
 import numpy as np
-from openai import OpenAI
 from pydantic import BaseModel
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -12,16 +11,18 @@ from src.constants import (
     CLOUD_EMBEDDING_MODEL,
     CLOUD_MODEL,
     LOCAL_EMBEDDING_MODEL,
-    OLLAMA_API_KEY,
-    OLLAMA_API_URL,
     OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
-    get_ollama_model_name,
 )
-from src.embeddings import embed_text
 from src.logging_config import console, display_markdown, get_logger, log
 from src.profiles import create_profile, update_profile
-from src.utils import extract_profile_text, write_entity_to_file
+from src.utils.embeddings import embed_text
+from src.utils.file_ops import write_entity_to_file
+from src.utils.llm import (
+    cloud_generation,
+    local_generation,
+)
+from src.utils.profiles import extract_profile_text
 
 # Get module-specific logger
 logger = get_logger("merge")
@@ -52,17 +53,7 @@ def local_model_check_match(
         existing_profile_text: The existing profile text we're comparing against
         model: The LLM model to use for comparison
     """
-    try:
-        client = OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
-
-        results = client.beta.chat.completions.parse(
-            model=get_ollama_model_name(model),  # Strip ollama/ prefix for API call
-            response_format=MatchCheckResult,
-            temperature=0,
-            messages=[
-                {
-                    "role": "system",
-                    "content": """You are an expert analyst specializing in entity
+    system_content = """You are an expert analyst specializing in entity
                                resolution for news articles about Guantánamo Bay.
 
                     Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
@@ -74,11 +65,9 @@ def local_model_check_match(
                     4. Sub-location rule: If one location is a smaller subset (e.g., a camp within Guantánamo Bay), it is NOT the same as the larger location.
 
                     Provide a detailed explanation for your decision, citing specific evidence from both profiles. If one is a sub-location or facility inside a bigger one, do NOT merge them.
-                    """,
-                },
-                {
-                    "role": "user",
-                    "content": f"""I need to determine if these two profiles refer to the same entity:
+                    """
+
+    user_content = f"""I need to determine if these two profiles refer to the same entity:
 
 ## PROFILE FROM NEW ARTICLE:
 Name: {new_name}
@@ -88,15 +77,18 @@ Profile: {new_profile_text}
 Name: {existing_name}
 Profile: {existing_profile_text}
 
-Are these profiles referring to the same entity? Provide your analysis.""",
-                },
+Are these profiles referring to the same entity? Provide your analysis."""
+
+    try:
+        return local_generation(
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
             ],
-            metadata={
-                "project_name": "hinbox",
-                "tags": ["dev", "entity_resolution"],
-            },
+            response_model=MatchCheckResult,
+            model=model,
+            temperature=0,
         )
-        return results.choices[0].message.parsed
     except Exception as e:
         log(f"Error with Ollama API", level="error", exception=e)
         # Return a default result indicating failure
@@ -125,17 +117,7 @@ def cloud_model_check_match(
     Returns:
         MatchCheckResult with is_match flag and detailed reasoning
     """
-    client = instructor.from_litellm(litellm.completion)
-
-    try:
-        result = client.chat.completions.create(
-            model=model,
-            response_model=MatchCheckResult,
-            temperature=0,
-            messages=[
-                {
-                    "role": "system",
-                    "content": """You are an expert analyst specializing in entity resolution for news articles about Guantánamo Bay.
+    system_content = """You are an expert analyst specializing in entity resolution for news articles about Guantánamo Bay.
 
 Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
 
@@ -146,11 +128,9 @@ Consider the following when making your determination:
 4. Sub-location rule: If one location is a smaller subset (e.g., a camp within Guantánamo Bay), it is NOT the same as the larger location.
 
 Provide a detailed explanation for your decision, citing specific evidence from both profiles. If one is a sub-location or facility inside a bigger one, do NOT merge them.
-""",
-                },
-                {
-                    "role": "user",
-                    "content": f"""I need to determine if these two profiles refer to the same entity:
+"""
+
+    user_content = f"""I need to determine if these two profiles refer to the same entity:
 
 ## PROFILE FROM NEW ARTICLE:
 Name: {new_name}
@@ -160,67 +140,20 @@ Profile: {new_profile_text}
 Name: {existing_name}
 Profile: {existing_profile_text}
 
-Are these profiles referring to the same entity? Provide your analysis.""",
-                },
-            ],
-            metadata={
-                "project_name": "hinbox",
-                "tags": ["dev", "entity_resolution"],
-            },
-        )
-        return result
-    except Exception as e:
-        log(f"Error with Gemini API", level="error", exception=e)
-        return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
-    client = instructor.from_litellm(litellm.completion)
+Are these profiles referring to the same entity? Provide your analysis."""
 
     try:
-        result = client.chat.completions.create(
-            model=model,
-            response_model=MatchCheckResult,
-            temperature=0,
+        return cloud_generation(
             messages=[
-                {
-                    "role": "system",
-                    "content": """You are an expert analyst specializing in entity resolution for news articles about Guantánamo Bay.
-
-Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
-
-Consider the following when making your determination:
-1. Name variations: Different spellings, nicknames, titles, or partial names
-2. Contextual information: Role, affiliations, actions, and biographical details
-3. Temporal consistency: Whether the information in both profiles could apply to the same entity at different times
-4. Contradictions: Whether there are any clear contradictions that would make it impossible for these to be the same entity
-
-Even if names differ slightly, profiles may refer to the same entity if contextual details align.
-Conversely, identical names might refer to different entities if contextual details clearly diverge.
-
-Provide a detailed explanation for your decision, citing specific evidence from both profiles.""",
-                },
-                {
-                    "role": "user",
-                    "content": f"""I need to determine if these two profiles refer to the same entity:
-
-## PROFILE FROM NEW ARTICLE:
-Name: {new_name}
-Profile: {new_profile_text}
-
-## EXISTING PROFILE IN DATABASE:
-Name: {existing_name}
-Profile: {existing_profile_text}
-
-Are these profiles referring to the same entity? Provide your analysis.""",
-                },
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content},
             ],
-            metadata={
-                "project_name": "hinbox",
-                "tags": ["dev", "entity_resolution"],
-            },
+            response_model=MatchCheckResult,
+            model=model,
+            temperature=0,
         )
-        return result
     except Exception as e:
         log(f"Error with Gemini API", level="error", exception=e)
-        # Return a default result indicating failure
         return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
 
 

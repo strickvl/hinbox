@@ -33,3 +33,9 @@ ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.parquet")
 
 # Threshold for similarity matching
 SIMILARITY_THRESHOLD = 0.75
+
+# Braintrust configuration
+# Set this to your Braintrust project ID if you want to use Braintrust logging
+# You can also use project_name instead, which will create the project if it doesn't exist
+BRAINTRUST_PROJECT_ID = os.getenv("BRAINTRUST_PROJECT_ID", None)
+BRAINTRUST_PROJECT_NAME = os.getenv("BRAINTRUST_PROJECT_NAME", "hinbox")
