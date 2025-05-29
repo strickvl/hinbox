@@ -48,4 +48,4 @@ Do NOT return strings like "John Doe (journalist)". Always use the proper object
 The goal is to create a coherent, well-structured profile (mostly using prose text!) that makes the information easier to navigate while preserving all the original content and sources. Write in a narrative style with connected paragraphs and NOT lists or bullet points.
 
 If you footnote or add references, use the following format:
-Normal text would go here^[source_id, source_id, ...].
+Normal text would go here^[source_id].

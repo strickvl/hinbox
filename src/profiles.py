@@ -81,7 +81,7 @@ CRITICAL REQUIREMENTS:
 1. Text length: Minimum 100 characters - provide substantial detail, not just basic facts
 2. Citations: Use smart citation strategy to reduce repetition:
    - Group related facts in paragraphs, cite once per paragraph: paragraph content^[{article_id}]
-   - For multiple sources use: fact^[{article_id},other_id]
+   - Use single article ID per citation: ^[{article_id}] (not ^[id1,id2])
    - Don't cite every sentence - cite logical groupings of information
 3. Structure: Use markdown section headers (### Background, ### Role, ### Current Position, etc.)
 4. Content: Extract specific facts, quotes, actions, relationships from the article
@@ -96,6 +96,9 @@ EXAMPLE FORMAT:
   "confidence": 0.9,
   "sources": ["{article_id}"]
 }}
+
+MULTIPLE SOURCES: When the same fact appears in multiple articles, cite each separately:
+"Smith was promoted in 2020^[article1]. This promotion was confirmed in later reports^[article2]."
 
 Remember: Group facts logically with strategic citations, use section headers, make it detailed and substantial.
 """
@@ -115,7 +118,7 @@ REQUIRED CRITERIA:
 1. Text length: Minimum 100 characters (current profile should be substantial, not just a name)
 2. Citations: Must have citations but use smart strategy:
    - At least one citation per paragraph/section
-   - Format: ^[{article_id}] or ^[{article_id},other_id] for multiple sources
+   - Format: ^[{article_id}] (single article ID only)
    - Don't need citation on every sentence, group logically
 3. Structure: Must have section headers (### Background, ### Role, etc.)
 4. Content: Must contain specific facts from the article, not generic information
@@ -293,7 +296,7 @@ New Article (ID: {new_article_id}):
 
 REQUIRED CRITERIA:
 1. Text length: Minimum 100 characters
-2. Citations: Strategic citations with ^[article_id] format for facts
+2. Citations: Strategic citations with ^[article_id] format (single ID per citation)
 3. Structure: Section headers (### Background, ### Role, etc.)
 4. Content: Integrates both old and new information appropriately
 5. JSON format: Valid JSON with "text", "tags", "confidence", "sources" fields

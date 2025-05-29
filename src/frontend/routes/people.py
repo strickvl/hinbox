@@ -197,7 +197,7 @@ def show_person(key: str, request):
             style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
         ),
         H2("Related Articles", style="margin-top:25px; font-size:1.25rem;"),
-        format_article_list(articles),
+        format_article_list(articles, text),
         cls="entity-detail",
     )
 
