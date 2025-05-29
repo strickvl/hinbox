@@ -140,3 +140,4 @@ if __name__ == "__main__":
     console.print("[bold green]Checking articles in parquet file[/bold green]")
     check_articles(sample=args.sample)
     console.print("\n[bold green]Check completed[/bold green]")
+
