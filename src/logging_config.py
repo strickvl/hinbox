@@ -80,8 +80,11 @@ def log(
     elif level == "processing":
         # Custom processing level for workflow steps
         logger.info(f"[blue]{message}[/]")
-
-
+    else:
+        raise ValueError(
+            f"Unsupported log level '{level}'. Supported levels are: "
+            "'info', 'warning', 'error', 'debug', 'success', 'processing'."
+        )
 def display_markdown(content: str, title: str = None, style: str = "green"):
     """
     Display content with markdown formatting in a panel.
