@@ -3,8 +3,6 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.constants import (
-    CLOUD_EMBEDDING_MODEL,
-    LOCAL_EMBEDDING_MODEL,
     SIMILARITY_THRESHOLD,
 )
 from src.logging_config import display_markdown, get_logger, log
@@ -14,7 +12,7 @@ from src.merge import (
     local_model_check_match,
 )
 from src.profiles import create_profile, update_profile
-from src.utils.embeddings import embed_text
+from src.utils.embeddings import EmbeddingManager
 from src.utils.file_ops import write_entity_to_file
 from src.utils.profiles import extract_profile_text
 
@@ -222,15 +220,18 @@ class EntityMerger:
             similarity_threshold: Threshold for similarity matching
             domain: Domain configuration to use
         """
-        embedding_model = (
-            LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
+        # Determine embedding model type based on main model type
+        embedding_model_type = "local" if model_type == "ollama" else "cloud"
+        embedding_manager = EmbeddingManager(
+            model_type=embedding_model_type, domain=domain
         )
+
         log(
             f"Starting merge_{self.entity_type} with {len(extracted_entities)} {self.entity_type} to process",
             level="processing",
         )
         log(
-            f"Using model: {model_type}, embedding model: {embedding_model}",
+            f"Using model: {model_type}, embedding model: {embedding_model_type}",
             level="info",
         )
 
@@ -276,8 +277,8 @@ class EntityMerger:
                     f"Generating embedding for profile text (length: {len(proposed_profile_text)})",
                     level="info",
                 )
-                proposed_entity_embedding = embed_text(
-                    proposed_profile_text, model_name=embedding_model
+                proposed_entity_embedding = embedding_manager.embed_text(
+                    proposed_profile_text
                 )
                 log(
                     f"Generated embedding of size: {len(proposed_entity_embedding)}",
@@ -396,9 +397,8 @@ class EntityMerger:
                                 "Generating new embedding for updated profile...",
                                 level="info",
                             )
-                            existing_entity["profile_embedding"] = embed_text(
-                                updated_profile["text"],
-                                model_name=embedding_model,
+                            existing_entity["profile_embedding"] = (
+                                embedding_manager.embed_text(updated_profile["text"])
                             )
                             # Store reflection iteration history for debugging
                             existing_entity.setdefault("reflection_history", [])
@@ -426,9 +426,8 @@ class EntityMerger:
                             )
                             existing_entity["profile"] = new_profile
                             log("Generating embedding for new profile...", level="info")
-                            existing_entity["profile_embedding"] = embed_text(
-                                new_profile["text"],
-                                model_name=embedding_model,
+                            existing_entity["profile_embedding"] = (
+                                embedding_manager.embed_text(new_profile["text"])
                             )
                             # Store reflection iteration history
                             existing_entity.setdefault("reflection_history", [])

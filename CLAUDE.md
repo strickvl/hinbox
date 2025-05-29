@@ -77,3 +77,6 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
   1. Run the formatting script (`./scripts/format.sh`)
   2. Fix any formatting errors
   3. Commit and push changes
+
+## Development Guidance
+- The application has no users yet, so don't worry too much about backwards compatibility. Just make it work.

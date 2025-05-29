@@ -8,9 +8,7 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from src.constants import (
-    CLOUD_EMBEDDING_MODEL,
     CLOUD_MODEL,
-    LOCAL_EMBEDDING_MODEL,
     OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
 )
@@ -22,7 +20,7 @@ from src.exceptions import (
 )
 from src.logging_config import console, display_markdown, get_logger, log
 from src.profiles import create_profile, update_profile
-from src.utils.embeddings import embed_text
+from src.utils.embeddings import EmbeddingManager
 from src.utils.error_handler import handle_merge_error
 from src.utils.file_ops import write_entity_to_file
 from src.utils.llm import (
@@ -33,6 +31,19 @@ from src.utils.profiles import extract_profile_text
 
 # Get module-specific logger
 logger = get_logger("merge")
+
+# Global embedding manager for merge operations
+_embedding_manager = None
+
+
+def get_embedding_manager(
+    model_type: str = "default", domain: str = "guantanamo"
+) -> EmbeddingManager:
+    """Get or create embedding manager for merge operations."""
+    global _embedding_manager
+    if _embedding_manager is None:
+        _embedding_manager = EmbeddingManager(model_type=model_type, domain=domain)
+    return _embedding_manager
 
 
 class MatchCheckResult(BaseModel):
@@ -187,7 +198,7 @@ def normalize_vector(vector: List[float]) -> np.ndarray:
 
 def compute_similarity(vec1: List[float], vec2: List[float]) -> float:
     """
-    Compute cosine similarity between two vectors.
+    Compute cosine similarity between two vectors using centralized embedding manager.
 
     Args:
         vec1: First vector
@@ -196,17 +207,8 @@ def compute_similarity(vec1: List[float], vec2: List[float]) -> float:
     Returns:
         Cosine similarity score (0-1)
     """
-    if not vec1 or not vec2:
-        return 0.0
-
-    # Convert to numpy arrays and normalize
-    vec1_norm = normalize_vector(vec1)
-    vec2_norm = normalize_vector(vec2)
-
-    # Compute dot product (cosine similarity for normalized vectors)
-    if vec1_norm.size > 0 and vec2_norm.size > 0:
-        return float(np.dot(vec1_norm, vec2_norm))
-    return 0.0
+    embedding_manager = get_embedding_manager()
+    return embedding_manager.compute_similarity(vec1, vec2)
 
 
 def find_similar_person(
@@ -487,14 +489,18 @@ def merge_people(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
 ):
-    embedding_model = (
-        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
-    )
+    # Determine embedding model type based on main model type
+    embedding_model_type = "local" if model_type == "ollama" else "cloud"
+    embedding_manager = get_embedding_manager(model_type=embedding_model_type)
+
     log(
         f"Starting merge_people with {len(extracted_people)} people to process",
         level="processing",
     )
-    log(f"Using model: {model_type}, embedding model: {embedding_model}", level="info")
+    log(
+        f"Using model: {model_type}, embedding model: {embedding_model_type}",
+        level="info",
+    )
 
     for p in extracted_people:
         person_name = p.get("name", "")
@@ -527,8 +533,8 @@ def merge_people(
                 f"Generating embedding for profile text (length: {len(proposed_profile_text)})",
                 level="info",
             )
-            proposed_person_embedding = embed_text(
-                proposed_profile_text, model_name=embedding_model
+            proposed_person_embedding = embedding_manager.embed_text(
+                proposed_profile_text
             )
             log(
                 f"Generated embedding of size: {len(proposed_person_embedding)}",
@@ -637,9 +643,8 @@ def merge_people(
                             "Generating new embedding for updated profile...",
                             level="info",
                         )
-                        existing_person["profile_embedding"] = embed_text(
-                            updated_profile["text"],
-                            model_name=embedding_model,
+                        existing_person["profile_embedding"] = (
+                            embedding_manager.embed_text(updated_profile["text"])
                         )
                         # Store reflection iteration history for debugging
                         existing_person.setdefault("reflection_history", [])
@@ -664,9 +669,8 @@ def merge_people(
                         )
                         existing_person["profile"] = new_profile
                         log("Generating embedding for new profile...", level="info")
-                        existing_person["profile_embedding"] = embed_text(
-                            new_profile["text"],
-                            model_name=embedding_model,
+                        existing_person["profile_embedding"] = (
+                            embedding_manager.embed_text(new_profile["text"])
                         )
                         # Store reflection iteration history
                         existing_person.setdefault("reflection_history", [])
@@ -768,9 +772,10 @@ def merge_locations(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
 ):
-    embedding_model = (
-        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
-    )
+    # Determine embedding model type based on main model type
+    embedding_model_type = "local" if model_type == "ollama" else "cloud"
+    embedding_manager = get_embedding_manager(model_type=embedding_model_type)
+
     for loc in extracted_locations:
         loc_name = loc.get("name", "")
         loc_type = loc.get("type", "")
@@ -793,8 +798,8 @@ def merge_locations(
             log(f"Failed to generate profile for location {loc_name}", level="error")
             continue
 
-        proposed_location_embedding = embed_text(
-            proposed_profile_text, model_name=embedding_model
+        proposed_location_embedding = embedding_manager.embed_text(
+            proposed_profile_text
         )
 
         # Find similar location using embeddings
@@ -878,9 +883,8 @@ def merge_locations(
                         model_type,
                     )
                     existing_loc["profile"] = updated_profile
-                    existing_loc["profile_embedding"] = embed_text(
-                        updated_profile["text"],
-                        model_name=embedding_model,
+                    existing_loc["profile_embedding"] = embedding_manager.embed_text(
+                        updated_profile["text"]
                     )
                     existing_loc.setdefault("reflection_history", [])
                     existing_loc["reflection_history"].extend(reflection_history)
@@ -905,9 +909,8 @@ def merge_locations(
                         model_type,
                     )
                     existing_loc["profile"] = new_profile
-                    existing_loc["profile_embedding"] = embed_text(
-                        new_profile["text"],
-                        model_name=embedding_model,
+                    existing_loc["profile_embedding"] = embedding_manager.embed_text(
+                        new_profile["text"]
                     )
                     existing_loc.setdefault("reflection_history", [])
                     existing_loc["reflection_history"].extend(reflection_history)
@@ -1008,9 +1011,10 @@ def merge_organizations(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
 ):
-    embedding_model = (
-        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
-    )
+    # Determine embedding model type based on main model type
+    embedding_model_type = "local" if model_type == "ollama" else "cloud"
+    embedding_manager = get_embedding_manager(model_type=embedding_model_type)
+
     for org in extracted_orgs:
         org_name = org.get("name", "")
         org_type = org.get("type", "")
@@ -1043,14 +1047,16 @@ def merge_organizations(
                 continue
 
             try:
-                proposed_organization_embedding = embed_text(
-                    proposed_profile_text, model_name=embedding_model
+                proposed_organization_embedding = embedding_manager.embed_text(
+                    proposed_profile_text
                 )
             except Exception:
                 error = EmbeddingError(
                     f"Failed to generate embedding for organization {org_name}",
-                    embedding_model,
-                    "organization",
+                    {
+                        "embedding_model_type": embedding_model_type,
+                        "organization": org_name,
+                    },
                     article_id,
                 )
                 handle_merge_error(
@@ -1172,9 +1178,8 @@ def merge_organizations(
                         model_type,
                     )
                     existing_org["profile"] = updated_profile
-                    existing_org["profile_embedding"] = embed_text(
-                        updated_profile["text"],
-                        model_name=embedding_model,
+                    existing_org["profile_embedding"] = embedding_manager.embed_text(
+                        updated_profile["text"]
                     )
                     existing_org.setdefault("reflection_history", [])
                     existing_org["reflection_history"].extend(reflection_history)
@@ -1199,9 +1204,8 @@ def merge_organizations(
                         model_type,
                     )
                     existing_org["profile"] = new_profile
-                    existing_org["profile_embedding"] = embed_text(
-                        new_profile["text"],
-                        model_name=embedding_model,
+                    existing_org["profile_embedding"] = embedding_manager.embed_text(
+                        new_profile["text"]
                     )
                     existing_org.setdefault("reflection_history", [])
                     existing_org["reflection_history"].extend(reflection_history)
@@ -1311,9 +1315,10 @@ def merge_events(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
 ):
-    embedding_model = (
-        LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
-    )
+    # Determine embedding model type based on main model type
+    embedding_model_type = "local" if model_type == "ollama" else "cloud"
+    embedding_manager = get_embedding_manager(model_type=embedding_model_type)
+
     for e in extracted_events:
         event_title = e.get("title", "")
         event_start_date = e.get("start_date", "")
@@ -1337,9 +1342,7 @@ def merge_events(
             log(f"Failed to generate profile for event {event_title}", level="error")
             continue
 
-        proposed_event_embedding = embed_text(
-            proposed_profile_text, model_name=embedding_model
-        )
+        proposed_event_embedding = embedding_manager.embed_text(proposed_profile_text)
 
         # Find similar event using embeddings
         similar_key, similarity_score = find_similar_event(
@@ -1423,9 +1426,8 @@ def merge_events(
                         model_type,
                     )
                     existing_event["profile"] = updated_profile
-                    existing_event["profile_embedding"] = embed_text(
-                        updated_profile["text"],
-                        model_name=embedding_model,
+                    existing_event["profile_embedding"] = embedding_manager.embed_text(
+                        updated_profile["text"]
                     )
                     existing_event.setdefault("reflection_history", [])
                     existing_event["reflection_history"].extend(reflection_history)
@@ -1450,9 +1452,8 @@ def merge_events(
                         model_type,
                     )
                     existing_event["profile"] = new_profile
-                    existing_event["profile_embedding"] = embed_text(
-                        new_profile["text"],
-                        model_name=embedding_model,
+                    existing_event["profile_embedding"] = embedding_manager.embed_text(
+                        new_profile["text"]
                     )
                     existing_event.setdefault("reflection_history", [])
                     existing_event["reflection_history"].extend(reflection_history)
