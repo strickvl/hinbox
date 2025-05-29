@@ -10,18 +10,20 @@ import argparse
 import subprocess
 import sys
 
+from src.logging_config import log
+
 
 def run_command(cmd):
     """Run a command and handle errors."""
-    print(f"\n🚀 Running: {' '.join(cmd)}\n")
+    log(f"Running: {' '.join(cmd)}", level="processing")
     try:
         result = subprocess.run(cmd, check=True)
         return result.returncode
     except subprocess.CalledProcessError as e:
-        print(f"\n❌ Error: Command failed with exit code {e.returncode}")
+        log(f"Command failed with exit code {e.returncode}", level="error")
         return e.returncode
     except KeyboardInterrupt:
-        print("\n\n⚠️  Process interrupted by user")
+        log("Process interrupted by user", level="warning")
         return 1
 
 
@@ -134,17 +136,17 @@ Examples:
         return run_command(cmd)
 
     elif args.command == "reset":
-        print("⚠️  This will reset the processing status of all articles.")
+        log("This will reset the processing status of all articles.", level="warning")
         response = input("Are you sure? (y/N): ")
         if response.lower() == "y":
             return run_command([sys.executable, "scripts/reset_processing_status.py"])
         else:
-            print("Reset cancelled.")
+            log("Reset cancelled.", level="info")
             return 0
 
     elif args.command in ["frontend", "web", "ui"]:
-        print("🌐 Starting web interface...")
-        print("Open http://localhost:5001 in your browser")
+        log("Starting web interface...", level="info")
+        log("Open http://localhost:5001 in your browser", level="info")
         return run_command([sys.executable, "src/frontend/frontend.py"])
 
     elif args.command == "fetch-miami":
