@@ -5,6 +5,7 @@ import litellm
 from pydantic import BaseModel, Field
 from rich.console import Console
 
+from src.config_loader import get_domain_config
 from src.constants import (
     BRAINTRUST_PROJECT_ID,
     BRAINTRUST_PROJECT_NAME,
@@ -67,6 +68,7 @@ def generate_profile_with_reflection(
     article_id: str,
     model_type: str = "gemini",
     max_iterations: int = MAX_ITERATIONS,
+    domain: str = "guantanamo",
 ) -> (Dict, list):
     """
     Generate a profile with reflection and improvement.
@@ -74,36 +76,14 @@ def generate_profile_with_reflection(
     Returns a tuple: (final_profile_dict, improvement_history).
     """
 
-    # Enhanced system prompt emphasizing requirements
-    custom_system_prompt = f"""You are an expert at creating detailed profiles for entities mentioned in news articles.
+    # Load prompt template from config
+    config = get_domain_config(domain)
+    prompt_template = config.load_profile_prompt("generation")
 
-Create a comprehensive profile for {entity_type} "{entity_name}" using ONLY information from the provided article.
-
-CRITICAL REQUIREMENTS:
-1. Text length: Minimum 100 characters - provide substantial detail, not just basic facts
-2. Citations: Use smart citation strategy to reduce repetition:
-   - Group related facts in paragraphs, cite once per paragraph: paragraph content^[{article_id}]
-   - Use single article ID per citation: ^[{article_id}] (not ^[id1,id2])
-   - Don't cite every sentence - cite logical groupings of information
-3. Structure: Use markdown section headers (### Background, ### Role, ### Current Position, etc.)
-4. Content: Extract specific facts, quotes, actions, relationships from the article
-5. Tags: Include at least 2 relevant descriptive tags/keywords
-6. Confidence: Score 0.0-1.0 based on information quality and completeness
-7. JSON output: Return valid JSON with "text", "tags", "confidence", "sources" fields
-
-EXAMPLE FORMAT:
-{{
-  "text": "John Smith is a military officer who currently oversees detention operations at Guantánamo Bay. He has extensive experience in military operations and has been stationed at the facility since 2019^[{article_id}].\\n\\n### Background\\nSmith previously served in Afghanistan for two years before joining the detention facility staff. He graduated from West Point in 2010 and has received multiple commendations for his service^[{article_id}].\\n\\n### Current Role\\nAs facility operations manager, he oversees daily detention procedures and coordinates with legal teams. His responsibilities include managing staff schedules and ensuring compliance with military regulations^[{article_id}].",
-  "tags": ["military", "detention-operations", "guantanamo"],
-  "confidence": 0.9,
-  "sources": ["{article_id}"]
-}}
-
-MULTIPLE SOURCES: When the same fact appears in multiple articles, cite each separately:
-"Smith was promoted in 2020^[article1]. This promotion was confirmed in later reports^[article2]."
-
-Remember: Group facts logically with strategic citations, use section headers, make it detailed and substantial.
-"""
+    # Format the prompt with the specific values
+    custom_system_prompt = prompt_template.format(
+        entity_type=entity_type, entity_name=entity_name, article_id=article_id
+    )
 
     # Build messages for the new iterative_improve signature
     generation_messages = [
@@ -114,28 +94,11 @@ Remember: Group facts logically with strategic citations, use section headers, m
         },
     ]
 
-    reflection_prompt = f"""You are evaluating a profile for {entity_type} "{entity_name}". Check if it meets ALL requirements:
-
-REQUIRED CRITERIA:
-1. Text length: Minimum 100 characters (current profile should be substantial, not just a name)
-2. Citations: Must have citations but use smart strategy:
-   - At least one citation per paragraph/section
-   - Format: ^[{article_id}] (single article ID only)
-   - Don't need citation on every sentence, group logically
-3. Structure: Must have section headers (### Background, ### Role, etc.)
-4. Content: Must contain specific facts from the article, not generic information
-5. JSON format: Must be valid JSON with "text", "tags", "confidence", "sources" fields
-6. Tags: Must include at least 2 relevant tags
-7. Confidence: Must be between 0.0 and 1.0
-
-COMMON FAILURES:
-- No citations anywhere in text
-- Too short/generic text (under 100 chars)
-- No section headers
-- Invalid JSON structure
-- Empty or missing tags array
-
-Mark valid=true ONLY if ALL criteria are met. If any fail, mark valid=false and specify exactly which criteria failed."""
+    # Load reflection prompt from config
+    reflection_template = config.load_profile_prompt("reflection")
+    reflection_prompt = reflection_template.format(
+        entity_type=entity_type, entity_name=entity_name, article_id=article_id
+    )
 
     # Generate initial profile text for iterative improvement
     mode = GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
@@ -210,6 +173,7 @@ def generate_profile(
     article_text: str,
     article_id: str,
     model_type: str = "gemini",
+    domain: str = "guantanamo",
 ) -> (Dict, list):
     """
     Generate a profile for an entity based on article text using structured extraction.
@@ -222,6 +186,7 @@ def generate_profile(
         article_text=article_text,
         article_id=article_id,
         model_type=model_type,
+        domain=domain,
     )
     return profile_dict, improvement_history
 
@@ -233,6 +198,7 @@ def update_profile(
     new_article_text: str,
     new_article_id: str,
     model_type: str = "gemini",
+    domain: str = "guantanamo",
 ) -> (Dict, list):
     """
     Update an existing profile with new information from an article using iterative reflection.
@@ -251,16 +217,17 @@ def update_profile(
     )
 
     try:
-        # We'll build a combined prompt that includes the existing profile text and the new article text,
-        # instructing the LLM to integrate them into a new updated profile with the same formatting rules.
-        system_prompt = f"""You are an expert at updating profiles for a {entity_type} named "{entity_name}" with new information from news articles.
+        # Load update prompt template from config
+        config = get_domain_config(domain)
+        update_template = config.load_profile_prompt("update")
 
-The final updated profile must:
-1. Incorporate new relevant factual information from the new article.
-2. Retain existing valid information from the old profile.
-3. Resolve contradictions by preferring newer details.
-4. Include inline citations in the format: fact^[id]
-5. Provide a confidence score (0-1), relevant tags, and a well-structured, sectioned layout.
+        # Format the base prompt
+        base_prompt = update_template.format(
+            entity_type=entity_type, entity_name=entity_name
+        )
+
+        # Build the complete system prompt with existing profile and new article
+        system_prompt = f"""{base_prompt}
 
 Existing Profile (already validated):
 ----------------
@@ -293,19 +260,11 @@ New Article (ID: {new_article_id}):
             },
         ]
 
-        # Reflection prompt for updates
-        reflection_prompt = f"""Check if this updated profile for {entity_type} "{entity_name}" meets all requirements:
-
-REQUIRED CRITERIA:
-1. Text length: Minimum 100 characters
-2. Citations: Strategic citations with ^[article_id] format (single ID per citation)
-3. Structure: Section headers (### Background, ### Role, etc.)
-4. Content: Integrates both old and new information appropriately
-5. JSON format: Valid JSON with "text", "tags", "confidence", "sources" fields
-6. Tags: At least 2 relevant tags
-7. Confidence: Between 0.0 and 1.0
-
-Mark valid=true ONLY if ALL criteria are met."""
+        # Load reflection prompt for updates
+        reflection_template = config.load_profile_prompt("reflection")
+        reflection_prompt = reflection_template.format(
+            entity_type=entity_type, entity_name=entity_name, article_id=new_article_id
+        )
 
         # We'll use the same EntityProfile structure for the updated profile.
         result = iterative_improve(
@@ -417,6 +376,7 @@ def create_profile(
     article_text: str,
     article_id: str,
     model_type: str = "gemini",
+    domain: str = "guantanamo",
 ) -> (Dict, list):
     """
     Create an initial profile for an entity based on article text using structured extraction.
@@ -429,7 +389,7 @@ def create_profile(
 
     try:
         profile_dict, improvement_history = generate_profile(
-            entity_type, entity_name, article_text, article_id, model_type
+            entity_type, entity_name, article_text, article_id, model_type, domain
         )
 
         # Extract the actual text from nested/parsed fields before logging

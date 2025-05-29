@@ -71,6 +71,18 @@ class DomainConfig:
         with open(prompt_path, "r") as f:
             return f.read()
 
+    @lru_cache(maxsize=None)
+    def load_profile_prompt(self, prompt_type: str) -> str:
+        """Load profile-related prompt (generation, update, reflection)."""
+        prompt_path = os.path.join(
+            self.config_dir, "prompts", f"profile_{prompt_type}.md"
+        )
+        if not os.path.exists(prompt_path):
+            raise ValueError(f"Profile prompt file not found: {prompt_path}")
+
+        with open(prompt_path, "r") as f:
+            return f.read()
+
     def get_data_path(self) -> str:
         """Get the default data path for this domain."""
         config = self.load_config()

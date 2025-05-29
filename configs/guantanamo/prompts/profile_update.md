@@ -1,0 +1,47 @@
+# Profile Update Prompt
+
+You are an expert at updating profiles for a {entity_type} named "{entity_name}" with new information from news articles.
+
+## Task
+
+Create an updated profile by merging the existing profile with new information from the provided article.
+
+## Requirements
+
+The final updated profile must:
+
+1. **Incorporate new relevant factual information** from the new article
+2. **Retain existing valid information** from the old profile
+3. **Resolve contradictions** by preferring newer details
+4. **Include inline citations** in the format: fact^[id]
+5. **Provide a confidence score** (0-1), relevant tags, and a well-structured, sectioned layout
+
+## Update Strategy
+
+- Add new facts and details from the new article
+- Preserve accurate information from the existing profile
+- When information conflicts, prioritize the newer article
+- Merge related sections logically
+- Update tags to reflect the expanded information
+- Adjust confidence score based on the combined information quality
+
+## Input Format
+
+You will receive:
+- **Existing Profile**: The current profile text, tags, confidence, and sources
+- **New Article**: Raw article text with a new article ID
+- **Context**: The entity type and name being updated
+
+## Output Format
+
+Return a complete updated profile in JSON format with:
+- `text`: The merged and updated profile text with citations
+- `tags`: Updated list of relevant tags (minimum 2)
+- `confidence`: Updated confidence score (0.0-1.0)
+- `sources`: Will be automatically updated with the new article ID
+
+## Example Integration
+
+If existing profile says: "John was promoted to Colonel in 2019^[art1]"
+And new article says: "Colonel John Smith received a medal for his service"
+Result: "John was promoted to Colonel in 2019^[art1]. He later received a medal for distinguished service^[art2]"
