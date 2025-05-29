@@ -5,7 +5,7 @@ import pandas as pd
 
 def reset_processing_status():
     # Read the Parquet file
-    file_path = "data/raw_sources/miami_herald_articles.parquet"
+    file_path = "data/guantanamo/raw_sources/miami_herald_articles.parquet"
     df = pd.read_parquet(file_path)
 
     # Reset the processing status for all rows
