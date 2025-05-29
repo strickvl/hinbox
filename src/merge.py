@@ -1317,7 +1317,7 @@ def merge_events(
                 )
             if result.is_match:
                 log(
-                    f"The profiles match! Merging '{event_title}' with '{similar_key}'",
+                    f"✓ The profiles match! Merging '{event_title}' with '{similar_key[0]}'",
                     level="success",
                 )
             else:

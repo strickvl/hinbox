@@ -224,7 +224,16 @@ def write_entity_to_file(
             pq.write_table(table, output_path)
 
             action = "Updated" if entity_found else "Added"
-            logger.info(f"{action} {entity_type} entity: {entity_key}")
+            # Format entity_key appropriately for display
+            if entity_type == "events" and isinstance(entity_key, tuple):
+                display_key = entity_key[0]  # Just the event title
+            elif entity_type in ["locations", "organizations"] and isinstance(
+                entity_key, tuple
+            ):
+                display_key = entity_key[0]  # Just the name
+            else:
+                display_key = entity_key
+            logger.info(f"{action} {entity_type} entity: {display_key}")
         except Exception as e:
             # If we still get an error, try to identify the problematic field
             logger.error(f"Error writing {entity_type} to parquet: {e}")
