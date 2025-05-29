@@ -1,4 +1,4 @@
-from fasthtml.common import H2, A, Div, P
+from fasthtml.common import *
 
 from src.config_loader import DomainConfig
 

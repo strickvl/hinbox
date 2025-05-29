@@ -120,6 +120,7 @@ def titled_with_domain_picker(page_title: str, current_domain: str, children):
             Meta(charset="utf-8"),
             Meta(name="viewport", content="width=device-width, initial-scale=1"),
             Title(page_title),
+            Link(rel="stylesheet", href="/styles.css", type="text/css"),
         ),
         Body(
             Div(
