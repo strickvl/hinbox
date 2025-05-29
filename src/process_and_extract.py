@@ -13,8 +13,6 @@ from typing import Dict
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from rich import print
-from rich.console import Console
 
 from src.constants import (
     ARTICLES_PATH,
@@ -28,13 +26,15 @@ from src.constants import (
 )
 from src.events import gemini_extract_events, ollama_extract_events
 from src.locations import gemini_extract_locations, ollama_extract_locations
+from src.logging_config import get_logger, log, set_verbose
 from src.merge import merge_events, merge_locations, merge_organizations, merge_people
 from src.organizations import gemini_extract_organizations, ollama_extract_organizations
 from src.people import gemini_extract_people, ollama_extract_people
 from src.relevance import gemini_check_relevance, ollama_check_relevance
 from src.utils import write_entity_to_file
 
-console = Console()
+# Get module-specific logger
+logger = get_logger("process_and_extract")
 
 
 def ensure_dir(directory: str):
@@ -100,7 +100,7 @@ def write_entities_to_files(entities: Dict[str, Dict]):
 
 
 def main():
-    print("Starting script...")
+    log("Starting script...")
 
     parser = argparse.ArgumentParser(
         description="Process articles from a Parquet file and extract entities."
@@ -132,16 +132,27 @@ def main():
         action="store_true",
         help="Process articles even if they've been processed before",
     )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose logging for debugging the reflection mechanism",
+    )
     args = parser.parse_args()
 
-    console.print(
+    # Configure logger level based on verbosity flag
+    if args.verbose:
+        set_verbose(True)
+        log("Verbose logging enabled")
+
+    log(
         f"[bold blue]Arguments:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}, force_reprocess={args.force_reprocess}"
     )
 
     ensure_dir(OUTPUT_DIR)
 
     # Load existing entities
-    console.print("[green]Loading existing entities...[/green]")
+    log("Loading existing entities...", level="processing")
     entities = load_existing_entities()
 
     model_type = "ollama" if args.local else "gemini"
@@ -149,9 +160,7 @@ def main():
 
     # Check if articles parquet exists
     if not os.path.exists(args.articles_path):
-        console.print(
-            f"[red]ERROR: Articles file not found at {args.articles_path}[/red]"
-        )
+        log(f"ERROR: Articles file not found at {args.articles_path}", level="error")
         return
 
     # Read entire Parquet into memory
@@ -159,7 +168,7 @@ def main():
         table = pq.read_table(args.articles_path)
         rows = table.to_pylist()
     except Exception as e:
-        console.print(f"[red]Failed to read Parquet file: {e}[/red]")
+        log("Failed to read Parquet file", level="error", exception=e)
         return
 
     article_count = len(rows)
@@ -167,7 +176,7 @@ def main():
     skipped_relevance_count = 0
     skipped_already_processed = 0
 
-    console.print(f"Loaded {article_count} articles from {args.articles_path}")
+    log(f"Loaded {article_count} articles from {args.articles_path}", level="success")
 
     processed_rows = []
     row_index = 0
@@ -180,7 +189,7 @@ def main():
             continue
 
         row_index += 1
-        console.print(f"\n[bold]Processing article #{row_index}[/bold]")
+        log(f"\n[bold]Processing article #{row_index}[/bold]")
 
         article_id = row.get("id", f"article_{row_index}")
         article_title = row.get("title", "")
@@ -193,20 +202,23 @@ def main():
             row["processing_metadata"] = {}
         processing_metadata = row["processing_metadata"]
 
-        # Initialize reflection metadata
+        # Initialize enhanced reflection metadata tracking
         processing_metadata["reflection_attempts"] = {}
+        processing_metadata["reflection_summary"] = {
+            "total_attempts": 0,
+            "successful_attempts": 0,
+            "failed_attempts": 0,
+        }
 
         # Skip if already processed and not forced
         if processing_metadata.get("processed") and not args.force_reprocess:
-            console.print("[yellow]Article already processed, skipping...[/yellow]")
+            log("Article already processed, skipping...", level="warning")
             skipped_already_processed += 1
             processed_rows.append(row)
             continue
 
         if not article_content:
-            console.print(
-                "[yellow]Article has no content, skipping extraction[/yellow]"
-            )
+            log("Article has no content, skipping extraction", level="warning")
             processed_rows.append(row)
             continue
 
@@ -217,7 +229,7 @@ def main():
 
         # Relevance check
         if args.relevance_check:
-            console.print("[cyan]Performing relevance check...[/cyan]")
+            log("Performing relevance check...", level="processing")
             try:
                 if args.local:
                     relevance_result = ollama_check_relevance(
@@ -225,49 +237,107 @@ def main():
                     )
                 else:
                     relevance_result = gemini_check_relevance(article_content)
+
                 if not relevance_result.is_relevant:
-                    console.print("[red]Skipping article as it's not relevant[/red]")
+                    log("Skipping article as it's not relevant", level="warning")
+                    log(f"Reason: {relevance_result.reason}", level="debug")
                     processing_metadata["processed"] = False
                     processing_metadata["reason"] = relevance_result.reason
                     skipped_relevance_count += 1
                     processed_rows.append(row)
                     continue
                 else:
-                    console.print("[green]Article is relevant[/green]")
+                    log("Article is relevant", level="success")
             except Exception as e:
-                console.print(f"[red]Error during relevance check: {e}[/red]")
-                console.print(
-                    "[yellow]Proceeding with extraction despite error[/yellow]"
-                )
+                log("Error during relevance check", level="error", exception=e)
+                log("Proceeding with extraction despite error", level="warning")
 
         extraction_timestamp = datetime.now().isoformat()
 
-        # Extract people with reflection tracking
+        # Extract people with enhanced reflection tracking
         try:
-            console.print("[blue]Extracting people...[/blue]")
+            log("Extracting people...", level="processing")
+            start_time = datetime.now()
+
             if args.local:
                 extracted_people = ollama_extract_people(article_content, model="qwq")
             else:
                 extracted_people = gemini_extract_people(article_content)
 
-            # Track reflection attempts for people - just record success for now
-            # since we don't have direct access to reflection history
+            # Track reflection attempts for people
+            # Try to extract reflection history if available
+            reflection_history = []
+            reflection_attempts = 1
+
+            # Check if the response has reflection history attribute
+            if hasattr(extracted_people, "reflection_history"):
+                reflection_history = extracted_people.reflection_history
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+                if args.verbose and reflection_history:
+                    log(f"Reflection history for people extraction:", level="debug")
+                    for i, reflection in enumerate(reflection_history):
+                        passed = reflection.get("passed", False)
+                        feedback = reflection.get("feedback", "No feedback")
+                        log(
+                            f"  Attempt {i + 1}: {'✓' if passed else '✗'} {feedback}",
+                            level="debug",
+                        )
+
+            # For entity extraction modules that return merged results
+            if (
+                isinstance(extracted_people, dict)
+                and "reflection_history" in extracted_people
+            ):
+                reflection_history = extracted_people["reflection_history"]
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+            duration = (datetime.now() - start_time).total_seconds()
+            log(
+                f"Extracted {len(extracted_people)} people in {duration:.2f}s",
+                level="success",
+            )
+
+            if reflection_attempts > 1:
+                log(
+                    f"Required {reflection_attempts} reflection iterations",
+                    level="debug",
+                )
+
+            # Update reflection metadata
             processing_metadata["reflection_attempts"]["people"] = {
-                "attempts": 1,  # Basic tracking for now
+                "attempts": reflection_attempts,
                 "success": bool(extracted_people),
                 "timestamp": datetime.now().isoformat(),
+                "duration_seconds": duration,
             }
+
+            # Update summary counts
+            processing_metadata["reflection_summary"]["total_attempts"] += (
+                reflection_attempts
+            )
+            processing_metadata["reflection_summary"]["successful_attempts"] += 1
+
         except Exception as e:
-            console.print(f"[red]Error extracting people: {e}[/red]")
+            log("Error extracting people", level="error", exception=e)
             extracted_people = []
             processing_metadata["reflection_attempts"]["people"] = {
                 "error": str(e),
                 "timestamp": datetime.now().isoformat(),
+                "attempts": 1,
+                "success": False,
             }
+            processing_metadata["reflection_summary"]["failed_attempts"] += 1
 
-        # Extract organizations
+        # Extract organizations with enhanced reflection tracking
         try:
-            console.print("[blue]Extracting organizations...[/blue]")
+            log("Extracting organizations...", level="processing")
+            start_time = datetime.now()
+
             if args.local:
                 extracted_orgs = ollama_extract_organizations(
                     article_content, model="qwq"
@@ -275,56 +345,232 @@ def main():
             else:
                 extracted_orgs = gemini_extract_organizations(article_content)
 
+            # Track reflection attempts for organizations
+            reflection_history = []
+            reflection_attempts = 1
+
+            # Check if the response has reflection history attribute
+            if hasattr(extracted_orgs, "reflection_history"):
+                reflection_history = extracted_orgs.reflection_history
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+                if args.verbose and reflection_history:
+                    log(
+                        f"Reflection history for organizations extraction:",
+                        level="debug",
+                    )
+                    for i, reflection in enumerate(reflection_history):
+                        passed = reflection.get("passed", False)
+                        feedback = reflection.get("feedback", "No feedback")
+                        log(
+                            f"  Attempt {i + 1}: {'✓' if passed else '✗'} {feedback}",
+                            level="debug",
+                        )
+
+            # For entity extraction modules that return merged results
+            if (
+                isinstance(extracted_orgs, dict)
+                and "reflection_history" in extracted_orgs
+            ):
+                reflection_history = extracted_orgs["reflection_history"]
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+            duration = (datetime.now() - start_time).total_seconds()
+            log(
+                f"Extracted {len(extracted_orgs)} organizations in {duration:.2f}s",
+                level="success",
+            )
+
+            if reflection_attempts > 1:
+                log(
+                    f"Required {reflection_attempts} reflection iterations",
+                    level="debug",
+                )
+
+            # Update reflection metadata
             processing_metadata["reflection_attempts"]["organizations"] = {
-                "attempts": 1,
+                "attempts": reflection_attempts,
                 "success": bool(extracted_orgs),
                 "timestamp": datetime.now().isoformat(),
+                "duration_seconds": duration,
             }
+
+            # Update summary counts
+            processing_metadata["reflection_summary"]["total_attempts"] += (
+                reflection_attempts
+            )
+            processing_metadata["reflection_summary"]["successful_attempts"] += 1
+
         except Exception as e:
-            console.print(f"[red]Error extracting organizations: {e}[/red]")
+            log("Error extracting organizations", level="error", exception=e)
             extracted_orgs = []
             processing_metadata["reflection_attempts"]["organizations"] = {
                 "error": str(e),
                 "timestamp": datetime.now().isoformat(),
+                "attempts": 1,
+                "success": False,
             }
+            processing_metadata["reflection_summary"]["failed_attempts"] += 1
 
-        # Extract locations
+        # Extract locations with enhanced reflection tracking
         try:
-            console.print("[blue]Extracting locations...[/blue]")
+            log("Extracting locations...", level="processing")
+            start_time = datetime.now()
+
             if args.local:
                 extracted_locs = ollama_extract_locations(article_content, model="qwq")
             else:
                 extracted_locs = gemini_extract_locations(article_content)
 
+            # Track reflection attempts for locations
+            reflection_history = []
+            reflection_attempts = 1
+
+            # Check if the response has reflection history attribute
+            if hasattr(extracted_locs, "reflection_history"):
+                reflection_history = extracted_locs.reflection_history
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+                if args.verbose and reflection_history:
+                    log(f"Reflection history for locations extraction:", level="debug")
+                    for i, reflection in enumerate(reflection_history):
+                        passed = reflection.get("passed", False)
+                        feedback = reflection.get("feedback", "No feedback")
+                        log(
+                            f"  Attempt {i + 1}: {'✓' if passed else '✗'} {feedback}",
+                            level="debug",
+                        )
+
+            # For entity extraction modules that return merged results
+            if (
+                isinstance(extracted_locs, dict)
+                and "reflection_history" in extracted_locs
+            ):
+                reflection_history = extracted_locs["reflection_history"]
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+            duration = (datetime.now() - start_time).total_seconds()
+            log(
+                f"Extracted {len(extracted_locs)} locations in {duration:.2f}s",
+                level="success",
+            )
+
+            if reflection_attempts > 1:
+                log(
+                    f"Required {reflection_attempts} reflection iterations",
+                    level="debug",
+                )
+
+            # Update reflection metadata
             processing_metadata["reflection_attempts"]["locations"] = {
-                "attempts": 1,
+                "attempts": reflection_attempts,
                 "success": bool(extracted_locs),
                 "timestamp": datetime.now().isoformat(),
+                "duration_seconds": duration,
             }
+
+            # Update summary counts
+            processing_metadata["reflection_summary"]["total_attempts"] += (
+                reflection_attempts
+            )
+            processing_metadata["reflection_summary"]["successful_attempts"] += 1
+
         except Exception as e:
-            console.print(f"[red]Error extracting locations: {e}[/red]")
+            log("Error extracting locations", level="error", exception=e)
             extracted_locs = []
             processing_metadata["reflection_attempts"]["locations"] = {
                 "error": str(e),
                 "timestamp": datetime.now().isoformat(),
+                "attempts": 1,
+                "success": False,
             }
+            processing_metadata["reflection_summary"]["failed_attempts"] += 1
 
-        # Extract events
+        # Extract events with enhanced reflection tracking
         try:
-            console.print("[blue]Extracting events...[/blue]")
+            log("Extracting events...", level="processing")
+            start_time = datetime.now()
+
             if args.local:
                 extracted_events = ollama_extract_events(article_content, model="qwq")
             else:
                 extracted_events = gemini_extract_events(article_content)
 
+            # Track reflection attempts for events
+            reflection_history = []
+            reflection_attempts = 1
+
+            # Check if the response has reflection history attribute
+            if hasattr(extracted_events, "reflection_history"):
+                reflection_history = extracted_events.reflection_history
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+                if args.verbose and reflection_history:
+                    log(f"Reflection history for events extraction:", level="debug")
+                    for i, reflection in enumerate(reflection_history):
+                        passed = reflection.get("passed", False)
+                        feedback = reflection.get("feedback", "No feedback")
+                        log(
+                            f"  Attempt {i + 1}: {'✓' if passed else '✗'} {feedback}",
+                            level="debug",
+                        )
+
+            # For entity extraction modules that return merged results
+            if (
+                isinstance(extracted_events, dict)
+                and "reflection_history" in extracted_events
+            ):
+                reflection_history = extracted_events["reflection_history"]
+                reflection_attempts = (
+                    len(reflection_history) if reflection_history else 1
+                )
+
+            duration = (datetime.now() - start_time).total_seconds()
+            log(
+                f"Extracted {len(extracted_events)} events in {duration:.2f}s",
+                level="success",
+            )
+
+            if reflection_attempts > 1:
+                log(
+                    f"Required {reflection_attempts} reflection iterations",
+                    level="debug",
+                )
+
+            # Update reflection metadata
             processing_metadata["reflection_attempts"]["events"] = {
-                "attempts": 1,
+                "attempts": reflection_attempts,
                 "success": bool(extracted_events),
                 "timestamp": datetime.now().isoformat(),
+                "duration_seconds": duration,
             }
+
+            # Update summary counts
+            processing_metadata["reflection_summary"]["total_attempts"] += (
+                reflection_attempts
+            )
+            processing_metadata["reflection_summary"]["successful_attempts"] += 1
+
         except Exception as e:
-            console.print(f"[red]Error extracting events: {e}[/red]")
+            log("Error extracting events", level="error", exception=e)
             extracted_events = []
+            processing_metadata["reflection_attempts"]["events"] = {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat(),
+                "attempts": 1,
+                "success": False,
+            }
+            processing_metadata["reflection_summary"]["failed_attempts"] += 1
 
         # Convert Pydantic to dict if needed
         def to_dict_list(items):
@@ -344,9 +590,11 @@ def main():
         loc_dicts = to_dict_list(extracted_locs)
         event_dicts = to_dict_list(extracted_events)
 
-        console.print("[magenta]\nMerging extracted entities...[/magenta]")
+        log("Merging extracted entities...", level="processing")
+
         # Merge people
         try:
+            merge_start = datetime.now()
             merge_people(
                 people_dicts,
                 entities,
@@ -358,12 +606,18 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+            merge_duration = (datetime.now() - merge_start).total_seconds()
+            log(
+                f"Merged {len(people_dicts)} people in {merge_duration:.2f}s",
+                level="success",
+            )
         except Exception as e:
-            console.print(f"[red]Error merging people: {e}[/red]")
+            log("Error merging people", level="error", exception=e)
             processing_metadata["error_people"] = str(e)
 
         # Merge organizations
         try:
+            merge_start = datetime.now()
             merge_organizations(
                 org_dicts,
                 entities,
@@ -375,12 +629,18 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+            merge_duration = (datetime.now() - merge_start).total_seconds()
+            log(
+                f"Merged {len(org_dicts)} organizations in {merge_duration:.2f}s",
+                level="success",
+            )
         except Exception as e:
-            console.print(f"[red]Error merging organizations: {e}[/red]")
+            log("Error merging organizations", level="error", exception=e)
             processing_metadata["error_organizations"] = str(e)
 
         # Merge locations
         try:
+            merge_start = datetime.now()
             merge_locations(
                 loc_dicts,
                 entities,
@@ -392,12 +652,18 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+            merge_duration = (datetime.now() - merge_start).total_seconds()
+            log(
+                f"Merged {len(loc_dicts)} locations in {merge_duration:.2f}s",
+                level="success",
+            )
         except Exception as e:
-            console.print(f"[red]Error merging locations: {e}[/red]")
+            log("Error merging locations", level="error", exception=e)
             processing_metadata["error_locations"] = str(e)
 
         # Merge events
         try:
+            merge_start = datetime.now()
             merge_events(
                 event_dicts,
                 entities,
@@ -409,8 +675,13 @@ def main():
                 extraction_timestamp,
                 model_type,
             )
+            merge_duration = (datetime.now() - merge_start).total_seconds()
+            log(
+                f"Merged {len(event_dicts)} events in {merge_duration:.2f}s",
+                level="success",
+            )
         except Exception as e:
-            console.print(f"[red]Error merging events: {e}[/red]")
+            log("Error merging events", level="error", exception=e)
             processing_metadata["error_events"] = str(e)
 
         # Because reflection histories are stored in each entity, we can
@@ -418,44 +689,120 @@ def main():
         processing_metadata["reflection_used"] = True
         processing_metadata["processed"] = True
         processing_metadata["processing_completed"] = datetime.now().isoformat()
+
+        # Calculate processing time
+        start_time = datetime.fromisoformat(processing_metadata["processing_started"])
+        end_time = datetime.fromisoformat(processing_metadata["processing_completed"])
+        processing_time = (end_time - start_time).total_seconds()
+
+        # Record total reflection stats
+        total_reflection_attempts = processing_metadata["reflection_summary"][
+            "total_attempts"
+        ]
+        successful_attempts = processing_metadata["reflection_summary"][
+            "successful_attempts"
+        ]
+        failed_attempts = processing_metadata["reflection_summary"]["failed_attempts"]
+
+        # Store extraction counts and processing time
         processing_metadata["entities_extracted"] = {
             "people": len(people_dicts),
             "organizations": len(org_dicts),
             "locations": len(loc_dicts),
             "events": len(event_dicts),
+            "total": len(people_dicts)
+            + len(org_dicts)
+            + len(loc_dicts)
+            + len(event_dicts),
         }
+        processing_metadata["processing_time_seconds"] = processing_time
 
         processed_rows.append(row)
         processed_count += 1
-        console.print(f"[green]Successfully processed article #{row_index}[/green]")
+
+        # Log reflection summary
+        log(f"Reflection summary for article #{row_index}:", level="info")
+        log(f"  Total reflection attempts: {total_reflection_attempts}", level="info")
+
+        # Only log detailed reflection stats in verbose mode or if there were multiple attempts
+        if (
+            args.verbose or total_reflection_attempts > 4
+        ):  # 4 = minimum if all extractions took just 1 attempt
+            for entity_type, reflection_data in processing_metadata[
+                "reflection_attempts"
+            ].items():
+                attempts = reflection_data.get("attempts", 1)
+                duration = reflection_data.get("duration_seconds", 0)
+                if attempts > 1:
+                    log(
+                        f"  • {entity_type}: {attempts} attempts in {duration:.2f}s",
+                        level="info",
+                    )
+
+        log(
+            f"Successfully processed article #{row_index} in {processing_time:.2f}s",
+            level="success",
+        )
 
     # Write updated articles to a temp parquet file
     temp_file = args.articles_path + ".tmp.parquet"
     try:
+        log("Writing updated articles to parquet file...", level="processing")
         new_table = pa.Table.from_pylist(processed_rows)
         pq.write_table(new_table, temp_file)
         os.replace(temp_file, args.articles_path)
+        log("Successfully updated articles parquet file", level="success")
     except Exception as e:
-        console.print(f"[red]Could not write updated articles to parquet: {e}[/red]")
+        log("Could not write updated articles to parquet", level="error", exception=e)
         if os.path.exists(temp_file):
             os.remove(temp_file)
 
     # Write final entity sets to their parquet files
-    console.print("[green]\nSaving updated entity tables...[/green]")
+    log("Saving updated entity tables...", level="processing")
     write_entities_to_files(entities)
+    log("Entity tables successfully saved", level="success")
 
-    console.print(
-        f"\n[bold]Processing complete[/bold]. "
-        f"Articles read: {article_count}, "
-        f"processed: {processed_count}, "
-        f"skipped (relevance): {skipped_relevance_count}, "
-        f"skipped (already processed): {skipped_already_processed}"
+    # Print summary information
+    log("\n[bold]Processing complete[/bold]", level="info")
+
+    # Create a summary table in the log
+    log(f"Articles read: {article_count}", level="info")
+    log(f"Articles processed: {processed_count}", level="info")
+    log(f"Articles skipped (relevance): {skipped_relevance_count}", level="info")
+    log(
+        f"Articles skipped (already processed): {skipped_already_processed}",
+        level="info",
     )
-    console.print(f"\nFinal entity counts:")
-    console.print(f"- People: {len(entities['people'])}")
-    console.print(f"- Organizations: {len(entities['organizations'])}")
-    console.print(f"- Locations: {len(entities['locations'])}")
-    console.print(f"- Events: {len(entities['events'])}")
+
+    log("\nFinal entity counts:", level="info")
+    log(f"• People: {len(entities['people'])}", level="info")
+    log(f"• Organizations: {len(entities['organizations'])}", level="info")
+    log(f"• Locations: {len(entities['locations'])}", level="info")
+    log(f"• Events: {len(entities['events'])}", level="info")
+
+    # Add reflection statistics if we processed any articles
+    if processed_count > 0:
+        total_reflection_attempts = 0
+        for row in processed_rows:
+            if (
+                "processing_metadata" in row
+                and "reflection_summary" in row["processing_metadata"]
+            ):
+                total_reflection_attempts += row["processing_metadata"][
+                    "reflection_summary"
+                ].get("total_attempts", 0)
+
+        if total_reflection_attempts > 0:
+            avg_reflections = total_reflection_attempts / processed_count
+            log(f"\nReflection statistics:", level="info")
+            log(
+                f"• Total reflection attempts: {total_reflection_attempts}",
+                level="info",
+            )
+            log(
+                f"• Average reflection attempts per article: {avg_reflections:.2f}",
+                level="info",
+            )
 
 
 if __name__ == "__main__":

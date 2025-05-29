@@ -5,8 +5,6 @@ import litellm
 import numpy as np
 from openai import OpenAI
 from pydantic import BaseModel
-from rich import print
-from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
@@ -21,10 +19,12 @@ from src.constants import (
     get_ollama_model_name,
 )
 from src.embeddings import embed_text
+from src.logging_config import console, display_markdown, get_logger, log
 from src.profiles import create_profile, update_profile
 from src.utils import extract_profile_text, write_entity_to_file
 
-console = Console()
+# Get module-specific logger
+logger = get_logger("merge")
 
 
 class MatchCheckResult(BaseModel):
@@ -98,7 +98,7 @@ Are these profiles referring to the same entity? Provide your analysis.""",
         )
         return results.choices[0].message.parsed
     except Exception as e:
-        print(f"Error with Ollama API: {e}")
+        log(f"Error with Ollama API", level="error", exception=e)
         # Return a default result indicating failure
         return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
 
@@ -170,7 +170,7 @@ Are these profiles referring to the same entity? Provide your analysis.""",
         )
         return result
     except Exception as e:
-        print(f"Error with Gemini API: {e}")
+        log(f"Error with Gemini API", level="error", exception=e)
         return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
     client = instructor.from_litellm(litellm.completion)
 
@@ -219,7 +219,7 @@ Are these profiles referring to the same entity? Provide your analysis.""",
         )
         return result
     except Exception as e:
-        print(f"Error with Gemini API: {e}")
+        log(f"Error with Gemini API", level="error", exception=e)
         # Return a default result indicating failure
         return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
 
@@ -300,8 +300,9 @@ def find_similar_person(
             similarity = compute_similarity(
                 person_embedding, existing_person["profile_embedding"]
             )
-            console.print(
-                f"[cyan]Exact name match for '{person_name}' with similarity: {similarity:.4f}[/cyan]"
+            log(
+                f"Exact name match for '{person_name}' with similarity: {similarity:.4f}",
+                level="info",
             )
             if similarity >= similarity_threshold:
                 return person_name, similarity
@@ -322,8 +323,9 @@ def find_similar_person(
                 best_match = existing_name
 
     if best_match and best_score >= similarity_threshold:
-        console.print(
-            f"[yellow]Found similar person: '{best_match}' for '{person_name}' with similarity: {best_score:.4f}[/yellow]"
+        log(
+            f"Found similar person: '{best_match}' for '{person_name}' with similarity: {best_score:.4f}",
+            level="info",
         )
         return best_match, best_score
 
@@ -364,8 +366,9 @@ def find_similar_location(
             similarity = compute_similarity(
                 loc_embedding, existing_loc["profile_embedding"]
             )
-            console.print(
-                f"[cyan]Exact match for location '{loc_name}' with similarity: {similarity:.4f}[/cyan]"
+            log(
+                f"Exact match for location '{loc_name}' with similarity: {similarity:.4f}",
+                level="info",
             )
             if similarity >= similarity_threshold:
                 return location_key, similarity
@@ -386,8 +389,9 @@ def find_similar_location(
                 best_match = existing_key
 
     if best_match and best_score >= similarity_threshold:
-        console.print(
-            f"[yellow]Found similar location: '{best_match[0]}' for '{loc_name}' with similarity: {best_score:.4f}[/yellow]"
+        log(
+            f"Found similar location: '{best_match[0]}' for '{loc_name}' with similarity: {best_score:.4f}",
+            level="warning",
         )
         return best_match, best_score
 
@@ -428,8 +432,9 @@ def find_similar_organization(
             similarity = compute_similarity(
                 org_embedding, existing_org["profile_embedding"]
             )
-            console.print(
-                f"[cyan]Exact match for organization '{org_name}' with similarity: {similarity:.4f}[/cyan]"
+            log(
+                f"Exact match for organization '{org_name}' with similarity: {similarity:.4f}",
+                level="info",
             )
             if similarity >= similarity_threshold:
                 return org_key, similarity
@@ -450,8 +455,9 @@ def find_similar_organization(
                 best_match = existing_key
 
     if best_match and best_score >= similarity_threshold:
-        console.print(
-            f"[yellow]Found similar organization: '{best_match[0]}' for '{org_name}' with similarity: {best_score:.4f}[/yellow]"
+        log(
+            f"Found similar organization: '{best_match[0]}' for '{org_name}' with similarity: {best_score:.4f}",
+            level="warning",
         )
         return best_match, best_score
 
@@ -494,8 +500,9 @@ def find_similar_event(
             similarity = compute_similarity(
                 event_embedding, existing_event["profile_embedding"]
             )
-            console.print(
-                f"[cyan]Exact match for event '{event_title}' with similarity: {similarity:.4f}[/cyan]"
+            log(
+                f"Exact match for event '{event_title}' with similarity: {similarity:.4f}",
+                level="info",
             )
             if similarity >= similarity_threshold:
                 return event_key, similarity
@@ -516,8 +523,9 @@ def find_similar_event(
                 best_match = existing_key
 
     if best_match and best_score >= similarity_threshold:
-        console.print(
-            f"[yellow]Found similar event: '{best_match[0]}' for '{event_title}' with similarity: {best_score:.4f}[/yellow]"
+        log(
+            f"Found similar event: '{best_match[0]}' for '{event_title}' with similarity: {best_score:.4f}",
+            level="warning",
         )
         return best_match, best_score
 
@@ -542,71 +550,73 @@ def merge_people(
     embedding_model = (
         LOCAL_EMBEDDING_MODEL if model_type == "ollama" else CLOUD_EMBEDDING_MODEL
     )
-    console.print(
-        f"\n[bold blue]Starting merge_people with {len(extracted_people)} people to process[/bold blue]"
+    log(
+        f"Starting merge_people with {len(extracted_people)} people to process",
+        level="processing",
     )
-    console.print(f"Using model: {model_type}, embedding model: {embedding_model}")
+    log(f"Using model: {model_type}, embedding model: {embedding_model}", level="info")
 
     for p in extracted_people:
         person_name = p.get("name", "")
         if not person_name:
-            console.print("[red]Skipping person with empty name[/red]")
+            log("Skipping person with empty name", level="error")
             continue
 
-        console.print(f"\n[yellow]Processing person: {person_name}[/yellow]")
+        log(f"Processing person: {person_name}", level="processing")
         entity_updated = False
 
         try:
-            console.print(
-                f"[cyan]Attempting to create profile for {person_name}...[/cyan]"
-            )
+            log(f"Attempting to create profile for {person_name}...", level="info")
             proposed_profile, reflection_history = create_profile(
                 "person", person_name, article_content, article_id, model_type
             )
 
             # Extract profile text from response
-            console.print("[cyan]Extracting profile text from response...[/cyan]")
+            log("Extracting profile text from response...", level="info")
             proposed_profile = extract_profile_text(proposed_profile)
             if not proposed_profile or not proposed_profile.get("text"):
-                console.print(
-                    f"[red]Failed to generate profile for {person_name}. Profile data: {proposed_profile}[/red]"
+                log(
+                    f"Failed to generate profile for {person_name}. Profile data: {proposed_profile}",
+                    level="error",
                 )
                 continue
 
             # Generate embedding for the person name and type
             proposed_profile_text = proposed_profile.get("text", "")
-            console.print(
-                f"[cyan]Generating embedding for profile text (length: {len(proposed_profile_text)})[/cyan]"
+            log(
+                f"Generating embedding for profile text (length: {len(proposed_profile_text)})",
+                level="info",
             )
             proposed_person_embedding = embed_text(
                 proposed_profile_text, model_name=embedding_model
             )
-            console.print(
-                f"[cyan]Generated embedding of size: {len(proposed_person_embedding)}[/cyan]"
+            log(
+                f"Generated embedding of size: {len(proposed_person_embedding)}",
+                level="info",
             )
 
             # Find similar person using embeddings
-            console.print(
-                f"[cyan]Searching for similar person with similarity threshold: {similarity_threshold}[/cyan]"
+            log(
+                f"Searching for similar person with similarity threshold: {similarity_threshold}",
+                level="info",
             )
             similar_name, similarity_score = find_similar_person(
                 person_name, proposed_person_embedding, entities, similarity_threshold
             )
 
             if similar_name:
-                console.print(
-                    f"[purple]Doing a final check to see if '{person_name}' is the same as '{similar_name}'[/purple]..."
+                log(
+                    f"Doing a final check to see if '{person_name}' is the same as '{similar_name}'...",
+                    level="info",
                 )
 
                 existing_profile = entities["people"][similar_name].get("profile", {})
                 existing_profile_text = existing_profile.get("text", "")
                 if not existing_profile_text:
-                    console.print(
-                        f"[red]No existing profile text for {similar_name}[/red]"
-                    )
+                    log(f"No existing profile text for {similar_name}", level="error")
                     continue
 
-                console.print("[cyan]Performing model-based match check...[/cyan]")
+                log("Performing model-based match check...", level="info")
                 if model_type == "ollama":
                     result = local_model_check_match(
                         person_name,
@@ -622,23 +632,27 @@ def merge_people(
                         existing_profile_text,
                     )
 
-                console.print(
-                    f"[cyan]Match check result: {result.is_match} - {result.reason}[/cyan]"
+                log(
+                    f"Match check result: {result.is_match} - {result.reason}",
+                    level="info",
                 )
 
                 if result.is_match:
-                    console.print(
-                        f"[green]The profiles match! Merging '{person_name}' with '{similar_name}'[/green]"
+                    log(
+                        f"The profiles match! Merging '{person_name}' with '{similar_name}'",
+                        level="success",
                     )
                 else:
-                    console.print(
-                        f"[red]The profiles do not match. Skipping merge for '{person_name}'[/red]"
+                    log(
+                        f"The profiles do not match. Skipping merge for '{person_name}'",
+                        level="error",
                     )
                     continue
 
                 # We found a similar person - use that instead of creating a new one
-                console.print(
-                    f"[blue]Merging '{person_name}' with existing person '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
+                log(
+                    f"Merging '{person_name}' with existing person '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})",
+                    level="processing",
                 )
 
                 # Use the existing person's name as the key
@@ -651,8 +665,8 @@ def merge_people(
                 )
 
                 if not article_exists:
-                    console.print(
-                        f"[cyan]Adding new article reference for {similar_name}[/cyan]"
+                    log(
+                        f"Adding new article reference for {similar_name}", level="info"
                     )
                     existing_person["articles"].append(
                         {
@@ -666,8 +680,9 @@ def merge_people(
 
                     # Update profile with new information
                     if "profile" in existing_person:
-                        console.print(
-                            f"\n[yellow]Updating profile for person:[/] {similar_name}"
+                        log(
+                            f"\n[yellow]Updating profile for person:[/] {similar_name}",
+                            level="info",
                         )
                         updated_profile, reflection_history = update_profile(
                             "person",
@@ -678,8 +693,9 @@ def merge_people(
                             model_type,
                         )
                         existing_person["profile"] = updated_profile
-                        console.print(
-                            "[cyan]Generating new embedding for updated profile...[/cyan]"
+                        log(
+                            "Generating new embedding for updated profile...",
+                            level="info",
                         )
                         existing_person["profile_embedding"] = embed_text(
                             updated_profile["text"],
@@ -689,16 +705,15 @@ def merge_people(
                         existing_person.setdefault("reflection_history", [])
                         existing_person["reflection_history"].extend(reflection_history)
 
-                        console.print(
-                            Panel(
-                                Markdown(updated_profile["text"]),
-                                title=f"Updated Profile: {similar_name}",
-                                border_style="yellow",
-                            )
+                        display_markdown(
+                            updated_profile["text"],
+                            title=f"Updated Profile: {similar_name}",
+                            style="yellow",
                         )
                     else:
-                        console.print(
-                            f"\n[green]Creating initial profile for person:[/] {similar_name}"
+                        log(
+                            f"\n[green]Creating initial profile for person:[/] {similar_name}",
+                            level="info",
                         )
                         new_profile, reflection_history = create_profile(
                             "person",
@@ -708,9 +723,7 @@ def merge_people(
                             model_type,
                         )
                         existing_person["profile"] = new_profile
-                        console.print(
-                            "[cyan]Generating embedding for new profile...[/cyan]"
-                        )
+                        log("Generating embedding for new profile...", level="info")
                         existing_person["profile_embedding"] = embed_text(
                             new_profile["text"],
                             model_name=embedding_model,
@@ -719,12 +732,10 @@ def merge_people(
                         existing_person.setdefault("reflection_history", [])
                         existing_person["reflection_history"].extend(reflection_history)
 
-                        console.print(
-                            Panel(
-                                Markdown(new_profile["text"]),
-                                title=f"New Profile: {similar_name}",
-                                border_style="green",
-                            )
+                        display_markdown(
+                            new_profile["text"],
+                            title=f"New Profile: {similar_name}",
+                            style="green",
                         )
 
                     # Store alternative names if they differ
@@ -734,8 +745,9 @@ def merge_people(
 
                         if person_name not in existing_person["alternative_names"]:
                             existing_person["alternative_names"].append(person_name)
-                            console.print(
-                                f"[blue]Added alternative name: '{person_name}' for '{similar_name}'[/blue]"
+                            log(
+                                f"Added alternative name: '{person_name}' for '{similar_name}'",
+                                level="processing",
                             )
                             entity_updated = True
 
@@ -750,19 +762,19 @@ def merge_people(
                     entity_updated = True
 
                 if entity_updated:
-                    console.print(
-                        f"[cyan]Writing updated entity to file for {similar_name}...[/cyan]"
+                    log(
+                        f"Writing updated entity to file for {similar_name}...",
+                        level="info",
                     )
                     write_entity_to_file("people", similar_name, existing_person)
                     entities["people"][similar_name] = existing_person
-                    console.print(
-                        f"[blue]Updated person entity saved to file:[/] {similar_name}"
+                    log(
+                        f"Updated person entity saved to file: {similar_name}",
+                        level="success",
                     )
             else:
                 # No similar person found - create new entry
-                console.print(
-                    f"\n[green]Creating new person entry for:[/] {person_name}"
-                )
+                log(f"Creating new person entry for: {person_name}", level="success")
 
                 # We already have proposed_profile, reflection_history, and proposed_person_embedding
                 # so we simply reuse them instead of calling create_profile() again.
@@ -788,19 +800,20 @@ def merge_people(
 
                 entities["people"][person_name] = new_person
                 write_entity_to_file("people", person_name, new_person)
-                console.print(
-                    f"[green]New person entity saved to file:[/] {person_name}"
+                log(
+                    f"[green]New person entity saved to file:[/] {person_name}",
+                    level="info",
                 )
 
         except Exception as e:
-            console.print(f"[red]Error processing person {person_name}:[/red]")
-            console.print(f"[red]Error details: {str(e)}[/red]")
+            log(f"Error processing person {person_name}:", level="error")
+            log(f"Error details: {str(e)}", level="error")
             import traceback
 
-            console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
+            log(f"Traceback:\n{traceback.format_exc()}", level="error")
             continue
 
-    console.print("\n[bold green]Completed merge_people function[/bold green]")
+    log("Completed merge_people function", level="success")
 
 
 def merge_locations(
@@ -837,9 +850,7 @@ def merge_locations(
             proposed_profile.get("text") if proposed_profile else None
         )
         if not proposed_profile_text:
-            console.print(
-                f"[red]Failed to generate profile for location {loc_name}[/red]"
-            )
+            log(f"Failed to generate profile for location {loc_name}", level="error")
             continue
 
         proposed_location_embedding = embed_text(
@@ -856,8 +867,9 @@ def merge_locations(
         )
 
         if similar_key:
-            console.print(
-                f"[purple]Doing a final check to see if '{loc_name}' is the same as '{similar_key[0]}'[/purple]..."
+            log(
+                f"[purple]Doing a final check to see if '{loc_name}' is the same as '{similar_key[0]}'[/purple]...",
+                level="info",
             )
             if model_type == "ollama":
                 result = local_model_check_match(
@@ -874,19 +886,22 @@ def merge_locations(
                     entities["locations"][similar_key]["profile"]["text"],
                 )
             if result.is_match:
-                console.print(
-                    f"[green]The profiles match! Merging '{loc_name}' with '{similar_key[0]}'[/green]"
+                log(
+                    f"The profiles match! Merging '{loc_name}' with '{similar_key[0]}'",
+                    level="success",
                 )
             else:
-                console.print(
-                    f"[red]The profiles do not match. Skipping merge for '{loc_name}'[/red]"
+                log(
+                    f"The profiles do not match. Skipping merge for '{loc_name}'",
+                    level="error",
                 )
                 continue
 
             # We found a similar location - use that instead of creating a new one
             similar_name, _ = similar_key
-            console.print(
-                f"[blue]Merging location '{loc_name}' with existing location '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
+            log(
+                f"Merging location '{loc_name}' with existing location '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})",
+                level="processing",
             )
 
             # Use the existing location's key
@@ -910,8 +925,9 @@ def merge_locations(
 
                 # Update profile
                 if "profile" in existing_loc:
-                    console.print(
-                        f"\n[yellow]Updating profile for location:[/] {similar_name}"
+                    log(
+                        f"\n[yellow]Updating profile for location:[/] {similar_name}",
+                        level="info",
                     )
                     updated_profile, reflection_history = update_profile(
                         "location",
@@ -937,8 +953,9 @@ def merge_locations(
                         )
                     )
                 else:
-                    console.print(
-                        f"\n[green]Creating initial profile for location:[/] {similar_name}"
+                    log(
+                        f"\n[green]Creating initial profile for location:[/] {similar_name}",
+                        level="info",
                     )
                     new_profile, reflection_history = create_profile(
                         "location",
@@ -971,8 +988,9 @@ def merge_locations(
                     alt_name_entry = {"name": loc_name, "type": loc_type}
                     if alt_name_entry not in existing_loc["alternative_names"]:
                         existing_loc["alternative_names"].append(alt_name_entry)
-                        console.print(
-                            f"[blue]Added alternative name: '{loc_name}' (type: {loc_type}) for '{similar_name}'[/blue]"
+                        log(
+                            f"Added alternative name: '{loc_name}' (type: {loc_type}) for '{similar_name}'",
+                            level="processing",
                         )
                         entity_updated = True
 
@@ -988,12 +1006,16 @@ def merge_locations(
             if entity_updated:
                 write_entity_to_file("locations", similar_key, existing_loc)
                 entities["locations"][similar_key] = existing_loc
-                console.print(
-                    f"[blue]Updated location entity saved to file:[/] {similar_name}"
+                log(
+                    f"[blue]Updated location entity saved to file:[/] {similar_name}",
+                    level="info",
                 )
         else:
             # No similar location found - create new entry
-            console.print(f"\n[green]Creating profile for new location:[/] {loc_name}")
+            log(
+                f"\n[green]Creating profile for new location:[/] {loc_name}",
+                level="info",
+            )
 
             # Reuse the proposed_profile, reflection_history, and proposed_location_embedding
             profile = proposed_profile
@@ -1029,7 +1051,9 @@ def merge_locations(
 
             entities["locations"][location_key] = new_location
             write_entity_to_file("locations", location_key, new_location)
-            console.print(f"[green]New location entity saved to file:[/] {loc_name}")
+            log(
+                f"[green]New location entity saved to file:[/] {loc_name}", level="info"
+            )
 
 
 def merge_organizations(
@@ -1066,9 +1090,7 @@ def merge_organizations(
             proposed_profile.get("text") if proposed_profile else None
         )
         if not proposed_profile_text:
-            console.print(
-                f"[red]Failed to generate profile for event {event_title}[/red]"
-            )
+            log(f"Failed to generate profile for event {event_title}", level="error")
             continue
 
         proposed_organization_embedding = embed_text(
@@ -1085,8 +1107,9 @@ def merge_organizations(
         )
 
         if similar_key:
-            console.print(
-                f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key[0]}'[/purple]..."
+            log(
+                f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key[0]}'[/purple]...",
+                level="info",
             )
             # First, ensure existing_org["profile"] is a dict with "text" to avoid KeyError
             existing_profile_dict = entities["organizations"][similar_key].get(
@@ -1096,8 +1119,9 @@ def merge_organizations(
                 not isinstance(existing_profile_dict, dict)
                 or "text" not in existing_profile_dict
             ):
-                console.print(
-                    f"[red]Existing organization '{similar_key}' profile is missing 'text'—cannot finalize check.[/red]"
+                log(
+                    f"Existing organization '{similar_key}' profile is missing 'text'—cannot finalize check.",
+                    level="error",
                 )
                 # We'll treat it as if it doesn't match, or we can skip it:
                 continue
@@ -1117,19 +1141,22 @@ def merge_organizations(
                     existing_profile_dict["text"],
                 )
             if result.is_match:
-                console.print(
-                    f"[green]The profiles match! Merging '{org_name}' with '{similar_key[0]}'[/green]"
+                log(
+                    f"The profiles match! Merging '{org_name}' with '{similar_key[0]}'",
+                    level="success",
                 )
             else:
-                console.print(
-                    f"[red]The profiles do not match. Skipping merge for '{org_name}'[/red]"
+                log(
+                    f"The profiles do not match. Skipping merge for '{org_name}'",
+                    level="error",
                 )
                 continue
 
             # We found a similar organization - use that instead of creating a new one
             similar_name, _ = similar_key
-            console.print(
-                f"[blue]Merging organization '{org_name}' with existing organization '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
+            log(
+                f"Merging organization '{org_name}' with existing organization '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})",
+                level="processing",
             )
 
             # Use the existing organization's key
@@ -1153,8 +1180,9 @@ def merge_organizations(
 
                 # Update profile
                 if "profile" in existing_org:
-                    console.print(
-                        f"\n[yellow]Updating profile for organization:[/] {similar_name}"
+                    log(
+                        f"\n[yellow]Updating profile for organization:[/] {similar_name}",
+                        level="info",
                     )
                     updated_profile, reflection_history = update_profile(
                         "organization",
@@ -1180,8 +1208,9 @@ def merge_organizations(
                         )
                     )
                 else:
-                    console.print(
-                        f"\n[green]Creating initial profile for organization:[/] {similar_name}"
+                    log(
+                        f"\n[green]Creating initial profile for organization:[/] {similar_name}",
+                        level="info",
                     )
                     new_profile, reflection_history = create_profile(
                         "organization",
@@ -1214,8 +1243,9 @@ def merge_organizations(
                     alt_name_entry = {"name": org_name, "type": org_type}
                     if alt_name_entry not in existing_org["alternative_names"]:
                         existing_org["alternative_names"].append(alt_name_entry)
-                        console.print(
-                            f"[blue]Added alternative name: '{org_name}' (type: {org_type}) for '{similar_name}'[/blue]"
+                        log(
+                            f"Added alternative name: '{org_name}' (type: {org_type}) for '{similar_name}'",
+                            level="processing",
                         )
                         entity_updated = True
 
@@ -1231,13 +1261,15 @@ def merge_organizations(
             if entity_updated:
                 write_entity_to_file("organizations", similar_key, existing_org)
                 entities["organizations"][similar_key] = existing_org
-                console.print(
-                    f"[blue]Updated organization entity saved to file:[/] {similar_name}"
+                log(
+                    f"[blue]Updated organization entity saved to file:[/] {similar_name}",
+                    level="info",
                 )
         else:
             # No similar organization found - create new entry
-            console.print(
-                f"\n[green]Creating profile for new organization:[/] {org_name}"
+            log(
+                f"\n[green]Creating profile for new organization:[/] {org_name}",
+                level="info",
             )
 
             # Reuse the proposed_profile, reflection_history, and proposed_organization_embedding
@@ -1273,8 +1305,9 @@ def merge_organizations(
 
             entities["organizations"][org_key] = new_org
             write_entity_to_file("organizations", org_key, new_org)
-            console.print(
-                f"[green]New organization entity saved to file:[/] {org_name}"
+            log(
+                f"[green]New organization entity saved to file:[/] {org_name}",
+                level="info",
             )
 
 
@@ -1313,9 +1346,7 @@ def merge_events(
             proposed_profile.get("text") if proposed_profile else None
         )
         if not proposed_profile_text:
-            console.print(
-                f"[red]Failed to generate profile for event {event_title}[/red]"
-            )
+            log(f"Failed to generate profile for event {event_title}", level="error")
             continue
 
         proposed_event_embedding = embed_text(
@@ -1333,8 +1364,9 @@ def merge_events(
         )
 
         if similar_key:
-            console.print(
-                f"[purple]Doing a final check to see if '{event_title}' is the same as '{similar_key}'[/purple]..."
+            log(
+                f"[purple]Doing a final check to see if '{event_title}' is the same as '{similar_key}'[/purple]...",
+                level="info",
             )
             if model_type == "ollama":
                 result = local_model_check_match(
@@ -1351,19 +1383,22 @@ def merge_events(
                     entities["events"][similar_key]["profile"]["text"],
                 )
             if result.is_match:
-                console.print(
-                    f"[green]The profiles match! Merging '{event_title}' with '{similar_key}'[/green]"
+                log(
+                    f"The profiles match! Merging '{event_title}' with '{similar_key}'",
+                    level="success",
                 )
             else:
-                console.print(
-                    f"[red]The profiles do not match. Skipping merge for '{event_title}'[/red]"
+                log(
+                    f"The profiles do not match. Skipping merge for '{event_title}'",
+                    level="error",
                 )
                 continue
 
             # We found a similar event - use that instead of creating a new one
             similar_title, _ = similar_key
-            console.print(
-                f"[blue]Merging event '{event_title}' with existing event '[bold]{similar_title}[/bold]' (similarity: {similarity_score:.4f})[/blue]"
+            log(
+                f"Merging event '{event_title}' with existing event '[bold]{similar_title}[/bold]' (similarity: {similarity_score:.4f})",
+                level="processing",
             )
 
             # Use the existing event's key
@@ -1387,8 +1422,9 @@ def merge_events(
 
                 # Update profile
                 if "profile" in existing_event:
-                    console.print(
-                        f"\n[yellow]Updating profile for event:[/] {similar_title}"
+                    log(
+                        f"\n[yellow]Updating profile for event:[/] {similar_title}",
+                        level="info",
                     )
                     updated_profile, reflection_history = update_profile(
                         "event",
@@ -1414,8 +1450,9 @@ def merge_events(
                         )
                     )
                 else:
-                    console.print(
-                        f"\n[green]Creating initial profile for event:[/] {similar_title}"
+                    log(
+                        f"\n[green]Creating initial profile for event:[/] {similar_title}",
+                        level="info",
                     )
                     new_profile, reflection_history = create_profile(
                         "event",
@@ -1452,8 +1489,9 @@ def merge_events(
                     }
                     if alt_title_entry not in existing_event["alternative_titles"]:
                         existing_event["alternative_titles"].append(alt_title_entry)
-                        console.print(
-                            f"[blue]Added alternative title: '{event_title}' for '{similar_title}'[/blue]"
+                        log(
+                            f"Added alternative title: '{event_title}' for '{similar_title}'",
+                            level="processing",
                         )
                         entity_updated = True
 
@@ -1469,12 +1507,16 @@ def merge_events(
             if entity_updated:
                 write_entity_to_file("events", similar_key, existing_event)
                 entities["events"][similar_key] = existing_event
-                console.print(
-                    f"[blue]Updated event entity saved to file:[/] {similar_title}"
+                log(
+                    f"[blue]Updated event entity saved to file:[/] {similar_title}",
+                    level="info",
                 )
         else:
             # Create new entry
-            console.print(f"\n[green]Creating profile for new event:[/] {event_title}")
+            log(
+                f"\n[green]Creating profile for new event:[/] {event_title}",
+                level="info",
+            )
 
             # Reuse the proposed_profile, reflection_history, and proposed_event_embedding
             profile = proposed_profile
@@ -1514,4 +1556,6 @@ def merge_events(
 
             entities["events"][event_key] = new_event
             write_entity_to_file("events", event_key, new_event)
-            console.print(f"[green]New event entity saved to file:[/] {event_title}")
+            log(
+                f"[green]New event entity saved to file:[/] {event_title}", level="info"
+            )

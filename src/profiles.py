@@ -9,6 +9,7 @@ from src.utils import GenerationMode, extract_profile_text, iterative_improve
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
+litellm.suppress_debug_info = True
 litellm.callbacks = ["braintrust"]
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,16 @@ New Article (ID: {new_article_id}):
             console.print("[yellow]Falling back to existing profile[/yellow]")
             return existing_profile, history
 
+        # Log reflection pass/fail results for each iteration
+        console.print(
+            f"\n[bold magenta]Reflection Iterations for {entity_name}:[/bold magenta]"
+        )
+        for idx, entry in enumerate(history):
+            passed_str = "✓ PASSED" if entry.get("passed", False) else "✗ FAILED"
+            console.print(f"[magenta]Iteration {idx + 1} - {passed_str}[/magenta]")
+            console.print(f"  Reason: {entry.get('reason', '')}")
+            console.print(f"  Feedback: {entry.get('feedback', '')}\n")
+
         # Convert final_result to a dict
         updated_profile_dict = final_result.model_dump()
 
@@ -225,8 +236,17 @@ New Article (ID: {new_article_id}):
         console.print(
             f"[cyan]Number of tags: {len(updated_profile_dict.get('tags', []))}[/cyan]"
         )
-        console.print(f"[cyan]Total sources: {len(all_sources)}[/cyan]")
         console.print(f"[cyan]Improvement iterations: {len(history)}[/cyan]")
+
+        # Optional debug check: confirm final text length
+        final_text_len = len(updated_profile_dict.get("text", ""))
+        console.print(f"[cyan]Final text length after update: {final_text_len}[/cyan]")
+        if final_text_len < 50:
+            console.print(
+                "[yellow]Warning: Final text is under 50 characters, may be incomplete.[/yellow]"
+            )
+
+        return updated_profile_dict, history
 
         return updated_profile_dict, history
 
