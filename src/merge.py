@@ -14,9 +14,16 @@ from src.constants import (
     OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
 )
+from src.exceptions import (
+    EmbeddingError,
+    EntityMergeError,
+    ProfileGenerationError,
+    SimilarityCalculationError,
+)
 from src.logging_config import console, display_markdown, get_logger, log
 from src.profiles import create_profile, update_profile
 from src.utils.embeddings import embed_text
+from src.utils.error_handler import handle_merge_error
 from src.utils.file_ops import write_entity_to_file
 from src.utils.llm import (
     cloud_generation,
@@ -1011,67 +1018,106 @@ def merge_organizations(
             continue
         org_key = (org_name, org_type)
 
-        entity_updated = False
+        try:
+            entity_updated = False
 
-        # Generate embedding for the organization name and type
-        proposed_profile, reflection_history = create_profile(
-            "organization", org_name, article_content, article_id, model_type
-        )
-        # Extract profile text from response
-        proposed_profile = extract_profile_text(proposed_profile)
-        proposed_profile_text = (
-            proposed_profile.get("text") if proposed_profile else None
-        )
-        if not proposed_profile_text:
-            log(f"Failed to generate profile for event {event_title}", level="error")
-            continue
-
-        proposed_organization_embedding = embed_text(
-            proposed_profile_text, model_name=embedding_model
-        )
-
-        # Find similar organization using embeddings
-        similar_key, similarity_score = find_similar_organization(
-            org_name,
-            org_type,
-            proposed_organization_embedding,
-            entities,
-            similarity_threshold,
-        )
-
-        if similar_key:
-            log(
-                f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key[0]}'[/purple]...",
-                level="info",
-            )
-            # First, ensure existing_org["profile"] is a dict with "text" to avoid KeyError
-            existing_profile_dict = entities["organizations"][similar_key].get(
-                "profile", {}
-            )
-            if (
-                not isinstance(existing_profile_dict, dict)
-                or "text" not in existing_profile_dict
-            ):
-                log(
-                    f"Existing organization '{similar_key}' profile is missing 'text'—cannot finalize check.",
-                    level="error",
+            # Generate embedding for the organization name and type
+            try:
+                proposed_profile, reflection_history = create_profile(
+                    "organization", org_name, article_content, article_id, model_type
                 )
-                # We'll treat it as if it doesn't match, or we can skip it:
+                # Extract profile text from response
+                proposed_profile = extract_profile_text(proposed_profile)
+                proposed_profile_text = (
+                    proposed_profile.get("text") if proposed_profile else None
+                )
+                if not proposed_profile_text:
+                    raise ProfileGenerationError(
+                        f"Failed to generate profile text for organization {org_name}",
+                        org_name,
+                        "organization",
+                        article_id,
+                    )
+            except Exception as e:
+                handle_merge_error("organizations", org_name, e, "profile_generation")
                 continue
 
-            if model_type == "ollama":
-                result = local_model_check_match(
-                    org_name,
-                    similar_key,
-                    proposed_profile_text,
-                    existing_profile_dict["text"],
+            try:
+                proposed_organization_embedding = embed_text(
+                    proposed_profile_text, model_name=embedding_model
                 )
-            else:
-                result = cloud_model_check_match(
+            except Exception:
+                error = EmbeddingError(
+                    f"Failed to generate embedding for organization {org_name}",
+                    embedding_model,
+                    "organization",
+                    article_id,
+                )
+                handle_merge_error(
+                    "organizations", org_name, error, "embedding_generation"
+                )
+                continue
+
+            # Find similar organization using embeddings
+            try:
+                similar_key, similarity_score = find_similar_organization(
                     org_name,
-                    similar_key,
-                    proposed_profile_text,
-                    existing_profile_dict["text"],
+                    org_type,
+                    proposed_organization_embedding,
+                    entities,
+                    similarity_threshold,
+                )
+            except Exception:
+                error = SimilarityCalculationError(
+                    f"Failed to find similar organizations for {org_name}",
+                    "organizations",
+                )
+                handle_merge_error(
+                    "organizations", org_name, error, "similarity_search"
+                )
+                # Continue with no similar entity found
+                similar_key, similarity_score = None, 0.0
+
+            if similar_key:
+                log(
+                    f"[purple]Doing a final check to see if '{org_name}' is the same as '{similar_key[0]}'[/purple]...",
+                    level="info",
+                )
+                # First, ensure existing_org["profile"] is a dict with "text" to avoid KeyError
+                existing_profile_dict = entities["organizations"][similar_key].get(
+                    "profile", {}
+                )
+                if (
+                    not isinstance(existing_profile_dict, dict)
+                    or "text" not in existing_profile_dict
+                ):
+                    log(
+                        f"Existing organization '{similar_key}' profile is missing 'text'—cannot finalize check.",
+                        level="error",
+                    )
+                    # We'll treat it as if it doesn't match, or we can skip it:
+                    continue
+
+            try:
+                if model_type == "ollama":
+                    result = local_model_check_match(
+                        org_name,
+                        similar_key,
+                        proposed_profile_text,
+                        existing_profile_dict["text"],
+                    )
+                else:
+                    result = cloud_model_check_match(
+                        org_name,
+                        similar_key,
+                        proposed_profile_text,
+                        existing_profile_dict["text"],
+                    )
+            except Exception as e:
+                handle_merge_error("organizations", org_name, e, "match_verification")
+                # Default to no match if verification fails
+                result = MatchCheckResult(
+                    is_match=False, reason="Match verification failed"
                 )
             if result.is_match:
                 log(
@@ -1198,12 +1244,12 @@ def merge_organizations(
                     f"[blue]Updated organization entity saved to file:[/] {similar_name}",
                     level="info",
                 )
-        else:
-            # No similar organization found - create new entry
-            log(
-                f"\n[green]Creating profile for new organization:[/] {org_name}",
-                level="info",
-            )
+            else:
+                # No similar organization found - create new entry
+                log(
+                    f"\n[green]Creating profile for new organization:[/] {org_name}",
+                    level="info",
+                )
 
             # Reuse the proposed_profile, reflection_history, and proposed_organization_embedding
             profile = proposed_profile
@@ -1242,6 +1288,15 @@ def merge_organizations(
                 f"[green]New organization entity saved to file:[/] {org_name}",
                 level="info",
             )
+
+        except Exception:
+            # Catch any unhandled errors for this organization
+            error = EntityMergeError(
+                f"Unexpected error while processing organization {org_name}",
+                "organizations",
+                org_name,
+            )
+            handle_merge_error("organizations", org_name, error, "general")
 
 
 def merge_events(

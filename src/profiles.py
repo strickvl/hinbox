@@ -14,6 +14,14 @@ from src.constants import (
     MAX_ITERATIONS,
     OLLAMA_MODEL,
 )
+from src.exceptions import (
+    ProfileGenerationError,
+    ProfileUpdateError,
+)
+from src.utils.error_handler import (
+    handle_profile_error,
+    retry_on_error,
+)
 from src.utils.llm import (
     GenerationMode,
     cloud_generation,
@@ -61,6 +69,7 @@ class EntityProfile(BaseModel):
     )
 
 
+@retry_on_error(max_retries=2, initial_delay=1.0)
 def generate_profile_with_reflection(
     entity_type: str,
     entity_name: str,
@@ -148,17 +157,22 @@ def generate_profile_with_reflection(
                 )
         else:
             final_result = None
-    except:
+    except Exception as e:
+        logger.error(f"Error parsing profile generation result for {entity_name}: {e}")
         final_result = None
 
     if final_result is None:
-        # Fallback to basic profile if all iterations fail
-        fallback_profile = {
-            "text": f"Profile generation failed for {entity_name}^[{article_id}]",
-            "tags": [],
-            "confidence": 0.0,
-            "sources": [article_id],
-        }
+        # Use standardized error handling for profile generation failures
+        error = ProfileGenerationError(
+            f"Profile generation failed after {len(history)} iterations",
+            entity_name,
+            entity_type,
+            article_id,
+            {"iterations": len(history), "history": history},
+        )
+        fallback_profile = handle_profile_error(
+            entity_name, entity_type, article_id, error, "generation"
+        )
         return fallback_profile, history
 
     result_dict = final_result.model_dump()
@@ -301,10 +315,19 @@ New Article (ID: {new_article_id}):
             final_result = None
 
         if final_result is None:
+            error = ProfileUpdateError(
+                f"Failed to update profile for {entity_name}",
+                entity_name,
+                entity_type,
+                new_article_id,
+                {"existing_profile": existing_profile, "history": history},
+            )
             console.print(
                 f"[red]Failed to generate updated profile for {entity_name}[/red]"
             )
             console.print("[yellow]Falling back to existing profile[/yellow]")
+            # Log the error but return existing profile as fallback
+            logger.error(f"Profile update failed: {error}")
             return existing_profile, history
 
         # Log reflection pass/fail results for each iteration

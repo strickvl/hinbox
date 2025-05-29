@@ -25,12 +25,20 @@ from src.constants import (
     PEOPLE_OUTPUT_PATH,
 )
 from src.events import gemini_extract_events, ollama_extract_events
+from src.exceptions import (
+    ArticleLoadError,
+    EntityExtractionError,
+    RelevanceCheckError,
+)
 from src.locations import gemini_extract_locations, ollama_extract_locations
 from src.logging_config import get_logger, log, set_verbose
 from src.merge import merge_events, merge_locations, merge_organizations, merge_people
 from src.organizations import gemini_extract_organizations, ollama_extract_organizations
 from src.people import gemini_extract_people, ollama_extract_people
 from src.relevance import gemini_check_relevance, ollama_check_relevance
+from src.utils.error_handler import (
+    handle_article_processing_error,
+)
 from src.utils.file_ops import write_entity_to_file
 
 # Get module-specific logger
@@ -174,7 +182,11 @@ def main():
         table = pq.read_table(args.articles_path)
         rows = table.to_pylist()
     except Exception as e:
-        log("Failed to read Parquet file", level="error", exception=e)
+        error = ArticleLoadError(
+            f"Failed to read articles from {args.articles_path}",
+            {"file_path": args.articles_path, "original_error": str(e)},
+        )
+        log("Failed to read Parquet file", level="error", exception=error)
         return
 
     article_count = len(rows)
@@ -257,8 +269,17 @@ def main():
                 else:
                     log("Article is relevant", level="success")
             except Exception as e:
-                log("Error during relevance check", level="error", exception=e)
-                log("Proceeding with extraction despite error", level="warning")
+                error = RelevanceCheckError(
+                    "Relevance check failed",
+                    "unknown",
+                    article_id,
+                    {"original_error": str(e), "model_type": model_type},
+                )
+                handle_article_processing_error(article_id, "relevance_check", error)
+                log(
+                    "Proceeding with extraction despite relevance check error",
+                    level="warning",
+                )
 
         extraction_timestamp = datetime.now().isoformat()
 
@@ -335,10 +356,16 @@ def main():
             processing_metadata["reflection_summary"]["successful_attempts"] += 1
 
         except Exception as e:
-            log("Error extracting people", level="error", exception=e)
+            error = EntityExtractionError(
+                "People extraction failed",
+                "people",
+                article_id,
+                {"original_error": str(e), "model_type": model_type},
+            )
+            handle_article_processing_error(article_id, "people_extraction", error)
             extracted_people = []
             processing_metadata["reflection_attempts"]["people"] = {
-                "error": str(e),
+                "error": str(error),
                 "timestamp": datetime.now().isoformat(),
                 "attempts": 1,
                 "success": False,
@@ -420,10 +447,18 @@ def main():
             processing_metadata["reflection_summary"]["successful_attempts"] += 1
 
         except Exception as e:
-            log("Error extracting organizations", level="error", exception=e)
+            error = EntityExtractionError(
+                "Organizations extraction failed",
+                "organizations",
+                article_id,
+                {"original_error": str(e), "model_type": model_type},
+            )
+            handle_article_processing_error(
+                article_id, "organizations_extraction", error
+            )
             extracted_orgs = []
             processing_metadata["reflection_attempts"]["organizations"] = {
-                "error": str(e),
+                "error": str(error),
                 "timestamp": datetime.now().isoformat(),
                 "attempts": 1,
                 "success": False,
@@ -502,10 +537,16 @@ def main():
             processing_metadata["reflection_summary"]["successful_attempts"] += 1
 
         except Exception as e:
-            log("Error extracting locations", level="error", exception=e)
+            error = EntityExtractionError(
+                "Locations extraction failed",
+                "locations",
+                article_id,
+                {"original_error": str(e), "model_type": model_type},
+            )
+            handle_article_processing_error(article_id, "locations_extraction", error)
             extracted_locs = []
             processing_metadata["reflection_attempts"]["locations"] = {
-                "error": str(e),
+                "error": str(error),
                 "timestamp": datetime.now().isoformat(),
                 "attempts": 1,
                 "success": False,
@@ -584,10 +625,16 @@ def main():
             processing_metadata["reflection_summary"]["successful_attempts"] += 1
 
         except Exception as e:
-            log("Error extracting events", level="error", exception=e)
+            error = EntityExtractionError(
+                "Events extraction failed",
+                "events",
+                article_id,
+                {"original_error": str(e), "model_type": model_type},
+            )
+            handle_article_processing_error(article_id, "events_extraction", error)
             extracted_events = []
             processing_metadata["reflection_attempts"]["events"] = {
-                "error": str(e),
+                "error": str(error),
                 "timestamp": datetime.now().isoformat(),
                 "attempts": 1,
                 "success": False,

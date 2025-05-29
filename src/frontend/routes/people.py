@@ -1,7 +1,10 @@
+import logging
+
 import markdown
 from fasthtml.common import H2, A, Div, Li, NotStr, P, Span, Ul
 
 from src.config_loader import DomainConfig
+from src.utils.error_handler import ErrorHandler
 
 from ..app_config import (
     get_current_domain,
@@ -11,6 +14,8 @@ from ..app_config import (
 from ..data_access import build_indexes, get_domain_data
 from ..filters import people_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
+
+logger = logging.getLogger(__name__)
 
 
 def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
@@ -26,10 +31,28 @@ def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
 
 @rt("/people")
 def list_people(request):
-    current_domain = get_current_domain(request)
+    error_handler = ErrorHandler("people_list", {"route": "/people"})
 
-    # Load domain-specific data
-    domain_data = get_domain_data(current_domain)
+    try:
+        current_domain = get_current_domain(request)
+
+        # Load domain-specific data
+        domain_data = get_domain_data(current_domain)
+    except Exception as e:
+        error_handler.log_error(e, "error")
+        # Return error page
+        return main_layout(
+            "Error - People",
+            Div(),
+            Div(
+                H2("Error Loading Data", style="color:var(--danger);"),
+                P(
+                    "There was an error loading the people data. Please try again later."
+                ),
+                A("← Back to Home", href="/", cls="primary"),
+            ),
+            page_header_title="Error",
+        )
     if not domain_data["people"]:
         # No data for this domain
         content = Div(
@@ -50,73 +73,114 @@ def list_people(request):
             current_domain=current_domain,
         )
 
-    # Build indexes for this domain
-    domain_indexes = build_indexes(domain_data)
-    people_index = domain_indexes["people"]
+    try:
+        # Build indexes for this domain
+        domain_indexes = build_indexes(domain_data)
+        people_index = domain_indexes["people"]
 
-    q = request.query_params.get("q", "").strip().lower()
-    selected_types_raw = request.query_params.getlist("type")
-    selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
-    selected_tags_raw = request.query_params.getlist("tag")
-    selected_tags = [t.strip().lower() for t in selected_tags_raw if t.strip()]
+        q = request.query_params.get("q", "").strip().lower()
+        selected_types_raw = request.query_params.getlist("type")
+        selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
+        selected_tags_raw = request.query_params.getlist("tag")
+        selected_tags = [t.strip().lower() for t in selected_tags_raw if t.strip()]
 
-    filtered_items = []
-    for k, person in people_index.items():
-        ptype = person.get("type", "").strip().lower()
-        pname = person.get("name", "").strip().lower()
-        p_tags = [
-            tg.strip().lower() for tg in person.get("profile", {}).get("tags", [])
-        ]
+        filtered_items = []
+        for k, person in people_index.items():
+            ptype = person.get("type", "").strip().lower()
+            pname = person.get("name", "").strip().lower()
+            p_tags = [
+                tg.strip().lower() for tg in person.get("profile", {}).get("tags", [])
+            ]
 
-        if selected_types:
-            if not set(selected_types).issubset({ptype}):
+            if selected_types:
+                if not set(selected_types).issubset({ptype}):
+                    continue
+            if q and q not in pname:
                 continue
-        if q and q not in pname:
-            continue
-        if selected_tags:
-            if not set(selected_tags).issubset(set(p_tags)):
-                continue
+            if selected_tags:
+                if not set(selected_tags).issubset(set(p_tags)):
+                    continue
 
-        type_badge = ""
-        if person.get("type"):
-            type_badge = Span(person.get("type"), cls="tag")
-        link = A(person["name"], href=f"/people/{encode_key(k)}")
-        filtered_items.append(Li(link, " ", type_badge))
+            type_badge = ""
+            if person.get("type"):
+                type_badge = Span(person.get("type"), cls="tag")
+            link = A(person["name"], href=f"/people/{encode_key(k)}")
+            filtered_items.append(Li(link, " ", type_badge))
 
-    content = Div(
-        Div(
-            f"{len(filtered_items)} people found",
-            style="margin-bottom:15px; color:var(--text-light);",
-        ),
-        Ul(*filtered_items)
-        if filtered_items
-        else Div(
-            "No people match your filters. Try adjusting your criteria.",
-            cls="empty-state",
-        ),
-    )
-
-    is_htmx = request.headers.get("HX-Request") == "true"
-    if is_htmx:
-        return content
-    else:
-        return main_layout(
-            get_page_title("People"),
-            people_filter_panel(
-                q=q, selected_types=selected_types, selected_tags=selected_tags
+        content = Div(
+            Div(
+                f"{len(filtered_items)} people found",
+                style="margin-bottom:15px; color:var(--text-light);",
             ),
-            content,
-            page_header_title="People",
-            current_domain=current_domain,
+            Ul(*filtered_items)
+            if filtered_items
+            else Div(
+                "No people match your filters. Try adjusting your criteria.",
+                cls="empty-state",
+            ),
         )
+
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            return content
+        else:
+            return main_layout(
+                get_page_title("People"),
+                people_filter_panel(
+                    q=q, selected_types=selected_types, selected_tags=selected_tags
+                ),
+                content,
+                page_header_title="People",
+                current_domain=current_domain,
+            )
+
+    except Exception as e:
+        error_handler.log_error(e, "error")
+        error_content = Div(
+            H2("Error Processing Request", style="color:var(--danger);"),
+            P("There was an error processing your request. Please try again later."),
+            A("← Back to People", href="/people", cls="primary"),
+        )
+
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            return error_content
+        else:
+            return main_layout(
+                get_page_title("People - Error"),
+                Div(),
+                error_content,
+                page_header_title="Error",
+                current_domain=current_domain,
+            )
 
 
 @rt("/people/{key:path}")
 def show_person(key: str, request):
-    current_domain = get_current_domain(request)
+    error_handler = ErrorHandler(
+        "person_detail", {"route": f"/people/{key}", "key": key}
+    )
 
-    # Load domain-specific data
-    domain_data = get_domain_data(current_domain)
+    try:
+        current_domain = get_current_domain(request)
+
+        # Load domain-specific data
+        domain_data = get_domain_data(current_domain)
+    except Exception as e:
+        error_handler.log_error(e, "error")
+        # Return error page
+        return main_layout(
+            "Error - Person",
+            Div(),
+            Div(
+                H2("Error Loading Data", style="color:var(--danger);"),
+                P(
+                    "There was an error loading the person data. Please try again later."
+                ),
+                A("← Back to People", href="/people", cls="primary"),
+            ),
+            page_header_title="Error",
+        )
     if not domain_data["people"]:
         return main_layout(
             get_page_title("People - Not Found"),
