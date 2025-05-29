@@ -1,12 +1,14 @@
 import markdown
-from fasthtml.common import H2, A, Div, Li, NotStr, P, Span, Ul
+from fasthtml.common import H2, A, Div, NotStr, P, Span
 
 from src.config_loader import DomainConfig
+from src.utils.error_handler import ErrorHandler
 
 from ..app_config import get_current_domain, main_layout, rt
 from ..data_access import build_indexes, get_domain_data
+from ..entity_helpers import filter_simple_entities, render_simple_entity_list
 from ..filters import locations_filter_panel
-from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
+from ..utils import decode_key, format_article_list, transform_profile_text
 
 
 def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
@@ -22,10 +24,26 @@ def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
 
 @rt("/locations")
 def list_locations(request):
-    current_domain = get_current_domain(request)
+    error_handler = ErrorHandler("locations_list", {"route": "/locations"})
 
-    # Load domain-specific data
-    domain_data = get_domain_data(current_domain)
+    try:
+        current_domain = get_current_domain(request)
+        domain_data = get_domain_data(current_domain)
+    except Exception as e:
+        error_handler.log_error(e, "error")
+        return main_layout(
+            "Error - Locations",
+            Div(),
+            Div(
+                H2("Error Loading Data", style="color:var(--danger);"),
+                P(
+                    "There was an error loading the locations data. Please try again later."
+                ),
+                A("← Back to Home", href="/", cls="primary"),
+            ),
+            page_header_title="Error",
+        )
+
     if not domain_data["locations"]:
         # No data for this domain
         content = Div(
@@ -46,56 +64,57 @@ def list_locations(request):
             current_domain=current_domain,
         )
 
-    # Build indexes for this domain
-    domain_indexes = build_indexes(domain_data)
-    locations_index = domain_indexes["locations"]
+    try:
+        # Build indexes for this domain
+        domain_indexes = build_indexes(domain_data)
+        locations_index = domain_indexes["locations"]
 
-    q = request.query_params.get("q", "").strip().lower()
-    selected_types_raw = request.query_params.getlist("loc_type")
-    selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
+        # Get filters from request
+        q = request.query_params.get("q", "").strip()
+        selected_types_raw = request.query_params.getlist("loc_type")
+        selected_types = [t.strip() for t in selected_types_raw if t.strip()]
 
-    filtered_items = []
-    for k, loc in locations_index.items():
-        ltype = loc.get("type", "").strip().lower()
-        lname = loc.get("name", "").strip().lower()
-
-        if selected_types:
-            if not set(selected_types).issubset({ltype}):
-                continue
-        if q and q not in lname:
-            continue
-
-        type_badge = ""
-        if loc.get("type"):
-            type_badge = Span(loc.get("type"), cls="tag")
-
-        link = A(loc["name"], href=f"/locations/{encode_key(k)}")
-        filtered_items.append(Li(link, " ", type_badge))
-
-    content = Div(
-        Div(
-            f"{len(filtered_items)} locations found",
-            style="margin-bottom:15px; color:var(--text-light);",
-        ),
-        Ul(*filtered_items)
-        if filtered_items
-        else Div(
-            "No locations match your filters. Try adjusting your criteria.",
-            cls="empty-state",
-        ),
-    )
-
-    is_htmx = request.headers.get("HX-Request") == "true"
-    if is_htmx:
-        return content
-    else:
-        return main_layout(
-            get_page_title("Locations"),
-            locations_filter_panel(q=q, selected_types=selected_types),
-            content,
-            page_header_title="Locations",
-            current_domain=current_domain,
+        # Apply filters using generic helper
+        filtered_locations = filter_simple_entities(
+            locations_index, q.lower(), selected_types
         )
+
+        # Render results using generic helper
+        content = render_simple_entity_list(
+            filtered_locations, "locations", "locations"
+        )
+
+        # Return full page or partial based on HTMX request
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            return content
+        else:
+            return main_layout(
+                get_page_title("Locations"),
+                locations_filter_panel(q=q, selected_types=selected_types),
+                content,
+                page_header_title="Locations",
+                current_domain=current_domain,
+            )
+    except Exception as e:
+        error_handler.log_error(e, "error")
+        error_content = Div(
+            H2("Error Processing Request", style="color:var(--danger);"),
+            P("There was an error processing your request. Please try again later."),
+            A("← Back to Locations", href="/locations", cls="primary"),
+        )
+
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            return error_content
+        else:
+            return main_layout(
+                get_page_title("Locations - Error"),
+                Div(),
+                error_content,
+                page_header_title="Error",
+                current_domain=current_domain,
+            )
 
 
 @rt("/locations/{key:path}")
