@@ -20,12 +20,12 @@ Create a comprehensive profile for {entity_type} "{entity_name}" using ONLY info
 ## Example Format
 
 ```json
-{
-  "text": "John Smith is a military officer who currently oversees detention operations at Guantánamo Bay. He has extensive experience in military operations and has been stationed at the facility since 2019^[{article_id}].\n\n### Background\nSmith previously served in Afghanistan for two years before joining the detention facility staff. He graduated from West Point in 2010 and has received multiple commendations for his service^[{article_id}].\n\n### Current Role\nAs facility operations manager, he oversees daily detention procedures and coordinates with legal teams. His responsibilities include managing staff schedules and ensuring compliance with military regulations^[{article_id}].",
+{{
+  "text": "John Smith is a military officer who currently oversees detention operations at Guantánamo Bay. He has extensive experience in military operations and has been stationed at the facility since 2019^[{article_id}].\\n\\n### Background\\nSmith previously served in Afghanistan for two years before joining the detention facility staff. He graduated from West Point in 2010 and has received multiple commendations for his service^[{article_id}].\\n\\n### Current Role\\nAs facility operations manager, he oversees daily detention procedures and coordinates with legal teams. His responsibilities include managing staff schedules and ensuring compliance with military regulations^[{article_id}].",
   "tags": ["military", "detention-operations", "guantanamo"],
   "confidence": 0.9,
   "sources": ["{article_id}"]
-}
+}}
 ```
 
 ## Multiple Sources Handling

@@ -1492,3 +1492,132 @@ def merge_events(
             log(
                 f"[green]New event entity saved to file:[/] {event_title}", level="info"
             )
+
+
+# Generic merger wrapper functions using the new EntityMerger class
+def merge_people_generic(
+    extracted_people: List[Dict[str, Any]],
+    entities: Dict[str, Dict],
+    article_id: str,
+    article_title: str,
+    article_url: str,
+    article_published_date: Any,
+    article_content: str,
+    extraction_timestamp: str,
+    model_type: str = "gemini",
+    similarity_threshold: float = SIMILARITY_THRESHOLD,
+    domain: str = "guantanamo",
+):
+    """Merge people entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
+    merger = EntityMerger("people")
+    merger.merge_entities(
+        extracted_people,
+        entities,
+        article_id,
+        article_title,
+        article_url,
+        article_published_date,
+        article_content,
+        extraction_timestamp,
+        model_type,
+        similarity_threshold,
+        domain,
+    )
+
+
+def merge_organizations_generic(
+    extracted_orgs: List[Dict[str, Any]],
+    entities: Dict[str, Dict],
+    article_id: str,
+    article_title: str,
+    article_url: str,
+    article_published_date: Any,
+    article_content: str,
+    extraction_timestamp: str,
+    model_type: str = "gemini",
+    similarity_threshold: float = SIMILARITY_THRESHOLD,
+    domain: str = "guantanamo",
+):
+    """Merge organization entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
+    merger = EntityMerger("organizations")
+    merger.merge_entities(
+        extracted_orgs,
+        entities,
+        article_id,
+        article_title,
+        article_url,
+        article_published_date,
+        article_content,
+        extraction_timestamp,
+        model_type,
+        similarity_threshold,
+        domain,
+    )
+
+
+def merge_locations_generic(
+    extracted_locations: List[Dict[str, Any]],
+    entities: Dict[str, Dict],
+    article_id: str,
+    article_title: str,
+    article_url: str,
+    article_published_date: Any,
+    article_content: str,
+    extraction_timestamp: str,
+    model_type: str = "gemini",
+    similarity_threshold: float = SIMILARITY_THRESHOLD,
+    domain: str = "guantanamo",
+):
+    """Merge location entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
+    merger = EntityMerger("locations")
+    merger.merge_entities(
+        extracted_locations,
+        entities,
+        article_id,
+        article_title,
+        article_url,
+        article_published_date,
+        article_content,
+        extraction_timestamp,
+        model_type,
+        similarity_threshold,
+        domain,
+    )
+
+
+def merge_events_generic(
+    extracted_events: List[Dict[str, Any]],
+    entities: Dict[str, Dict],
+    article_id: str,
+    article_title: str,
+    article_url: str,
+    article_published_date: Any,
+    article_content: str,
+    extraction_timestamp: str,
+    model_type: str = "gemini",
+    similarity_threshold: float = SIMILARITY_THRESHOLD,
+    domain: str = "guantanamo",
+):
+    """Merge event entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
+    merger = EntityMerger("events")
+    merger.merge_entities(
+        extracted_events,
+        entities,
+        article_id,
+        article_title,
+        article_url,
+        article_published_date,
+        article_content,
+        extraction_timestamp,
+        model_type,
+        similarity_threshold,
+        domain,
+    )

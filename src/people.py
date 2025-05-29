@@ -2,44 +2,24 @@
 
 from typing import Any, Dict, List
 
-from src.config_loader import get_system_prompt
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
-from src.dynamic_models import create_list_models, get_person_model
-from src.utils.extraction import (
-    extract_entities_cloud,
-    extract_entities_local,
-)
+from src.extractors import EntityExtractor
 
 
 def gemini_extract_people(
     text: str, model: str = CLOUD_MODEL, domain: str = "guantanamo"
 ) -> List[Dict[str, Any]]:
     """Extract person entities from the provided text using Gemini."""
-    Person = get_person_model(domain)
-    return extract_entities_cloud(
-        text=text,
-        system_prompt=get_system_prompt("people", domain),
-        response_model=List[Person],
-        model=model,
-        temperature=0,
-    )
+    extractor = EntityExtractor("people", domain)
+    return extractor.extract_cloud(text=text, model=model, temperature=0)
 
 
 def ollama_extract_people(
     text: str, model: str = OLLAMA_MODEL, domain: str = "guantanamo"
 ) -> List[Dict[str, Any]]:
     """Extract person entities from the provided text using Ollama."""
-    list_models = create_list_models(domain)
-    ArticlePeople = list_models["people"]
-
-    results = extract_entities_local(
-        text=text,
-        system_prompt=get_system_prompt("people", domain),
-        response_model=ArticlePeople,
-        model=model,
-        temperature=0,
-    )
-    return results.people
+    extractor = EntityExtractor("people", domain)
+    return extractor.extract_local(text=text, model=model, temperature=0)
 
 
 if __name__ == "__main__":
