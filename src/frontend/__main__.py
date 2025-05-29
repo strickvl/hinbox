@@ -12,6 +12,20 @@ from .routes import events, home, locations, organizations, people  # noqa: F401
 
 # We only need to define the run logic if this file is run directly under -m syntax:
 if __name__ == "__main__":
-    from fasthtml.common import serve
+    import sys
 
-    serve(app)
+    import uvicorn
+
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=5001, reload=False)
+    except OSError as e:
+        if "address already in use" in str(e).lower():
+            print("\n❌ Error: Port 5001 is already in use!")
+            print("💡 Try one of these solutions:")
+            print("   • Stop the existing server (Ctrl+C in the other terminal)")
+            print("   • Kill existing process: pkill -f 'uvicorn.*5001'")
+            print("   • Use a different port: uvicorn src.frontend:app --port 5002")
+            print()
+            sys.exit(1)
+        else:
+            raise

@@ -2,14 +2,55 @@ import arrow
 import markdown
 from fasthtml.common import H2, A, Div, Li, NotStr, P, Span, Ul
 
-from ..app_config import main_layout, rt
-from ..data_access import events_index
+from src.config_loader import DomainConfig
+
+from ..app_config import get_current_domain, main_layout, rt
+from ..data_access import build_indexes, get_domain_data
 from ..filters import events_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
 
 
+def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
+    """Get domain-aware page title."""
+    try:
+        config = DomainConfig(domain)
+        domain_config = config.load_config()
+        domain_name = domain_config.get("domain", domain).title()
+        return f"{domain_name} Browse - {page_name}"
+    except Exception:
+        return f"Research Browse - {page_name}"
+
+
 @rt("/events")
 def list_events(request):
+    current_domain = get_current_domain(request)
+
+    # Load domain-specific data
+    domain_data = get_domain_data(current_domain)
+    if not domain_data["events"]:
+        # No data for this domain
+        content = Div(
+            Div(
+                "No data available",
+                style="margin-bottom:15px; color:var(--text-light);",
+            ),
+            Div(
+                f"No events data found for the '{current_domain}' domain. You may need to process articles for this domain first.",
+                cls="empty-state",
+            ),
+        )
+        return main_layout(
+            get_page_title("Events"),
+            Div(),  # Empty filter panel
+            content,
+            page_header_title="Events",
+            current_domain=current_domain,
+        )
+
+    # Build indexes for this domain
+    domain_indexes = build_indexes(domain_data)
+    events_index = domain_indexes["events"]
+
     def parse_dt(dt):
         if not dt:
             return None
@@ -85,7 +126,6 @@ def list_events(request):
         )
 
     content = Div(
-        H2("Events"),
         Div(
             f"{len(filtered)} events found",
             style="margin-bottom:15px; color:var(--text-light);",
@@ -103,19 +143,44 @@ def list_events(request):
         return content
     else:
         return main_layout(
-            "GTMO Browse - Events",
+            get_page_title("Events"),
             events_filter_panel(q, selected_types, start_q, end_q),
             content,
+            page_header_title="Events",
+            current_domain=current_domain,
         )
 
 
 @rt("/events/{key:path}")
-def show_event(key: str):
+def show_event(key: str, request):
+    current_domain = get_current_domain(request)
+
+    # Load domain-specific data
+    domain_data = get_domain_data(current_domain)
+    if not domain_data["events"]:
+        # No data for this domain
+        return main_layout(
+            get_page_title("Events - Not Found"),
+            Div("No filters for detail pages."),
+            Div(
+                H2("No events data", style="color:var(--danger);"),
+                P(
+                    f"No events data found for the '{current_domain}' domain. You may need to process articles for this domain first."
+                ),
+                A("← Back to Events", href="/events", cls="primary"),
+            ),
+            current_domain=current_domain,
+        )
+
+    # Build indexes for this domain
+    domain_indexes = build_indexes(domain_data)
+    events_index = domain_indexes["events"]
+
     actual_key = decode_key(key)
     ev = events_index.get(actual_key)
     if not ev:
         return main_layout(
-            "GTMO Browse - Events - Not Found",
+            get_page_title("Events - Not Found"),
             Div("No filters for detail pages."),
             Div(
                 H2("Event not found", style="color:var(--danger);"),
@@ -137,7 +202,6 @@ def show_event(key: str):
     articles = ev.get("articles", [])
 
     detail_content = Div(
-        H2(f"Event: {title}"),
         Div(
             Span("Type: ", style="font-weight:bold;"),
             Span(event_type, cls="tag"),
@@ -186,16 +250,18 @@ def show_event(key: str):
     )
 
     return main_layout(
-        f"GTMO Browse - Events - {title}",
+        get_page_title(f"Events - {title}"),
         Div(
             H2("Navigation"),
             A(
                 "← Back to Events",
-                href="/events",
+                href=f"/events?domain={current_domain}",
                 cls="primary",
                 style="display:block; margin-bottom:10px;",
             ),
             style="margin-bottom:20px;",
         ),
         detail_content,
+        page_header_title=title,
+        current_domain=current_domain,
     )

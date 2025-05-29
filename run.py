@@ -168,7 +168,7 @@ Examples:
     elif args.command in ["frontend", "web", "ui"]:
         log("Starting web interface...", level="info")
         log("Open http://localhost:5001 in your browser", level="info")
-        return run_command([sys.executable, "src/frontend/frontend.py"])
+        return run_command([sys.executable, "-m", "src.frontend"])
 
     elif args.command == "fetch-miami":
         return run_command([sys.executable, "-m", "scripts.get_miami_herald_articles"])

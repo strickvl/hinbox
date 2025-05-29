@@ -1,14 +1,10 @@
 import hashlib
 import os
+from typing import Any, Dict, List
 
 import pyarrow.parquet as pq
 
-DATA_DIR = "data/entities"
-
-PEOPLE_FILE = os.path.join(DATA_DIR, "people.parquet")
-EVENTS_FILE = os.path.join(DATA_DIR, "events.parquet")
-LOCATIONS_FILE = os.path.join(DATA_DIR, "locations.parquet")
-ORGS_FILE = os.path.join(DATA_DIR, "organizations.parquet")
+from src.config_loader import DomainConfig
 
 
 def load_parquet(path: str):
@@ -19,11 +15,45 @@ def load_parquet(path: str):
     return table.to_pylist()
 
 
-# In-memory loaded data
-people_data = load_parquet(PEOPLE_FILE)
-events_data = load_parquet(EVENTS_FILE)
-locations_data = load_parquet(LOCATIONS_FILE)
-orgs_data = load_parquet(ORGS_FILE)
+def get_domain_data(domain: str = "guantanamo") -> Dict[str, List[Any]]:
+    """Load data for a specific domain."""
+    try:
+        config = DomainConfig(domain)
+        data_dir = config.get_output_dir()
+
+        people_file = os.path.join(data_dir, "people.parquet")
+        events_file = os.path.join(data_dir, "events.parquet")
+        locations_file = os.path.join(data_dir, "locations.parquet")
+        orgs_file = os.path.join(data_dir, "organizations.parquet")
+
+        return {
+            "people": load_parquet(people_file),
+            "events": load_parquet(events_file),
+            "locations": load_parquet(locations_file),
+            "organizations": load_parquet(orgs_file),
+        }
+    except Exception:
+        # Fallback to legacy hardcoded paths
+        data_dir = "data/entities"
+        people_file = os.path.join(data_dir, "people.parquet")
+        events_file = os.path.join(data_dir, "events.parquet")
+        locations_file = os.path.join(data_dir, "locations.parquet")
+        orgs_file = os.path.join(data_dir, "organizations.parquet")
+
+        return {
+            "people": load_parquet(people_file),
+            "events": load_parquet(events_file),
+            "locations": load_parquet(locations_file),
+            "organizations": load_parquet(orgs_file),
+        }
+
+
+# Default data load for backward compatibility
+_default_data = get_domain_data()
+people_data = _default_data["people"]
+events_data = _default_data["events"]
+locations_data = _default_data["locations"]
+orgs_data = _default_data["organizations"]
 
 
 def make_person_key(person: dict) -> str:
@@ -56,7 +86,19 @@ def make_org_key(org: dict) -> str:
     return f"{nm} ({h})"
 
 
-people_index = {make_person_key(p): p for p in people_data}
-events_index = {make_event_key(e): e for e in events_data}
-locations_index = {make_location_key(l): l for l in locations_data}
-orgs_index = {make_org_key(o): o for o in orgs_data}
+def build_indexes(domain_data: Dict[str, List[Any]]) -> Dict[str, Dict[str, Any]]:
+    """Build indexes from domain data."""
+    return {
+        "people": {make_person_key(p): p for p in domain_data["people"]},
+        "events": {make_event_key(e): e for e in domain_data["events"]},
+        "locations": {make_location_key(l): l for l in domain_data["locations"]},
+        "organizations": {make_org_key(o): o for o in domain_data["organizations"]},
+    }
+
+
+# Default indexes for backward compatibility
+_default_indexes = build_indexes(_default_data)
+people_index = _default_indexes["people"]
+events_index = _default_indexes["events"]
+locations_index = _default_indexes["locations"]
+orgs_index = _default_indexes["organizations"]

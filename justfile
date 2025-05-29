@@ -12,7 +12,7 @@ process *args:
 frontend:
     @echo "Starting web interface..."
     @echo "Open http://localhost:5001 in your browser"
-    python src/frontend/frontend.py
+    python -m src.frontend
 
 # Alias for frontend
 web: frontend

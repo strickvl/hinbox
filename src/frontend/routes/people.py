@@ -1,14 +1,62 @@
 import markdown
 from fasthtml.common import H2, A, Container, Div, Li, NotStr, P, Span, Titled, Ul
 
-from ..app_config import main_layout, rt
-from ..data_access import people_index
+from src.config_loader import DomainConfig
+
+from ..app_config import (
+    FALLBACK_STYLES,
+    STYLES_LINK,
+    get_current_domain,
+    main_layout,
+    nav_bar,
+    rt,
+)
+from ..data_access import build_indexes, get_domain_data
 from ..filters import people_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
 
 
+def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
+    """Get domain-aware page title."""
+    try:
+        config = DomainConfig(domain)
+        domain_config = config.load_config()
+        domain_name = domain_config.get("domain", domain).title()
+        return f"{domain_name} Browse - {page_name}"
+    except Exception:
+        return f"Research Browse - {page_name}"
+
+
 @rt("/people")
 def list_people(request):
+    current_domain = get_current_domain(request)
+
+    # Load domain-specific data
+    domain_data = get_domain_data(current_domain)
+    if not domain_data["people"]:
+        # No data for this domain
+        content = Div(
+            Div(
+                "No data available",
+                style="margin-bottom:15px; color:var(--text-light);",
+            ),
+            Div(
+                f"No people data found for the '{current_domain}' domain. You may need to process articles for this domain first.",
+                cls="empty-state",
+            ),
+        )
+        return main_layout(
+            get_page_title("People"),
+            Div(),  # Empty filter panel
+            content,
+            page_header_title="People",
+            current_domain=current_domain,
+        )
+
+    # Build indexes for this domain
+    domain_indexes = build_indexes(domain_data)
+    people_index = domain_indexes["people"]
+
     q = request.query_params.get("q", "").strip().lower()
     selected_types_raw = request.query_params.getlist("type")
     selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
@@ -39,7 +87,6 @@ def list_people(request):
         filtered_items.append(Li(link, " ", type_badge))
 
     content = Div(
-        H2("People"),
         Div(
             f"{len(filtered_items)} people found",
             style="margin-bottom:15px; color:var(--text-light);",
@@ -57,21 +104,52 @@ def list_people(request):
         return content
     else:
         return main_layout(
-            "GTMO Browse - People",
+            get_page_title("People"),
             people_filter_panel(
                 q=q, selected_types=selected_types, selected_tags=selected_tags
             ),
             content,
+            page_header_title="People",
+            current_domain=current_domain,
         )
 
 
 @rt("/people/{key:path}")
-def show_person(key: str):
+def show_person(key: str, request):
+    current_domain = get_current_domain(request)
+
+    # Load domain-specific data
+    domain_data = get_domain_data(current_domain)
+    if not domain_data["people"]:
+        return Titled(
+            get_page_title("People - Not Found"),
+            Container(
+                STYLES_LINK,
+                FALLBACK_STYLES,
+                nav_bar(current_domain),
+                Div(
+                    H2("No Data Available", style="color:var(--danger);"),
+                    P(f"No people data found for the '{current_domain}' domain."),
+                    A(
+                        "← Back to Home",
+                        href=f"/?domain={current_domain}",
+                        cls="primary",
+                    ),
+                    cls="content-area",
+                    style="max-width:800px; margin:0 auto;",
+                ),
+            ),
+        )
+
+    # Build indexes for this domain
+    domain_indexes = build_indexes(domain_data)
+    people_index = domain_indexes["people"]
+
     actual_key = decode_key(key)
     person = people_index.get(actual_key)
     if not person:
         return Titled(
-            "GTMO Browse - People - Not Found",
+            get_page_title("People - Not Found"),
             Container(
                 Div(
                     H2("Person not found", style="color:var(--danger);"),
@@ -100,7 +178,6 @@ def show_person(key: str):
             tag_elements.append(Span(tag, cls="tag"))
 
     detail_content = Div(
-        H2(f"Person: {name}"),
         Div(
             Span(f"Type: ", style="font-weight:bold;"),
             Span(typ, cls="tag"),
@@ -125,16 +202,18 @@ def show_person(key: str):
     )
 
     return main_layout(
-        f"GTMO Browse - People - {name}",
+        get_page_title(f"People - {name}"),
         Div(
             H2("Navigation"),
             A(
                 "← Back to People",
-                href="/people",
+                href=f"/people?domain={current_domain}",
                 cls="primary",
                 style="display:block; margin-bottom:10px;",
             ),
             style="margin-bottom:20px;",
         ),
         detail_content,
+        page_header_title=name,
+        current_domain=current_domain,
     )

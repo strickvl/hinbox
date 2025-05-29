@@ -1,14 +1,55 @@
 import markdown
 from fasthtml.common import H2, A, Div, Li, NotStr, P, Span, Ul
 
-from ..app_config import main_layout, rt
-from ..data_access import orgs_index
+from src.config_loader import DomainConfig
+
+from ..app_config import get_current_domain, main_layout, rt
+from ..data_access import build_indexes, get_domain_data
 from ..filters import organizations_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
 
 
+def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
+    """Get domain-aware page title."""
+    try:
+        config = DomainConfig(domain)
+        domain_config = config.load_config()
+        domain_name = domain_config.get("domain", domain).title()
+        return f"{domain_name} Browse - {page_name}"
+    except Exception:
+        return f"Research Browse - {page_name}"
+
+
 @rt("/organizations")
 def list_orgs(request):
+    current_domain = get_current_domain(request)
+
+    # Load domain-specific data
+    domain_data = get_domain_data(current_domain)
+    if not domain_data["organizations"]:
+        # No data for this domain
+        content = Div(
+            Div(
+                "No data available",
+                style="margin-bottom:15px; color:var(--text-light);",
+            ),
+            Div(
+                f"No organizations data found for the '{current_domain}' domain. You may need to process articles for this domain first.",
+                cls="empty-state",
+            ),
+        )
+        return main_layout(
+            get_page_title("Organizations"),
+            Div(),  # Empty filter panel
+            content,
+            page_header_title="Organizations",
+            current_domain=current_domain,
+        )
+
+    # Build indexes for this domain
+    domain_indexes = build_indexes(domain_data)
+    orgs_index = domain_indexes["organizations"]
+
     q = request.query_params.get("q", "").strip().lower()
     selected_types_raw = request.query_params.getlist("org_type")
     selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
@@ -32,7 +73,6 @@ def list_orgs(request):
         filtered_items.append(Li(link, " ", type_badge))
 
     content = Div(
-        H2("Organizations"),
         Div(
             f"{len(filtered_items)} organizations found",
             style="margin-bottom:15px; color:var(--text-light);",
@@ -50,19 +90,44 @@ def list_orgs(request):
         return content
     else:
         return main_layout(
-            "GTMO Browse - Organizations",
+            get_page_title("Organizations"),
             organizations_filter_panel(q=q, selected_types=selected_types),
             content,
+            page_header_title="Organizations",
+            current_domain=current_domain,
         )
 
 
 @rt("/organizations/{key:path}")
-def show_org(key: str):
+def show_org(key: str, request):
+    current_domain = get_current_domain(request)
+
+    # Load domain-specific data
+    domain_data = get_domain_data(current_domain)
+    if not domain_data["organizations"]:
+        # No data for this domain
+        return main_layout(
+            get_page_title("Organizations - Not Found"),
+            Div("No filters for detail pages."),
+            Div(
+                H2("No organizations data", style="color:var(--danger);"),
+                P(
+                    f"No organizations data found for the '{current_domain}' domain. You may need to process articles for this domain first."
+                ),
+                A("← Back to Organizations", href="/organizations", cls="primary"),
+            ),
+            current_domain=current_domain,
+        )
+
+    # Build indexes for this domain
+    domain_indexes = build_indexes(domain_data)
+    orgs_index = domain_indexes["organizations"]
+
     actual_key = decode_key(key)
     org = orgs_index.get(actual_key)
     if not org:
         return main_layout(
-            "GTMO Browse - Organizations - Not Found",
+            get_page_title("Organizations - Not Found"),
             Div("No filters for detail pages."),
             Div(
                 H2("Organization not found", style="color:var(--danger);"),
@@ -80,7 +145,6 @@ def show_org(key: str):
     articles = org.get("articles", [])
 
     detail_content = Div(
-        H2(f"Organization: {nm}"),
         Div(
             Span("Type: ", style="font-weight:bold;"),
             Span(typ, cls="tag"),
@@ -104,16 +168,18 @@ def show_org(key: str):
     )
 
     return main_layout(
-        f"GTMO Browse - Organizations - {nm}",
+        get_page_title(f"Organizations - {nm}"),
         Div(
             H2("Navigation"),
             A(
                 "← Back to Organizations",
-                href="/organizations",
+                href=f"/organizations?domain={current_domain}",
                 cls="primary",
                 style="display:block; margin-bottom:10px;",
             ),
             style="margin-bottom:20px;",
         ),
         detail_content,
+        page_header_title=nm,
+        current_domain=current_domain,
     )

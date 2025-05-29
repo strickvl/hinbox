@@ -10,7 +10,7 @@ def transform_profile_text(text, articles):
         aid = a.get("article_id")
         article_map[aid] = a.get("article_url", "#")
 
-    pattern = r"\\^\\[([0-9a-fA-F-]+)\\]"
+    pattern = r"\^\[([0-9a-fA-F-]+)\]"
 
     marker_map = {}
     marker_counter = [1]  # Using a list so it can be updated in replacer
