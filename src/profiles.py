@@ -279,14 +279,62 @@ New Article (ID: {new_article_id}):
             GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
         )
 
+        # Build messages for iterative improvement
+        generation_messages = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": f"Please create an updated profile by merging the existing profile with new information from the article.",
+            },
+        ]
+
+        # Reflection prompt for updates
+        reflection_prompt = f"""Check if this updated profile for {entity_type} "{entity_name}" meets all requirements:
+
+REQUIRED CRITERIA:
+1. Text length: Minimum 100 characters
+2. Citations: Strategic citations with ^[article_id] format for facts
+3. Structure: Section headers (### Background, ### Role, etc.)
+4. Content: Integrates both old and new information appropriately
+5. JSON format: Valid JSON with "text", "tags", "confidence", "sources" fields
+6. Tags: At least 2 relevant tags
+7. Confidence: Between 0.0 and 1.0
+
+Mark valid=true ONLY if ALL criteria are met."""
+
         # We'll use the same EntityProfile structure for the updated profile.
-        final_result, history = iterative_improve(
-            prompt=system_prompt,
+        result = iterative_improve(
+            initial_text="{}",  # Start with empty JSON
+            generation_messages=generation_messages,
+            reflection_prompt=reflection_prompt,
             response_model=EntityProfile,
-            generation_mode=generation_mode,
             max_iterations=3,
-            metadata=_build_metadata("profile_update"),
+            mode=generation_mode,
         )
+
+        final_result = None
+        history = result.get("reflection_history", [])
+
+        # Parse the final result
+        try:
+            import json
+
+            final_text = result.get("text", "{}")
+            if final_text.strip():
+                if final_text.strip().startswith("{"):
+                    data = json.loads(final_text)
+                    final_result = EntityProfile(**data)
+                else:
+                    # If it's not JSON, wrap it
+                    final_result = EntityProfile(
+                        text=final_text,
+                        tags=existing_profile.get("tags", []),
+                        confidence=0.8,
+                        sources=existing_profile.get("sources", []) + [new_article_id],
+                    )
+        except Exception as e:
+            console.print(f"[red]Error parsing iterative improvement result: {e}[/red]")
+            final_result = None
 
         if final_result is None:
             console.print(
@@ -300,10 +348,13 @@ New Article (ID: {new_article_id}):
             f"\n[bold magenta]Reflection Iterations for {entity_name}:[/bold magenta]"
         )
         for idx, entry in enumerate(history):
-            passed_str = "✓ PASSED" if entry.get("passed", False) else "✗ FAILED"
+            passed_str = "✓ PASSED" if entry.get("valid", False) else "✗ FAILED"
             console.print(f"[magenta]Iteration {idx + 1} - {passed_str}[/magenta]")
-            console.print(f"  Reason: {entry.get('reason', '')}")
-            console.print(f"  Feedback: {entry.get('feedback', '')}\n")
+            console.print(f"  Reasoning: {entry.get('reasoning', '')}")
+            if entry.get("issues"):
+                console.print(f"  Issues: {entry.get('issues', '')}\n")
+            else:
+                console.print()
 
         # Convert final_result to a dict
         updated_profile_dict = final_result.model_dump()
@@ -343,8 +394,6 @@ New Article (ID: {new_article_id}):
             console.print(
                 "[yellow]Warning: Final text is under 50 characters, may be incomplete.[/yellow]"
             )
-
-        return updated_profile_dict, history
 
         return updated_profile_dict, history
 
