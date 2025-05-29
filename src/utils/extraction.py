@@ -1,20 +1,27 @@
 """Generic entity extraction utilities."""
 
+import random
+import time
 from typing import Any, List, Type, Union
 
 from pydantic import BaseModel
 
 from src.constants import (
+    BASE_DELAY,
     BRAINTRUST_PROJECT_ID,
     BRAINTRUST_PROJECT_NAME,
     CLOUD_MODEL,
+    MAX_RETRIES,
     OLLAMA_MODEL,
 )
+from src.logging_config import get_logger
 from src.utils.llm import (
     create_messages,
     get_litellm_client,
     get_ollama_client,
 )
+
+logger = get_logger(__name__)
 
 
 def extract_entities_cloud(
@@ -51,13 +58,41 @@ def extract_entities_cloud(
     elif BRAINTRUST_PROJECT_NAME:
         metadata["project_name"] = BRAINTRUST_PROJECT_NAME
 
-    return client.chat.completions.create(
-        model=model,
-        response_model=response_model,
-        temperature=temperature,
-        messages=messages,
-        metadata=metadata,
-    )
+    max_retries = MAX_RETRIES
+    base_delay = BASE_DELAY
+
+    for attempt in range(max_retries + 1):
+        try:
+            return client.chat.completions.create(
+                model=model,
+                response_model=response_model,
+                temperature=temperature,
+                messages=messages,
+                metadata=metadata,
+            )
+        except Exception as e:
+            error_str = str(e)
+
+            # Check for retryable errors (503, 529, rate limiting)
+            is_retryable = (
+                "503" in error_str
+                or "529" in error_str
+                or "overloaded" in error_str.lower()
+                or "rate limit" in error_str.lower()
+                or "try again" in error_str.lower()
+            )
+
+            if is_retryable and attempt < max_retries:
+                delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                logger.warning(
+                    f"Retryable error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
+                )
+                logger.info(f"Retrying in {delay:.2f} seconds...")
+                time.sleep(delay)
+                continue
+
+            logger.error(f"Cloud extraction failed: {error_str}")
+            raise
 
 
 def extract_entities_local(

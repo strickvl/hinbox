@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
+from src.constants import HASH_TRUNCATE_LENGTH
 
 
 def load_parquet(path: str):
@@ -66,7 +67,7 @@ def make_event_key(event: dict) -> str:
     title = event.get("title", "")
     start = event.get("start_date", "")
     combined = f"{title}##{start}"
-    h = hashlib.md5(combined.encode()).hexdigest()[:6]
+    h = hashlib.md5(combined.encode()).hexdigest()[:HASH_TRUNCATE_LENGTH]
     return f"{title} ({h})"
 
 
@@ -74,7 +75,7 @@ def make_location_key(loc: dict) -> str:
     nm = loc.get("name", "")
     t = loc.get("type", "")
     combined = f"{nm}##{t}"
-    h = hashlib.md5(combined.encode()).hexdigest()[:6]
+    h = hashlib.md5(combined.encode()).hexdigest()[:HASH_TRUNCATE_LENGTH]
     return f"{nm} ({h})"
 
 
@@ -82,7 +83,7 @@ def make_org_key(org: dict) -> str:
     nm = org.get("name", "")
     t = org.get("type", "")
     combined = f"{nm}##{t}"
-    h = hashlib.md5(combined.encode()).hexdigest()[:6]
+    h = hashlib.md5(combined.encode()).hexdigest()[:HASH_TRUNCATE_LENGTH]
     return f"{nm} ({h})"
 
 

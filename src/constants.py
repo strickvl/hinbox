@@ -34,6 +34,22 @@ ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.parquet")
 # Threshold for similarity matching
 SIMILARITY_THRESHOLD = 0.75
 
+# Retry configuration for LLM API calls
+MAX_RETRIES = 3
+BASE_DELAY = 2.0
+
+# LLM generation defaults
+DEFAULT_MAX_TOKENS = 2048
+DEFAULT_TEMPERATURE = 0
+MAX_ITERATIONS = 3
+
+# Frontend configuration
+DEFAULT_FRONTEND_PORT = 5001
+HASH_TRUNCATE_LENGTH = 6
+
+# Default embedding model
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+
 # Braintrust configuration
 # Set this to your Braintrust project ID if you want to use Braintrust logging
 # You can also use project_name instead, which will create the project if it doesn't exist

@@ -1,5 +1,7 @@
 """LLM utility functions and client management."""
 
+import random
+import time
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type
 
@@ -9,9 +11,14 @@ from openai import OpenAI
 from pydantic import BaseModel
 
 from src.constants import (
+    BASE_DELAY,
     BRAINTRUST_PROJECT_ID,
     BRAINTRUST_PROJECT_NAME,
     CLOUD_MODEL,
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_TEMPERATURE,
+    MAX_ITERATIONS,
+    MAX_RETRIES,
     OLLAMA_API_KEY,
     OLLAMA_API_URL,
     OLLAMA_MODEL,
@@ -72,8 +79,8 @@ def cloud_generation(
     messages: List[Dict[str, Any]],
     response_model: Type[BaseModel],
     model: str = CLOUD_MODEL,
-    max_tokens: int = 2048,
-    temperature: float = 0,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    temperature: float = DEFAULT_TEMPERATURE,
     **kwargs: Any,
 ) -> Any:
     """
@@ -95,29 +102,53 @@ def cloud_generation(
 
     client = get_litellm_client()
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            response_model=response_model,
-            metadata=DEFAULT_METADATA,
-            **kwargs,
-        )
-        logger.debug(f"Successfully generated response with {model}")
-        return response
-    except Exception as e:
-        logger.error(f"Cloud generation failed: {str(e)}")
-        raise
+    max_retries = MAX_RETRIES
+    base_delay = BASE_DELAY
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                response_model=response_model,
+                metadata=DEFAULT_METADATA,
+                **kwargs,
+            )
+            logger.debug(f"Successfully generated response with {model}")
+            return response
+        except Exception as e:
+            error_str = str(e)
+
+            # Check for retryable errors (503, 529, rate limiting)
+            is_retryable = (
+                "503" in error_str
+                or "529" in error_str
+                or "overloaded" in error_str.lower()
+                or "rate limit" in error_str.lower()
+                or "try again" in error_str.lower()
+            )
+
+            if is_retryable and attempt < max_retries:
+                delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                logger.warning(
+                    f"Retryable error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
+                )
+                logger.info(f"Retrying in {delay:.2f} seconds...")
+                time.sleep(delay)
+                continue
+
+            logger.error(f"Cloud generation failed: {error_str}")
+            raise
 
 
 def local_generation(
     messages: List[Dict[str, Any]],
     response_model: Type[BaseModel],
     model: str = OLLAMA_MODEL,
-    max_tokens: int = 2048,
-    temperature: float = 0,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    temperature: float = DEFAULT_TEMPERATURE,
     **kwargs: Any,
 ) -> Any:
     """
@@ -234,7 +265,7 @@ def iterative_improve(
     generation_messages: List[Dict[str, Any]],
     reflection_prompt: str,
     response_model: Type[BaseModel],
-    max_iterations: int = 3,
+    max_iterations: int = MAX_ITERATIONS,
     mode: GenerationMode = GenerationMode.CLOUD,
     model: str = None,
 ) -> Dict[str, Any]:

@@ -5,6 +5,7 @@ We simply import them here to ensure everything is registered with 'app, rt'.
 """
 
 # Import and expose the app at module level for FastHTML serve() to find
+from ..constants import DEFAULT_FRONTEND_PORT
 from .app_config import app
 
 # Import the routes so they get registered
@@ -17,14 +18,18 @@ if __name__ == "__main__":
     import uvicorn
 
     try:
-        uvicorn.run(app, host="0.0.0.0", port=5001, reload=False)
+        uvicorn.run(app, host="0.0.0.0", port=DEFAULT_FRONTEND_PORT, reload=False)
     except OSError as e:
         if "address already in use" in str(e).lower():
-            print("\n❌ Error: Port 5001 is already in use!")
+            print(f"\n❌ Error: Port {DEFAULT_FRONTEND_PORT} is already in use!")
             print("💡 Try one of these solutions:")
             print("   • Stop the existing server (Ctrl+C in the other terminal)")
-            print("   • Kill existing process: pkill -f 'uvicorn.*5001'")
-            print("   • Use a different port: uvicorn src.frontend:app --port 5002")
+            print(
+                f"   • Kill existing process: pkill -f 'uvicorn.*{DEFAULT_FRONTEND_PORT}'"
+            )
+            print(
+                f"   • Use a different port: uvicorn src.frontend:app --port {DEFAULT_FRONTEND_PORT + 1}"
+            )
             print()
             sys.exit(1)
         else:

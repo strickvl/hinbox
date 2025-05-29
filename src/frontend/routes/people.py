@@ -1,14 +1,11 @@
 import markdown
-from fasthtml.common import H2, A, Container, Div, Li, NotStr, P, Span, Titled, Ul
+from fasthtml.common import H2, A, Div, Li, NotStr, P, Span, Ul
 
 from src.config_loader import DomainConfig
 
 from ..app_config import (
-    FALLBACK_STYLES,
-    STYLES_LINK,
     get_current_domain,
     main_layout,
-    nav_bar,
     rt,
 )
 from ..data_access import build_indexes, get_domain_data
@@ -121,24 +118,19 @@ def show_person(key: str, request):
     # Load domain-specific data
     domain_data = get_domain_data(current_domain)
     if not domain_data["people"]:
-        return Titled(
+        return main_layout(
             get_page_title("People - Not Found"),
-            Container(
-                STYLES_LINK,
-                FALLBACK_STYLES,
-                nav_bar(current_domain),
-                Div(
-                    H2("No Data Available", style="color:var(--danger);"),
-                    P(f"No people data found for the '{current_domain}' domain."),
-                    A(
-                        "← Back to Home",
-                        href=f"/?domain={current_domain}",
-                        cls="primary",
-                    ),
-                    cls="content-area",
-                    style="max-width:800px; margin:0 auto;",
+            Div("No filters for detail pages."),
+            Div(
+                H2("No Data Available", style="color:var(--danger);"),
+                P(f"No people data found for the '{current_domain}' domain."),
+                A(
+                    "← Back to Home",
+                    href=f"/?domain={current_domain}",
+                    cls="primary",
                 ),
             ),
+            current_domain=current_domain,
         )
 
     # Build indexes for this domain
@@ -148,17 +140,19 @@ def show_person(key: str, request):
     actual_key = decode_key(key)
     person = people_index.get(actual_key)
     if not person:
-        return Titled(
+        return main_layout(
             get_page_title("People - Not Found"),
-            Container(
-                Div(
-                    H2("Person not found", style="color:var(--danger);"),
-                    P(f"No person found with the name: {actual_key}"),
-                    A("← Back to People", href="/people", cls="primary"),
-                    cls="content-area",
-                    style="max-width:800px; margin:0 auto;",
+            Div("No filters for detail pages."),
+            Div(
+                H2("Person not found", style="color:var(--danger);"),
+                P(f"No person found with the name: {actual_key}"),
+                A(
+                    "← Back to People",
+                    href=f"/people?domain={current_domain}",
+                    cls="primary",
                 ),
             ),
+            current_domain=current_domain,
         )
 
     name = person.get("name", "N/A")

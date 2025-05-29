@@ -9,6 +9,8 @@ from src.constants import (
     BRAINTRUST_PROJECT_ID,
     BRAINTRUST_PROJECT_NAME,
     CLOUD_MODEL,
+    DEFAULT_TEMPERATURE,
+    MAX_ITERATIONS,
     OLLAMA_MODEL,
 )
 from src.utils.llm import (
@@ -64,7 +66,7 @@ def generate_profile_with_reflection(
     article_text: str,
     article_id: str,
     model_type: str = "gemini",
-    max_iterations: int = 3,
+    max_iterations: int = MAX_ITERATIONS,
 ) -> (Dict, list):
     """
     Generate a profile with reflection and improvement.
@@ -142,14 +144,14 @@ Mark valid=true ONLY if ALL criteria are met. If any fail, mark valid=false and 
             messages=generation_messages,
             response_model=EntityProfile,
             model=CLOUD_MODEL,
-            temperature=0,
+            temperature=DEFAULT_TEMPERATURE,
         )
     else:
         initial_response = local_generation(
             messages=generation_messages,
             response_model=EntityProfile,
             model=OLLAMA_MODEL,
-            temperature=0,
+            temperature=DEFAULT_TEMPERATURE,
         )
 
     # Convert to text for iterative improvement
