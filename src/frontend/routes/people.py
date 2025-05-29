@@ -1,7 +1,7 @@
 import logging
 
 import markdown
-from fasthtml.common import H2, A, Div, Li, NotStr, P, Span, Ul
+from fasthtml.common import *
 
 from src.config_loader import DomainConfig
 from src.utils.error_handler import ErrorHandler
@@ -16,6 +16,60 @@ from ..filters import people_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
 
 logger = logging.getLogger(__name__)
+
+
+def filter_people(people_index, q="", selected_types=None, selected_tags=None):
+    """Filter people based on search criteria."""
+    selected_types = selected_types or []
+    selected_tags = selected_tags or []
+
+    filtered = []
+    for k, person in people_index.items():
+        # Search filter
+        if q and q not in person.get("name", "").strip().lower():
+            continue
+
+        # Type filter
+        ptype = person.get("type", "").strip().lower()
+        if selected_types and ptype not in [t.lower() for t in selected_types]:
+            continue
+
+        # Tag filter
+        person_tags = [
+            t.strip().lower() for t in person.get("profile", {}).get("tags", [])
+        ]
+        if selected_tags and not any(t.lower() in person_tags for t in selected_tags):
+            continue
+
+        filtered.append((k, person))
+
+    return filtered
+
+
+def render_people_list(filtered_people):
+    """Render the people list with consistent styling."""
+    if not filtered_people:
+        return Div(
+            "No people match your filters. Try adjusting your criteria.",
+            cls="empty-state",
+        )
+
+    items = []
+    for k, person in filtered_people:
+        type_badge = ""
+        if person.get("type"):
+            type_badge = Span(person.get("type"), cls="tag")
+        link = A(person["name"], href=f"/people/{encode_key(k)}")
+        items.append(Li(link, " ", type_badge))
+
+    return Div(
+        Div(
+            f"{len(filtered_people)} people found",
+            style="margin-bottom:15px; color:var(--text-light);",
+        ),
+        Ul(*items),
+        id="results",
+    )
 
 
 def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
@@ -35,12 +89,9 @@ def list_people(request):
 
     try:
         current_domain = get_current_domain(request)
-
-        # Load domain-specific data
         domain_data = get_domain_data(current_domain)
     except Exception as e:
         error_handler.log_error(e, "error")
-        # Return error page
         return main_layout(
             "Error - People",
             Div(),
@@ -53,8 +104,8 @@ def list_people(request):
             ),
             page_header_title="Error",
         )
+
     if not domain_data["people"]:
-        # No data for this domain
         content = Div(
             Div(
                 "No data available",
@@ -78,48 +129,22 @@ def list_people(request):
         domain_indexes = build_indexes(domain_data)
         people_index = domain_indexes["people"]
 
-        q = request.query_params.get("q", "").strip().lower()
+        # Get filters from request
+        q = request.query_params.get("q", "").strip()
         selected_types_raw = request.query_params.getlist("type")
-        selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
+        selected_types = [t.strip() for t in selected_types_raw if t.strip()]
         selected_tags_raw = request.query_params.getlist("tag")
-        selected_tags = [t.strip().lower() for t in selected_tags_raw if t.strip()]
+        selected_tags = [t.strip() for t in selected_tags_raw if t.strip()]
 
-        filtered_items = []
-        for k, person in people_index.items():
-            ptype = person.get("type", "").strip().lower()
-            pname = person.get("name", "").strip().lower()
-            p_tags = [
-                tg.strip().lower() for tg in person.get("profile", {}).get("tags", [])
-            ]
-
-            if selected_types:
-                if not set(selected_types).issubset({ptype}):
-                    continue
-            if q and q not in pname:
-                continue
-            if selected_tags:
-                if not set(selected_tags).issubset(set(p_tags)):
-                    continue
-
-            type_badge = ""
-            if person.get("type"):
-                type_badge = Span(person.get("type"), cls="tag")
-            link = A(person["name"], href=f"/people/{encode_key(k)}")
-            filtered_items.append(Li(link, " ", type_badge))
-
-        content = Div(
-            Div(
-                f"{len(filtered_items)} people found",
-                style="margin-bottom:15px; color:var(--text-light);",
-            ),
-            Ul(*filtered_items)
-            if filtered_items
-            else Div(
-                "No people match your filters. Try adjusting your criteria.",
-                cls="empty-state",
-            ),
+        # Apply filters
+        filtered_people = filter_people(
+            people_index, q.lower(), selected_types, selected_tags
         )
 
+        # Render results
+        content = render_people_list(filtered_people)
+
+        # Return full page or partial based on HTMX request
         is_htmx = request.headers.get("HX-Request") == "true"
         if is_htmx:
             return content
@@ -229,8 +254,6 @@ def show_person(key: str, request):
 
     tags = profile.get("tags", [])
     tag_elements = []
-    from fasthtml.common import Span
-
     for tag in tags:
         if tag.strip():
             tag_elements.append(Span(tag, cls="tag"))
