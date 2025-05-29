@@ -15,6 +15,7 @@ from src.constants import (
 from src.models import Event
 
 litellm.enable_json_schema_validation = True
+litellm.suppress_debug_info = True
 litellm.callbacks = ["braintrust"]
 
 
