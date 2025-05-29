@@ -1,0 +1,21 @@
+domain: "{DOMAIN_NAME}"
+description: "{DOMAIN_DESCRIPTION}"
+
+# Data source configuration
+data_sources:
+  default_path: "data/{DOMAIN_NAME}/raw_sources/{DOMAIN_NAME}_articles.parquet"
+
+# Output configuration  
+output:
+  directory: "data/{DOMAIN_NAME}/entities"
+
+# Similarity threshold for entity deduplication (0.0-1.0)
+similarity_threshold: 0.75
+
+# Processing configuration
+processing:
+  # Enable relevance checking before extraction
+  relevance_check: true
+  
+  # Batch size for processing articles
+  batch_size: 5

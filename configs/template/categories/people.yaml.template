@@ -1,0 +1,30 @@
+person_types:
+  # Define the main types of people relevant to your domain
+  # Each type should have a clear description and examples
+  
+  primary_actor:
+    description: "Main actors or participants in {DOMAIN_NAME}"
+    examples: ["Example Person 1", "Example Person 2"]
+    
+  official:
+    description: "Officials, authorities, or decision-makers"
+    examples: ["Official Name", "Authority Figure"]
+    
+  expert:
+    description: "Subject matter experts, analysts, or specialists"
+    examples: ["Expert Name", "Specialist"]
+    
+  journalist:
+    description: "Reporters, writers, and media professionals"
+    examples: ["Reporter Name", "Journalist"]
+    
+  other:
+    description: "Any other type of person not covered above"
+    examples: []
+
+# Instructions for customization:
+# 1. Replace {DOMAIN_NAME} with your domain
+# 2. Update person_types to match your domain's key roles
+# 3. Provide clear descriptions and real examples
+# 4. Remove any types that don't apply to your domain
+# 5. Add new types as needed

@@ -1,0 +1,21 @@
+domain: "guantanamo"
+description: "Guantánamo Bay detention and related issues"
+
+# Data source configuration
+data_sources:
+  default_path: "data/guantanamo/raw_sources/miami_herald_articles.parquet"
+
+# Output configuration  
+output:
+  directory: "data/guantanamo/entities"
+
+# Similarity threshold for entity deduplication (0.0-1.0)
+similarity_threshold: 0.75
+
+# Processing configuration
+processing:
+  # Enable relevance checking before extraction
+  relevance_check: true
+  
+  # Batch size for processing articles
+  batch_size: 5

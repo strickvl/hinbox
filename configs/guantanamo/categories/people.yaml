@@ -1,0 +1,24 @@
+person_types:
+  detainee:
+    description: "A person who is or was detained at Guantánamo Bay or another detention facility"
+    examples: ["Mohamedou Ould Slahi", "David Hicks", "Khalid Sheikh Mohammed"]
+    
+  military:
+    description: "Military personnel including soldiers, officers, and other armed forces members"
+    examples: ["General Geoffrey Miller", "Admiral Harry Harris", "Colonel Morris Davis"]
+    
+  government:
+    description: "Government officials, politicians, and civil servants"
+    examples: ["Donald Rumsfeld", "Barack Obama", "Eric Holder"]
+    
+  lawyer:
+    description: "Attorneys, legal representatives, and other legal professionals"
+    examples: ["Clive Stafford Smith", "Gitanjali Gutierrez", "David Remes"]
+    
+  journalist:
+    description: "Reporters, writers, and other media professionals"
+    examples: ["Carol Rosenberg", "Andy Worthington", "Jason Leopold"]
+    
+  other:
+    description: "Any other type of person not covered by the above categories"
+    examples: []

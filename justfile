@@ -4,7 +4,7 @@
 default:
     @just --list
 
-# Process articles and extract entities
+# Process articles and extract entities (default: guantanamo domain)
 process *args:
     python -m src.process_and_extract {{args}}
 
@@ -67,3 +67,15 @@ process-verbose:
 # Quick test run - process one article with verbose output
 test-run:
     python -m src.process_and_extract --limit 1 -v
+
+# Initialize a new domain configuration
+init domain:
+    python run.py init {{domain}}
+
+# List available domain configurations
+domains:
+    python run.py domains
+
+# Process articles for a specific domain
+process-domain domain *args:
+    python -m src.process_and_extract --domain {{domain}} {{args}}

@@ -1,203 +1,260 @@
-# `hinbox`
+# Hinbox
 
-A tool for processing and extracting information from articles related to Guantánamo Bay detention facility.
+Hinbox is a flexible, domain-configurable entity extraction system that processes news articles and extracts structured information about people, organizations, locations, and events. Originally designed for Guantánamo Bay coverage analysis, it now supports any domain through a simple configuration system.
 
-## Overview
+## 🎯 Key Features
 
-This project processes articles to extract relevant information about Guantánamo Bay, including people, events, locations, and organizations mentioned in the articles. It uses LLMs (Gemini or local Ollama models) to analyze articles and build a knowledge base of entities.
+- **Domain-Agnostic**: Configure for any topic (politics, sports, business, etc.)
+- **Multiple AI Models**: Support for both cloud (Gemini) and local (Ollama) models  
+- **Entity Extraction**: Automatically extract people, organizations, locations, and events
+- **Smart Deduplication**: Uses embeddings to merge similar entities
+- **Web Interface**: FastHTML-based UI for exploring results
+- **Easy Setup**: Simple configuration files, no Python coding required
 
-## Quick Start
+## 🚀 Quick Start
 
-The project provides a user-friendly CLI interface through `run.py` or using `just`:
+> **Note**: This project supports both `./run.py` commands and `just` commands. Use whichever you prefer!
 
-### Using run.py
+### 1. List Available Domains
 ```bash
-# Process 5 articles with relevance checking
-./run.py process --relevance
+./run.py domains
+# OR: just domains
+```
 
-# Check article statistics
-./run.py check
+### 2. Create a New Domain
+```bash
+./run.py init football
+# OR: just init football
+```
 
-# Start the web interface to browse entities
+### 3. Configure Your Domain
+Edit the generated files in `configs/football/`:
+- `config.yaml` - Domain settings and data paths
+- `prompts/*.md` - Extraction instructions (in plain English!)
+- `categories/*.yaml` - Entity type definitions
+
+### 4. Process Articles
+```bash
+./run.py process --domain football --limit 5
+# OR: just process-domain football --limit 5
+```
+
+### 5. Explore Results
+```bash
 ./run.py frontend
+# OR: just frontend
 ```
 
-### Using just (recommended)
-If you have [just](https://github.com/casey/just) installed:
+## 📦 Installation
 
-```bash
-# Show available commands
-just
+### Prerequisites
+- Python 3.8+
+- uv (for dependency management)
+- Optional: Ollama (for local model support)
+- Optional: just (for easier command running)
 
-# Process articles
-just process --relevance
+### Setup
 
-# Check article statistics  
-just check
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/yourusername/hinbox.git
+   cd hinbox
+   ```
 
-# Start the web interface
-just frontend
-```
-
-## Installation
-
-1. Clone the repository
-2. Install dependencies using uv:
+2. **Install dependencies:**
    ```bash
    uv sync
    ```
-3. Set up your API keys in environment variables:
-   - `GEMINI_API_KEY` for Google Gemini
-   - `OLLAMA_API_URL` for local Ollama (optional)
 
-## Commands
+3. **Set up environment variables:**
+   ```bash
+   export GEMINI_API_KEY="your-gemini-api-key"
+   # Optional for local processing:
+   export OLLAMA_API_URL="http://localhost:11434/v1"
+   ```
 
-### Process Articles
+4. **Verify installation:**
+   ```bash
+   ./run.py domains
+   ```
 
-Process articles from the parquet file and extract entities:
+## 📁 Domain Examples
 
+### Sports (Football)
 ```bash
-./run.py process [options]
+just init football
+# Edit configs/football/ to focus on:
+# - People: players, coaches, referees
+# - Organizations: teams, leagues, federations  
+# - Events: matches, transfers, tournaments
+# - Locations: stadiums, cities, countries
 ```
 
-Options:
-- `-n, --limit N`: Number of articles to process (default: 5)
-- `--local`: Use local models (Ollama/spaCy) instead of cloud APIs
-- `--relevance`: Perform relevance check before processing
-- `--force`: Force reprocessing of already processed articles
-- `--articles-path PATH`: Custom path to articles parquet file
-- `-v, --verbose`: Enable verbose logging
-
-Examples:
+### Business
 ```bash
-# Process 10 articles with relevance checking
-./run.py process -n 10 --relevance
-
-# Force reprocess using local models
-./run.py process --force --local
-
-# Process with verbose logging
-./run.py process -v --relevance
+just init business
+# Configure for:
+# - People: executives, investors, analysts
+# - Organizations: companies, funds, banks
+# - Events: mergers, earnings, launches
+# - Locations: headquarters, markets, regions
 ```
 
-### Check Article Statistics
-
-Display statistics about articles in the database:
-
+### Politics
 ```bash
-./run.py check [--sample]
+just init politics
+# Set up for:
+# - People: politicians, officials, activists
+# - Organizations: parties, governments, NGOs
+# - Events: elections, policies, debates
+# - Locations: capitals, districts, countries
 ```
 
-Options:
-- `--sample`: Display a sample article
+## 🛠 Advanced Usage
+
+### Processing Articles
+```bash
+# Process with different options
+./run.py process --domain football -n 20 --verbose
+just process-domain football --limit 10 --relevance
+
+# Use local models (requires Ollama)
+./run.py process --domain football --local
+
+# Force reprocessing
+./run.py process --domain football --force
+```
 
 ### Web Interface
-
-Start the FastHTML web interface to browse extracted entities:
-
 ```bash
 ./run.py frontend
-# or
-./run.py web
-# or
-./run.py ui
+# OR: just frontend
 ```
+Explore extracted entities at http://localhost:5001
 
-The interface will be available at http://localhost:5001
-
-### Reset Processing Status
-
-Reset the processing status of all articles:
-
+### Data Management
 ```bash
+# Check processing status
+./run.py check
+
+# Reset processing status
 ./run.py reset
+
+# View available domains
+./run.py domains
 ```
 
-This will prompt for confirmation before resetting.
-
-### Miami Herald Commands
-
-Fetch and import Miami Herald articles:
-
-```bash
-# Fetch new articles
-./run.py fetch-miami
-
-# Import articles from JSONL
-./run.py import-miami
-```
-
-## Project Structure
+## 📂 Project Structure
 
 ```
-hinbox/
-├── run.py                 # Main CLI interface
-├── src/
-│   ├── process_and_extract.py  # Main processing script
-│   ├── merge.py           # Entity merging logic
-│   ├── people.py          # Person extraction
-│   ├── organizations.py   # Organization extraction
-│   ├── locations.py       # Location extraction
-│   ├── events.py          # Event extraction
-│   ├── relevance.py       # Relevance checking
-│   ├── profiles.py        # Entity profile generation
-│   ├── embeddings.py      # Text embedding utilities
-│   ├── logging_config.py  # Centralized logging
-│   └── frontend/          # Web interface
-├── data/
-│   ├── raw_sources/       # Raw article data
-│   │   └── miami_herald_articles.parquet
-│   └── entities/          # Extracted entities
-│       ├── people.parquet
-│       ├── organizations.parquet
-│       ├── locations.parquet
-│       └── events.parquet
-└── scripts/               # Utility scripts
+configs/
+├── guantanamo/          # Example: Guantánamo Bay domain
+├── football/            # Your sports domain
+├── template/            # Template for new domains
+└── README.md           # Configuration guide
+
+src/
+├── config_loader.py    # Domain configuration system
+├── dynamic_models.py   # Dynamic Pydantic model generation
+├── people.py          # People extraction
+├── organizations.py   # Organization extraction
+├── locations.py       # Location extraction
+├── events.py         # Event extraction
+└── frontend/         # Web interface
+
+data/
+├── guantanamo/      # Guantánamo domain data
+│   ├── raw_sources/ # Input articles (Parquet format)
+│   └── entities/    # Extracted entities
+└── {domain}/        # Each domain has its own directory
+    ├── raw_sources/
+    └── entities/
 ```
 
-## Output Files
+## 🔧 Configuration
 
-The processing creates parquet files for each entity type:
+### Domain Configuration
+Each domain has its own `configs/{domain}/` directory with:
 
-- `data/entities/people.parquet`: People mentioned in articles
-- `data/entities/organizations.parquet`: Organizations mentioned
-- `data/entities/locations.parquet`: Locations referenced
-- `data/entities/events.parquet`: Events described
+**config.yaml** - Main settings:
+```yaml
+domain: "football"
+description: "Football news and analysis"
+data_sources:
+  default_path: "data/football/raw_sources/football_articles.parquet"
+output:
+  directory: "data/football/entities"
+```
 
-Each entity includes:
-- Profile text generated by LLM
-- Source article information
-- Processing metadata
-- Embeddings for similarity matching
+**categories/*.yaml** - Entity type definitions:
+```yaml
+person_types:
+  player:
+    description: "Professional football players"
+    examples: ["Lionel Messi", "Cristiano Ronaldo"]
+```
 
-## Features
+**prompts/*.md** - Extraction instructions (plain English!):
+```markdown
+You are an expert at extracting people from football articles.
+Focus on players, coaches, and officials...
+```
 
-- **Intelligent Entity Extraction**: Uses LLMs to understand context and extract relevant entities
-- **Entity Deduplication**: Uses embeddings to identify and merge duplicate entities
-- **Relevance Filtering**: Only processes articles relevant to Guantánamo Bay
-- **Profile Generation**: Creates comprehensive profiles for each entity
-- **Web Interface**: Browse and search extracted entities
-- **Flexible Processing**: Support for both cloud (Gemini) and local (Ollama) models
+### Data Format
+Articles should be in Parquet format with columns:
+- `title`, `content`, `url`, `published_date`
+
+## 🏗 Architecture
+
+### Processing Pipeline
+1. **Configuration Loading**: Read domain-specific settings
+2. **Article Loading**: Process Parquet files
+3. **Relevance Filtering**: Domain-specific content filtering  
+4. **Entity Extraction**: Extract people, organizations, locations, events
+5. **Smart Deduplication**: Merge similar entities using embeddings
+6. **Profile Generation**: Create comprehensive entity profiles
+
+### Key Features
+- **Domain-Agnostic**: Easy to configure for any topic
+- **Multiple AI Models**: Cloud (Gemini) and local (Ollama) support
+- **Smart Processing**: Automatic relevance filtering and deduplication
+- **Modern Interface**: FastHTML-based web UI
+- **Robust Pipeline**: Error handling and progress tracking
 
 ## Development
 
-### Running Tests
-
+### Code Quality
 ```bash
 # Format code
 ./scripts/format.sh
 
 # Run linting
 ./scripts/lint.sh
+
+# Both together
+just check-code
 ```
 
-### Logging
+## 🤝 Contributing
 
-The project uses a centralized logging system with Rich formatting. Log levels include:
-- `info`: General information
-- `warning`: Important notices
-- `error`: Error messages
-- `success`: Successful operations
-- `processing`: Processing status updates
+Contributions welcome! Areas of interest:
+- New domain templates and examples
+- Additional language model integrations
+- Enhanced web interface features
+- Performance optimizations
 
-Enable verbose logging with the `-v` flag when processing articles.
+## 📄 License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## 🙋 Support
+
+For questions about:
+- **Configuration**: See `configs/README.md`
+- **Setup**: Check installation steps above
+- **Usage**: Try `./run.py --help` or `just --list`
+- **Issues**: Open a GitHub issue
+
+---
+
+**Built with**: Python, Pydantic, FastHTML, LiteLLM, Jina Embeddings

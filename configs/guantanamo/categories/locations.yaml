@@ -1,0 +1,28 @@
+location_types:
+  detention_facility:
+    description: "Detention centers, prisons, camps (e.g., Camp X-Ray, Camp Delta)"
+    examples: ["Camp X-Ray", "Camp Delta", "Camp Echo"]
+    
+  military_base:
+    description: "Military installations and bases (e.g., Guantánamo Naval Base)"
+    examples: ["Guantánamo Bay Naval Base", "Bagram Air Base", "Abu Ghraib"]
+    
+  country:
+    description: "Nations and countries (e.g., United States, Afghanistan)"
+    examples: ["United States", "Afghanistan", "Iraq", "Pakistan"]
+    
+  city:
+    description: "Cities and towns (e.g., Washington D.C., Kabul)"
+    examples: ["Washington D.C.", "Miami", "New York", "Kabul"]
+    
+  region:
+    description: "Geographic regions, states, provinces (e.g., Middle East, Florida)"
+    examples: ["Middle East", "Florida", "Caribbean", "South Asia"]
+    
+  building:
+    description: "Specific buildings or structures (e.g., Pentagon, White House)"
+    examples: ["Pentagon", "White House", "Supreme Court", "Capitol Building"]
+    
+  other:
+    description: "Any other location type not covered above"
+    examples: []

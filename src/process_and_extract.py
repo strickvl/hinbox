@@ -138,6 +138,12 @@ def main():
         action="store_true",
         help="Enable verbose logging for debugging the reflection mechanism",
     )
+    parser.add_argument(
+        "--domain",
+        type=str,
+        default="guantanamo",
+        help="Domain configuration to use (default: guantanamo)",
+    )
     args = parser.parse_args()
 
     # Configure logger level based on verbosity flag
@@ -233,10 +239,12 @@ def main():
             try:
                 if args.local:
                     relevance_result = ollama_check_relevance(
-                        article_content, model="qwq"
+                        article_content, model="qwq", domain=args.domain
                     )
                 else:
-                    relevance_result = gemini_check_relevance(article_content)
+                    relevance_result = gemini_check_relevance(
+                        article_content, domain=args.domain
+                    )
 
                 if not relevance_result.is_relevant:
                     log("Skipping article as it's not relevant", level="warning")
@@ -260,9 +268,13 @@ def main():
             start_time = datetime.now()
 
             if args.local:
-                extracted_people = ollama_extract_people(article_content, model="qwq")
+                extracted_people = ollama_extract_people(
+                    article_content, model="qwq", domain=args.domain
+                )
             else:
-                extracted_people = gemini_extract_people(article_content)
+                extracted_people = gemini_extract_people(
+                    article_content, domain=args.domain
+                )
 
             # Track reflection attempts for people
             # Try to extract reflection history if available
@@ -340,10 +352,12 @@ def main():
 
             if args.local:
                 extracted_orgs = ollama_extract_organizations(
-                    article_content, model="qwq"
+                    article_content, model="qwq", domain=args.domain
                 )
             else:
-                extracted_orgs = gemini_extract_organizations(article_content)
+                extracted_orgs = gemini_extract_organizations(
+                    article_content, domain=args.domain
+                )
 
             # Track reflection attempts for organizations
             reflection_history = []
@@ -422,9 +436,13 @@ def main():
             start_time = datetime.now()
 
             if args.local:
-                extracted_locs = ollama_extract_locations(article_content, model="qwq")
+                extracted_locs = ollama_extract_locations(
+                    article_content, model="qwq", domain=args.domain
+                )
             else:
-                extracted_locs = gemini_extract_locations(article_content)
+                extracted_locs = gemini_extract_locations(
+                    article_content, domain=args.domain
+                )
 
             # Track reflection attempts for locations
             reflection_history = []
@@ -500,9 +518,13 @@ def main():
             start_time = datetime.now()
 
             if args.local:
-                extracted_events = ollama_extract_events(article_content, model="qwq")
+                extracted_events = ollama_extract_events(
+                    article_content, model="qwq", domain=args.domain
+                )
             else:
-                extracted_events = gemini_extract_events(article_content)
+                extracted_events = gemini_extract_events(
+                    article_content, domain=args.domain
+                )
 
             # Track reflection attempts for events
             reflection_history = []

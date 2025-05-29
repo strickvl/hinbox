@@ -1,0 +1,36 @@
+organization_types:
+  military:
+    description: "Military organizations (e.g., JTF-GTMO, US Army, Navy)"
+    examples: ["Joint Task Force Guantanamo", "US Army", "US Navy"]
+    
+  intelligence:
+    description: "Intelligence agencies (e.g., CIA, FBI)"
+    examples: ["CIA", "FBI", "DIA"]
+    
+  legal:
+    description: "Legal organizations and law firms (e.g., ACLU, Center for Constitutional Rights)"
+    examples: ["ACLU", "Center for Constitutional Rights", "Reprieve"]
+    
+  humanitarian:
+    description: "Organizations focused on humanitarian aid and human rights (e.g., Red Cross, Physicians for Human Rights)"
+    examples: ["International Red Cross", "Physicians for Human Rights", "Human Rights Watch"]
+    
+  advocacy:
+    description: "Advocacy groups and activist organizations (e.g., Amnesty International, Human Rights Watch)"
+    examples: ["Amnesty International", "Human Rights First", "Witness Against Torture"]
+    
+  media:
+    description: "Media organizations (e.g., Miami Herald, NY Times)"
+    examples: ["Miami Herald", "New York Times", "Associated Press"]
+    
+  government:
+    description: "Government entities and departments (e.g., US DoD, DoJ)"
+    examples: ["Department of Defense", "Department of Justice", "State Department"]
+    
+  intergovernmental:
+    description: "International governmental bodies (e.g., UN, European Union)"
+    examples: ["United Nations", "European Union", "Organization of American States"]
+    
+  other:
+    description: "Any other organization type not covered above"
+    examples: []

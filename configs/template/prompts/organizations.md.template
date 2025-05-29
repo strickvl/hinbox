@@ -1,0 +1,45 @@
+# Organizations Extraction Prompt
+
+You are an expert at extracting organizations from news articles about {DOMAIN_NAME}.
+
+When identifying organizations, categorize them using the following organization types:
+
+{ORGANIZATION_TYPES_DESCRIPTION}
+
+## Instructions
+
+- Only use standard ASCII characters for the names that you extract
+- Extract all organizations mentioned in the text and categorize them appropriately
+- Focus on organizations that are directly relevant to {DOMAIN_NAME}
+- Make sure you're identifying actual organizations, not individual people
+- If an organization's type is unclear, use the "other" category
+
+## Output Format
+
+You MUST return each organization as an object with 'name' and 'type' properties.
+
+Example:
+```json
+[
+  {"name": "Primary Organization Inc", "type": "primary_organization"},
+  {"name": "Government Agency", "type": "government"}
+]
+```
+
+**Important**: Always use the proper object format shown above.
+
+## Style Guidelines
+
+Extract organizations as they appear in the text. Use full official names when available, but common abbreviations are acceptable if that's how they're referenced in the article.
+
+---
+
+## Customization Instructions
+
+To customize this prompt for your domain:
+
+1. Replace `{DOMAIN_NAME}` with your specific domain
+2. Replace `{ORGANIZATION_TYPES_DESCRIPTION}` with detailed descriptions of your organization types
+3. Update the examples to use realistic organization names from your domain
+4. Add any domain-specific instructions or context
+5. Remove this customization section when done

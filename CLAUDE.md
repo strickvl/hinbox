@@ -1,6 +1,14 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository. Any design docs that you write can be stored in the
+`design/` folder (which is ignored by git).
+
+## Running commands
+
+We have a `justfile` which allows you to run commands with `just <command>`. We
+also have a `run.py` script which does similar things. When you update one, make
+sure to update the other.
 
 ## Common Commands
 
@@ -61,4 +69,5 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
 ### Configuration
 - **Models**: Configured in `src/constants.py` with cloud/local model specifications
 - **Logging**: Centralized Rich-based logging in `src/logging_config.py` with color-coded levels
-- **Environment**: Requires `GEMINI_API_KEY` for cloud processing, optional `OLLAMA_API_URL` for local
+- **Environment**: Requires `GEMINI_API_KEY` for cloud processing, optional
+  `OLLAMA_API_URL` for local

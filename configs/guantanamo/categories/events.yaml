@@ -1,0 +1,76 @@
+event_types:
+  detention:
+    description: "Events related to capture, transfer, or detention of individuals"
+    examples: ["Detainee Transfer", "Capture Operation", "Detention Review"]
+    
+  legal:
+    description: "Court cases, hearings, tribunals, legal proceedings"
+    examples: ["Habeas Corpus Hearing", "Military Commission Trial", "Appeal Filing"]
+    
+  military_operation:
+    description: "Military actions, raids, operations"
+    examples: ["Raid Operation", "Security Sweep", "Force Cell Extraction"]
+    
+  policy_change:
+    description: "Changes in government or military policy"
+    examples: ["Executive Order", "Policy Directive", "Regulation Change"]
+    
+  protest:
+    description: "Demonstrations, protests, hunger strikes"
+    examples: ["Hunger Strike", "Protest March", "Demonstration"]
+    
+  investigation:
+    description: "Official investigations, inquiries, reports"
+    examples: ["FBI Investigation", "Congressional Inquiry", "Inspector General Report"]
+    
+  release:
+    description: "Release or transfer of detainees"
+    examples: ["Detainee Release", "Repatriation", "Transfer to Third Country"]
+    
+  medical:
+    description: "Medical events, treatments, health issues"
+    examples: ["Medical Emergency", "Force Feeding", "Psychological Assessment"]
+    
+  other:
+    description: "Any other event type not covered above"
+    examples: []
+
+event_tags:
+  torture:
+    description: "Torture allegations or incidents"
+    
+  force_feeding:
+    description: "Force-feeding of hunger strikers"
+    
+  hunger_strike:
+    description: "Hunger strike events"
+    
+  transfer:
+    description: "Detainee transfer events"
+    
+  interrogation:
+    description: "Interrogation sessions"
+    
+  policy_change:
+    description: "Changes in detention policies"
+    
+  legal_challenge:
+    description: "Legal challenges to detention"
+    
+  habeas_corpus:
+    description: "Habeas corpus proceedings"
+    
+  medical_care:
+    description: "Medical care issues"
+    
+  isolation:
+    description: "Isolation of detainees"
+    
+  suicide_attempt:
+    description: "Suicide attempts"
+    
+  abuse:
+    description: "Detainee abuse incidents"
+    
+  official_statement:
+    description: "Official statements about Guantánamo"

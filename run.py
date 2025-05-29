@@ -7,9 +7,12 @@ This script provides a user-friendly interface to the main functionality of the 
 """
 
 import argparse
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
+from src.config_loader import DomainConfig
 from src.logging_config import log
 
 
@@ -82,6 +85,12 @@ Examples:
     process_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Enable verbose logging"
     )
+    process_parser.add_argument(
+        "--domain",
+        type=str,
+        default="guantanamo",
+        help="Domain configuration to use (default: guantanamo)",
+    )
 
     # Check command
     check_parser = subparsers.add_parser(
@@ -105,6 +114,14 @@ Examples:
         "import-miami", help="Import Miami Herald articles from JSONL"
     )
 
+    # Domain management commands
+    init_parser = subparsers.add_parser(
+        "init", help="Initialize a new domain configuration"
+    )
+    init_parser.add_argument("domain", help="Name of the new domain to create")
+
+    subparsers.add_parser("domains", help="List available domain configurations")
+
     # Parse arguments
     args = parser.parse_args()
 
@@ -127,6 +144,8 @@ Examples:
             cmd.extend(["--articles-path", args.articles_path])
         if args.verbose:
             cmd.append("--verbose")
+        if args.domain:
+            cmd.extend(["--domain", args.domain])
         return run_command(cmd)
 
     elif args.command == "check":
@@ -159,8 +178,89 @@ Examples:
             [sys.executable, "-m", "scripts.import_miami_herald_articles"]
         )
 
+    elif args.command == "init":
+        return init_domain(args.domain)
+
+    elif args.command == "domains":
+        return list_domains()
+
     else:
         parser.print_help()
+        return 1
+
+
+def init_domain(domain_name: str) -> int:
+    """Initialize a new domain configuration."""
+    # Validate domain name
+    if not domain_name.isalnum():
+        log(f"Domain name '{domain_name}' must be alphanumeric", level="error")
+        return 1
+
+    # Check if domain already exists
+    target_dir = Path(f"configs/{domain_name}")
+    if target_dir.exists():
+        log(f"Domain '{domain_name}' already exists", level="error")
+        return 1
+
+    # Copy template
+    template_dir = Path("configs/template")
+    if not template_dir.exists():
+        log("Template directory not found", level="error")
+        return 1
+
+    try:
+        shutil.copytree(template_dir, target_dir)
+        log(f"Created domain configuration: {target_dir}", level="success")
+
+        # Process template files
+        for template_file in target_dir.rglob("*.template"):
+            new_file = template_file.with_suffix("")
+            content = template_file.read_text()
+
+            # Replace placeholders
+            content = content.replace("{DOMAIN_NAME}", domain_name)
+            content = content.replace(
+                "{DOMAIN_DESCRIPTION}",
+                f"Articles and analysis related to {domain_name}",
+            )
+
+            new_file.write_text(content)
+            template_file.unlink()  # Remove .template file
+
+        log(f"Domain '{domain_name}' initialized successfully!", level="success")
+        log(
+            f"Edit files in {target_dir} to customize your domain configuration",
+            level="info",
+        )
+        return 0
+
+    except Exception as e:
+        log(f"Failed to initialize domain: {e}", level="error")
+        return 1
+
+
+def list_domains() -> int:
+    """List available domain configurations."""
+    try:
+        domains = DomainConfig.get_available_domains()
+        if not domains:
+            log("No domain configurations found", level="warning")
+            return 0
+
+        log("Available domains:", level="info")
+        for domain in domains:
+            try:
+                config = DomainConfig(domain)
+                domain_config = config.load_config()
+                description = domain_config.get("description", "No description")
+                log(f"  • {domain}: {description}", level="info")
+            except Exception as e:
+                log(f"  • {domain}: (error loading config: {e})", level="warning")
+
+        return 0
+
+    except Exception as e:
+        log(f"Failed to list domains: {e}", level="error")
         return 1
 
 
