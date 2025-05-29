@@ -22,3 +22,52 @@ person_types:
   other:
     description: "Any other type of person not covered by the above categories"
     examples: []
+
+person_tags:
+  civil_rights:
+    description: "People involved in civil rights advocacy or organizations"
+    examples: ["ACLU lawyers", "Human rights activists"]
+    
+  immigration:
+    description: "People involved in immigration law or policy"
+    examples: ["Immigration lawyers", "ICE officials"]
+    
+  defense:
+    description: "People involved in defense or military defense roles"
+    examples: ["Defense attorneys", "Military defense counsel"]
+    
+  prosecution:
+    description: "People involved in prosecution or legal enforcement"
+    examples: ["Prosecutors", "FBI agents"]
+    
+  policy:
+    description: "People involved in policy making or administration"
+    examples: ["Cabinet members", "Policy advisors"]
+    
+  medical:
+    description: "Medical professionals and healthcare workers"
+    examples: ["Doctors", "Psychiatrists", "Medical staff"]
+    
+  intelligence:
+    description: "Intelligence agency personnel and analysts"
+    examples: ["CIA agents", "Intelligence analysts"]
+    
+  academic:
+    description: "Academics, researchers, and scholars"
+    examples: ["University professors", "Research fellows"]
+    
+  religious:
+    description: "Religious figures and chaplains"
+    examples: ["Military chaplains", "Religious leaders"]
+    
+  family:
+    description: "Family members of detainees or other key figures"
+    examples: ["Detainee family members", "Victims' families"]
+    
+  activist:
+    description: "Activists and advocacy group members"
+    examples: ["Protesters", "Campaign organizers"]
+    
+  other:
+    description: "Any other tag not covered by the above categories"
+    examples: []

@@ -19,9 +19,29 @@ def create_person_model(domain: str = "guantanamo") -> Type[BaseModel]:
     # Create enum for person types with custom schema
     PersonType = Enum("PersonType", {ptype.upper(): ptype for ptype in person_types})
 
+    # Try to get person tags if they exist
+    try:
+        categories_data = config.load_categories("people")
+        person_tags = []
+        if "person_tags" in categories_data:
+            person_tags = list(categories_data["person_tags"].keys())
+
+        if person_tags:
+            PersonTag = Enum("PersonTag", {ptag.upper(): ptag for ptag in person_tags})
+        else:
+            # Fallback - create a minimal tag enum
+            PersonTag = Enum("PersonTag", {"OTHER": "other"})
+            person_tags = ["other"]
+
+    except Exception:
+        # Fallback if no tags are defined
+        PersonTag = Enum("PersonTag", {"OTHER": "other"})
+        person_tags = ["other"]
+
     class Person(BaseModel):
         name: str
         type: PersonType = Field(..., json_schema_extra={"enum": person_types})
+        tags: List[PersonTag] = Field(default_factory=list)
 
         @classmethod
         def model_json_schema(
@@ -36,6 +56,14 @@ def create_person_model(domain: str = "guantanamo") -> Type[BaseModel]:
                     "type": "string",
                     "enum": person_types,
                     "title": "Type",
+                }
+            # Replace tags schema with simple string array (VertexAI doesn't like enum in array items)
+            if "tags" in schema.get("properties", {}):
+                schema["properties"]["tags"] = {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "title": "Tags",
+                    "default": [],
                 }
             # Clean up $defs to avoid const fields
             if "$defs" in schema:

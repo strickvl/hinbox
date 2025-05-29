@@ -36,11 +36,11 @@ Each domain contains these files:
 Main configuration including domain name, data paths, and processing settings.
 
 #### `categories/`
-YAML files defining entity types:
-- `people.yaml` - Types of people relevant to your domain
+YAML files defining entity types and tags:
+- `people.yaml` - Types of people and person tags relevant to your domain
 - `organizations.yaml` - Types of organizations
 - `locations.yaml` - Types of locations  
-- `events.yaml` - Types of events and tags
+- `events.yaml` - Types of events and event tags
 
 #### `prompts/`
 Markdown files with extraction instructions:
@@ -116,6 +116,12 @@ Starting point for new research domains with generic categories and prompts suit
 entity_types:
   type_name:
     description: "Clear description of this type"
+    examples: ["Example 1", "Example 2"]
+
+# For people and events, you can also define tags for additional categorization
+entity_tags:  # e.g., person_tags, event_tags
+  tag_name:
+    description: "Clear description of this tag"
     examples: ["Example 1", "Example 2"]
 ```
 

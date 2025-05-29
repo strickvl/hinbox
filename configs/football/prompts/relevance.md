@@ -1,0 +1,55 @@
+# Relevance Filtering Prompt
+
+You are tasked with determining if a historical document, academic paper, book chapter, or other source is relevant to football research.
+
+## Relevance Criteria
+
+An article is considered relevant if it discusses:
+
+{RELEVANCE_CRITERIA}
+
+## Guidelines
+
+- The source should have substantial content about these topics, not just passing mentions
+- Consider direct relevance to the main research themes of football
+- Include sources that discuss related policies, decisions, impacts, or historical context
+- Exclude sources that only mention the topic in passing or as background context
+- Consider the historical significance and scholarly value of the content
+
+## Output Format
+
+You must return a boolean decision with reasoning:
+
+```json
+{
+  "is_relevant": true,
+  "reason": "Brief explanation of why the article is or is not relevant"
+}
+```
+
+## Examples
+
+**Relevant**: Sources that focus on the main themes, key players, policies, or direct impacts related to football. Also include sources with significant historical context or analysis.
+
+**Not Relevant**: Sources that only mention football topics briefly, use them as background context, or focus on unrelated subjects.
+
+---
+
+## Customization Instructions
+
+To customize this prompt for your research domain:
+
+1. Replace `football` with your specific research focus
+2. Replace `{RELEVANCE_CRITERIA}` with a bulleted list of what makes sources relevant to your research
+3. Add specific examples of relevant vs. not relevant sources for your domain
+4. Consider edge cases and provide guidance on borderline decisions
+5. Think about the types of sources most valuable for historical research
+6. Remove this customization section when done
+
+Example relevance criteria format:
+- Primary sources from the historical period
+- Secondary analysis and scholarly interpretation
+- Policy decisions affecting the research area
+- Key events or incidents
+- Major stakeholder actions or statements
+- Contemporary accounts and observations

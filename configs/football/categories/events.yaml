@@ -1,0 +1,56 @@
+event_types:
+  # Define the main types of events relevant to your domain
+  
+  primary_event:
+    description: "Main events central to football"
+    examples: ["Key Event Type", "Important Activity"]
+    
+  meeting:
+    description: "Meetings, conferences, or discussions"
+    examples: ["Board Meeting", "Conference"]
+    
+  announcement:
+    description: "Official announcements or declarations"
+    examples: ["Policy Announcement", "Statement"]
+    
+  decision:
+    description: "Decisions, rulings, or determinations"
+    examples: ["Court Decision", "Policy Decision"]
+    
+  incident:
+    description: "Incidents, accidents, or significant occurrences"
+    examples: ["Security Incident", "Accident"]
+    
+  investigation:
+    description: "Investigations, inquiries, or examinations"
+    examples: ["Official Investigation", "Inquiry"]
+    
+  other:
+    description: "Any other event type not covered above"
+    examples: []
+
+# Additional event properties that may be useful:
+event_tags:
+  # Common tags that can be applied across event types
+  urgent:
+    description: "Urgent or time-sensitive events"
+    
+  public:
+    description: "Public events or announcements"
+    
+  private:
+    description: "Private or confidential events"
+    
+  scheduled:
+    description: "Pre-planned or scheduled events"
+    
+  breaking:
+    description: "Breaking news or developing events"
+
+# Instructions for customization:
+# 1. Replace football with your domain
+# 2. Update event_types to match your domain's key events
+# 3. Provide clear descriptions and real examples
+# 4. Customize event_tags to match your domain's needs
+# 5. Remove any types that don't apply to your domain
+# 6. Add new types and tags as needed

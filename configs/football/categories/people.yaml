@@ -4,7 +4,7 @@ person_types:
   # Consider the historical context and time period of your research
   
   primary_actor:
-    description: "Main historical figures or participants in {DOMAIN_NAME}"
+    description: "Main historical figures or participants in football"
     examples: ["Historical Figure 1", "Key Participant 2"]
     
   official:
@@ -49,7 +49,7 @@ person_tags:
     examples: []
 
 # Instructions for customization:
-# 1. Replace {DOMAIN_NAME} with your research domain
+# 1. Replace football with your research domain
 # 2. Update person_types to match your historical period's key roles
 # 3. Update person_tags to provide additional categorization
 # 4. Provide clear descriptions and real historical examples

@@ -11,17 +11,33 @@ When identifying people, categorize them using the following person types:
 - **journalist**: Reporters, writers, and other media professionals
 - **other**: Any other type of person not covered by the above categories
 
+Additionally, assign relevant tags from the following predefined categories:
+
+- **civil_rights**: People involved in civil rights advocacy or organizations
+- **immigration**: People involved in immigration law or policy
+- **defense**: People involved in defense or military defense roles
+- **prosecution**: People involved in prosecution or legal enforcement
+- **policy**: People involved in policy making or administration
+- **medical**: Medical professionals and healthcare workers
+- **intelligence**: Intelligence agency personnel and analysts
+- **academic**: Academics, researchers, and scholars
+- **religious**: Religious figures and chaplains
+- **family**: Family members of detainees or other key figures
+- **activist**: Activists and advocacy group members
+- **other**: Any other tag not covered by the above categories
+
 ## Instructions
 
 Only use standard ASCII characters for the names that you extract.
 Extract all people mentioned in the text and categorize them appropriately.
 
-You MUST return each person as an object with 'name' and 'type' properties.
+You MUST return each person as an object with 'name', 'type', and 'tags' properties.
+The 'tags' field should be an array of relevant tags from the predefined categories above.
 For example:
 ```json
 [
-  {"name": "John Doe", "type": "journalist"},
-  {"name": "Jane Smith", "type": "lawyer"}
+  {"name": "John Doe", "type": "journalist", "tags": ["activist"]},
+  {"name": "Jane Smith", "type": "lawyer", "tags": ["civil_rights", "defense"]}
 ]
 ```
 
