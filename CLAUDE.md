@@ -71,3 +71,9 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
 - **Logging**: Centralized Rich-based logging in `src/logging_config.py` with color-coded levels
 - **Environment**: Requires `GEMINI_API_KEY` for cloud processing, optional
   `OLLAMA_API_URL` for local
+
+## Workflow Notes
+- When finishing a chunk of work, check with the user to confirm the fix, then:
+  1. Run the formatting script (`./scripts/format.sh`)
+  2. Fix any formatting errors
+  3. Commit and push changes
