@@ -8,8 +8,9 @@ This project processes articles to extract relevant information about Guantánam
 
 ## Quick Start
 
-The project provides a user-friendly CLI interface through `run.py`:
+The project provides a user-friendly CLI interface through `run.py` or using `just`:
 
+### Using run.py
 ```bash
 # Process 5 articles with relevance checking
 ./run.py process --relevance
@@ -19,6 +20,23 @@ The project provides a user-friendly CLI interface through `run.py`:
 
 # Start the web interface to browse entities
 ./run.py frontend
+```
+
+### Using just (recommended)
+If you have [just](https://github.com/casey/just) installed:
+
+```bash
+# Show available commands
+just
+
+# Process articles
+just process --relevance
+
+# Check article statistics  
+just check
+
+# Start the web interface
+just frontend
 ```
 
 ## Installation
