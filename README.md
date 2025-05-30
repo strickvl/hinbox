@@ -80,8 +80,8 @@ Edit the generated files in `configs/palestine_food_history/`:
 ## 📦 Installation
 
 ### Prerequisites
-- Python 3.8+
-- uv (for dependency management)
+- Python 3.9+
+- `uv` (for dependency management)
 - Optional: Ollama (for local model support)
 - Optional: just (for easier command running)
 
@@ -89,7 +89,7 @@ Edit the generated files in `configs/palestine_food_history/`:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/hinbox.git
+   git clone https://github.com/strickvl/hinbox.git
    cd hinbox
    ```
 
