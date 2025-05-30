@@ -58,5 +58,5 @@ BRAINTRUST_PROJECT_NAME = os.getenv("BRAINTRUST_PROJECT_NAME", "hinbox")
 
 # Profile versioning feature flag
 ENABLE_PROFILE_VERSIONING = (
-    os.getenv("ENABLE_PROFILE_VERSIONING", "false").lower() == "true"
+    os.getenv("ENABLE_PROFILE_VERSIONING", "true").lower() == "true"
 )
