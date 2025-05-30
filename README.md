@@ -1,6 +1,11 @@
-# Hinbox
+# hinbox
 
-Hinbox is a flexible, domain-configurable entity extraction system designed for historians and researchers. It processes historical documents, academic papers, news articles, and book chapters to extract structured information about people, organizations, locations, and events. Originally designed for Guantánamo Bay coverage analysis, it now supports any historical or research domain through a simple configuration system.
+`hinbox` is a flexible, domain-configurable entity extraction system designed
+for historians and researchers. It processes historical documents, academic
+papers, news articles, and book chapters to extract structured information about
+people, organizations, locations, and events. Originally designed for Guantánamo
+Bay media coverage analysis, it now supports any historical or research domain
+through a simple configuration system.
 
 ## 🎯 Key Features
 
