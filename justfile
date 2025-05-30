@@ -50,6 +50,10 @@ format:
 lint:
     ./scripts/lint.sh
 
+# Run tests
+test:
+    python -m pytest tests/ -v
+
 # Run both format and lint
 check-code: format lint
 

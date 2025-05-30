@@ -12,7 +12,8 @@ Hinbox is a flexible, domain-configurable entity extraction system designed for 
   `litellm`) models  
 - **Entity Extraction**: Automatically extract people, organizations, locations, and events
 - **Smart Deduplication**: Uses embeddings to merge similar entities across sources
-- **Web Interface**: FastHTML-based UI for exploring research findings
+- **Profile Versioning**: Track how entity profiles evolve as new sources are processed
+- **Web Interface**: FastHTML-based UI for exploring research findings with version navigation
 - **Easy Setup**: Simple configuration files, no Python coding required
 
 ## 🚀 Quick Start
@@ -220,16 +221,30 @@ Historical sources should be in Parquet format with columns:
 3. **Relevance Filtering**: Domain-specific content filtering for research focus
 4. **Entity Extraction**: Extract people, organizations, locations, events from historical sources
 5. **Smart Deduplication**: Merge similar entities using embeddings
-6. **Profile Generation**: Create comprehensive entity profiles
+6. **Profile Generation**: Create comprehensive entity profiles with automatic versioning
+7. **Version Management**: Track profile evolution as new sources are processed
 
 ### Key Features
 - **Domain-Agnostic**: Easy to configure for any topic
 - **Multiple AI Models**: Cloud (Gemini) and local (Ollama) support
 - **Smart Processing**: Automatic relevance filtering and deduplication
-- **Modern Interface**: FastHTML-based web UI
+- **Profile Versioning**: Track entity profile changes over time with full version history
+- **Modern Interface**: FastHTML-based web UI with version navigation
 - **Robust Pipeline**: Error handling and progress tracking
 
 ## Development
+
+### Testing
+```bash
+# Run tests (pytest)
+pytest tests/
+
+# Run specific test files
+pytest tests/test_profile_versioning.py
+pytest tests/test_frontend_versioning.py
+```
+
+The project includes unit tests for profile versioning functionality and frontend components.
 
 ### Code Quality
 ```bash

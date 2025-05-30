@@ -1,9 +1,10 @@
+import copy
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import litellm
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from rich.console import Console
 
 from src.config_loader import get_domain_config
@@ -49,6 +50,12 @@ class ProfileVersion(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     trigger_article_id: Optional[str] = None
 
+    @field_validator("profile_data")
+    @classmethod
+    def deep_copy_profile_data(cls, v):
+        """Ensure profile_data is deep copied to prevent mutation."""
+        return copy.deepcopy(v)
+
 
 class VersionedProfile(BaseModel):
     """Container for versioned profile history."""
@@ -62,7 +69,7 @@ class VersionedProfile(BaseModel):
         """Add a new version to the history."""
         new_version = ProfileVersion(
             version_number=len(self.versions) + 1,
-            profile_data=profile_data.copy(),
+            profile_data=copy.deepcopy(profile_data),
             trigger_article_id=trigger_article_id,
         )
         self.versions.append(new_version)
