@@ -1,14 +1,21 @@
+import logging
+
 import markdown
 from fasthtml.common import H2, A, Div, NotStr, P, Span
 
 from src.config_loader import DomainConfig
+from src.constants import ENABLE_PROFILE_VERSIONING
+from src.profiles import VersionedProfile
 from src.utils.error_handler import ErrorHandler
 
 from ..app_config import get_current_domain, main_layout, rt
+from ..components import ProfileVersionSelector
 from ..data_access import build_indexes, get_domain_data
 from ..entity_helpers import filter_simple_entities, render_simple_entity_list
 from ..filters import locations_filter_panel
 from ..utils import decode_key, format_article_list, transform_profile_text
+
+logger = logging.getLogger(__name__)
 
 
 def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
@@ -158,12 +165,61 @@ def show_location(key: str, request):
     nm = loc.get("name", "N/A")
     typ = loc.get("type", "N/A")
     profile = loc.get("profile", {})
+
+    # Handle version selection for profile versioning
+    requested_version = None
+    version_selector = ""
+
+    if ENABLE_PROFILE_VERSIONING and "profile_versions" in loc:
+        try:
+            versioned_profile = VersionedProfile(**loc["profile_versions"])
+
+            # Check for version parameter
+            version_param = request.query_params.get("version")
+            if version_param:
+                try:
+                    requested_version = int(version_param)
+                    if 1 <= requested_version <= versioned_profile.current_version:
+                        # Use specific version
+                        version_data = versioned_profile.get_version(requested_version)
+                        if version_data:
+                            profile = version_data.profile_data
+                    else:
+                        # Invalid version, redirect to current
+                        from fasthtml.common import Response
+
+                        return Response(
+                            status_code=302, headers={"Location": f"/locations/{key}"}
+                        )
+                except (ValueError, TypeError):
+                    # Invalid version format, redirect to current
+                    from fasthtml.common import Response
+
+                    return Response(
+                        status_code=302, headers={"Location": f"/locations/{key}"}
+                    )
+
+            # Create version selector
+            version_selector = ProfileVersionSelector(
+                entity_name=nm,
+                entity_type="locations",
+                current_version=versioned_profile.current_version,
+                total_versions=len(versioned_profile.versions),
+                route_prefix="locations",
+                entity_key=actual_key,
+                selected_version=requested_version,
+            )
+        except Exception as e:
+            # Log error but continue with current profile
+            logger.warning(f"Error loading profile versions for {nm}: {e}")
+
     text = profile.get("text", "")
     transformed_text = transform_profile_text(text, loc.get("articles", []))
     conf = profile.get("confidence", "(none)")
     articles = loc.get("articles", [])
 
     detail_content = Div(
+        version_selector,  # Add version selector at the top
         Div(
             Span("Type: ", style="font-weight:bold;"),
             Span(typ, cls="tag"),

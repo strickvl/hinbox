@@ -4,6 +4,8 @@ import markdown
 from fasthtml.common import *
 
 from src.config_loader import DomainConfig
+from src.constants import ENABLE_PROFILE_VERSIONING
+from src.profiles import VersionedProfile
 from src.utils.error_handler import ErrorHandler
 
 from ..app_config import (
@@ -11,6 +13,7 @@ from ..app_config import (
     main_layout,
     rt,
 )
+from ..components import ProfileVersionSelector
 from ..data_access import build_indexes, get_domain_data
 from ..filters import people_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
@@ -247,6 +250,54 @@ def show_person(key: str, request):
     name = person.get("name", "N/A")
     typ = person.get("type", "N/A")
     profile = person.get("profile", {})
+
+    # Handle version selection for profile versioning
+    requested_version = None
+    version_selector = ""
+
+    if ENABLE_PROFILE_VERSIONING and "profile_versions" in person:
+        try:
+            versioned_profile = VersionedProfile(**person["profile_versions"])
+
+            # Check for version parameter
+            version_param = request.query_params.get("version")
+            if version_param:
+                try:
+                    requested_version = int(version_param)
+                    if 1 <= requested_version <= versioned_profile.current_version:
+                        # Use specific version
+                        version_data = versioned_profile.get_version(requested_version)
+                        if version_data:
+                            profile = version_data.profile_data
+                    else:
+                        # Invalid version, redirect to current
+                        from fasthtml.common import Response
+
+                        return Response(
+                            status_code=302, headers={"Location": f"/people/{key}"}
+                        )
+                except (ValueError, TypeError):
+                    # Invalid version format, redirect to current
+                    from fasthtml.common import Response
+
+                    return Response(
+                        status_code=302, headers={"Location": f"/people/{key}"}
+                    )
+
+            # Create version selector
+            version_selector = ProfileVersionSelector(
+                entity_name=name,
+                entity_type="people",
+                current_version=versioned_profile.current_version,
+                total_versions=len(versioned_profile.versions),
+                route_prefix="people",
+                entity_key=actual_key,
+                selected_version=requested_version,
+            )
+        except Exception as e:
+            # Log error but continue with current profile
+            logger.warning(f"Error loading profile versions for {name}: {e}")
+
     text = profile.get("text", "")
     transformed_text = transform_profile_text(text, person.get("articles", []))
     conf = profile.get("confidence", "(none)")
@@ -259,6 +310,7 @@ def show_person(key: str, request):
             tag_elements.append(Span(tag, cls="tag"))
 
     detail_content = Div(
+        version_selector,  # Add version selector at the top
         Div(
             Span(f"Type: ", style="font-weight:bold;"),
             Span(typ, cls="tag"),

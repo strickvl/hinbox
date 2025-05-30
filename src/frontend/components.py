@@ -207,3 +207,48 @@ def DateRangeInputs(start_date="", end_date="", cls="date-range"):
         ),
         cls=cls,
     )
+
+
+def ProfileVersionSelector(
+    entity_name: str,
+    entity_type: str,
+    current_version: int,
+    total_versions: int,
+    route_prefix: str,
+    entity_key: str,
+    selected_version: int = None,
+):
+    """Dropdown selector for profile versions."""
+    from src.constants import ENABLE_PROFILE_VERSIONING
+
+    from .utils import encode_key
+
+    if not ENABLE_PROFILE_VERSIONING or total_versions <= 1:
+        return ""
+
+    selected_version = selected_version or current_version
+
+    options = []
+    for v in range(total_versions, 0, -1):  # Latest first
+        label = f"Version {v}"
+        if v == current_version:
+            label += " (Current)"
+
+        options.append(
+            Option(
+                label,
+                value=str(v),
+                selected="selected" if v == selected_version else None,
+            )
+        )
+
+    return Div(
+        Label("Profile Version:", style="font-weight: bold; margin-right: 10px;"),
+        Select(
+            *options,
+            name="version",
+            onchange=f"window.location.href = '/{route_prefix}/{encode_key(entity_key)}?version=' + this.value",
+            style="margin-right: 10px;",
+        ),
+        style="margin-bottom: 20px; padding: 15px; background: var(--surface-2); border-radius: 8px;",
+    )
