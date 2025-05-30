@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.constants import (
+    ENABLE_PROFILE_VERSIONING,
     SIMILARITY_THRESHOLD,
 )
 from src.logging_config import display_markdown, get_logger, log
@@ -11,7 +12,7 @@ from src.merge import (
     compute_similarity,
     local_model_check_match,
 )
-from src.profiles import create_profile, update_profile
+from src.profiles import VersionedProfile, create_profile, update_profile
 from src.utils.embeddings import EmbeddingManager
 from src.utils.file_ops import write_entity_to_file
 from src.utils.profiles import extract_profile_text
@@ -252,13 +253,15 @@ class EntityMerger:
                     f"Attempting to create profile for {self._format_key_for_display(entity_key)}...",
                     level="info",
                 )
-                proposed_profile, reflection_history = create_profile(
-                    self.entity_type[:-1],
-                    self._format_key_for_display(entity_key),
-                    article_content,
-                    article_id,
-                    model_type,
-                    domain,
+                proposed_profile, proposed_versioned_profile, reflection_history = (
+                    create_profile(
+                        self.entity_type[:-1],
+                        self._format_key_for_display(entity_key),
+                        article_content,
+                        article_id,
+                        model_type,
+                        domain,
+                    )
                 )
 
                 # Extract profile text from response
@@ -383,16 +386,35 @@ class EntityMerger:
                                 f"\\n[yellow]Updating profile for {self.entity_type[:-1]}:[/] {self._format_key_for_display(similar_key)}",
                                 level="info",
                             )
-                            updated_profile, reflection_history = update_profile(
-                                self.entity_type[:-1],
-                                self._format_key_for_display(similar_key),
-                                existing_entity["profile"],
-                                article_content,
-                                article_id,
-                                model_type,
-                                domain,
+                            # Load existing versioned profile or create new one
+                            if (
+                                ENABLE_PROFILE_VERSIONING
+                                and "profile_versions" in existing_entity
+                            ):
+                                versioned_profile = VersionedProfile(
+                                    **existing_entity["profile_versions"]
+                                )
+                            else:
+                                versioned_profile = VersionedProfile()
+
+                            updated_profile, versioned_profile, reflection_history = (
+                                update_profile(
+                                    self.entity_type[:-1],
+                                    self._format_key_for_display(similar_key),
+                                    existing_entity["profile"],
+                                    versioned_profile,
+                                    article_content,
+                                    article_id,
+                                    model_type,
+                                    domain,
+                                )
                             )
                             existing_entity["profile"] = updated_profile
+                            existing_entity["profile_versions"] = (
+                                versioned_profile.model_dump()
+                                if ENABLE_PROFILE_VERSIONING
+                                else None
+                            )
                             log(
                                 "Generating new embedding for updated profile...",
                                 level="info",
@@ -416,15 +438,22 @@ class EntityMerger:
                                 f"\\n[{self.log_color}]Creating initial profile for {self.entity_type[:-1]}:[/] {self._format_key_for_display(similar_key)}",
                                 level="info",
                             )
-                            new_profile, reflection_history = create_profile(
-                                self.entity_type[:-1],
-                                self._format_key_for_display(similar_key),
-                                article_content,
-                                article_id,
-                                model_type,
-                                domain,
+                            new_profile, new_versioned_profile, reflection_history = (
+                                create_profile(
+                                    self.entity_type[:-1],
+                                    self._format_key_for_display(similar_key),
+                                    article_content,
+                                    article_id,
+                                    model_type,
+                                    domain,
+                                )
                             )
                             existing_entity["profile"] = new_profile
+                            existing_entity["profile_versions"] = (
+                                new_versioned_profile.model_dump()
+                                if ENABLE_PROFILE_VERSIONING
+                                else None
+                            )
                             log("Generating embedding for new profile...", level="info")
                             existing_entity["profile_embedding"] = (
                                 embedding_manager.embed_text(new_profile["text"])
@@ -484,6 +513,7 @@ class EntityMerger:
                         entity_dict,
                         entity_key,
                         proposed_profile,
+                        proposed_versioned_profile,
                         proposed_entity_embedding,
                         reflection_history,
                         article_id,
@@ -524,6 +554,7 @@ class EntityMerger:
         entity_dict: Dict[str, Any],
         entity_key: Union[str, Tuple],
         profile: Dict,
+        versioned_profile: VersionedProfile,
         profile_embedding: List[float],
         reflection_history: List,
         article_id: str,
@@ -535,6 +566,9 @@ class EntityMerger:
         """Create a new entity dictionary with appropriate structure for the entity type."""
         base_entity = {
             "profile": profile,
+            "profile_versions": versioned_profile.model_dump()
+            if ENABLE_PROFILE_VERSIONING
+            else None,
             "articles": [
                 {
                     "article_id": article_id,

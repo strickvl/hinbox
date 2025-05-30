@@ -67,6 +67,7 @@ class ReflectionResult(BaseModel):
 
 def get_litellm_client():
     """Get a configured litellm client with instructor."""
+    # Use default mode, but we'll handle multiple tool calls in error handling
     return instructor.from_litellm(litellm.completion)
 
 
@@ -120,6 +121,62 @@ def cloud_generation(
             return response
         except Exception as e:
             error_str = str(e)
+
+            # Handle Instructor multiple tool calls error
+            if "multiple tool calls" in error_str.lower():
+                logger.warning(
+                    f"Multiple tool calls detected for {model}, attempting recovery strategies"
+                )
+
+                # Strategy 1: Try with lower temperature and max_retries=0 to force single response
+                try:
+                    logger.info("Trying with temperature=0 and max_retries=0")
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=0,
+                        response_model=response_model,
+                        metadata=DEFAULT_METADATA,
+                        max_retries=0,
+                        **kwargs,
+                    )
+                    logger.info(
+                        "✓ Successfully recovered from multiple tool calls error with strategy 1"
+                    )
+                    return response
+                except Exception as recovery_e1:
+                    logger.warning(f"Strategy 1 failed: {recovery_e1}")
+
+                # Strategy 2: Try modifying the messages to be more explicit
+                try:
+                    logger.info("Trying with modified system message")
+                    modified_messages = messages.copy()
+                    if modified_messages and modified_messages[0]["role"] == "system":
+                        modified_messages[0]["content"] += (
+                            "\n\nIMPORTANT: Provide exactly ONE response. Do not make multiple tool calls."
+                        )
+
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=modified_messages,
+                        max_tokens=max_tokens,
+                        temperature=0,
+                        response_model=response_model,
+                        metadata=DEFAULT_METADATA,
+                        max_retries=0,
+                        **kwargs,
+                    )
+                    logger.info(
+                        "✓ Successfully recovered from multiple tool calls error with strategy 2"
+                    )
+                    return response
+                except Exception as recovery_e2:
+                    logger.warning(f"Strategy 2 failed: {recovery_e2}")
+                    logger.error(
+                        f"All recovery strategies failed, will raise original error"
+                    )
+                    # Fall through to raise the original error
 
             # Check for retryable errors (503, 529, rate limiting)
             is_retryable = (

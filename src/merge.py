@@ -9,6 +9,7 @@ from rich.panel import Panel
 
 from src.constants import (
     CLOUD_MODEL,
+    ENABLE_PROFILE_VERSIONING,
     OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
 )
@@ -19,7 +20,7 @@ from src.exceptions import (
     SimilarityCalculationError,
 )
 from src.logging_config import console, display_markdown, get_logger, log
-from src.profiles import create_profile, update_profile
+from src.profiles import VersionedProfile, create_profile, update_profile
 from src.utils.embeddings import EmbeddingManager
 from src.utils.error_handler import handle_merge_error
 from src.utils.file_ops import write_entity_to_file
@@ -513,8 +514,10 @@ def merge_people(
 
         try:
             log(f"Attempting to create profile for {person_name}...", level="info")
-            proposed_profile, reflection_history = create_profile(
-                "person", person_name, article_content, article_id, model_type
+            proposed_profile, proposed_versioned_profile, reflection_history = (
+                create_profile(
+                    "person", person_name, article_content, article_id, model_type
+                )
             )
 
             # Extract profile text from response
@@ -630,15 +633,34 @@ def merge_people(
                             f"\n[yellow]Updating profile for person:[/] {similar_name}",
                             level="info",
                         )
-                        updated_profile, reflection_history = update_profile(
-                            "person",
-                            similar_name,
-                            existing_person["profile"],
-                            article_content,
-                            article_id,
-                            model_type,
+                        # Load existing versioned profile or create new one
+                        if (
+                            ENABLE_PROFILE_VERSIONING
+                            and "profile_versions" in existing_person
+                        ):
+                            versioned_profile = VersionedProfile(
+                                **existing_person["profile_versions"]
+                            )
+                        else:
+                            versioned_profile = VersionedProfile()
+
+                        updated_profile, versioned_profile, reflection_history = (
+                            update_profile(
+                                "person",
+                                similar_name,
+                                existing_person["profile"],
+                                versioned_profile,
+                                article_content,
+                                article_id,
+                                model_type,
+                            )
                         )
                         existing_person["profile"] = updated_profile
+                        existing_person["profile_versions"] = (
+                            versioned_profile.model_dump()
+                            if ENABLE_PROFILE_VERSIONING
+                            else None
+                        )
                         log(
                             "Generating new embedding for updated profile...",
                             level="info",
@@ -660,14 +682,21 @@ def merge_people(
                             f"\n[green]Creating initial profile for person:[/] {similar_name}",
                             level="info",
                         )
-                        new_profile, reflection_history = create_profile(
-                            "person",
-                            similar_name,
-                            article_content,
-                            article_id,
-                            model_type,
+                        new_profile, new_versioned_profile, reflection_history = (
+                            create_profile(
+                                "person",
+                                similar_name,
+                                article_content,
+                                article_id,
+                                model_type,
+                            )
                         )
                         existing_person["profile"] = new_profile
+                        existing_person["profile_versions"] = (
+                            new_versioned_profile.model_dump()
+                            if ENABLE_PROFILE_VERSIONING
+                            else None
+                        )
                         log("Generating embedding for new profile...", level="info")
                         existing_person["profile_embedding"] = (
                             embedding_manager.embed_text(new_profile["text"])
@@ -728,6 +757,9 @@ def merge_people(
                 new_person = {
                     "name": person_name,
                     "profile": proposed_profile,
+                    "profile_versions": proposed_versioned_profile.model_dump()
+                    if ENABLE_PROFILE_VERSIONING
+                    else None,
                     "articles": [
                         {
                             "article_id": article_id,
@@ -786,8 +818,10 @@ def merge_locations(
         entity_updated = False
 
         # Generate embedding for the location name and type
-        proposed_profile, reflection_history = create_profile(
-            "location", loc_name, article_content, article_id, model_type
+        proposed_profile, proposed_versioned_profile, reflection_history = (
+            create_profile(
+                "location", loc_name, article_content, article_id, model_type
+            )
         )
         # Extract profile text from response
         proposed_profile = extract_profile_text(proposed_profile)
@@ -874,15 +908,31 @@ def merge_locations(
                         f"\n[yellow]Updating profile for location:[/] {similar_name}",
                         level="info",
                     )
-                    updated_profile, reflection_history = update_profile(
-                        "location",
-                        similar_name,
-                        existing_loc["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
+                    # Load existing versioned profile or create new one
+                    if ENABLE_PROFILE_VERSIONING and "profile_versions" in existing_loc:
+                        versioned_profile = VersionedProfile(
+                            **existing_loc["profile_versions"]
+                        )
+                    else:
+                        versioned_profile = VersionedProfile()
+
+                    updated_profile, versioned_profile, reflection_history = (
+                        update_profile(
+                            "location",
+                            similar_name,
+                            existing_loc["profile"],
+                            versioned_profile,
+                            article_content,
+                            article_id,
+                            model_type,
+                        )
                     )
                     existing_loc["profile"] = updated_profile
+                    existing_loc["profile_versions"] = (
+                        versioned_profile.model_dump()
+                        if ENABLE_PROFILE_VERSIONING
+                        else None
+                    )
                     existing_loc["profile_embedding"] = embedding_manager.embed_text(
                         updated_profile["text"]
                     )
@@ -901,14 +951,21 @@ def merge_locations(
                         f"\n[green]Creating initial profile for location:[/] {similar_name}",
                         level="info",
                     )
-                    new_profile, reflection_history = create_profile(
-                        "location",
-                        similar_name,
-                        article_content,
-                        article_id,
-                        model_type,
+                    new_profile, new_versioned_profile, reflection_history = (
+                        create_profile(
+                            "location",
+                            similar_name,
+                            article_content,
+                            article_id,
+                            model_type,
+                        )
                     )
                     existing_loc["profile"] = new_profile
+                    existing_loc["profile_versions"] = (
+                        new_versioned_profile.model_dump()
+                        if ENABLE_PROFILE_VERSIONING
+                        else None
+                    )
                     existing_loc["profile_embedding"] = embedding_manager.embed_text(
                         new_profile["text"]
                     )
@@ -978,6 +1035,9 @@ def merge_locations(
                 "name": loc_name,
                 "type": loc_type,
                 "profile": profile,
+                "profile_versions": proposed_versioned_profile.model_dump()
+                if ENABLE_PROFILE_VERSIONING
+                else None,
                 "articles": [
                     {
                         "article_id": article_id,
@@ -1027,8 +1087,14 @@ def merge_organizations(
 
             # Generate embedding for the organization name and type
             try:
-                proposed_profile, reflection_history = create_profile(
-                    "organization", org_name, article_content, article_id, model_type
+                proposed_profile, proposed_versioned_profile, reflection_history = (
+                    create_profile(
+                        "organization",
+                        org_name,
+                        article_content,
+                        article_id,
+                        model_type,
+                    )
                 )
                 # Extract profile text from response
                 proposed_profile = extract_profile_text(proposed_profile)
@@ -1104,150 +1170,179 @@ def merge_organizations(
                     # We'll treat it as if it doesn't match, or we can skip it:
                     continue
 
-            try:
-                if model_type == "ollama":
-                    result = local_model_check_match(
-                        org_name,
-                        similar_key,
-                        proposed_profile_text,
-                        existing_profile_dict["text"],
-                    )
-                else:
-                    result = cloud_model_check_match(
-                        org_name,
-                        similar_key,
-                        proposed_profile_text,
-                        existing_profile_dict["text"],
-                    )
-            except Exception as e:
-                handle_merge_error("organizations", org_name, e, "match_verification")
-                # Default to no match if verification fails
-                result = MatchCheckResult(
-                    is_match=False, reason="Match verification failed"
-                )
-            if result.is_match:
-                log(
-                    f"The profiles match! Merging '{org_name}' with '{similar_key[0]}'",
-                    level="success",
-                )
-            else:
-                log(
-                    f"The profiles do not match. Skipping merge for '{org_name}'",
-                    level="error",
-                )
-                continue
-
-            # We found a similar organization - use that instead of creating a new one
-            similar_name, _ = similar_key
-            log(
-                f"Merging organization '{org_name}' with existing organization '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})",
-                level="processing",
-            )
-
-            # Use the existing organization's key
-            existing_org = entities["organizations"][similar_key]
-
-            # Check if this article is already associated with the organization
-            article_exists = any(
-                a.get("article_id") == article_id for a in existing_org["articles"]
-            )
-
-            if not article_exists:
-                existing_org["articles"].append(
-                    {
-                        "article_id": article_id,
-                        "article_title": article_title,
-                        "article_url": article_url,
-                        "article_published_date": article_published_date,
-                    }
-                )
-                entity_updated = True
-
-                # Update profile
-                if "profile" in existing_org:
-                    log(
-                        f"\n[yellow]Updating profile for organization:[/] {similar_name}",
-                        level="info",
-                    )
-                    updated_profile, reflection_history = update_profile(
-                        "organization",
-                        similar_name,
-                        existing_org["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
-                    )
-                    existing_org["profile"] = updated_profile
-                    existing_org["profile_embedding"] = embedding_manager.embed_text(
-                        updated_profile["text"]
-                    )
-                    existing_org.setdefault("reflection_history", [])
-                    existing_org["reflection_history"].extend(reflection_history)
-
-                    console.print(
-                        Panel(
-                            Markdown(updated_profile["text"]),
-                            title=f"Updated Profile: {similar_name}",
-                            border_style="yellow",
+                try:
+                    if model_type == "ollama":
+                        result = local_model_check_match(
+                            org_name,
+                            similar_key,
+                            proposed_profile_text,
+                            existing_profile_dict["text"],
                         )
+                    else:
+                        result = cloud_model_check_match(
+                            org_name,
+                            similar_key,
+                            proposed_profile_text,
+                            existing_profile_dict["text"],
+                        )
+                except Exception as e:
+                    handle_merge_error(
+                        "organizations", org_name, e, "match_verification"
+                    )
+                    # Default to no match if verification fails
+                    result = MatchCheckResult(
+                        is_match=False, reason="Match verification failed"
+                    )
+
+                if result.is_match:
+                    log(
+                        f"The profiles match! Merging '{org_name}' with '{similar_key[0]}'",
+                        level="success",
                     )
                 else:
                     log(
-                        f"\n[green]Creating initial profile for organization:[/] {similar_name}",
-                        level="info",
+                        f"The profiles do not match. Skipping merge for '{org_name}'",
+                        level="error",
                     )
-                    new_profile, reflection_history = create_profile(
-                        "organization",
-                        similar_name,
-                        article_content,
-                        article_id,
-                        model_type,
-                    )
-                    existing_org["profile"] = new_profile
-                    existing_org["profile_embedding"] = embedding_manager.embed_text(
-                        new_profile["text"]
-                    )
-                    existing_org.setdefault("reflection_history", [])
-                    existing_org["reflection_history"].extend(reflection_history)
+                    continue
 
-                    console.print(
-                        Panel(
-                            Markdown(new_profile["text"]),
-                            title=f"New Profile: {similar_name}",
-                            border_style="green",
-                        )
+                # We found a similar organization - use that instead of creating a new one
+                similar_name, _ = similar_key
+                log(
+                    f"Merging organization '{org_name}' with existing organization '[bold]{similar_name}[/bold]' (similarity: {similarity_score:.4f})",
+                    level="processing",
+                )
+
+                # Use the existing organization's key
+                existing_org = entities["organizations"][similar_key]
+
+                # Check if this article is already associated with the organization
+                article_exists = any(
+                    a.get("article_id") == article_id for a in existing_org["articles"]
+                )
+
+                if not article_exists:
+                    existing_org["articles"].append(
+                        {
+                            "article_id": article_id,
+                            "article_title": article_title,
+                            "article_url": article_url,
+                            "article_published_date": article_published_date,
+                        }
                     )
+                    entity_updated = True
 
-                # Store alternative names if they differ
-                if org_key != similar_key:
-                    if "alternative_names" not in existing_org:
-                        existing_org["alternative_names"] = []
-
-                    alt_name_entry = {"name": org_name, "type": org_type}
-                    if alt_name_entry not in existing_org["alternative_names"]:
-                        existing_org["alternative_names"].append(alt_name_entry)
+                    # Update profile
+                    if "profile" in existing_org:
                         log(
-                            f"Added alternative name: '{org_name}' (type: {org_type}) for '{similar_name}'",
-                            level="processing",
+                            f"\n[yellow]Updating profile for organization:[/] {similar_name}",
+                            level="info",
                         )
-                        entity_updated = True
+                        # Load existing versioned profile or create new one
+                        if (
+                            ENABLE_PROFILE_VERSIONING
+                            and "profile_versions" in existing_org
+                        ):
+                            versioned_profile = VersionedProfile(
+                                **existing_org["profile_versions"]
+                            )
+                        else:
+                            versioned_profile = VersionedProfile()
 
-            existing_timestamp = existing_org.get(
-                "extraction_timestamp", extraction_timestamp
-            )
-            if existing_timestamp != min(existing_timestamp, extraction_timestamp):
-                existing_org["extraction_timestamp"] = min(
-                    existing_timestamp, extraction_timestamp
-                )
-                entity_updated = True
+                        updated_profile, versioned_profile, reflection_history = (
+                            update_profile(
+                                "organization",
+                                similar_name,
+                                existing_org["profile"],
+                                versioned_profile,
+                                article_content,
+                                article_id,
+                                model_type,
+                            )
+                        )
+                        existing_org["profile"] = updated_profile
+                        existing_org["profile_versions"] = (
+                            versioned_profile.model_dump()
+                            if ENABLE_PROFILE_VERSIONING
+                            else None
+                        )
+                        existing_org["profile_embedding"] = (
+                            embedding_manager.embed_text(updated_profile["text"])
+                        )
+                        existing_org.setdefault("reflection_history", [])
+                        existing_org["reflection_history"].extend(reflection_history)
 
-            if entity_updated:
-                write_entity_to_file("organizations", similar_key, existing_org)
-                entities["organizations"][similar_key] = existing_org
-                log(
-                    f"[blue]Updated organization entity saved to file:[/] {similar_name}",
-                    level="info",
+                        console.print(
+                            Panel(
+                                Markdown(updated_profile["text"]),
+                                title=f"Updated Profile: {similar_name}",
+                                border_style="yellow",
+                            )
+                        )
+                    else:
+                        log(
+                            f"\n[green]Creating initial profile for organization:[/] {similar_name}",
+                            level="info",
+                        )
+                        new_profile, new_versioned_profile, reflection_history = (
+                            create_profile(
+                                "organization",
+                                similar_name,
+                                article_content,
+                                article_id,
+                                model_type,
+                            )
+                        )
+                        existing_org["profile"] = new_profile
+                        existing_org["profile_versions"] = (
+                            new_versioned_profile.model_dump()
+                            if ENABLE_PROFILE_VERSIONING
+                            else None
+                        )
+                        existing_org["profile_embedding"] = (
+                            embedding_manager.embed_text(new_profile["text"])
+                        )
+                        existing_org.setdefault("reflection_history", [])
+                        existing_org["reflection_history"].extend(reflection_history)
+
+                        console.print(
+                            Panel(
+                                Markdown(new_profile["text"]),
+                                title=f"New Profile: {similar_name}",
+                                border_style="green",
+                            )
+                        )
+
+                    # Store alternative names if they differ
+                    if org_key != similar_key:
+                        if "alternative_names" not in existing_org:
+                            existing_org["alternative_names"] = []
+
+                        alt_name_entry = {"name": org_name, "type": org_type}
+                        if alt_name_entry not in existing_org["alternative_names"]:
+                            existing_org["alternative_names"].append(alt_name_entry)
+                            log(
+                                f"Added alternative name: '{org_name}' (type: {org_type}) for '{similar_name}'",
+                                level="processing",
+                            )
+                            entity_updated = True
+
+                existing_timestamp = existing_org.get(
+                    "extraction_timestamp", extraction_timestamp
                 )
+                if existing_timestamp != min(existing_timestamp, extraction_timestamp):
+                    existing_org["extraction_timestamp"] = min(
+                        existing_timestamp, extraction_timestamp
+                    )
+                    entity_updated = True
+
+                if entity_updated:
+                    write_entity_to_file("organizations", similar_key, existing_org)
+                    entities["organizations"][similar_key] = existing_org
+                    log(
+                        f"[blue]Updated organization entity saved to file:[/] {similar_name}",
+                        level="info",
+                    )
             else:
                 # No similar organization found - create new entry
                 log(
@@ -1255,43 +1350,46 @@ def merge_organizations(
                     level="info",
                 )
 
-            # Reuse the proposed_profile, reflection_history, and proposed_organization_embedding
-            profile = proposed_profile
-            profile_embedding = proposed_organization_embedding
-            reflection_history = reflection_history or []
+                # Reuse the proposed_profile, reflection_history, and proposed_organization_embedding
+                profile = proposed_profile
+                profile_embedding = proposed_organization_embedding
+                reflection_history = reflection_history or []
 
-            console.print(
-                Panel(
-                    Markdown(profile["text"]),
-                    title=f"New Profile: {org_name}",
-                    border_style="green",
+                console.print(
+                    Panel(
+                        Markdown(profile["text"]),
+                        title=f"New Profile: {org_name}",
+                        border_style="green",
+                    )
                 )
-            )
 
-            new_org = {
-                "name": org_name,
-                "type": org_type,
-                "profile": profile,
-                "articles": [
-                    {
-                        "article_id": article_id,
-                        "article_title": article_title,
-                        "article_url": article_url,
-                        "article_published_date": article_published_date,
-                    }
-                ],
-                "profile_embedding": profile_embedding,
-                "extraction_timestamp": extraction_timestamp,
-                "alternative_names": [],
-                "reflection_history": reflection_history,
-            }
+                new_org = {
+                    "name": org_name,
+                    "type": org_type,
+                    "profile": profile,
+                    "profile_versions": proposed_versioned_profile.model_dump()
+                    if ENABLE_PROFILE_VERSIONING
+                    else None,
+                    "articles": [
+                        {
+                            "article_id": article_id,
+                            "article_title": article_title,
+                            "article_url": article_url,
+                            "article_published_date": article_published_date,
+                        }
+                    ],
+                    "profile_embedding": profile_embedding,
+                    "extraction_timestamp": extraction_timestamp,
+                    "alternative_names": [],
+                    "reflection_history": reflection_history,
+                }
 
-            entities["organizations"][org_key] = new_org
-            write_entity_to_file("organizations", org_key, new_org)
-            log(
-                f"[green]New organization entity saved to file:[/] {org_name}",
-                level="info",
-            )
+                entities["organizations"][org_key] = new_org
+                write_entity_to_file("organizations", org_key, new_org)
+                log(
+                    f"[green]New organization entity saved to file:[/] {org_name}",
+                    level="info",
+                )
 
         except Exception:
             # Catch any unhandled errors for this organization
@@ -1330,8 +1428,10 @@ def merge_events(
         entity_updated = False
 
         # Generate embedding for the event title and type
-        proposed_profile, reflection_history = create_profile(
-            "event", event_title, article_content, article_id, model_type
+        proposed_profile, proposed_versioned_profile, reflection_history = (
+            create_profile(
+                "event", event_title, article_content, article_id, model_type
+            )
         )
         # Extract profile text from response
         proposed_profile = extract_profile_text(proposed_profile)
@@ -1417,15 +1517,34 @@ def merge_events(
                         f"\n[yellow]Updating profile for event:[/] {similar_title}",
                         level="info",
                     )
-                    updated_profile, reflection_history = update_profile(
-                        "event",
-                        similar_title,
-                        existing_event["profile"],
-                        article_content,
-                        article_id,
-                        model_type,
+                    # Load existing versioned profile or create new one
+                    if (
+                        ENABLE_PROFILE_VERSIONING
+                        and "profile_versions" in existing_event
+                    ):
+                        versioned_profile = VersionedProfile(
+                            **existing_event["profile_versions"]
+                        )
+                    else:
+                        versioned_profile = VersionedProfile()
+
+                    updated_profile, versioned_profile, reflection_history = (
+                        update_profile(
+                            "event",
+                            similar_title,
+                            existing_event["profile"],
+                            versioned_profile,
+                            article_content,
+                            article_id,
+                            model_type,
+                        )
                     )
                     existing_event["profile"] = updated_profile
+                    existing_event["profile_versions"] = (
+                        versioned_profile.model_dump()
+                        if ENABLE_PROFILE_VERSIONING
+                        else None
+                    )
                     existing_event["profile_embedding"] = embedding_manager.embed_text(
                         updated_profile["text"]
                     )
@@ -1444,14 +1563,21 @@ def merge_events(
                         f"\n[green]Creating initial profile for event:[/] {similar_title}",
                         level="info",
                     )
-                    new_profile, reflection_history = create_profile(
-                        "event",
-                        similar_title,
-                        article_content,
-                        article_id,
-                        model_type,
+                    new_profile, new_versioned_profile, reflection_history = (
+                        create_profile(
+                            "event",
+                            similar_title,
+                            article_content,
+                            article_id,
+                            model_type,
+                        )
                     )
                     existing_event["profile"] = new_profile
+                    existing_event["profile_versions"] = (
+                        new_versioned_profile.model_dump()
+                        if ENABLE_PROFILE_VERSIONING
+                        else None
+                    )
                     existing_event["profile_embedding"] = embedding_manager.embed_text(
                         new_profile["text"]
                     )
@@ -1529,6 +1655,9 @@ def merge_events(
                 "is_fuzzy_date": e.get("is_fuzzy_date", False),
                 "tags": e.get("tags", []),
                 "profile": profile,
+                "profile_versions": proposed_versioned_profile.model_dump()
+                if ENABLE_PROFILE_VERSIONING
+                else None,
                 "profile_embedding": profile_embedding,
                 "articles": [
                     {

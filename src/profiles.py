@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, List
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 
 import litellm
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from src.constants import (
     BRAINTRUST_PROJECT_NAME,
     CLOUD_MODEL,
     DEFAULT_TEMPERATURE,
+    ENABLE_PROFILE_VERSIONING,
     MAX_ITERATIONS,
     OLLAMA_MODEL,
 )
@@ -37,6 +39,46 @@ litellm.callbacks = ["braintrust", "langfuse"]
 
 logger = logging.getLogger(__name__)
 console = Console()
+
+
+class ProfileVersion(BaseModel):
+    """A single version of an entity profile."""
+
+    version_number: int
+    profile_data: Dict  # Complete profile snapshot
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    trigger_article_id: Optional[str] = None
+
+
+class VersionedProfile(BaseModel):
+    """Container for versioned profile history."""
+
+    current_version: int = 1
+    versions: List[ProfileVersion] = Field(default_factory=list)
+
+    def add_version(
+        self, profile_data: Dict, trigger_article_id: Optional[str] = None
+    ) -> ProfileVersion:
+        """Add a new version to the history."""
+        new_version = ProfileVersion(
+            version_number=len(self.versions) + 1,
+            profile_data=profile_data.copy(),
+            trigger_article_id=trigger_article_id,
+        )
+        self.versions.append(new_version)
+        self.current_version = new_version.version_number
+        return new_version
+
+    def get_version(self, version_number: int) -> Optional[ProfileVersion]:
+        """Get a specific version by number."""
+        for version in self.versions:
+            if version.version_number == version_number:
+                return version
+        return None
+
+    def get_latest(self) -> Optional[ProfileVersion]:
+        """Get the latest version."""
+        return self.versions[-1] if self.versions else None
 
 
 def _build_metadata(operation: str) -> Dict[str, any]:
@@ -205,7 +247,7 @@ def generate_profile(
     return profile_dict, improvement_history
 
 
-def update_profile(
+def _update_profile_internal(
     entity_type: str,
     entity_name: str,
     existing_profile: Dict,
@@ -213,9 +255,9 @@ def update_profile(
     new_article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
-) -> (Dict, list):
+) -> Tuple[Dict, list]:
     """
-    Update an existing profile with new information from an article using iterative reflection.
+    Internal function to update an existing profile with new information from an article.
 
     We treat the existing profile text plus the new article text as input for improvement.
     Returns (updated_profile, improvement_history).
@@ -393,6 +435,41 @@ New Article (ID: {new_article_id}):
         raise
 
 
+def update_profile(
+    entity_type: str,
+    entity_name: str,
+    existing_profile: Dict,
+    versioned_profile: VersionedProfile,
+    new_article_text: str,
+    new_article_id: str,
+    model_type: str = "gemini",
+    domain: str = "guantanamo",
+) -> Tuple[Dict, VersionedProfile, list]:
+    """
+    Update profile and add version if versioning is enabled.
+
+    Returns (updated_profile, versioned_profile, improvement_history).
+    """
+    # Call existing update logic
+    updated_profile, history = _update_profile_internal(
+        entity_type,
+        entity_name,
+        existing_profile,
+        new_article_text,
+        new_article_id,
+        model_type,
+        domain,
+    )
+
+    # Add new version if versioning enabled
+    if ENABLE_PROFILE_VERSIONING:
+        versioned_profile.add_version(
+            profile_data=updated_profile, trigger_article_id=new_article_id
+        )
+
+    return updated_profile, versioned_profile, history
+
+
 def create_profile(
     entity_type: str,
     entity_name: str,
@@ -400,10 +477,10 @@ def create_profile(
     article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
-) -> (Dict, list):
+) -> Tuple[Dict, VersionedProfile, list]:
     """
     Create an initial profile for an entity based on article text using structured extraction.
-    Returns (profile_dict, improvement_history).
+    Returns (profile_dict, versioned_profile, improvement_history).
     """
     console.print(f"\n[cyan]Creating profile for {entity_type} '{entity_name}'[/cyan]")
     console.print(f"[cyan]Using model: {model_type}[/cyan]")
@@ -434,7 +511,14 @@ def create_profile(
             f"[cyan]Improvement iterations: {len(improvement_history)}[/cyan]"
         )
 
-        return profile_dict, improvement_history
+        # Create versioned profile
+        versioned_profile = VersionedProfile()
+        if ENABLE_PROFILE_VERSIONING:
+            versioned_profile.add_version(
+                profile_data=profile_dict, trigger_article_id=article_id
+            )
+
+        return profile_dict, versioned_profile, improvement_history
     except Exception as e:
         console.print(f"[red]Error creating profile for {entity_name}:[/red]")
         console.print(f"[red]Error details: {str(e)}[/red]")

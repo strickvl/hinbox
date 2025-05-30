@@ -55,3 +55,8 @@ DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # You can also use project_name instead, which will create the project if it doesn't exist
 BRAINTRUST_PROJECT_ID = os.getenv("BRAINTRUST_PROJECT_ID", None)
 BRAINTRUST_PROJECT_NAME = os.getenv("BRAINTRUST_PROJECT_NAME", "hinbox")
+
+# Profile versioning feature flag
+ENABLE_PROFILE_VERSIONING = (
+    os.getenv("ENABLE_PROFILE_VERSIONING", "false").lower() == "true"
+)
