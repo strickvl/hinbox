@@ -1,0 +1,209 @@
+"""
+Reusable UI components following FastHTML patterns.
+
+This module contains reusable components that can be used across different entity routes
+to improve consistency and reduce code duplication.
+"""
+
+from fasthtml.common import *
+
+
+def EmptyState(message, cls="empty-state"):
+    """Consistent empty state component for when no results are found."""
+    return Div(
+        message,
+        cls=cls,
+    )
+
+
+def SearchInput(name, value="", placeholder="Search...", cls="search-box", **attrs):
+    """Reusable search input component that respects our hybrid UX pattern.
+
+    Note: This does NOT include auto-trigger HTMX attributes by default,
+    following our hybrid UX approach where text inputs require Apply button.
+    """
+    return Div(
+        Label("Search: "),
+        Input(
+            type="text",
+            name=name,
+            value=value,
+            placeholder=placeholder,
+            style="width:100%; margin-top:5px;",
+            **attrs,
+        ),
+        cls=cls,
+    )
+
+
+def EntityCount(count, entity_type_name):
+    """Consistent count display for entity results."""
+    return Div(
+        f"{count} {entity_type_name.lower()} found",
+        style="margin-bottom:15px; color:var(--text-light);",
+    )
+
+
+def ClearFiltersButton(
+    route,
+    cls="contrast outline",
+    style="width:100%; margin-bottom:15px; font-weight:bold;",
+):
+    """Consistent clear filters button across entity types."""
+    return Button(
+        "Clear Filters",
+        cls=cls,
+        onclick=f"window.location.href='{route}'",
+        style=style,
+    )
+
+
+def ApplyFiltersButton(
+    route, cls="primary", style="width:100%; margin-top:15px; font-weight:bold;"
+):
+    """Consistent apply filters button for our hybrid UX approach."""
+    return Button(
+        "Apply Filters",
+        type="submit",
+        cls=cls,
+        style=style,
+    )
+
+
+def FilterForm(route, *content, **attrs):
+    """Wrapper for filter forms with consistent HTMX configuration."""
+    default_attrs = {
+        "method": "get",
+        "action": route,
+        "hx_get": route,
+        "hx_target": ".content-area",
+        "hx_swap": "innerHTML",
+    }
+    default_attrs.update(attrs)
+
+    return Form(*content, **default_attrs)
+
+
+def TypeChip(chip_name, chip_value, is_checked, target_route, param_name="type"):
+    """Reusable type chip component following our chip_checkbox pattern."""
+    from .utils import random_pastel_color
+
+    return Label(
+        Input(
+            type="checkbox",
+            name=param_name,
+            value=chip_value,
+            checked="checked" if is_checked else None,
+            style="display:none;",
+            onchange="this.parentElement.classList.toggle('selected', this.checked);",
+            hx_trigger="change",
+            hx_get=target_route,
+            hx_target=".content-area",
+            hx_swap="innerHTML",
+            hx_include="[name]",
+        ),
+        chip_name.capitalize(),
+        cls=f"filter-chip{' selected' if is_checked else ''}",
+        style=f"background-color: {random_pastel_color(chip_value)};",
+    )
+
+
+def TypeChipsSection(
+    title, chips_data, target_route, param_name="type", style="margin-bottom:15px;"
+):
+    """Section containing multiple type chips."""
+    if not chips_data:
+        return ""
+
+    return Div(
+        H4(title),
+        *[
+            TypeChip(chip_name, chip_value, is_checked, target_route, param_name)
+            for chip_name, chip_value, is_checked in chips_data
+        ],
+        style=style,
+    )
+
+
+def EntityCard(title, subtitle="", badge="", content="", href="#", cls="entity-card"):
+    """Reusable card component for entity display."""
+    card_content = [
+        A(title, href=href, cls="entity-link") if href != "#" else H4(title)
+    ]
+
+    if subtitle:
+        card_content.append(P(subtitle, cls="entity-subtitle"))
+
+    if badge:
+        card_content.append(Span(badge, cls="tag"))
+
+    if content:
+        card_content.append(Div(content, cls="entity-content"))
+
+    return Div(*card_content, cls=cls)
+
+
+def EntityList(entities, entity_type_name, route_prefix, render_func=None):
+    """Generic entity list renderer with consistent structure."""
+    if not entities:
+        return EmptyState(
+            f"No {entity_type_name.lower()} match your filters. Try adjusting your criteria."
+        )
+
+    items = []
+    for entity_data in entities:
+        if render_func:
+            items.append(render_func(entity_data))
+        else:
+            # Default simple rendering
+            if isinstance(entity_data, tuple) and len(entity_data) >= 2:
+                k, entity = entity_data[0], entity_data[1]
+            else:
+                k, entity = entity_data, entity_data
+
+            # Create default list item
+            from .utils import encode_key
+
+            type_badge = ""
+            if entity.get("type"):
+                type_badge = Span(entity.get("type"), cls="tag")
+
+            name = entity.get("name") or entity.get("title", "Unknown")
+            link = A(name, href=f"/{route_prefix}/{encode_key(k)}")
+
+            items.append(Li(link, " ", type_badge))
+
+    return Div(EntityCount(len(entities), entity_type_name), Ul(*items), id="results")
+
+
+def PageWithSidebar(title, sidebar_content, main_content, **layout_attrs):
+    """Layout wrapper for pages with sidebar (filter panel) and main content."""
+    from .app_config import main_layout
+
+    return main_layout(title, sidebar_content, main_content, **layout_attrs)
+
+
+def DateRangeInputs(start_date="", end_date="", cls="date-range"):
+    """Reusable date range inputs for filtering."""
+    return Div(
+        H4("Date Range"),
+        Div(
+            Label("From:"),
+            Input(
+                type="date",
+                name="start_date",
+                value=start_date if start_date else None,
+            ),
+            style="margin-bottom:10px;",
+        ),
+        Div(
+            Label("To:"),
+            Input(
+                type="date",
+                name="end_date",
+                value=end_date if end_date else None,
+            ),
+            style="margin-bottom:10px;",
+        ),
+        cls=cls,
+    )

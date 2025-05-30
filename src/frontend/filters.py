@@ -4,6 +4,14 @@ from fasthtml.common import *
 
 log = logging.getLogger(__name__)
 
+from .components import (
+    ApplyFiltersButton,
+    ClearFiltersButton,
+    DateRangeInputs,
+    FilterForm,
+    SearchInput,
+    TypeChipsSection,
+)
 from .utils import random_pastel_color
 
 
@@ -30,7 +38,7 @@ def chip_checkbox(name, value, checked, target_route):
 
 
 def people_filter_panel(q="", selected_types=None, selected_tags=None):
-    """Create a more idiomatic filter panel using FastHTML patterns."""
+    """Create a more idiomatic filter panel using reusable components."""
     from .data_access import people_index
 
     selected_types = selected_types or []
@@ -53,67 +61,34 @@ def people_filter_panel(q="", selected_types=None, selected_tags=None):
         }
     )
 
+    # Prepare chip data for reusable components
+    type_chips_data = (
+        [(t, t, t.lower() in selected_types) for t in types] if types else []
+    )
+
+    tag_chips_data = (
+        [(tag, tag, tag.lower() in selected_tags) for tag in tags] if tags else []
+    )
+
     return Div(
-        Button(
-            "Clear Filters",
-            cls="contrast outline",
-            onclick="window.location.href='/people'",
-            style="width:100%; margin-bottom:15px; font-weight:bold;",
-        ),
-        Form(
+        ClearFiltersButton("/people"),
+        FilterForm(
+            "/people",
             H3("People Filters"),
             # Search input (no auto-trigger)
-            Div(
-                Label("Search: "),
-                Input(
-                    type="text",
-                    name="q",
-                    value=q,
-                    placeholder="Search by name...",
-                    style="width:100%; margin-top:5px;",
-                ),
-                cls="search-box",
-            ),
+            SearchInput("q", q, "Search by name..."),
             # Type chips (keep immediate behavior)
-            Div(
-                H4("Person Types"),
-                *[
-                    chip_checkbox("type", t, t.lower() in selected_types, "/people")
-                    for t in types
-                ],
-                style="margin-bottom:15px;",
-            )
-            if types
-            else "",
+            TypeChipsSection("Person Types", type_chips_data, "/people", "type"),
             # Tag chips (keep immediate behavior)
-            Div(
-                H4("Tags"),
-                *[
-                    chip_checkbox("tag", tag, tag.lower() in selected_tags, "/people")
-                    for tag in tags
-                ],
-                style="margin-bottom:15px;",
-            )
-            if tags
-            else "",
+            TypeChipsSection("Tags", tag_chips_data, "/people", "tag"),
             # Apply Filters button
-            Button(
-                "Apply Filters",
-                type="submit",
-                cls="primary",
-                style="width:100%; margin-top:15px; font-weight:bold;",
-            ),
-            method="get",
-            action="/people",
-            hx_get="/people",
-            hx_target=".content-area",
-            hx_swap="innerHTML",
+            ApplyFiltersButton("/people"),
         ),
     )
 
 
 def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
-    """Events filter panel with date range."""
+    """Events filter panel with date range using reusable components."""
     from .data_access import events_index
 
     selected_types = selected_types or []
@@ -125,73 +100,24 @@ def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
         }
     )
 
+    # Prepare chip data for reusable components
+    type_chips_data = (
+        [(t, t, t.lower() in selected_types) for t in types] if types else []
+    )
+
     return Div(
-        Button(
-            "Clear Filters",
-            cls="contrast outline",
-            onclick="window.location.href='/events'",
-            style="width:100%; margin-bottom:15px; font-weight:bold;",
-        ),
-        Form(
+        ClearFiltersButton("/events"),
+        FilterForm(
+            "/events",
             H3("Event Filters"),
             # Search input (no auto-trigger)
-            Div(
-                Label("Search: "),
-                Input(
-                    type="text",
-                    name="q",
-                    value=q,
-                    placeholder="Search by title...",
-                    style="width:100%; margin-top:5px;",
-                ),
-                cls="search-box",
-            ),
+            SearchInput("q", q, "Search by title..."),
             # Type chips (keep immediate behavior)
-            Div(
-                H4("Event Types"),
-                *[
-                    chip_checkbox("etype", t, t.lower() in selected_types, "/events")
-                    for t in types
-                ],
-                style="margin-bottom:15px;",
-            )
-            if types
-            else "",
+            TypeChipsSection("Event Types", type_chips_data, "/events", "etype"),
             # Date range (no auto-trigger)
-            Div(
-                H4("Date Range"),
-                Div(
-                    Label("From:"),
-                    Input(
-                        type="date",
-                        name="start_date",
-                        value=start_date if start_date else None,
-                    ),
-                    style="margin-bottom:10px;",
-                ),
-                Div(
-                    Label("To:"),
-                    Input(
-                        type="date",
-                        name="end_date",
-                        value=end_date if end_date else None,
-                    ),
-                    style="margin-bottom:10px;",
-                ),
-                cls="date-range",
-            ),
+            DateRangeInputs(start_date, end_date),
             # Apply Filters button
-            Button(
-                "Apply Filters",
-                type="submit",
-                cls="primary",
-                style="width:100%; margin-top:15px; font-weight:bold;",
-            ),
-            method="get",
-            action="/events",
-            hx_get="/events",
-            hx_target=".content-area",
-            hx_swap="innerHTML",
+            ApplyFiltersButton("/events"),
         ),
     )
 
