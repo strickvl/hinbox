@@ -62,7 +62,7 @@ def people_filter_panel(q="", selected_types=None, selected_tags=None):
         ),
         Form(
             H3("People Filters"),
-            # Live search
+            # Search input (no auto-trigger)
             Div(
                 Label("Search: "),
                 Input(
@@ -71,14 +71,10 @@ def people_filter_panel(q="", selected_types=None, selected_tags=None):
                     value=q,
                     placeholder="Search by name...",
                     style="width:100%; margin-top:5px;",
-                    hx_get="/people",
-                    hx_trigger="keyup changed delay:500ms",
-                    hx_target=".content-area",
-                    hx_include="[name]",
                 ),
                 cls="search-box",
             ),
-            # Type chips
+            # Type chips (keep immediate behavior)
             Div(
                 H4("Person Types"),
                 *[
@@ -89,7 +85,7 @@ def people_filter_panel(q="", selected_types=None, selected_tags=None):
             )
             if types
             else "",
-            # Tag chips
+            # Tag chips (keep immediate behavior)
             Div(
                 H4("Tags"),
                 *[
@@ -100,8 +96,18 @@ def people_filter_panel(q="", selected_types=None, selected_tags=None):
             )
             if tags
             else "",
+            # Apply Filters button
+            Button(
+                "Apply Filters",
+                type="submit",
+                cls="primary",
+                style="width:100%; margin-top:15px; font-weight:bold;",
+            ),
             method="get",
             action="/people",
+            hx_get="/people",
+            hx_target=".content-area",
+            hx_swap="innerHTML",
         ),
     )
 
@@ -128,7 +134,7 @@ def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
         ),
         Form(
             H3("Event Filters"),
-            # Live search
+            # Search input (no auto-trigger)
             Div(
                 Label("Search: "),
                 Input(
@@ -137,14 +143,10 @@ def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
                     value=q,
                     placeholder="Search by title...",
                     style="width:100%; margin-top:5px;",
-                    hx_get="/events",
-                    hx_trigger="keyup changed delay:500ms",
-                    hx_target=".content-area",
-                    hx_include="[name]",
                 ),
                 cls="search-box",
             ),
-            # Type chips
+            # Type chips (keep immediate behavior)
             Div(
                 H4("Event Types"),
                 *[
@@ -155,7 +157,7 @@ def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
             )
             if types
             else "",
-            # Date range
+            # Date range (no auto-trigger)
             Div(
                 H4("Date Range"),
                 Div(
@@ -164,10 +166,6 @@ def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
                         type="date",
                         name="start_date",
                         value=start_date if start_date else None,
-                        hx_get="/events",
-                        hx_trigger="change",
-                        hx_target=".content-area",
-                        hx_include="[name]",
                     ),
                     style="margin-bottom:10px;",
                 ),
@@ -177,17 +175,23 @@ def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
                         type="date",
                         name="end_date",
                         value=end_date if end_date else None,
-                        hx_get="/events",
-                        hx_trigger="change",
-                        hx_target=".content-area",
-                        hx_include="[name]",
                     ),
                     style="margin-bottom:10px;",
                 ),
                 cls="date-range",
             ),
+            # Apply Filters button
+            Button(
+                "Apply Filters",
+                type="submit",
+                cls="primary",
+                style="width:100%; margin-top:15px; font-weight:bold;",
+            ),
             method="get",
             action="/events",
+            hx_get="/events",
+            hx_target=".content-area",
+            hx_swap="innerHTML",
         ),
     )
 
@@ -214,7 +218,7 @@ def locations_filter_panel(q="", selected_types=None):
         ),
         Form(
             H3("Location Filters"),
-            # Live search
+            # Search input (no auto-trigger)
             Div(
                 Label("Search: "),
                 Input(
@@ -223,14 +227,10 @@ def locations_filter_panel(q="", selected_types=None):
                     value=q,
                     placeholder="Search by name...",
                     style="width:100%; margin-top:5px;",
-                    hx_get="/locations",
-                    hx_trigger="keyup changed delay:500ms",
-                    hx_target=".content-area",
-                    hx_include="[name]",
                 ),
                 cls="search-box",
             ),
-            # Type chips
+            # Type chips (keep immediate behavior)
             Div(
                 H4("Location Types"),
                 *[
@@ -243,8 +243,18 @@ def locations_filter_panel(q="", selected_types=None):
             )
             if types
             else "",
+            # Apply Filters button
+            Button(
+                "Apply Filters",
+                type="submit",
+                cls="primary",
+                style="width:100%; margin-top:15px; font-weight:bold;",
+            ),
             method="get",
             action="/locations",
+            hx_get="/locations",
+            hx_target=".content-area",
+            hx_swap="innerHTML",
         ),
     )
 
@@ -271,7 +281,7 @@ def organizations_filter_panel(q="", selected_types=None):
         ),
         Form(
             H3("Organization Filters"),
-            # Live search
+            # Search input (no auto-trigger)
             Div(
                 Label("Search: "),
                 Input(
@@ -280,14 +290,10 @@ def organizations_filter_panel(q="", selected_types=None):
                     value=q,
                     placeholder="Search by name...",
                     style="width:100%; margin-top:5px;",
-                    hx_get="/organizations",
-                    hx_trigger="keyup changed delay:500ms",
-                    hx_target=".content-area",
-                    hx_include="[name]",
                 ),
                 cls="search-box",
             ),
-            # Type chips
+            # Type chips (keep immediate behavior)
             Div(
                 H4("Organization Types"),
                 *[
@@ -300,7 +306,17 @@ def organizations_filter_panel(q="", selected_types=None):
             )
             if types
             else "",
+            # Apply Filters button
+            Button(
+                "Apply Filters",
+                type="submit",
+                cls="primary",
+                style="width:100%; margin-top:15px; font-weight:bold;",
+            ),
             method="get",
             action="/organizations",
+            hx_get="/organizations",
+            hx_target=".content-area",
+            hx_swap="innerHTML",
         ),
     )
