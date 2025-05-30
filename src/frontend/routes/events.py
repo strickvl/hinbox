@@ -3,6 +3,7 @@ import markdown
 from fasthtml.common import H2, A, Div, Li, NotStr, P, Span, Ul
 
 from src.config_loader import DomainConfig
+from src.utils.error_handler import ErrorHandler
 
 from ..app_config import get_current_domain, main_layout, rt
 from ..data_access import build_indexes, get_domain_data
@@ -21,12 +22,135 @@ def get_page_title(page_name: str, domain: str = "guantanamo") -> str:
         return f"Research Browse - {page_name}"
 
 
+def parse_event_date(dt):
+    """Parse event date string to Arrow object."""
+    if not dt:
+        return None
+    try:
+        return arrow.get(dt)
+    except:
+        return None
+
+
+def filter_events(events_index, q="", selected_types=None, start_date="", end_date=""):
+    """Filter events with date range support."""
+    selected_types = selected_types or []
+
+    # Parse date filters
+    filter_start = None
+    filter_end = None
+    if start_date:
+        try:
+            filter_start = arrow.get(start_date)
+        except:
+            pass
+    if end_date:
+        try:
+            filter_end = arrow.get(end_date)
+        except:
+            pass
+
+    # Create event tuples with parsed dates
+    all_events = []
+    for k, event in events_index.items():
+        start_dt = parse_event_date(event.get("start_date", ""))
+        all_events.append((k, start_dt, event))
+
+    # Apply filters
+    filtered = []
+    for k, start_dt, event in all_events:
+        # Search filter
+        if q and q not in event.get("title", "").strip().lower():
+            continue
+
+        # Type filter
+        event_type = event.get("event_type", "").strip().lower()
+        if selected_types and event_type not in [t.lower() for t in selected_types]:
+            continue
+
+        # Date range filters
+        if filter_start and start_dt and start_dt < filter_start:
+            continue
+        if filter_end and start_dt and start_dt > filter_end:
+            continue
+
+        filtered.append((k, start_dt, event))
+
+    return filtered
+
+
+def sort_events_by_date(filtered_events):
+    """Sort events chronologically."""
+    return sorted(filtered_events, key=lambda x: (x[1].timestamp() if x[1] else 0))
+
+
+def render_events_list(filtered_events):
+    """Render events list with date formatting."""
+    if not filtered_events:
+        return Div(
+            "No events match your filters. Try adjusting your criteria.",
+            cls="empty-state",
+        )
+
+    # Sort events by date
+    sorted_events = sort_events_by_date(filtered_events)
+
+    items = []
+    for k, start_dt, event in sorted_events:
+        start_str = start_dt.format("YYYY-MM-DD") if start_dt else "Unknown"
+        event_type = event.get("event_type", "")
+
+        type_badge = ""
+        if event_type:
+            type_badge = Span(event_type, cls="tag")
+
+        link = A(event["title"], href=f"/events/{encode_key(k)}")
+        items.append(
+            Li(
+                Div(
+                    Span(
+                        start_str,
+                        style="font-weight:bold; margin-right:10px; color:var(--primary);",
+                    ),
+                    link,
+                    style="display:flex; align-items:center;",
+                ),
+                Div(type_badge, style="margin-top:5px;") if type_badge else "",
+            )
+        )
+
+    return Div(
+        Div(
+            f"{len(filtered_events)} events found",
+            style="margin-bottom:15px; color:var(--text-light);",
+        ),
+        Ul(*items),
+        id="results",
+    )
+
+
 @rt("/events")
 def list_events(request):
-    current_domain = get_current_domain(request)
+    error_handler = ErrorHandler("events_list", {"route": "/events"})
 
-    # Load domain-specific data
-    domain_data = get_domain_data(current_domain)
+    try:
+        current_domain = get_current_domain(request)
+        domain_data = get_domain_data(current_domain)
+    except Exception as e:
+        error_handler.log_error(e, "error")
+        return main_layout(
+            "Error - Events",
+            Div(),
+            Div(
+                H2("Error Loading Data", style="color:var(--danger);"),
+                P(
+                    "There was an error loading the events data. Please try again later."
+                ),
+                A("← Back to Home", href="/", cls="primary"),
+            ),
+            page_header_title="Error",
+        )
+
     if not domain_data["events"]:
         # No data for this domain
         content = Div(
@@ -47,108 +171,57 @@ def list_events(request):
             current_domain=current_domain,
         )
 
-    # Build indexes for this domain
-    domain_indexes = build_indexes(domain_data)
-    events_index = domain_indexes["events"]
+    try:
+        # Build indexes for this domain
+        domain_indexes = build_indexes(domain_data)
+        events_index = domain_indexes["events"]
 
-    def parse_dt(dt):
-        if not dt:
-            return None
-        try:
-            return arrow.get(dt)
-        except:
-            return None
+        # Get filters from request
+        q = request.query_params.get("q", "").strip()
+        selected_types_raw = request.query_params.getlist("etype")
+        selected_types = [t.strip() for t in selected_types_raw if t.strip()]
+        start_date = request.query_params.get("start_date", "")
+        end_date = request.query_params.get("end_date", "")
 
-    q = request.query_params.get("q", "").strip().lower()
-    selected_types_raw = request.query_params.getlist("etype")
-    selected_types = [t.strip().lower() for t in selected_types_raw if t.strip()]
-    start_q = request.query_params.get("start_date", "")
-    end_q = request.query_params.get("end_date", "")
+        # Apply filters using helper functions
+        filtered_events = filter_events(
+            events_index, q.lower(), selected_types, start_date, end_date
+        )
 
-    def rowinfo(k, ev):
-        startdt = parse_dt(ev.get("start_date", ""))
-        return (k, startdt, ev)
+        # Render results using helper function
+        content = render_events_list(filtered_events)
 
-    all_rows = [rowinfo(k, e) for k, e in events_index.items()]
-
-    filtered = []
-    for k, startdt, ev in all_rows:
-        evtype = ev.get("event_type", "").strip().lower()
-        title_lower = ev.get("title", "").strip().lower()
-        keep = True
-
-        if selected_types:
-            if not set(selected_types).issubset({evtype}):
-                keep = False
-        if q and q not in title_lower:
-            keep = False
-        if keep and start_q:
-            try:
-                filter_start = arrow.get(start_q)
-                if startdt and startdt < filter_start:
-                    keep = False
-            except:
-                pass
-        if keep and end_q:
-            try:
-                filter_end = arrow.get(end_q)
-                if startdt and startdt > filter_end:
-                    keep = False
-            except:
-                pass
-        if keep:
-            filtered.append((k, startdt, ev))
-
-    filtered.sort(key=lambda x: (x[1].timestamp() if x[1] else 0))
-    items = []
-    for k, startdt, ev in filtered:
-        start_str = startdt.format("YYYY-MM-DD") if startdt else "Unknown"
-        event_type = ev.get("event_type", "")
-        type_badge = ""
-        if event_type:
-            from fasthtml.common import Span
-
-            type_badge = Span(event_type, cls="tag")
-
-        link = A(ev["title"], href=f"/events/{encode_key(k)}")
-        items.append(
-            Li(
-                Div(
-                    Span(
-                        start_str,
-                        style="font-weight:bold; margin-right:10px; color:var(--primary);",
-                    ),
-                    link,
-                    style="display:flex; align-items:center;",
-                ),
-                Div(type_badge, style="margin-top:5px;") if type_badge else "",
+        # Return full page or partial based on HTMX request
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            return content
+        else:
+            return main_layout(
+                get_page_title("Events"),
+                events_filter_panel(q, selected_types, start_date, end_date),
+                content,
+                page_header_title="Events",
+                current_domain=current_domain,
             )
+    except Exception as e:
+        error_handler.log_error(e, "error")
+        error_content = Div(
+            H2("Error Processing Request", style="color:var(--danger);"),
+            P("There was an error processing your request. Please try again later."),
+            A("← Back to Events", href="/events", cls="primary"),
         )
 
-    content = Div(
-        Div(
-            f"{len(filtered)} events found",
-            style="margin-bottom:15px; color:var(--text-light);",
-        ),
-        Ul(*items)
-        if items
-        else Div(
-            "No events match your filters. Try adjusting your criteria.",
-            cls="empty-state",
-        ),
-    )
-
-    is_htmx = request.headers.get("HX-Request") == "true"
-    if is_htmx:
-        return content
-    else:
-        return main_layout(
-            get_page_title("Events"),
-            events_filter_panel(q, selected_types, start_q, end_q),
-            content,
-            page_header_title="Events",
-            current_domain=current_domain,
-        )
+        is_htmx = request.headers.get("HX-Request") == "true"
+        if is_htmx:
+            return error_content
+        else:
+            return main_layout(
+                get_page_title("Events - Error"),
+                Div(),
+                error_content,
+                page_header_title="Error",
+                current_domain=current_domain,
+            )
 
 
 @rt("/events/{key:path}")
