@@ -16,6 +16,28 @@ Hinbox is a flexible, domain-configurable entity extraction system designed for 
 - **Web Interface**: FastHTML-based UI for exploring research findings with version navigation
 - **Easy Setup**: Simple configuration files, no Python coding required
 
+## 📸 Screenshots
+
+<figure>
+  <img src="assets/processing-logs.png" alt="Processing Logs" width="800">
+  <figcaption><em>Real-time processing logs showing entity extraction progress with detailed status updates</em></figcaption>
+</figure>
+
+<figure>
+  <img src="assets/frontpage.png" alt="Front page" width="800">
+  <figcaption><em>Main dashboard displaying research domains and extracted entity statistics</em></figcaption>
+</figure>
+
+<figure>
+  <img src="assets/organizations-view.png" alt="Organizations View" width="800">
+  <figcaption><em>Organizations listing with search and filtering capabilities for research analysis</em></figcaption>
+</figure>
+
+<figure>
+  <img src="assets/organization-profile.png" alt="Sample Organization Profile" width="800">
+  <figcaption><em>Detailed organization profile showing extracted information, sources, and version history</em></figcaption>
+</figure>
+
 ## 🚀 Quick Start
 
 > **Note**: This project supports both `./run.py` commands and `just` commands. Use whichever you prefer!
