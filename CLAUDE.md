@@ -80,3 +80,6 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
 
 ## Development Guidance
 - The application has no users yet, so don't worry too much about backwards compatibility. Just make it work.
+
+## Code Conventions
+- When using type hints for dicts or tuples, we use the Tuple or Dict from the `typing` module and not `tuple` or `dict` FYI
