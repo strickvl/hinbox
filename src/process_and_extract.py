@@ -432,7 +432,7 @@ def process_articles_batch(
     }
 
     for row_index, row in enumerate(rows, 1):
-        langfuse_trace_id = f"{row.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        langfuse_trace_id = f"{row['id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         if row_index > args.limit:
             # We've hit the limit; keep the rest unmodified
             processed_rows.append(row)
@@ -468,9 +468,7 @@ def main():
     log("Starting script...")
 
     # create a unique session id
-    langfuse_session_id = (
-        f"{uuid.uuid4()}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
-    )
+    langfuse_session_id = f"{uuid.uuid4()}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     # Setup and initialization
     args = setup_arguments_and_config()
