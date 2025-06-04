@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Type
 
 import instructor
 import litellm
-from openai import OpenAI
+from langfuse.openai import OpenAI
 from pydantic import BaseModel
 
 from src.constants import (

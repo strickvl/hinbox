@@ -59,4 +59,8 @@ select = [
 ]
 
 [dependency-groups]
-dev = ["deadcode>=2.4.1", "vulture>=2.14"]
+dev = [
+    "deadcode>=2.4.1",
+ "ipython>=8.37.0",
+ "vulture>=2.14",
+]
