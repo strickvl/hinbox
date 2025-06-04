@@ -8,8 +8,9 @@ into the data/entities/*.parquet files.
 
 import argparse
 import os
+import uuid
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -250,7 +251,7 @@ def write_updated_articles(processed_rows: List[Dict], articles_path: str) -> No
 
 def calculate_reflection_statistics(
     processed_rows: List[Dict], processed_count: int
-) -> tuple[int, float]:
+) -> Tuple[int, float]:
     """Calculate reflection statistics from processed articles."""
     total_reflection_attempts = 0
     for row in processed_rows:
@@ -349,7 +350,9 @@ def process_single_article(
     processor: ArticleProcessor,
     entities: Dict[str, Dict],
     args: argparse.Namespace,
-) -> tuple[Dict, bool, str]:
+    langfuse_session_id: str,
+    langfuse_trace_id: str,
+) -> Tuple[Dict, bool, str]:
     """Process a single article through the extraction pipeline.
 
     Returns:
@@ -417,7 +420,8 @@ def process_articles_batch(
     processor: ArticleProcessor,
     entities: Dict[str, Dict],
     args: argparse.Namespace,
-) -> tuple[List[Dict], Dict[str, int]]:
+    langfuse_session_id: str,
+) -> Tuple[List[Dict], Dict[str, int]]:
     """Process a batch of articles and return results with statistics."""
     processed_rows = []
     counters = {
@@ -428,6 +432,7 @@ def process_articles_batch(
     }
 
     for row_index, row in enumerate(rows, 1):
+        langfuse_trace_id = f"{row.id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         if row_index > args.limit:
             # We've hit the limit; keep the rest unmodified
             processed_rows.append(row)
@@ -435,7 +440,13 @@ def process_articles_batch(
 
         # Process the article
         updated_row, was_processed, skip_reason = process_single_article(
-            row, row_index, processor, entities, args
+            row,
+            row_index,
+            processor,
+            entities,
+            args,
+            langfuse_session_id,
+            langfuse_trace_id,
         )
 
         processed_rows.append(updated_row)
@@ -456,6 +467,11 @@ def main():
     """Main processing function - orchestrates the entire article processing workflow."""
     log("Starting script...")
 
+    # create a unique session id
+    langfuse_session_id = (
+        f"{uuid.uuid4()}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    )
+
     # Setup and initialization
     args = setup_arguments_and_config()
     entities = load_existing_entities()
@@ -471,7 +487,9 @@ def main():
 
     # Process articles
     article_count = len(rows)
-    processed_rows, counters = process_articles_batch(rows, processor, entities, args)
+    processed_rows, counters = process_articles_batch(
+        rows, processor, entities, args, langfuse_session_id
+    )
 
     # Write results and statistics
     write_results_and_statistics(
