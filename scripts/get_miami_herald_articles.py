@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
-from typing import Any, Dict, Iterator, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -264,7 +264,7 @@ class ProcessingStats:
     processed_count: int = 0
     success_count: int = 0
     failure_count: int = 0
-    processing_times: list[float] = None
+    processing_times: List[float] = None
     start_time: float = 0.0
     last_save_count: int = 0  # Track when we last saved
 
@@ -326,8 +326,8 @@ class ProcessingStats:
 
 
 async def process_article_batch(
-    articles: list[Article], semaphore: asyncio.Semaphore, stats: ProcessingStats
-) -> list[Article]:
+    articles: List[Article], semaphore: asyncio.Semaphore, stats: ProcessingStats
+) -> List[Article]:
     """Process a batch of articles to fetch their content.
 
     Args:
@@ -371,7 +371,7 @@ async def process_article_batch(
 
 
 async def save_progress(
-    articles: list[Article], output_path: Path, stats: ProcessingStats
+    articles: List[Article], output_path: Path, stats: ProcessingStats
 ) -> None:
     """Save current progress to the JSONL file.
 

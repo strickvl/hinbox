@@ -1,7 +1,7 @@
 """File operations for entity data management."""
 
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -264,7 +264,7 @@ def write_entity_to_file(
         logger.warning(f"No entities to write for {entity_type}")
 
 
-def read_entities_from_file(entity_type: str) -> list[Dict[str, Any]]:
+def read_entities_from_file(entity_type: str) -> List[Dict[str, Any]]:
     """
     Read all entities of a given type from their Parquet file.
 
