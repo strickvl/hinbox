@@ -50,12 +50,6 @@ HASH_TRUNCATE_LENGTH = 6
 # Default embedding model
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
-# Braintrust configuration
-# Set this to your Braintrust project ID if you want to use Braintrust logging
-# You can also use project_name instead, which will create the project if it doesn't exist
-BRAINTRUST_PROJECT_ID = os.getenv("BRAINTRUST_PROJECT_ID", None)
-BRAINTRUST_PROJECT_NAME = os.getenv("BRAINTRUST_PROJECT_NAME", "hinbox")
-
 # Profile versioning feature flag
 ENABLE_PROFILE_VERSIONING = (
     os.getenv("ENABLE_PROFILE_VERSIONING", "true").lower() == "true"

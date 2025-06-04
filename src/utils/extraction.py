@@ -8,8 +8,6 @@ from pydantic import BaseModel
 
 from src.constants import (
     BASE_DELAY,
-    BRAINTRUST_PROJECT_ID,
-    BRAINTRUST_PROJECT_NAME,
     CLOUD_MODEL,
     MAX_RETRIES,
     OLLAMA_MODEL,
@@ -51,12 +49,7 @@ def extract_entities_cloud(
         user_content=text,
     )
 
-    # Build metadata with Braintrust configuration
     metadata = {"tags": ["dev", "extraction"]}
-    if BRAINTRUST_PROJECT_ID:
-        metadata["project_id"] = BRAINTRUST_PROJECT_ID
-    elif BRAINTRUST_PROJECT_NAME:
-        metadata["project_name"] = BRAINTRUST_PROJECT_NAME
 
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY

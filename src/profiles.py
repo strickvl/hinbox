@@ -9,8 +9,6 @@ from rich.console import Console
 
 from src.config_loader import get_domain_config
 from src.constants import (
-    BRAINTRUST_PROJECT_ID,
-    BRAINTRUST_PROJECT_NAME,
     CLOUD_MODEL,
     DEFAULT_TEMPERATURE,
     ENABLE_PROFILE_VERSIONING,
@@ -36,7 +34,7 @@ from src.utils.profiles import extract_profile_text
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
-litellm.callbacks = ["braintrust", "langfuse"]
+litellm.callbacks = ["langfuse"]
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -86,16 +84,6 @@ class VersionedProfile(BaseModel):
     def get_latest(self) -> Optional[ProfileVersion]:
         """Get the latest version."""
         return self.versions[-1] if self.versions else None
-
-
-def _build_metadata(operation: str) -> Dict[str, any]:
-    """Build metadata dict with Braintrust configuration."""
-    metadata = {"tags": [operation]}
-    if BRAINTRUST_PROJECT_ID:
-        metadata["project_id"] = BRAINTRUST_PROJECT_ID
-    elif BRAINTRUST_PROJECT_NAME:
-        metadata["project_name"] = BRAINTRUST_PROJECT_NAME
-    return metadata
 
 
 class EntityProfile(BaseModel):
