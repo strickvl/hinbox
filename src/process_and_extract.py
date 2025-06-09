@@ -377,7 +377,12 @@ def process_single_article(
 
     # Relevance check
     if args.relevance_check:
-        if not processor.check_relevance(article_info["content"], article_info["id"]):
+        if not processor.check_relevance(
+            article_info["content"],
+            article_info["id"],
+            langfuse_session_id,
+            langfuse_trace_id,
+        ):
             processing_metadata["processed"] = False
             processing_metadata["reason"] = "Not relevant"
             return row, False, "not_relevant"

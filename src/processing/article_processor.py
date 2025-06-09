@@ -30,12 +30,20 @@ class ArticleProcessor:
         self.model_type = model_type
         self.specific_model = OLLAMA_MODEL if model_type == "ollama" else CLOUD_MODEL
 
-    def check_relevance(self, article_content: str, article_id: str) -> bool:
+    def check_relevance(
+        self,
+        article_content: str,
+        article_id: str,
+        langfuse_session_id: str,
+        langfuse_trace_id: str,
+    ) -> bool:
         """Check if article is relevant to the domain.
 
         Args:
             article_content: Full text of the article
             article_id: Unique identifier for the article
+            langfuse_session_id: Langfuse session ID
+            langfuse_trace_id: Langfuse trace ID
 
         Returns:
             True if article is relevant, False otherwise
@@ -44,11 +52,18 @@ class ArticleProcessor:
         try:
             if self.model_type == "ollama":
                 relevance_result = ollama_check_relevance(
-                    article_content, model="qwq", domain=self.domain
+                    article_content,
+                    model="qwq",
+                    domain=self.domain,
+                    langfuse_session_id=langfuse_session_id,
+                    langfuse_trace_id=langfuse_trace_id,
                 )
             else:
                 relevance_result = gemini_check_relevance(
-                    article_content, domain=self.domain
+                    article_content,
+                    domain=self.domain,
+                    langfuse_session_id=langfuse_session_id,
+                    langfuse_trace_id=langfuse_trace_id,
                 )
 
             if not relevance_result.is_relevant:

@@ -28,6 +28,8 @@ def extract_entities_cloud(
     response_model: Union[Type[BaseModel], List[Type[BaseModel]]],
     model: str = CLOUD_MODEL,
     temperature: float = 0,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> Any:
     """
     Generic cloud-based entity extraction.
@@ -38,6 +40,8 @@ def extract_entities_cloud(
         response_model: Pydantic model or list of models for response
         model: Model to use for extraction
         temperature: Temperature for generation
+        langfuse_session_id: Langfuse session ID
+        langfuse_trace_id: Langfuse trace ID
 
     Returns:
         Extracted entities according to response_model
@@ -49,7 +53,11 @@ def extract_entities_cloud(
         user_content=text,
     )
 
-    metadata = {"tags": ["dev", "extraction"]}
+    metadata = {
+        "tags": ["dev", "extraction"],
+        "trace_id": langfuse_trace_id,
+        "session_id": langfuse_session_id,
+    }
 
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
@@ -94,6 +102,8 @@ def extract_entities_local(
     response_model: Type[BaseModel],
     model: str = OLLAMA_MODEL,
     temperature: float = 0,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> Any:
     """
     Generic local Ollama-based entity extraction.
@@ -104,6 +114,8 @@ def extract_entities_local(
         response_model: Pydantic model for response
         model: Model to use for extraction
         temperature: Temperature for generation
+        langfuse_session_id: Langfuse session ID
+        langfuse_trace_id: Langfuse trace ID
 
     Returns:
         Extracted entities according to response_model
@@ -117,15 +129,18 @@ def extract_entities_local(
         user_content=text,
     )
 
+    metadata = {
+        "tags": ["dev", "extraction"],
+        "trace_id": langfuse_trace_id,
+        "session_id": langfuse_session_id,
+    }
+
     results = client.beta.chat.completions.parse(
         model=get_ollama_model_name(model),
         response_format=response_model,
         temperature=temperature,
         messages=messages,
+        metadata=metadata,
     )
 
     return results.choices[0].message.parsed
-
-
-# Backward compatibility - these functions now load from config files
-# The actual prompts are stored in configs/{domain}/prompts/*.md files
