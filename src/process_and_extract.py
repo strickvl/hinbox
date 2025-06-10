@@ -223,8 +223,8 @@ def merge_all_entities(
                 article_info["content"],
                 extraction_timestamp,
                 model_type,
-                langfuse_session_id,
-                langfuse_trace_id,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
             merge_duration = (datetime.now() - merge_start).total_seconds()
             log(

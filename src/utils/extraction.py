@@ -14,6 +14,7 @@ from src.constants import (
 )
 from src.logging_config import get_logger
 from src.utils.llm import (
+    DEFAULT_METADATA,
     create_messages,
     get_litellm_client,
     get_ollama_client,
@@ -53,11 +54,12 @@ def extract_entities_cloud(
         user_content=text,
     )
 
-    metadata = {
-        "tags": ["dev", "extraction"],
-        "trace_id": langfuse_trace_id,
-        "session_id": langfuse_session_id,
-    }
+    metadata = dict(DEFAULT_METADATA)
+    metadata["tags"] = ["dev", "extraction"]
+    if langfuse_trace_id is not None:
+        metadata["trace_id"] = langfuse_trace_id
+    if langfuse_session_id is not None:
+        metadata["session_id"] = langfuse_session_id
 
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
@@ -129,11 +131,12 @@ def extract_entities_local(
         user_content=text,
     )
 
-    metadata = {
-        "tags": ["dev", "extraction"],
-        "trace_id": langfuse_trace_id,
-        "session_id": langfuse_session_id,
-    }
+    metadata = dict(DEFAULT_METADATA)
+    metadata["tags"] = ["dev", "extraction"]
+    if langfuse_trace_id is not None:
+        metadata["trace_id"] = langfuse_trace_id
+    if langfuse_session_id is not None:
+        metadata["session_id"] = langfuse_session_id
 
     results = client.beta.chat.completions.parse(
         model=get_ollama_model_name(model),

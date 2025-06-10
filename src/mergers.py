@@ -8,11 +8,8 @@ from src.constants import (
     SIMILARITY_THRESHOLD,
 )
 from src.logging_config import display_markdown, get_logger, log
-from src.merge import (
-    cloud_model_check_match,
-    compute_similarity,
-    local_model_check_match,
-)
+from src.match_checker import cloud_model_check_match, local_model_check_match
+from src.merge import compute_similarity
 from src.profiles import VersionedProfile, create_profile, update_profile
 from src.utils.embeddings import EmbeddingManager
 from src.utils.file_ops import write_entity_to_file

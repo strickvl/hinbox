@@ -4,14 +4,11 @@ import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
-from pydantic import BaseModel
 from rich.markdown import Markdown
 from rich.panel import Panel
 
 from src.constants import (
-    CLOUD_MODEL,
     ENABLE_PROFILE_VERSIONING,
-    OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
 )
 from src.exceptions import (
@@ -21,15 +18,11 @@ from src.exceptions import (
     SimilarityCalculationError,
 )
 from src.logging_config import console, display_markdown, get_logger, log
-from src.mergers import EntityMerger
+from src.match_checker import cloud_model_check_match, local_model_check_match
 from src.profiles import VersionedProfile, create_profile, update_profile
 from src.utils.embeddings import EmbeddingManager
 from src.utils.error_handler import handle_merge_error
 from src.utils.file_ops import write_entity_to_file
-from src.utils.llm import (
-    cloud_generation,
-    local_generation,
-)
 from src.utils.profiles import extract_profile_text
 
 # Get module-specific logger
@@ -49,145 +42,7 @@ def get_embedding_manager(
     return _embedding_manager
 
 
-class MatchCheckResult(BaseModel):
-    is_match: bool
-    reason: str
-
-
-def local_model_check_match(
-    new_name: str,
-    existing_name: str,
-    new_profile_text: str,
-    existing_profile_text: str,
-    model: str = OLLAMA_MODEL,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
-) -> MatchCheckResult:
-    """
-    Check if a newly extracted profile refers to the same entity as an existing profile.
-
-    This function uses an LLM to determine if two profiles refer to the same person,
-    even when names might have variations or additional context is needed to establish identity.
-
-    Args:
-        new_name: The name extracted from the new article
-        existing_name: The name from an existing profile in our database
-        new_profile_text: The profile text generated from the new article
-        existing_profile_text: The existing profile text we're comparing against
-        model: The LLM model to use for comparison
-        langfuse_session_id: The Langfuse session ID
-        langfuse_trace_id: The Langfuse trace ID
-    """
-    system_content = """You are an expert analyst specializing in entity
-                               resolution for news articles about Guantánamo Bay.
-
-                    Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
-
-                    Consider the following when making your determination:
-                    1. Name variations: Different spellings, nicknames, titles, or partial names
-                    2. Contextual information: Role, affiliations, actions, and biographical details
-                    3. Temporal consistency: Whether the information in both profiles could apply to the same entity at different times
-                    4. Sub-location rule: If one location is a smaller subset (e.g., a camp within Guantánamo Bay), it is NOT the same as the larger location.
-
-                    Provide a detailed explanation for your decision, citing specific evidence from both profiles. If one is a sub-location or facility inside a bigger one, do NOT merge them.
-                    """
-
-    user_content = f"""I need to determine if these two profiles refer to the same entity:
-
-## PROFILE FROM NEW ARTICLE:
-Name: {new_name}
-Profile: {new_profile_text}
-
-## EXISTING PROFILE IN DATABASE:
-Name: {existing_name}
-Profile: {existing_profile_text}
-
-Are these profiles referring to the same entity? Provide your analysis."""
-
-    try:
-        return local_generation(
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": user_content},
-            ],
-            response_model=MatchCheckResult,
-            model=model,
-            temperature=0,
-            langfuse_session_id=langfuse_session_id,
-            langfuse_trace_id=langfuse_trace_id,
-        )
-    except Exception as e:
-        log(f"Error with Ollama API", level="error", exception=e)
-        # Return a default result indicating failure
-        return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
-
-
-def cloud_model_check_match(
-    new_name: str,
-    existing_name: str,
-    new_profile_text: str,
-    existing_profile_text: str,
-    model: str = CLOUD_MODEL,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
-) -> MatchCheckResult:
-    """
-    Check if a newly extracted profile refers to the same entity as an existing profile,
-    using a cloud-based LLM. This function specifically ensures sub-locations
-    are not merged with their larger locations.
-
-    Args:
-        new_name: The name extracted from the new article
-        existing_name: The name from an existing profile in our database
-        new_profile_text: The profile text generated from the new article
-        existing_profile_text: The existing profile text we're comparing against
-        model: The LLM model to use for comparison
-        langfuse_session_id: The Langfuse session ID
-        langfuse_trace_id: The Langfuse trace ID
-
-    Returns:
-        MatchCheckResult with is_match flag and detailed reasoning
-    """
-    system_content = """You are an expert analyst specializing in entity resolution for news articles about Guantánamo Bay.
-
-Your task is to determine if two profiles refer to the same real-world entity (person, organization, location, or event).
-
-Consider the following when making your determination:
-1. Name variations: Different spellings, nicknames, titles, or partial names
-2. Contextual information: Role, affiliations, actions, and biographical details
-3. Temporal consistency: Whether the information in both profiles could apply to the same entity at different times
-4. Sub-location rule: If one location is a smaller subset (e.g., a camp within Guantánamo Bay), it is NOT the same as the larger location.
-
-Provide a detailed explanation for your decision, citing specific evidence from both profiles. If one is a sub-location or facility inside a bigger one, do NOT merge them.
-"""
-
-    user_content = f"""I need to determine if these two profiles refer to the same entity:
-
-## PROFILE FROM NEW ARTICLE:
-Name: {new_name}
-Profile: {new_profile_text}
-
-## EXISTING PROFILE IN DATABASE:
-Name: {existing_name}
-Profile: {existing_profile_text}
-
-Are these profiles referring to the same entity? Provide your analysis."""
-
-    try:
-        return cloud_generation(
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": user_content},
-            ],
-            response_model=MatchCheckResult,
-            model=model,
-            temperature=0,
-            langfuse_session_id=langfuse_session_id,
-            langfuse_trace_id=langfuse_trace_id,
-        )
-    except Exception as e:
-        log(f"Error with Gemini API", level="error", exception=e)
-        return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
+# Match check functions moved to match_checker.py to avoid circular imports
 
 
 def normalize_vector(vector: List[float]) -> np.ndarray:
@@ -537,6 +392,7 @@ def merge_people(
                     article_content,
                     article_id,
                     model_type,
+                    "guantanamo",  # domain parameter was missing
                     langfuse_session_id,
                     langfuse_trace_id,
                 )
@@ -559,9 +415,7 @@ def merge_people(
                 level="info",
             )
             proposed_person_embedding = embedding_manager.embed_text(
-                proposed_profile_text,
-                langfuse_session_id=langfuse_session_id,
-                langfuse_trace_id=langfuse_trace_id,
+                proposed_profile_text
             )
             log(
                 f"Generated embedding of size: {len(proposed_person_embedding)}",
@@ -681,6 +535,7 @@ def merge_people(
                                 article_content,
                                 article_id,
                                 model_type,
+                                "guantanamo",
                                 langfuse_session_id=langfuse_session_id,
                                 langfuse_trace_id=langfuse_trace_id,
                             )
@@ -719,6 +574,7 @@ def merge_people(
                                 article_content,
                                 article_id,
                                 model_type,
+                                "guantanamo",
                                 langfuse_session_id=langfuse_session_id,
                                 langfuse_trace_id=langfuse_trace_id,
                             )
@@ -857,6 +713,7 @@ def merge_locations(
                 article_content,
                 article_id,
                 model_type,
+                "guantanamo",
                 langfuse_session_id=langfuse_session_id,
                 langfuse_trace_id=langfuse_trace_id,
             )
@@ -967,6 +824,7 @@ def merge_locations(
                             article_content,
                             article_id,
                             model_type,
+                            "guantanamo",
                             langfuse_session_id=langfuse_session_id,
                             langfuse_trace_id=langfuse_trace_id,
                         )
@@ -1002,6 +860,7 @@ def merge_locations(
                             article_content,
                             article_id,
                             model_type,
+                            "guantanamo",
                             langfuse_session_id=langfuse_session_id,
                             langfuse_trace_id=langfuse_trace_id,
                         )
@@ -1142,6 +1001,7 @@ def merge_organizations(
                         article_content,
                         article_id,
                         model_type,
+                        "guantanamo",
                         langfuse_session_id=langfuse_session_id,
                         langfuse_trace_id=langfuse_trace_id,
                     )
@@ -1312,6 +1172,7 @@ def merge_organizations(
                                 article_content,
                                 article_id,
                                 model_type,
+                                "guantanamo",
                                 langfuse_session_id=langfuse_session_id,
                                 langfuse_trace_id=langfuse_trace_id,
                             )
@@ -1347,6 +1208,7 @@ def merge_organizations(
                                 article_content,
                                 article_id,
                                 model_type,
+                                "guantanamo",
                                 langfuse_session_id=langfuse_session_id,
                                 langfuse_trace_id=langfuse_trace_id,
                             )
@@ -1495,6 +1357,7 @@ def merge_events(
                 article_content,
                 article_id,
                 model_type,
+                "guantanamo",
                 langfuse_session_id=langfuse_session_id,
                 langfuse_trace_id=langfuse_trace_id,
             )
@@ -1607,6 +1470,7 @@ def merge_events(
                             article_content,
                             article_id,
                             model_type,
+                            "guantanamo",
                             langfuse_session_id=langfuse_session_id,
                             langfuse_trace_id=langfuse_trace_id,
                         )
@@ -1642,6 +1506,7 @@ def merge_events(
                             article_content,
                             article_id,
                             model_type,
+                            "guantanamo",
                             langfuse_session_id=langfuse_session_id,
                             langfuse_trace_id=langfuse_trace_id,
                         )
@@ -1768,6 +1633,8 @@ def merge_people_generic(
     domain: str = "guantanamo",
 ):
     """Merge people entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
     merger = EntityMerger("people")
     merger.merge_entities(
         extracted_people,
@@ -1798,6 +1665,8 @@ def merge_organizations_generic(
     domain: str = "guantanamo",
 ):
     """Merge organization entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
     merger = EntityMerger("organizations")
     merger.merge_entities(
         extracted_orgs,
@@ -1828,6 +1697,8 @@ def merge_locations_generic(
     domain: str = "guantanamo",
 ):
     """Merge location entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
     merger = EntityMerger("locations")
     merger.merge_entities(
         extracted_locations,
@@ -1858,6 +1729,8 @@ def merge_events_generic(
     domain: str = "guantanamo",
 ):
     """Merge event entities using the generic EntityMerger."""
+    from src.mergers import EntityMerger
+
     merger = EntityMerger("events")
     merger.merge_entities(
         extracted_events,
