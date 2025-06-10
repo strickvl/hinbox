@@ -74,6 +74,8 @@ def cloud_generation(
     model: str = CLOUD_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
     **kwargs: Any,
 ) -> Any:
     """
@@ -98,6 +100,12 @@ def cloud_generation(
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
 
+    metadata = dict(DEFAULT_METADATA)
+    if langfuse_trace_id is not None:
+        metadata["trace_id"] = langfuse_trace_id
+    if langfuse_session_id is not None:
+        metadata["session_id"] = langfuse_session_id
+
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
@@ -106,7 +114,7 @@ def cloud_generation(
                 max_tokens=max_tokens,
                 temperature=temperature,
                 response_model=response_model,
-                metadata=DEFAULT_METADATA,
+                metadata=metadata,
                 **kwargs,
             )
             logger.debug(f"Successfully generated response with {model}")
@@ -129,7 +137,7 @@ def cloud_generation(
                         max_tokens=max_tokens,
                         temperature=0,
                         response_model=response_model,
-                        metadata=DEFAULT_METADATA,
+                        metadata=metadata,
                         max_retries=0,
                         **kwargs,
                     )
@@ -155,7 +163,7 @@ def cloud_generation(
                         max_tokens=max_tokens,
                         temperature=0,
                         response_model=response_model,
-                        metadata=DEFAULT_METADATA,
+                        metadata=metadata,
                         max_retries=0,
                         **kwargs,
                     )
@@ -198,6 +206,8 @@ def local_generation(
     model: str = OLLAMA_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
     **kwargs: Any,
 ) -> Any:
     """
@@ -219,6 +229,12 @@ def local_generation(
 
     client = get_ollama_client()
 
+    metadata = dict(DEFAULT_METADATA)
+    if langfuse_trace_id is not None:
+        metadata["trace_id"] = langfuse_trace_id
+    if langfuse_session_id is not None:
+        metadata["session_id"] = langfuse_session_id
+
     try:
         response = client.beta.chat.completions.parse(
             model=get_ollama_model_name(model),
@@ -226,6 +242,7 @@ def local_generation(
             max_tokens=max_tokens,
             temperature=temperature,
             response_format=response_model,
+            metadata=metadata,
             **kwargs,
         )
         result = response.choices[0].message.parsed
@@ -241,6 +258,8 @@ def reflect_and_check(
     reasoning_prompt: str,
     mode: GenerationMode = GenerationMode.CLOUD,
     model: str = None,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> ReflectionResult:
     """
     Use an LLM to reflect on generated text and check if it meets requirements.
@@ -274,12 +293,16 @@ def reflect_and_check(
                 messages=messages,
                 response_model=ReflectionResult,
                 model=model or CLOUD_MODEL,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
         else:
             result = local_generation(
                 messages=messages,
                 response_model=ReflectionResult,
                 model=model or OLLAMA_MODEL,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
 
         logger.debug(f"Reflection check completed - valid: {result.valid}")
@@ -317,6 +340,8 @@ def iterative_improve(
     max_iterations: int = MAX_ITERATIONS,
     mode: GenerationMode = GenerationMode.CLOUD,
     model: str = None,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> Dict[str, Any]:
     """
     Iteratively improve text using generation and reflection.
@@ -353,7 +378,12 @@ def iterative_improve(
 
         # Reflect on current text
         reflection = reflect_and_check(
-            current_text, reflection_prompt, mode=mode, model=model
+            current_text,
+            reflection_prompt,
+            mode=mode,
+            model=model,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
         reflection_result = extract_reflection_result(reflection)
 
@@ -383,12 +413,16 @@ def iterative_improve(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or CLOUD_MODEL,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
         else:
             improved = local_generation(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or OLLAMA_MODEL,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
 
         # Extract text from response

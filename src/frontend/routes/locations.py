@@ -1,7 +1,7 @@
 import logging
 
 import markdown
-from fasthtml.common import H2, A, Div, NotStr, P, Span
+from fasthtml.common import H2, A, Div, NotStr, P, Response, Span
 
 from src.config_loader import DomainConfig
 from src.constants import ENABLE_PROFILE_VERSIONING
@@ -186,15 +186,11 @@ def show_location(key: str, request):
                             profile = version_data.profile_data
                     else:
                         # Invalid version, redirect to current
-                        from fasthtml.common import Response
-
                         return Response(
                             status_code=302, headers={"Location": f"/locations/{key}"}
                         )
                 except (ValueError, TypeError):
                     # Invalid version format, redirect to current
-                    from fasthtml.common import Response
-
                     return Response(
                         status_code=302, headers={"Location": f"/locations/{key}"}
                     )

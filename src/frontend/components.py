@@ -7,6 +7,11 @@ to improve consistency and reduce code duplication.
 
 from fasthtml.common import *
 
+from src.constants import ENABLE_PROFILE_VERSIONING
+
+from .app_config import main_layout
+from .utils import encode_key, random_pastel_color
+
 
 def EmptyState(message, cls="empty-state"):
     """Consistent empty state component for when no results are found."""
@@ -86,8 +91,6 @@ def FilterForm(route, *content, **attrs):
 
 def TypeChip(chip_name, chip_value, is_checked, target_route, param_name="type"):
     """Reusable type chip component following our chip_checkbox pattern."""
-    from .utils import random_pastel_color
-
     return Label(
         Input(
             type="checkbox",
@@ -162,8 +165,6 @@ def EntityList(entities, entity_type_name, route_prefix, render_func=None):
                 k, entity = entity_data, entity_data
 
             # Create default list item
-            from .utils import encode_key
-
             type_badge = ""
             if entity.get("type"):
                 type_badge = Span(entity.get("type"), cls="tag")
@@ -178,8 +179,6 @@ def EntityList(entities, entity_type_name, route_prefix, render_func=None):
 
 def PageWithSidebar(title, sidebar_content, main_content, **layout_attrs):
     """Layout wrapper for pages with sidebar (filter panel) and main content."""
-    from .app_config import main_layout
-
     return main_layout(title, sidebar_content, main_content, **layout_attrs)
 
 
@@ -219,10 +218,6 @@ def ProfileVersionSelector(
     selected_version: int = None,
 ):
     """Dropdown selector for profile versions."""
-    from src.constants import ENABLE_PROFILE_VERSIONING
-
-    from .utils import encode_key
-
     if not ENABLE_PROFILE_VERSIONING or total_versions <= 1:
         return ""
 

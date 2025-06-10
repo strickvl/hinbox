@@ -5,6 +5,7 @@ Tests the ProfileVersion and VersionedProfile models, as well as
 profile creation and update functions with versioning support.
 """
 
+import importlib
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -325,8 +326,6 @@ class TestFeatureFlag:
     def test_feature_flag_can_be_disabled(self):
         """Test that feature flag can be disabled via environment variable."""
         # Need to reload the module to pick up env var change
-        import importlib
-
         from src import constants
 
         importlib.reload(constants)
@@ -336,8 +335,6 @@ class TestFeatureFlag:
     @patch.dict("os.environ", {"ENABLE_PROFILE_VERSIONING": "TRUE"})
     def test_feature_flag_case_insensitive(self):
         """Test that feature flag is case insensitive."""
-        import importlib
-
         from src import constants
 
         importlib.reload(constants)
@@ -347,8 +344,6 @@ class TestFeatureFlag:
     @patch.dict("os.environ", {"ENABLE_PROFILE_VERSIONING": "invalid"})
     def test_feature_flag_invalid_value_defaults_false(self):
         """Test that invalid values default to False."""
-        import importlib
-
         from src import constants
 
         importlib.reload(constants)

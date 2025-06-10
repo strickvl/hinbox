@@ -1,5 +1,6 @@
 """Entity merging and deduplication functionality."""
 
+import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -20,6 +21,7 @@ from src.exceptions import (
     SimilarityCalculationError,
 )
 from src.logging_config import console, display_markdown, get_logger, log
+from src.mergers import EntityMerger
 from src.profiles import VersionedProfile, create_profile, update_profile
 from src.utils.embeddings import EmbeddingManager
 from src.utils.error_handler import handle_merge_error
@@ -58,6 +60,8 @@ def local_model_check_match(
     new_profile_text: str,
     existing_profile_text: str,
     model: str = OLLAMA_MODEL,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> MatchCheckResult:
     """
     Check if a newly extracted profile refers to the same entity as an existing profile.
@@ -71,6 +75,8 @@ def local_model_check_match(
         new_profile_text: The profile text generated from the new article
         existing_profile_text: The existing profile text we're comparing against
         model: The LLM model to use for comparison
+        langfuse_session_id: The Langfuse session ID
+        langfuse_trace_id: The Langfuse trace ID
     """
     system_content = """You are an expert analyst specializing in entity
                                resolution for news articles about Guantánamo Bay.
@@ -107,6 +113,8 @@ Are these profiles referring to the same entity? Provide your analysis."""
             response_model=MatchCheckResult,
             model=model,
             temperature=0,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
     except Exception as e:
         log(f"Error with Ollama API", level="error", exception=e)
@@ -120,6 +128,8 @@ def cloud_model_check_match(
     new_profile_text: str,
     existing_profile_text: str,
     model: str = CLOUD_MODEL,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> MatchCheckResult:
     """
     Check if a newly extracted profile refers to the same entity as an existing profile,
@@ -132,6 +142,8 @@ def cloud_model_check_match(
         new_profile_text: The profile text generated from the new article
         existing_profile_text: The existing profile text we're comparing against
         model: The LLM model to use for comparison
+        langfuse_session_id: The Langfuse session ID
+        langfuse_trace_id: The Langfuse trace ID
 
     Returns:
         MatchCheckResult with is_match flag and detailed reasoning
@@ -170,6 +182,8 @@ Are these profiles referring to the same entity? Provide your analysis."""
             response_model=MatchCheckResult,
             model=model,
             temperature=0,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
     except Exception as e:
         log(f"Error with Gemini API", level="error", exception=e)
@@ -489,6 +503,8 @@ def merge_people(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ):
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
@@ -516,7 +532,13 @@ def merge_people(
             log(f"Attempting to create profile for {person_name}...", level="info")
             proposed_profile, proposed_versioned_profile, reflection_history = (
                 create_profile(
-                    "person", person_name, article_content, article_id, model_type
+                    "person",
+                    person_name,
+                    article_content,
+                    article_id,
+                    model_type,
+                    langfuse_session_id,
+                    langfuse_trace_id,
                 )
             )
 
@@ -537,7 +559,9 @@ def merge_people(
                 level="info",
             )
             proposed_person_embedding = embedding_manager.embed_text(
-                proposed_profile_text
+                proposed_profile_text,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
             log(
                 f"Generated embedding of size: {len(proposed_person_embedding)}",
@@ -572,6 +596,8 @@ def merge_people(
                         similar_name,
                         proposed_profile_text,
                         existing_profile_text,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
                 else:
                     result = cloud_model_check_match(
@@ -579,6 +605,8 @@ def merge_people(
                         similar_name,
                         proposed_profile_text,
                         existing_profile_text,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
 
                 log(
@@ -653,6 +681,8 @@ def merge_people(
                                 article_content,
                                 article_id,
                                 model_type,
+                                langfuse_session_id=langfuse_session_id,
+                                langfuse_trace_id=langfuse_trace_id,
                             )
                         )
                         existing_person["profile"] = updated_profile
@@ -689,6 +719,8 @@ def merge_people(
                                 article_content,
                                 article_id,
                                 model_type,
+                                langfuse_session_id=langfuse_session_id,
+                                langfuse_trace_id=langfuse_trace_id,
                             )
                         )
                         existing_person["profile"] = new_profile
@@ -784,8 +816,6 @@ def merge_people(
         except Exception as e:
             log(f"Error processing person {person_name}:", level="error")
             log(f"Error details: {str(e)}", level="error")
-            import traceback
-
             log(f"Traceback:\n{traceback.format_exc()}", level="error")
             continue
 
@@ -803,6 +833,8 @@ def merge_locations(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ):
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
@@ -820,7 +852,13 @@ def merge_locations(
         # Generate embedding for the location name and type
         proposed_profile, proposed_versioned_profile, reflection_history = (
             create_profile(
-                "location", loc_name, article_content, article_id, model_type
+                "location",
+                loc_name,
+                article_content,
+                article_id,
+                model_type,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
         )
         # Extract profile text from response
@@ -856,6 +894,8 @@ def merge_locations(
                     similar_key,
                     proposed_profile_text,
                     entities["locations"][similar_key]["profile"]["text"],
+                    langfuse_session_id=langfuse_session_id,
+                    langfuse_trace_id=langfuse_trace_id,
                 )
             else:
                 result = cloud_model_check_match(
@@ -863,6 +903,8 @@ def merge_locations(
                     similar_key,
                     proposed_profile_text,
                     entities["locations"][similar_key]["profile"]["text"],
+                    langfuse_session_id=langfuse_session_id,
+                    langfuse_trace_id=langfuse_trace_id,
                 )
             if result.is_match:
                 log(
@@ -925,6 +967,8 @@ def merge_locations(
                             article_content,
                             article_id,
                             model_type,
+                            langfuse_session_id=langfuse_session_id,
+                            langfuse_trace_id=langfuse_trace_id,
                         )
                     )
                     existing_loc["profile"] = updated_profile
@@ -958,6 +1002,8 @@ def merge_locations(
                             article_content,
                             article_id,
                             model_type,
+                            langfuse_session_id=langfuse_session_id,
+                            langfuse_trace_id=langfuse_trace_id,
                         )
                     )
                     existing_loc["profile"] = new_profile
@@ -1070,6 +1116,8 @@ def merge_organizations(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ):
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
@@ -1094,6 +1142,8 @@ def merge_organizations(
                         article_content,
                         article_id,
                         model_type,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
                 )
                 # Extract profile text from response
@@ -1177,6 +1227,8 @@ def merge_organizations(
                             similar_key,
                             proposed_profile_text,
                             existing_profile_dict["text"],
+                            langfuse_session_id=langfuse_session_id,
+                            langfuse_trace_id=langfuse_trace_id,
                         )
                     else:
                         result = cloud_model_check_match(
@@ -1184,6 +1236,8 @@ def merge_organizations(
                             similar_key,
                             proposed_profile_text,
                             existing_profile_dict["text"],
+                            langfuse_session_id=langfuse_session_id,
+                            langfuse_trace_id=langfuse_trace_id,
                         )
                 except Exception as e:
                     handle_merge_error(
@@ -1258,6 +1312,8 @@ def merge_organizations(
                                 article_content,
                                 article_id,
                                 model_type,
+                                langfuse_session_id=langfuse_session_id,
+                                langfuse_trace_id=langfuse_trace_id,
                             )
                         )
                         existing_org["profile"] = updated_profile
@@ -1291,6 +1347,8 @@ def merge_organizations(
                                 article_content,
                                 article_id,
                                 model_type,
+                                langfuse_session_id=langfuse_session_id,
+                                langfuse_trace_id=langfuse_trace_id,
                             )
                         )
                         existing_org["profile"] = new_profile
@@ -1412,6 +1470,8 @@ def merge_events(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ):
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
@@ -1430,7 +1490,13 @@ def merge_events(
         # Generate embedding for the event title and type
         proposed_profile, proposed_versioned_profile, reflection_history = (
             create_profile(
-                "event", event_title, article_content, article_id, model_type
+                "event",
+                event_title,
+                article_content,
+                article_id,
+                model_type,
+                langfuse_session_id=langfuse_session_id,
+                langfuse_trace_id=langfuse_trace_id,
             )
         )
         # Extract profile text from response
@@ -1465,6 +1531,8 @@ def merge_events(
                     similar_key,
                     proposed_profile_text,
                     entities["events"][similar_key]["profile"]["text"],
+                    langfuse_session_id=langfuse_session_id,
+                    langfuse_trace_id=langfuse_trace_id,
                 )
             else:
                 result = cloud_model_check_match(
@@ -1472,6 +1540,8 @@ def merge_events(
                     similar_key,
                     proposed_profile_text,
                     entities["events"][similar_key]["profile"]["text"],
+                    langfuse_session_id=langfuse_session_id,
+                    langfuse_trace_id=langfuse_trace_id,
                 )
             if result.is_match:
                 log(
@@ -1537,6 +1607,8 @@ def merge_events(
                             article_content,
                             article_id,
                             model_type,
+                            langfuse_session_id=langfuse_session_id,
+                            langfuse_trace_id=langfuse_trace_id,
                         )
                     )
                     existing_event["profile"] = updated_profile
@@ -1570,6 +1642,8 @@ def merge_events(
                             article_content,
                             article_id,
                             model_type,
+                            langfuse_session_id=langfuse_session_id,
+                            langfuse_trace_id=langfuse_trace_id,
                         )
                     )
                     existing_event["profile"] = new_profile
@@ -1694,8 +1768,6 @@ def merge_people_generic(
     domain: str = "guantanamo",
 ):
     """Merge people entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
-
     merger = EntityMerger("people")
     merger.merge_entities(
         extracted_people,
@@ -1726,8 +1798,6 @@ def merge_organizations_generic(
     domain: str = "guantanamo",
 ):
     """Merge organization entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
-
     merger = EntityMerger("organizations")
     merger.merge_entities(
         extracted_orgs,
@@ -1758,8 +1828,6 @@ def merge_locations_generic(
     domain: str = "guantanamo",
 ):
     """Merge location entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
-
     merger = EntityMerger("locations")
     merger.merge_entities(
         extracted_locations,
@@ -1790,8 +1858,6 @@ def merge_events_generic(
     domain: str = "guantanamo",
 ):
     """Merge event entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
-
     merger = EntityMerger("events")
     merger.merge_entities(
         extracted_events,

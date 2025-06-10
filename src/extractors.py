@@ -52,7 +52,12 @@ class EntityExtractor:
         self._list_attr = self.ENTITY_LIST_ATTRIBUTES[entity_type]
 
     def extract_cloud(
-        self, text: str, model: str = CLOUD_MODEL, temperature: float = 0
+        self,
+        text: str,
+        model: str = CLOUD_MODEL,
+        temperature: float = 0,
+        langfuse_session_id: str = None,
+        langfuse_trace_id: str = None,
     ) -> List[Dict[str, Any]]:
         """Extract entities using cloud-based models (Gemini).
 
@@ -60,6 +65,8 @@ class EntityExtractor:
             text: The text to extract entities from
             model: The cloud model to use
             temperature: Temperature for generation
+            langfuse_session_id: Langfuse session ID
+            langfuse_trace_id: Langfuse trace ID
 
         Returns:
             List of extracted entities as dictionaries
@@ -71,10 +78,17 @@ class EntityExtractor:
             response_model=List[Entity],
             model=model,
             temperature=temperature,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
 
     def extract_local(
-        self, text: str, model: str = OLLAMA_MODEL, temperature: float = 0
+        self,
+        text: str,
+        model: str = OLLAMA_MODEL,
+        temperature: float = 0,
+        langfuse_session_id: str = None,
+        langfuse_trace_id: str = None,
     ) -> List[Dict[str, Any]]:
         """Extract entities using local models (Ollama).
 
@@ -82,6 +96,8 @@ class EntityExtractor:
             text: The text to extract entities from
             model: The local model to use
             temperature: Temperature for generation
+            langfuse_session_id: Langfuse session ID
+            langfuse_trace_id: Langfuse trace ID
 
         Returns:
             List of extracted entities as dictionaries
@@ -95,6 +111,8 @@ class EntityExtractor:
             response_model=ArticleEntities,
             model=model,
             temperature=temperature,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
 
         # Return the specific entity list attribute

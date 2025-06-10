@@ -1,4 +1,19 @@
-from fasthtml.common import A, Button, Div, Link, Nav, Option, Select, fast_app
+from fasthtml.common import (
+    H1,
+    A,
+    Body,
+    Button,
+    Div,
+    Head,
+    Html,
+    Link,
+    Meta,
+    Nav,
+    Option,
+    Select,
+    Title,
+    fast_app,
+)
 
 from src.config_loader import DomainConfig
 
@@ -81,8 +96,6 @@ def nav_bar(current_domain="guantanamo"):
 
 def page_header(title: str, current_domain: str = "guantanamo"):
     """Create a page header with title and domain switcher."""
-    from fasthtml.common import H1, Div
-
     return Div(
         H1(title, style="color:var(--primary); margin:0; flex:1;"),
         Div(
@@ -95,8 +108,6 @@ def page_header(title: str, current_domain: str = "guantanamo"):
 
 def title_with_domain_picker(page_title: str, current_domain: str = "guantanamo"):
     """Create a title bar with domain picker in top right."""
-    from fasthtml.common import H1, Div
-
     return Div(
         H1(page_title, style="color:var(--primary); margin:0; flex:1;"),
         Div(
@@ -109,8 +120,6 @@ def title_with_domain_picker(page_title: str, current_domain: str = "guantanamo"
 
 def titled_with_domain_picker(page_title: str, current_domain: str, children):
     """Create a Titled page with domain picker integrated into the title area."""
-    from fasthtml.common import H1, Body, Div, Head, Html, Meta, Title
-
     # Extract just the main title from "Domain Browse - Page" format
     title_parts = page_title.split(" - ")
     main_title = title_parts[-1] if len(title_parts) > 1 else page_title
@@ -147,8 +156,6 @@ def main_layout(
     page_header_title: str = None,
     current_domain: str = "guantanamo",
 ):
-    from fasthtml.common import Div
-
     return titled_with_domain_picker(
         page_title,
         current_domain,

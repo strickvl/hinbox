@@ -47,8 +47,6 @@ def load_existing_entities() -> Dict[str, Dict]:
     Returns a dict with keys: people, events, locations, organizations
     Each is a dictionary keyed by the relevant unique tuple or name.
     """
-    import pyarrow.parquet as pq
-
     people = {}
     events = {}
     locations = {}
@@ -184,6 +182,8 @@ def merge_all_entities(
     model_type: str,
     processing_metadata: Dict,
     processor: ArticleProcessor,
+    langfuse_session_id: str,
+    langfuse_trace_id: str,
 ) -> None:
     """Merge all extracted entities with existing entities."""
     log("Merging extracted entities...", level="processing")
@@ -223,6 +223,8 @@ def merge_all_entities(
                 article_info["content"],
                 extraction_timestamp,
                 model_type,
+                langfuse_session_id,
+                langfuse_trace_id,
             )
             merge_duration = (datetime.now() - merge_start).total_seconds()
             log(
@@ -395,6 +397,8 @@ def process_single_article(
         article_info["id"],
         processing_metadata,
         args.verbose,
+        langfuse_session_id,
+        langfuse_trace_id,
     )
 
     # Merge all entities
@@ -406,6 +410,8 @@ def process_single_article(
         processor.model_type,
         processing_metadata,
         processor,
+        langfuse_session_id,
+        langfuse_trace_id,
     )
 
     # Finalize processing metadata

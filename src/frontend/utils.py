@@ -2,6 +2,8 @@ import hashlib
 import re
 from urllib.parse import quote, unquote
 
+from fasthtml.common import A, Div, Li, Ul
+
 
 def build_citation_map(text, articles):
     """Build a mapping of article IDs to citation numbers based on text citations."""
@@ -70,8 +72,6 @@ def decode_key(k: str) -> str:
 
 def format_article_list(articles, profile_text=""):
     """Create a consistent formatting for article lists with citation numbers."""
-    from fasthtml.common import A, Div, Li, Ul
-
     if not articles:
         return Div("No articles associated with this entity.", cls="empty-state")
 

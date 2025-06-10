@@ -5,6 +5,7 @@ Script to check the articles in the parquet file.
 
 import argparse
 import os
+import traceback
 
 import pyarrow.parquet as pq
 from rich.console import Console
@@ -125,8 +126,6 @@ def check_articles(sample=False):
 
     except Exception as e:
         console.print(f"[red]Error reading parquet file: {e}[/red]")
-        import traceback
-
         traceback.print_exc()
 
 

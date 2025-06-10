@@ -86,13 +86,19 @@ class ArticleProcessor:
             return True  # Default to relevant if check fails
 
     def extract_single_entity_type(
-        self, entity_type: str, article_content: str
+        self,
+        entity_type: str,
+        article_content: str,
+        langfuse_session_id: str = None,
+        langfuse_trace_id: str = None,
     ) -> List[Dict]:
         """Extract a single entity type from article content.
 
         Args:
             entity_type: Type of entity to extract (people, organizations, locations, events)
             article_content: Full text of the article
+            langfuse_session_id: Langfuse session ID
+            langfuse_trace_id: Langfuse trace ID
 
         Returns:
             List of extracted entities as dictionaries
@@ -101,31 +107,65 @@ class ArticleProcessor:
             if self.model_type == "ollama":
                 if entity_type == "people":
                     return ollama_extract_people(
-                        article_content, model="qwq", domain=self.domain
+                        article_content,
+                        model="qwq",
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
                 elif entity_type == "organizations":
                     return ollama_extract_organizations(
-                        article_content, model="qwq", domain=self.domain
+                        article_content,
+                        model="qwq",
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
                 elif entity_type == "locations":
                     return ollama_extract_locations(
-                        article_content, model="qwq", domain=self.domain
+                        article_content,
+                        model="qwq",
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
                 elif entity_type == "events":
                     return ollama_extract_events(
-                        article_content, model="qwq", domain=self.domain
+                        article_content,
+                        model="qwq",
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
             else:
                 if entity_type == "people":
-                    return gemini_extract_people(article_content, domain=self.domain)
+                    return gemini_extract_people(
+                        article_content,
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
+                    )
                 elif entity_type == "organizations":
                     return gemini_extract_organizations(
-                        article_content, domain=self.domain
+                        article_content,
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
                     )
                 elif entity_type == "locations":
-                    return gemini_extract_locations(article_content, domain=self.domain)
+                    return gemini_extract_locations(
+                        article_content,
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
+                    )
                 elif entity_type == "events":
-                    return gemini_extract_events(article_content, domain=self.domain)
+                    return gemini_extract_events(
+                        article_content,
+                        domain=self.domain,
+                        langfuse_session_id=langfuse_session_id,
+                        langfuse_trace_id=langfuse_trace_id,
+                    )
         except Exception as e:
             logger.error(f"Error extracting {entity_type}: {e}")
             return []
@@ -178,6 +218,8 @@ class ArticleProcessor:
         article_id: str,
         processing_metadata: Dict[str, Any],
         verbose: bool = False,
+        langfuse_session_id: str = None,
+        langfuse_trace_id: str = None,
     ) -> Dict[str, List[Dict]]:
         """Extract all entity types from article content.
 
@@ -186,6 +228,8 @@ class ArticleProcessor:
             article_id: Unique identifier for the article
             processing_metadata: Dictionary to store processing metadata
             verbose: Whether to enable verbose logging
+            langfuse_session_id: Langfuse session ID
+            langfuse_trace_id: Langfuse trace ID
 
         Returns:
             Dictionary with entity types as keys and lists of extracted entities as values
@@ -198,7 +242,12 @@ class ArticleProcessor:
             start_time = datetime.now()
 
             try:
-                entities = self.extract_single_entity_type(entity_type, article_content)
+                entities = self.extract_single_entity_type(
+                    entity_type,
+                    article_content,
+                    langfuse_session_id,
+                    langfuse_trace_id,
+                )
 
                 # Track reflection attempts
                 reflection_attempts = self.track_reflection_attempts(

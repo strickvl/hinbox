@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from src.frontend.components import ProfileVersionSelector
+from src.profiles import VersionedProfile
 
 
 class TestProfileVersionSelector:
@@ -185,7 +186,6 @@ class TestVersioningIntegration:
 
     def test_full_versioning_workflow(self):
         """Test complete versioning workflow from model to component."""
-        from src.profiles import VersionedProfile
 
         # Create versioned profile with multiple versions
         versioned = VersionedProfile()

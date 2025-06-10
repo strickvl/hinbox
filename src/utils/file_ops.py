@@ -1,5 +1,6 @@
 """File operations for entity data management."""
 
+import copy
 import os
 from typing import Any, Dict, List
 
@@ -31,8 +32,6 @@ def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
         Sanitized dictionary safe for Parquet storage
     """
     # Create a deep copy so we don't mutate the original
-    import copy
-
     sanitized = copy.deepcopy(entity)
 
     # If there's a reflection_history field, strip or convert the "response" object

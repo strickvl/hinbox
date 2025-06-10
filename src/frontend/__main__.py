@@ -5,6 +5,10 @@ We simply import them here to ensure everything is registered with 'app, rt'.
 """
 
 # Import and expose the app at module level for FastHTML serve() to find
+import sys
+
+import uvicorn
+
 from ..constants import DEFAULT_FRONTEND_PORT
 from .app_config import app
 
@@ -13,10 +17,6 @@ from .routes import events, home, locations, organizations, people  # noqa: F401
 
 # We only need to define the run logic if this file is run directly under -m syntax:
 if __name__ == "__main__":
-    import sys
-
-    import uvicorn
-
     try:
         uvicorn.run(app, host="0.0.0.0", port=DEFAULT_FRONTEND_PORT, reload=False)
     except OSError as e:

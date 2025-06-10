@@ -1,5 +1,7 @@
 import copy
+import json
 import logging
+import traceback
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -115,6 +117,8 @@ def generate_profile_with_reflection(
     model_type: str = "gemini",
     max_iterations: int = MAX_ITERATIONS,
     domain: str = "guantanamo",
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> (Dict, list):
     """
     Generate a profile with reflection and improvement.
@@ -154,6 +158,8 @@ def generate_profile_with_reflection(
             response_model=EntityProfile,
             model=CLOUD_MODEL,
             temperature=DEFAULT_TEMPERATURE,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
     else:
         initial_response = local_generation(
@@ -161,6 +167,8 @@ def generate_profile_with_reflection(
             response_model=EntityProfile,
             model=OLLAMA_MODEL,
             temperature=DEFAULT_TEMPERATURE,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
 
     # Convert to text for iterative improvement
@@ -174,6 +182,8 @@ def generate_profile_with_reflection(
         response_model=EntityProfile,
         max_iterations=max_iterations,
         mode=mode,
+        langfuse_session_id=langfuse_session_id,
+        langfuse_trace_id=langfuse_trace_id,
     )
 
     # Extract final result
@@ -182,8 +192,6 @@ def generate_profile_with_reflection(
 
     # Parse the final result
     try:
-        import json
-
         if final_text.strip():
             if final_text.strip().startswith("{"):
                 data = json.loads(final_text)
@@ -225,6 +233,8 @@ def generate_profile(
     article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> (Dict, list):
     """
     Generate a profile for an entity based on article text using structured extraction.
@@ -238,6 +248,8 @@ def generate_profile(
         article_id=article_id,
         model_type=model_type,
         domain=domain,
+        langfuse_session_id=langfuse_session_id,
+        langfuse_trace_id=langfuse_trace_id,
     )
     return profile_dict, improvement_history
 
@@ -250,6 +262,8 @@ def _update_profile_internal(
     new_article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> Tuple[Dict, list]:
     """
     Internal function to update an existing profile with new information from an article.
@@ -325,6 +339,8 @@ New Article (ID: {new_article_id}):
             response_model=EntityProfile,
             max_iterations=3,
             mode=generation_mode,
+            langfuse_session_id=langfuse_session_id,
+            langfuse_trace_id=langfuse_trace_id,
         )
 
         final_result = None
@@ -424,7 +440,6 @@ New Article (ID: {new_article_id}):
     except Exception as e:
         console.print(f"[red]Error updating profile for {entity_name}:[/red]")
         console.print(f"[red]Error details: {str(e)}[/red]")
-        import traceback
 
         console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
         raise
@@ -439,6 +454,8 @@ def update_profile(
     new_article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Update profile and add version if versioning is enabled.
@@ -454,6 +471,8 @@ def update_profile(
         new_article_id,
         model_type,
         domain,
+        langfuse_session_id,
+        langfuse_trace_id,
     )
 
     # Add new version if versioning enabled
@@ -472,6 +491,8 @@ def create_profile(
     article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    langfuse_session_id: str = None,
+    langfuse_trace_id: str = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Create an initial profile for an entity based on article text using structured extraction.
@@ -484,7 +505,14 @@ def create_profile(
 
     try:
         profile_dict, improvement_history = generate_profile(
-            entity_type, entity_name, article_text, article_id, model_type, domain
+            entity_type,
+            entity_name,
+            article_text,
+            article_id,
+            model_type,
+            domain,
+            langfuse_session_id,
+            langfuse_trace_id,
         )
 
         # Extract the actual text from nested/parsed fields before logging

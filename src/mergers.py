@@ -1,5 +1,6 @@
 """Generic entity merger classes to eliminate code duplication."""
 
+import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.constants import (
@@ -542,8 +543,6 @@ class EntityMerger:
                     level="error",
                 )
                 log(f"Error details: {str(e)}", level="error")
-                import traceback
-
                 log(f"Traceback:\\n{traceback.format_exc()}", level="error")
                 continue
 

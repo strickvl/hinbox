@@ -271,15 +271,11 @@ def show_person(key: str, request):
                             profile = version_data.profile_data
                     else:
                         # Invalid version, redirect to current
-                        from fasthtml.common import Response
-
                         return Response(
                             status_code=302, headers={"Location": f"/people/{key}"}
                         )
                 except (ValueError, TypeError):
                     # Invalid version format, redirect to current
-                    from fasthtml.common import Response
-
                     return Response(
                         status_code=302, headers={"Location": f"/people/{key}"}
                     )

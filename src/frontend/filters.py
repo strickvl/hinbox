@@ -2,8 +2,6 @@ import logging
 
 from fasthtml.common import *
 
-log = logging.getLogger(__name__)
-
 from .components import (
     ApplyFiltersButton,
     ClearFiltersButton,
@@ -12,7 +10,10 @@ from .components import (
     SearchInput,
     TypeChipsSection,
 )
+from .data_access import events_index, locations_index, orgs_index, people_index
 from .utils import random_pastel_color
+
+log = logging.getLogger(__name__)
 
 
 def chip_checkbox(name, value, checked, target_route):
@@ -39,8 +40,6 @@ def chip_checkbox(name, value, checked, target_route):
 
 def people_filter_panel(q="", selected_types=None, selected_tags=None):
     """Create a more idiomatic filter panel using reusable components."""
-    from .data_access import people_index
-
     selected_types = selected_types or []
     selected_tags = selected_tags or []
 
@@ -89,8 +88,6 @@ def people_filter_panel(q="", selected_types=None, selected_tags=None):
 
 def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
     """Events filter panel with date range using reusable components."""
-    from .data_access import events_index
-
     selected_types = selected_types or []
     types = sorted(
         {
@@ -124,8 +121,6 @@ def events_filter_panel(q="", selected_types=None, start_date="", end_date=""):
 
 def locations_filter_panel(q="", selected_types=None):
     """Locations filter panel with type filtering."""
-    from .data_access import locations_index
-
     selected_types = selected_types or []
     types = sorted(
         {
@@ -187,8 +182,6 @@ def locations_filter_panel(q="", selected_types=None):
 
 def organizations_filter_panel(q="", selected_types=None):
     """Organizations filter panel with type filtering."""
-    from .data_access import orgs_index
-
     selected_types = selected_types or []
     types = sorted(
         {
