@@ -1,8 +1,14 @@
-"""Generic entity extraction utilities."""
+"""Generic entity extraction utilities for cloud and local LLM models.
+
+This module provides generic extraction functions that work with both cloud-based
+and local language models. These functions form the core of the entity extraction
+pipeline and are used by specific entity extractors for people, organizations,
+locations, and events.
+"""
 
 import random
 import time
-from typing import Any, List, Type, Union
+from typing import Any, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -29,23 +35,33 @@ def extract_entities_cloud(
     response_model: Union[Type[BaseModel], List[Type[BaseModel]]],
     model: str = CLOUD_MODEL,
     temperature: float = 0,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
+    langfuse_session_id: Optional[str] = None,
+    langfuse_trace_id: Optional[str] = None,
 ) -> Any:
-    """
-    Generic cloud-based entity extraction.
+    """Extract entities from text using cloud-based language models via litellm.
+
+    Uses the configured cloud model (typically Gemini) to extract structured entities
+    from text content. Includes retry logic for transient failures and comprehensive
+    error handling.
 
     Args:
-        text: Text to extract entities from
-        system_prompt: System prompt defining extraction task
-        response_model: Pydantic model or list of models for response
-        model: Model to use for extraction
-        temperature: Temperature for generation
-        langfuse_session_id: Langfuse session ID
-        langfuse_trace_id: Langfuse trace ID
+        text: The input text content to extract entities from
+        system_prompt: System prompt that defines the extraction task and format
+        response_model: Pydantic model or list of models defining the expected response structure
+        model: Cloud model name to use for extraction (defaults to configured CLOUD_MODEL)
+        temperature: Temperature parameter for generation (0 for deterministic output)
+        langfuse_session_id: Optional Langfuse session ID for request tracing
+        langfuse_trace_id: Optional Langfuse trace ID for request tracing
 
     Returns:
-        Extracted entities according to response_model
+        Extracted entities structured according to the response_model specification
+
+    Raises:
+        Exception: Various exceptions from LLM API calls, network issues, or parsing failures
+
+    Note:
+        Implements exponential backoff retry logic for transient errors like rate limiting
+        or server overload. Non-retryable errors are raised immediately.
     """
     client = get_litellm_client()
 
@@ -104,23 +120,34 @@ def extract_entities_local(
     response_model: Type[BaseModel],
     model: str = OLLAMA_MODEL,
     temperature: float = 0,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
+    langfuse_session_id: Optional[str] = None,
+    langfuse_trace_id: Optional[str] = None,
 ) -> Any:
-    """
-    Generic local Ollama-based entity extraction.
+    """Extract entities from text using local Ollama language models.
+
+    Uses the configured local Ollama model to extract structured entities from text
+    content. Requires a running Ollama server and does not include retry logic
+    as local models typically don't experience transient failures.
 
     Args:
-        text: Text to extract entities from
-        system_prompt: System prompt defining extraction task
-        response_model: Pydantic model for response
-        model: Model to use for extraction
-        temperature: Temperature for generation
-        langfuse_session_id: Langfuse session ID
-        langfuse_trace_id: Langfuse trace ID
+        text: The input text content to extract entities from
+        system_prompt: System prompt that defines the extraction task and format
+        response_model: Pydantic model defining the expected response structure
+        model: Ollama model name to use for extraction (defaults to configured OLLAMA_MODEL)
+        temperature: Temperature parameter for generation (0 for deterministic output)
+        langfuse_session_id: Optional Langfuse session ID for request tracing
+        langfuse_trace_id: Optional Langfuse trace ID for request tracing
 
     Returns:
-        Extracted entities according to response_model
+        Extracted entities structured according to the response_model specification
+
+    Raises:
+        Exception: Various exceptions from Ollama API calls, connection issues, or parsing failures
+
+    Note:
+        Requires Ollama server to be running and accessible at the configured URL.
+        Model names are automatically mapped to Ollama-compatible format.
+        No retry logic as local models typically don't have transient failures.
     """
     from src.constants import get_ollama_model_name
 

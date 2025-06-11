@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""
-Script merging logic from run.py and extract_entities.py, iterating over articles in
-data/raw_sources/miami_herald_articles.parquet, extracting entities (people, events,
-locations, organizations) via Gemini or local approach, then merging results
-into the data/entities/*.parquet files.
+"""Main article processing and entity extraction pipeline.
+
+This script implements the core processing pipeline that reads articles from the Miami Herald
+dataset, extracts entities (people, events, locations, organizations) using either cloud-based
+(Gemini) or local (Ollama) language models, and merges the results with existing entity data.
+The pipeline includes relevance checking, entity deduplication, and comprehensive processing
+status tracking.
 """
 
 import argparse
@@ -33,19 +35,36 @@ from src.utils.file_ops import write_entity_to_file
 logger = get_logger("process_and_extract")
 
 
-def ensure_dir(directory: str):
-    """
-    Ensure that a directory exists, creating it if necessary.
+def ensure_dir(directory: str) -> None:
+    """Ensure that a directory exists, creating it if necessary.
+
+    Args:
+        directory: Path to the directory to ensure exists
+
+    Note:
+        Creates parent directories as needed. No-op if directory is empty string.
     """
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
 
 
 def load_existing_entities() -> Dict[str, Dict]:
-    """
-    Load existing entities from Parquet files if they exist.
-    Returns a dict with keys: people, events, locations, organizations
-    Each is a dictionary keyed by the relevant unique tuple or name.
+    """Load existing entities from Parquet files if they exist.
+
+    Reads all existing entity Parquet files and loads them into memory for merging
+    with newly extracted entities. Handles different keying schemes for each entity type.
+
+    Returns:
+        Dictionary with keys 'people', 'events', 'locations', 'organizations', each
+        containing a dictionary of entities keyed by their unique identifiers:
+        - people: keyed by name (string)
+        - events: keyed by (title, start_date) tuple
+        - locations: keyed by (name, type) tuple
+        - organizations: keyed by (name, type) tuple
+
+    Note:
+        Missing Parquet files result in empty dictionaries for those entity types.
+        This allows the pipeline to work even when starting from scratch.
     """
     people = {}
     events = {}
@@ -84,9 +103,18 @@ def load_existing_entities() -> Dict[str, Dict]:
     }
 
 
-def write_entities_to_files(entities: Dict[str, Dict]):
-    """
-    Write entities to their respective Parquet files.
+def write_entities_to_files(entities: Dict[str, Dict]) -> None:
+    """Write entities to their respective Parquet files.
+
+    Iterates through all entity types and their entities, writing each one to its
+    corresponding Parquet file using the centralized file operations utility.
+
+    Args:
+        entities: Dictionary of entity types containing their entity dictionaries
+
+    Note:
+        Uses write_entity_to_file utility which handles individual entity file writes.
+        This ensures all entities are persisted to disk after processing.
     """
     for entity_type, entity_dict in entities.items():
         for entity_key, entity_data in entity_dict.items():
@@ -94,7 +122,19 @@ def write_entities_to_files(entities: Dict[str, Dict]):
 
 
 def setup_arguments_and_config() -> argparse.Namespace:
-    """Setup command line arguments and configuration."""
+    """Setup command line arguments and configuration for the processing pipeline.
+
+    Defines and parses all command line arguments used by the processing pipeline,
+    including model selection, processing limits, relevance checking, and various
+    processing options.
+
+    Returns:
+        Parsed command line arguments namespace with configured options
+
+    Note:
+        Also configures verbose logging if requested via --verbose flag.
+        Logs the final argument configuration for debugging purposes.
+    """
     parser = argparse.ArgumentParser(
         description="Process articles from a Parquet file and extract entities."
     )
