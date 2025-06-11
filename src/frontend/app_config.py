@@ -1,3 +1,12 @@
+"""FastHTML application configuration and layout components.
+
+This module sets up the core FastHTML application instance and provides reusable
+layout components including navigation, domain switching, and page layout utilities.
+The frontend supports multi-domain configurations with dynamic domain switching.
+"""
+
+from typing import Any, List, Optional, Union
+
 from fasthtml.common import (
     H1,
     A,
@@ -25,8 +34,23 @@ app, rt = fast_app(
 
 
 # Domain management
-def get_current_domain(request=None):
-    """Get the current domain from request or default."""
+def get_current_domain(request: Any = None) -> str:
+    """Get the current domain from request query parameters or return default.
+
+    Extracts the domain from the request's query parameters if available and valid,
+    otherwise returns the default domain. Validates that the requested domain exists
+    in the available domain configurations.
+
+    Args:
+        request: FastHTML request object with query_params attribute
+
+    Returns:
+        Domain name string, either from request or default "guantanamo"
+
+    Note:
+        Only returns domains that exist in DomainConfig.get_available_domains().
+        Invalid or missing domains fall back to the default.
+    """
     if request and hasattr(request, "query_params"):
         domain = request.query_params.get("domain")
         if domain and domain in DomainConfig.get_available_domains():
@@ -34,8 +58,21 @@ def get_current_domain(request=None):
     return "guantanamo"  # Default domain
 
 
-def get_domain_description(domain=None):
-    """Get the description of the specified domain."""
+def get_domain_description(domain: Optional[str] = None) -> str:
+    """Get the description of the specified domain from its configuration.
+
+    Loads the domain configuration and extracts the description field, providing
+    a fallback description if the domain config is invalid or missing.
+
+    Args:
+        domain: Domain name to get description for, defaults to "guantanamo"
+
+    Returns:
+        Domain description string from config or fallback text
+
+    Note:
+        Returns "this research domain" as fallback for any configuration errors.
+    """
     if not domain:
         domain = "guantanamo"
     try:
@@ -46,8 +83,23 @@ def get_domain_description(domain=None):
         return "this research domain"
 
 
-def domain_switcher(current_domain="guantanamo"):
-    """Create a domain switcher dropdown."""
+def domain_switcher(current_domain: str = "guantanamo") -> Union[Div, Select]:
+    """Create a domain switcher UI component (dropdown or label).
+
+    Generates either a dropdown select for multiple domains or a simple label
+    for single domain setups. Handles the case where no domains are configured.
+
+    Args:
+        current_domain: Currently selected domain name
+
+    Returns:
+        Div component (empty, label, or dropdown) for domain switching
+
+    Note:
+        - Returns empty Div if no domains configured
+        - Returns styled label for single domain
+        - Returns Select dropdown for multiple domains with onchange handler
+    """
     try:
         available_domains = DomainConfig.get_available_domains()
 
@@ -78,7 +130,21 @@ def domain_switcher(current_domain="guantanamo"):
         return Div()  # Return empty div if domain detection fails
 
 
-def nav_bar(current_domain="guantanamo"):
+def nav_bar(current_domain: str = "guantanamo") -> Nav:
+    """Create the main navigation bar with domain-aware links.
+
+    Generates a horizontal navigation bar with links to all main entity pages
+    and an About button. All links include the current domain parameter.
+
+    Args:
+        current_domain: Domain name to include in navigation links
+
+    Returns:
+        Nav component with styled navigation links and About button
+
+    Note:
+        The About button shows an alert with domain-specific description.
+    """
     return Nav(
         A("Home", href=f"/?domain={current_domain}"),
         A("People", href=f"/people?domain={current_domain}"),
@@ -94,8 +160,19 @@ def nav_bar(current_domain="guantanamo"):
     )
 
 
-def page_header(title: str, current_domain: str = "guantanamo"):
-    """Create a page header with title and domain switcher."""
+def page_header(title: str, current_domain: str = "guantanamo") -> Div:
+    """Create a page header with title and domain switcher.
+
+    Creates a flexbox header with the page title on the left and domain
+    switcher on the right, with consistent styling and bottom border.
+
+    Args:
+        title: Page title text to display
+        current_domain: Current domain for the domain switcher
+
+    Returns:
+        Div component containing styled header with title and domain switcher
+    """
     return Div(
         H1(title, style="color:var(--primary); margin:0; flex:1;"),
         Div(
@@ -106,8 +183,24 @@ def page_header(title: str, current_domain: str = "guantanamo"):
     )
 
 
-def title_with_domain_picker(page_title: str, current_domain: str = "guantanamo"):
-    """Create a title bar with domain picker in top right."""
+def title_with_domain_picker(
+    page_title: str, current_domain: str = "guantanamo"
+) -> Div:
+    """Create a title bar with domain picker in top right.
+
+    Alternative to page_header with identical functionality but different name.
+    Creates a flexbox layout with title and domain switcher.
+
+    Args:
+        page_title: Title text to display
+        current_domain: Current domain for the domain switcher
+
+    Returns:
+        Div component with title and domain picker layout
+
+    Note:
+        This function duplicates page_header functionality and could be consolidated.
+    """
     return Div(
         H1(page_title, style="color:var(--primary); margin:0; flex:1;"),
         Div(
@@ -118,8 +211,26 @@ def title_with_domain_picker(page_title: str, current_domain: str = "guantanamo"
     )
 
 
-def titled_with_domain_picker(page_title: str, current_domain: str, children):
-    """Create a Titled page with domain picker integrated into the title area."""
+def titled_with_domain_picker(
+    page_title: str, current_domain: str, children: List[Any]
+) -> Html:
+    """Create a complete HTML page with domain picker integrated into the title area.
+
+    Generates a full HTML document with head, meta tags, and body containing
+    a title bar with domain picker and the provided child content.
+
+    Args:
+        page_title: Full page title for browser title bar
+        current_domain: Current domain for the domain switcher
+        children: List of FastHTML components to include in the page body
+
+    Returns:
+        Html component representing complete HTML document
+
+    Note:
+        Extracts main title from "Domain Browse - Page" format for display.
+        Includes responsive viewport meta tag and CSS stylesheet link.
+    """
     # Extract just the main title from "Domain Browse - Page" format
     title_parts = page_title.split(" - ")
     main_title = title_parts[-1] if len(title_parts) > 1 else page_title
@@ -151,11 +262,30 @@ def titled_with_domain_picker(page_title: str, current_domain: str, children):
 
 def main_layout(
     page_title: str,
-    filter_panel,
-    content,
-    page_header_title: str = None,
+    filter_panel: Any,
+    content: Any,
+    page_header_title: Optional[str] = None,
     current_domain: str = "guantanamo",
-):
+) -> Html:
+    """Create the main application layout with navigation, filter panel, and content area.
+
+    Provides the standard layout structure used across all entity pages, with
+    navigation bar, left sidebar filter panel, and main content area in a flexbox layout.
+
+    Args:
+        page_title: Full page title for browser title bar
+        filter_panel: FastHTML component for the left sidebar filter controls
+        content: FastHTML component for the main content area
+        page_header_title: Optional custom header title (currently unused)
+        current_domain: Current domain for navigation and domain switching
+
+    Returns:
+        Html component with complete page layout including navigation and content areas
+
+    Note:
+        Uses a responsive flexbox layout with fixed-width filter panel (220px)
+        and flexible content area. The filter panel has HTMX targets for dynamic updates.
+    """
     return titled_with_domain_picker(
         page_title,
         current_domain,

@@ -1,9 +1,11 @@
-"""
-Reusable UI components following FastHTML patterns.
+"""Reusable UI components following FastHTML patterns.
 
 This module contains reusable components that can be used across different entity routes
-to improve consistency and reduce code duplication.
+to improve consistency and reduce code duplication. Components support HTMX interactions
+and follow a hybrid UX approach where form controls require explicit Apply actions.
 """
+
+from typing import Any
 
 from fasthtml.common import *
 
@@ -13,19 +15,50 @@ from .app_config import main_layout
 from .utils import encode_key, random_pastel_color
 
 
-def EmptyState(message, cls="empty-state"):
-    """Consistent empty state component for when no results are found."""
+def EmptyState(message: str, cls: str = "empty-state") -> Div:
+    """Consistent empty state component for when no results are found.
+
+    Creates a styled message container to display when filters or searches
+    return no results, providing user feedback and guidance.
+
+    Args:
+        message: Text message to display to the user
+        cls: CSS class name for styling the empty state
+
+    Returns:
+        Div component with the empty state message
+    """
     return Div(
         message,
         cls=cls,
     )
 
 
-def SearchInput(name, value="", placeholder="Search...", cls="search-box", **attrs):
+def SearchInput(
+    name: str,
+    value: str = "",
+    placeholder: str = "Search...",
+    cls: str = "search-box",
+    **attrs: Any,
+) -> Div:
     """Reusable search input component that respects our hybrid UX pattern.
 
-    Note: This does NOT include auto-trigger HTMX attributes by default,
-    following our hybrid UX approach where text inputs require Apply button.
+    Creates a labeled text input for search functionality. Does NOT include
+    auto-trigger HTMX attributes by default, following the hybrid UX approach
+    where text inputs require an explicit Apply button.
+
+    Args:
+        name: Form input name attribute
+        value: Initial value for the input field
+        placeholder: Placeholder text for the input
+        cls: CSS class name for styling
+        **attrs: Additional HTML attributes to pass to the input element
+
+    Returns:
+        Div component containing label and input elements
+
+    Note:
+        Additional HTMX attributes can be added via **attrs for specific use cases.
     """
     return Div(
         Label("Search: "),
@@ -41,8 +74,19 @@ def SearchInput(name, value="", placeholder="Search...", cls="search-box", **att
     )
 
 
-def EntityCount(count, entity_type_name):
-    """Consistent count display for entity results."""
+def EntityCount(count: int, entity_type_name: str) -> Div:
+    """Consistent count display for entity results.
+
+    Creates a styled count display showing how many entities match the current
+    filters, providing users with feedback about result set size.
+
+    Args:
+        count: Number of entities found
+        entity_type_name: Display name for the entity type (e.g., "People", "Events")
+
+    Returns:
+        Div component with formatted count text
+    """
     return Div(
         f"{count} {entity_type_name.lower()} found",
         style="margin-bottom:15px; color:var(--text-light);",
@@ -50,11 +94,23 @@ def EntityCount(count, entity_type_name):
 
 
 def ClearFiltersButton(
-    route,
-    cls="contrast outline",
-    style="width:100%; margin-bottom:15px; font-weight:bold;",
-):
-    """Consistent clear filters button across entity types."""
+    route: str,
+    cls: str = "contrast outline",
+    style: str = "width:100%; margin-bottom:15px; font-weight:bold;",
+) -> Button:
+    """Consistent clear filters button across entity types.
+
+    Creates a button that redirects to the base route to clear all applied filters,
+    providing users with a quick way to reset their search.
+
+    Args:
+        route: Base route URL to redirect to for clearing filters
+        cls: CSS classes for button styling
+        style: Inline CSS styles for the button
+
+    Returns:
+        Button component with onclick navigation to clear filters
+    """
     return Button(
         "Clear Filters",
         cls=cls,
@@ -64,9 +120,23 @@ def ClearFiltersButton(
 
 
 def ApplyFiltersButton(
-    route, cls="primary", style="width:100%; margin-top:15px; font-weight:bold;"
-):
-    """Consistent apply filters button for our hybrid UX approach."""
+    route: str,
+    cls: str = "primary",
+    style: str = "width:100%; margin-top:15px; font-weight:bold;",
+) -> Button:
+    """Consistent apply filters button for our hybrid UX approach.
+
+    Creates a submit button for filter forms, implementing the hybrid UX pattern
+    where users must explicitly apply their filter selections.
+
+    Args:
+        route: Form action route (passed for consistency, but uses form submission)
+        cls: CSS classes for button styling
+        style: Inline CSS styles for the button
+
+    Returns:
+        Button component configured as form submit button
+    """
     return Button(
         "Apply Filters",
         type="submit",
@@ -75,8 +145,23 @@ def ApplyFiltersButton(
     )
 
 
-def FilterForm(route, *content, **attrs):
-    """Wrapper for filter forms with consistent HTMX configuration."""
+def FilterForm(route: str, *content: Any, **attrs: Any) -> Form:
+    """Wrapper for filter forms with consistent HTMX configuration.
+
+    Creates a form element with standard HTMX attributes for dynamic content updates,
+    targeting the content area and using GET method for filter submissions.
+
+    Args:
+        route: Form action URL for filter submission
+        *content: Child components to include in the form
+        **attrs: Additional form attributes (merged with defaults)
+
+    Returns:
+        Form component with HTMX configuration for dynamic updates
+
+    Note:
+        Default attributes can be overridden by passing them in **attrs.
+    """
     default_attrs = {
         "method": "get",
         "action": route,

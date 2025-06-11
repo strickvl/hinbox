@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""
-Script to check the articles in the parquet file.
+"""Check and analyze articles in the Miami Herald dataset Parquet file.
+
+This utility script provides comprehensive statistics and analysis of the articles
+stored in the Parquet dataset, including processing status, date ranges, and
+optional sample article display. Useful for monitoring dataset state and debugging.
 """
 
 import argparse
@@ -16,8 +19,25 @@ from src.constants import ARTICLES_PATH
 console = Console()
 
 
-def check_articles(sample=False):
-    """Check the articles in the parquet file."""
+def check_articles(sample: bool = False) -> None:
+    """Analyze and display statistics about articles in the Parquet dataset.
+
+    Reads the Miami Herald articles Parquet file and displays comprehensive statistics
+    including total count, processing status, relevance checking status, date ranges,
+    and optionally a sample article for inspection.
+
+    Args:
+        sample: If True, displays details of a sample article from the dataset
+
+    Raises:
+        FileNotFoundError: If the articles Parquet file doesn't exist
+        pyarrow.lib.ArrowIOError: If the Parquet file is corrupted or unreadable
+        Exception: Various other exceptions during file reading or processing
+
+    Note:
+        Uses Rich console formatting for colored output and tables.
+        Processing metadata includes 'processed' and 'relevance_checked' flags.
+    """
 
     if not os.path.exists(ARTICLES_PATH):
         console.print(f"[red]ERROR: Articles file not found at {ARTICLES_PATH}[/red]")

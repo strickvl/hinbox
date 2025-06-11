@@ -1,4 +1,12 @@
+"""People entity route handlers for the FastHTML frontend.
+
+This module provides route handlers for people-related pages including the people
+list view with filtering capabilities and individual person detail pages with
+profile display and article citations.
+"""
+
 import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 import markdown
 from fasthtml.common import *
@@ -21,8 +29,30 @@ from ..utils import decode_key, encode_key, format_article_list, transform_profi
 logger = logging.getLogger(__name__)
 
 
-def filter_people(people_index, q="", selected_types=None, selected_tags=None):
-    """Filter people based on search criteria."""
+def filter_people(
+    people_index: Dict[str, Dict[str, Any]],
+    q: str = "",
+    selected_types: Optional[List[str]] = None,
+    selected_tags: Optional[List[str]] = None,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Filter people based on search criteria and type/tag selections.
+
+    Applies multiple filter criteria to the people index including name search,
+    type filtering, and tag filtering based on profile tags.
+
+    Args:
+        people_index: Dictionary mapping person keys to person records
+        q: Search query string to match against person names (case-insensitive)
+        selected_types: List of person types to include in results
+        selected_tags: List of profile tags to include in results
+
+    Returns:
+        List of (person_key, person_record) tuples matching all filter criteria
+
+    Note:
+        Tag filtering uses AND logic - person must have at least one selected tag.
+        All filters are case-insensitive for better user experience.
+    """
     selected_types = selected_types or []
     selected_tags = selected_tags or []
 
