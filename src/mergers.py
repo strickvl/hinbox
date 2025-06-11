@@ -278,7 +278,7 @@ class EntityMerger:
                     f"Generating embedding for profile text (length: {len(proposed_profile_text)})",
                     level="info",
                 )
-                proposed_entity_embedding = embedding_manager.embed_text(
+                proposed_entity_embedding = embedding_manager.embed_text_sync(
                     proposed_profile_text
                 )
                 log(
@@ -418,7 +418,9 @@ class EntityMerger:
                                 level="info",
                             )
                             existing_entity["profile_embedding"] = (
-                                embedding_manager.embed_text(updated_profile["text"])
+                                embedding_manager.embed_text_sync(
+                                    updated_profile["text"]
+                                )
                             )
                             # Store reflection iteration history for debugging
                             existing_entity.setdefault("reflection_history", [])
@@ -454,7 +456,7 @@ class EntityMerger:
                             )
                             log("Generating embedding for new profile...", level="info")
                             existing_entity["profile_embedding"] = (
-                                embedding_manager.embed_text(new_profile["text"])
+                                embedding_manager.embed_text_sync(new_profile["text"])
                             )
                             # Store reflection iteration history
                             existing_entity.setdefault("reflection_history", [])

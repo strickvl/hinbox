@@ -35,10 +35,21 @@ _embedding_manager = None
 def get_embedding_manager(
     model_type: str = "default", domain: str = "guantanamo"
 ) -> EmbeddingManager:
-    """Get or create embedding manager for merge operations."""
+    """Get or create embedding manager for merge operations.
+
+    Args:
+        model_type: Type of embedding model (currently unused, kept for compatibility)
+        domain: Domain configuration to use for embeddings setup
+
+    Returns:
+        EmbeddingManager: Configured embedding manager instance
+
+    Note:
+        Uses a global singleton pattern to avoid recreating managers across merge operations.
+    """
     global _embedding_manager
     if _embedding_manager is None:
-        _embedding_manager = EmbeddingManager(model_type=model_type, domain=domain)
+        _embedding_manager = EmbeddingManager(domain=domain)
     return _embedding_manager
 
 
@@ -358,9 +369,36 @@ def merge_people(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
-):
+    langfuse_session_id: Optional[str] = None,
+    langfuse_trace_id: Optional[str] = None,
+) -> None:
+    """Merge extracted people entities with existing entities database.
+
+    Processes a list of people extracted from an article, performs similarity matching
+    against existing entities, and either merges with existing entities or creates new ones.
+    Includes profile generation/updating and embedding computation.
+
+    Args:
+        extracted_people: List of people dictionaries extracted from article
+        entities: Existing entities database with "people" key containing person entities
+        article_id: Unique identifier for the source article
+        article_title: Title of the source article
+        article_url: URL of the source article
+        article_published_date: Publication date of the source article
+        article_content: Full text content of the source article
+        extraction_timestamp: Timestamp when extraction was performed
+        model_type: LLM model type to use ("gemini" or "ollama")
+        similarity_threshold: Minimum embedding similarity score for entity matching
+        langfuse_session_id: Optional Langfuse session ID for tracing
+        langfuse_trace_id: Optional Langfuse trace ID for tracing
+
+    Raises:
+        Exception: Various exceptions during profile generation, embedding, or file operations
+
+    Note:
+        Modifies entities dict in-place and writes updates to individual entity files.
+        Uses embedding similarity combined with LLM-based verification for matching.
+    """
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
     embedding_manager = get_embedding_manager(model_type=embedding_model_type)
@@ -414,7 +452,7 @@ def merge_people(
                 f"Generating embedding for profile text (length: {len(proposed_profile_text)})",
                 level="info",
             )
-            proposed_person_embedding = embedding_manager.embed_text(
+            proposed_person_embedding = embedding_manager.embed_text_sync(
                 proposed_profile_text
             )
             log(
@@ -551,7 +589,7 @@ def merge_people(
                             level="info",
                         )
                         existing_person["profile_embedding"] = (
-                            embedding_manager.embed_text(updated_profile["text"])
+                            embedding_manager.embed_text_sync(updated_profile["text"])
                         )
                         # Store reflection iteration history for debugging
                         existing_person.setdefault("reflection_history", [])
@@ -587,7 +625,7 @@ def merge_people(
                         )
                         log("Generating embedding for new profile...", level="info")
                         existing_person["profile_embedding"] = (
-                            embedding_manager.embed_text(new_profile["text"])
+                            embedding_manager.embed_text_sync(new_profile["text"])
                         )
                         # Store reflection iteration history
                         existing_person.setdefault("reflection_history", [])
@@ -689,9 +727,33 @@ def merge_locations(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
-):
+    langfuse_session_id: Optional[str] = None,
+    langfuse_trace_id: Optional[str] = None,
+) -> None:
+    """Merge extracted location entities with existing entities database.
+
+    Processes a list of locations extracted from an article, performs similarity matching
+    against existing entities, and either merges with existing entities or creates new ones.
+    Locations are keyed by (name, type) tuple.
+
+    Args:
+        extracted_locations: List of location dictionaries extracted from article
+        entities: Existing entities database with "locations" key containing location entities
+        article_id: Unique identifier for the source article
+        article_title: Title of the source article
+        article_url: URL of the source article
+        article_published_date: Publication date of the source article
+        article_content: Full text content of the source article
+        extraction_timestamp: Timestamp when extraction was performed
+        model_type: LLM model type to use ("gemini" or "ollama")
+        similarity_threshold: Minimum embedding similarity score for entity matching
+        langfuse_session_id: Optional Langfuse session ID for tracing
+        langfuse_trace_id: Optional Langfuse trace ID for tracing
+
+    Note:
+        Locations are identified by (name, type) composite keys in the entities database.
+        Modifies entities dict in-place and writes updates to individual entity files.
+    """
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
     embedding_manager = get_embedding_manager(model_type=embedding_model_type)
@@ -727,7 +789,7 @@ def merge_locations(
             log(f"Failed to generate profile for location {loc_name}", level="error")
             continue
 
-        proposed_location_embedding = embedding_manager.embed_text(
+        proposed_location_embedding = embedding_manager.embed_text_sync(
             proposed_profile_text
         )
 
@@ -835,8 +897,8 @@ def merge_locations(
                         if ENABLE_PROFILE_VERSIONING
                         else None
                     )
-                    existing_loc["profile_embedding"] = embedding_manager.embed_text(
-                        updated_profile["text"]
+                    existing_loc["profile_embedding"] = (
+                        embedding_manager.embed_text_sync(updated_profile["text"])
                     )
                     existing_loc.setdefault("reflection_history", [])
                     existing_loc["reflection_history"].extend(reflection_history)
@@ -871,8 +933,8 @@ def merge_locations(
                         if ENABLE_PROFILE_VERSIONING
                         else None
                     )
-                    existing_loc["profile_embedding"] = embedding_manager.embed_text(
-                        new_profile["text"]
+                    existing_loc["profile_embedding"] = (
+                        embedding_manager.embed_text_sync(new_profile["text"])
                     )
                     existing_loc.setdefault("reflection_history", [])
                     existing_loc["reflection_history"].extend(reflection_history)
@@ -975,9 +1037,34 @@ def merge_organizations(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
-):
+    langfuse_session_id: Optional[str] = None,
+    langfuse_trace_id: Optional[str] = None,
+) -> None:
+    """Merge extracted organization entities with existing entities database.
+
+    Processes a list of organizations extracted from an article, performs similarity matching
+    against existing entities, and either merges with existing entities or creates new ones.
+    Organizations are keyed by (name, type) tuple and include comprehensive error handling.
+
+    Args:
+        extracted_orgs: List of organization dictionaries extracted from article
+        entities: Existing entities database with "organizations" key containing org entities
+        article_id: Unique identifier for the source article
+        article_title: Title of the source article
+        article_url: URL of the source article
+        article_published_date: Publication date of the source article
+        article_content: Full text content of the source article
+        extraction_timestamp: Timestamp when extraction was performed
+        model_type: LLM model type to use ("gemini" or "ollama")
+        similarity_threshold: Minimum embedding similarity score for entity matching
+        langfuse_session_id: Optional Langfuse session ID for tracing
+        langfuse_trace_id: Optional Langfuse trace ID for tracing
+
+    Note:
+        Organizations are identified by (name, type) composite keys in the entities database.
+        Includes robust error handling for profile generation and embedding failures.
+        Modifies entities dict in-place and writes updates to individual entity files.
+    """
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
     embedding_manager = get_embedding_manager(model_type=embedding_model_type)
@@ -1023,7 +1110,7 @@ def merge_organizations(
                 continue
 
             try:
-                proposed_organization_embedding = embedding_manager.embed_text(
+                proposed_organization_embedding = embedding_manager.embed_text_sync(
                     proposed_profile_text
                 )
             except Exception:
@@ -1184,7 +1271,7 @@ def merge_organizations(
                             else None
                         )
                         existing_org["profile_embedding"] = (
-                            embedding_manager.embed_text(updated_profile["text"])
+                            embedding_manager.embed_text_sync(updated_profile["text"])
                         )
                         existing_org.setdefault("reflection_history", [])
                         existing_org["reflection_history"].extend(reflection_history)
@@ -1220,7 +1307,7 @@ def merge_organizations(
                             else None
                         )
                         existing_org["profile_embedding"] = (
-                            embedding_manager.embed_text(new_profile["text"])
+                            embedding_manager.embed_text_sync(new_profile["text"])
                         )
                         existing_org.setdefault("reflection_history", [])
                         existing_org["reflection_history"].extend(reflection_history)
@@ -1332,9 +1419,34 @@ def merge_events(
     extraction_timestamp: str,
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
-):
+    langfuse_session_id: Optional[str] = None,
+    langfuse_trace_id: Optional[str] = None,
+) -> None:
+    """Merge extracted event entities with existing entities database.
+
+    Processes a list of events extracted from an article, performs similarity matching
+    against existing entities, and either merges with existing entities or creates new ones.
+    Events are keyed by (title, start_date) tuple.
+
+    Args:
+        extracted_events: List of event dictionaries extracted from article
+        entities: Existing entities database with "events" key containing event entities
+        article_id: Unique identifier for the source article
+        article_title: Title of the source article
+        article_url: URL of the source article
+        article_published_date: Publication date of the source article
+        article_content: Full text content of the source article
+        extraction_timestamp: Timestamp when extraction was performed
+        model_type: LLM model type to use ("gemini" or "ollama")
+        similarity_threshold: Minimum embedding similarity score for entity matching
+        langfuse_session_id: Optional Langfuse session ID for tracing
+        langfuse_trace_id: Optional Langfuse trace ID for tracing
+
+    Note:
+        Events are identified by (title, start_date) composite keys in the entities database.
+        Stores alternative titles when events are merged with different names.
+        Modifies entities dict in-place and writes updates to individual entity files.
+    """
     # Determine embedding model type based on main model type
     embedding_model_type = "local" if model_type == "ollama" else "cloud"
     embedding_manager = get_embedding_manager(model_type=embedding_model_type)
@@ -1371,7 +1483,9 @@ def merge_events(
             log(f"Failed to generate profile for event {event_title}", level="error")
             continue
 
-        proposed_event_embedding = embedding_manager.embed_text(proposed_profile_text)
+        proposed_event_embedding = embedding_manager.embed_text_sync(
+            proposed_profile_text
+        )
 
         # Find similar event using embeddings
         similar_key, similarity_score = find_similar_event(
@@ -1481,8 +1595,8 @@ def merge_events(
                         if ENABLE_PROFILE_VERSIONING
                         else None
                     )
-                    existing_event["profile_embedding"] = embedding_manager.embed_text(
-                        updated_profile["text"]
+                    existing_event["profile_embedding"] = (
+                        embedding_manager.embed_text_sync(updated_profile["text"])
                     )
                     existing_event.setdefault("reflection_history", [])
                     existing_event["reflection_history"].extend(reflection_history)
@@ -1517,8 +1631,8 @@ def merge_events(
                         if ENABLE_PROFILE_VERSIONING
                         else None
                     )
-                    existing_event["profile_embedding"] = embedding_manager.embed_text(
-                        new_profile["text"]
+                    existing_event["profile_embedding"] = (
+                        embedding_manager.embed_text_sync(new_profile["text"])
                     )
                     existing_event.setdefault("reflection_history", [])
                     existing_event["reflection_history"].extend(reflection_history)

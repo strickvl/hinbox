@@ -15,7 +15,7 @@ dependencies = [
     "beautifulsoup4>=4.13.3",
     "playwright>=1.50.0",
     "aiohttp>=3.11.12",
-    "litellm",
+    "litellm>1.72.4",
     "instructor",
     "python-fasthtml>=0.12.4",
     "markdown>=3.7",
@@ -24,7 +24,7 @@ dependencies = [
     "sentence-transformers>=3",
     "rapidfuzz>=3.12.0",
     "numpy>=2.0.0,<3.0.0",
-    "langfuse<3.0.0",
+    "langfuse>3.0.0",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +61,9 @@ select = [
 [dependency-groups]
 dev = [
     "deadcode>=2.4.1",
- "ipython>=8.37.0",
- "vulture>=2.14",
+    "ipython>=8.37.0",
+    "pytest>=8.3.4",
+    "pytest-asyncio>=1.0.0",
+    "ty>=0.0.1a9",
+    "vulture>=2.14",
 ]

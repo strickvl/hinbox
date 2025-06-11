@@ -19,3 +19,15 @@ processing:
   
   # Batch size for processing articles
   batch_size: 5
+
+# Embeddings configuration
+embeddings:
+  mode: local  # Options: local, cloud, hybrid
+  cloud:
+    model: jina_ai/jina-embeddings-v3
+    batch_size: 100
+    max_retries: 3
+    timeout: 30
+  local:
+    model: sentence-transformers/all-MiniLM-L6-v2
+    batch_size: 32

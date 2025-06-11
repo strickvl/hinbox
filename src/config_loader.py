@@ -147,6 +147,72 @@ class DomainConfig:
 
         return types_dict[entity_type]
 
+    def validate_embeddings_config(self) -> bool:
+        """Validate embeddings configuration.
+
+        Returns:
+            True if valid, raises ValueError if invalid
+        """
+        config = self.load_config()
+        embeddings_config = config.get("embeddings", {})
+
+        # Check mode
+        mode = embeddings_config.get("mode", "local")
+        valid_modes = ["local", "cloud", "hybrid"]
+        if mode not in valid_modes:
+            raise ValueError(
+                f"Invalid embeddings mode '{mode}'. Must be one of: {', '.join(valid_modes)}"
+            )
+
+        # Check cloud config if needed
+        if mode in ["cloud", "hybrid"]:
+            cloud_config = embeddings_config.get("cloud", {})
+            if not cloud_config.get("model"):
+                raise ValueError(
+                    "Cloud embeddings model must be specified when using cloud or hybrid mode"
+                )
+
+        # Check local config if needed
+        if mode in ["local", "hybrid"]:
+            local_config = embeddings_config.get("local", {})
+            if not local_config.get("model"):
+                raise ValueError(
+                    "Local embeddings model must be specified when using local or hybrid mode"
+                )
+
+        return True
+
+    def get_embeddings_config(self) -> Dict[str, Any]:
+        """Get embeddings configuration with defaults."""
+        config = self.load_config()
+        embeddings_config = config.get("embeddings", {})
+
+        # Set defaults
+        defaults = {
+            "mode": "local",
+            "cloud": {
+                "model": "jina_ai/jina-embeddings-v3",
+                "batch_size": 100,
+                "max_retries": 3,
+                "timeout": 30,
+            },
+            "local": {
+                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                "batch_size": 32,
+            },
+        }
+
+        # Merge with defaults
+        result = defaults.copy()
+        if embeddings_config:
+            result["mode"] = embeddings_config.get("mode", defaults["mode"])
+            if "cloud" in embeddings_config:
+                result["cloud"].update(embeddings_config["cloud"])
+            if "local" in embeddings_config:
+                result["local"].update(embeddings_config["local"])
+
+        return result
+
 
 # Global instances for common domains
 @lru_cache(maxsize=None)
