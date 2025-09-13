@@ -10,9 +10,19 @@ import yaml
 class DomainConfig:
     """Domain configuration manager."""
 
+    # Optional class-level override for configuration directory. When set,
+    # instances will use this directory instead of 'configs/{domain}'. This is
+    # primarily used in tests to inject a temporary config directory.
+    config_dir: str | None = None
+
     def __init__(self, domain: str):
         self.domain = domain
-        self.config_dir = f"configs/{domain}"
+        # Allow tests or callers to override configuration directory at the class level.
+        # This avoids having to stub filesystem layout and makes the loader patch-friendly.
+        if DomainConfig.config_dir:
+            self.config_dir = DomainConfig.config_dir  # type: ignore[assignment]
+        else:
+            self.config_dir = f"configs/{domain}"
         self._validate_domain()
 
     def _validate_domain(self):

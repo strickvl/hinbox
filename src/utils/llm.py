@@ -14,6 +14,7 @@ from pydantic import BaseModel
 # raise at import-time. We guard this to keep module import safe for tests.
 try:
     from langfuse.openai import OpenAI as LangfuseOpenAI  # type: ignore
+
     _LANGFUSE_AVAILABLE = True
 except Exception:
     LangfuseOpenAI = None  # type: ignore[assignment]

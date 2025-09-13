@@ -5,7 +5,6 @@ from typing import Any, Dict, List
 
 import litellm
 from langfuse import observe
-from litellm import embedding
 
 from src.logging_config import get_logger
 
@@ -84,7 +83,7 @@ class CloudEmbeddingProvider(EmbeddingProvider):
                 # Run the synchronous embedding call in an executor
                 response = await loop.run_in_executor(
                     None,
-                    lambda: embedding(
+                    lambda: litellm.embedding(
                         model=self.config.model_name,
                         input=texts,
                         metadata={

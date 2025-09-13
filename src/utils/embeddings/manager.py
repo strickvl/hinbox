@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import numpy as np
 
-from src.config_loader import DomainConfig
+import src.config_loader as config_loader
 from src.constants import CLOUD_EMBEDDING_MODEL, DEFAULT_EMBEDDING_MODEL
 from src.logging_config import get_logger
 
@@ -86,7 +86,7 @@ class EmbeddingManager:
     def _load_domain_config(self) -> Dict[str, Any]:
         """Load domain-specific configuration."""
         try:
-            config = DomainConfig(self.domain)
+            config = config_loader.DomainConfig(self.domain)
             return config.load_config()
         except Exception:
             return {}

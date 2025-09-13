@@ -9,10 +9,11 @@ from typing import Any
 
 from fasthtml.common import *
 
-from src.constants import ENABLE_PROFILE_VERSIONING
+import src.constants as constants
 
+from . import utils as frontend_utils
 from .app_config import main_layout
-from .utils import encode_key, random_pastel_color
+from .utils import random_pastel_color
 
 
 def EmptyState(message: str, cls: str = "empty-state") -> Div:
@@ -255,7 +256,7 @@ def EntityList(entities, entity_type_name, route_prefix, render_func=None):
                 type_badge = Span(entity.get("type"), cls="tag")
 
             name = entity.get("name") or entity.get("title", "Unknown")
-            link = A(name, href=f"/{route_prefix}/{encode_key(k)}")
+            link = A(name, href=f"/{route_prefix}/{frontend_utils.encode_key(k)}")
 
             items.append(Li(link, " ", type_badge))
 
@@ -303,7 +304,7 @@ def ProfileVersionSelector(
     selected_version: int = None,
 ):
     """Dropdown selector for profile versions."""
-    if not ENABLE_PROFILE_VERSIONING or total_versions <= 1:
+    if not constants.ENABLE_PROFILE_VERSIONING or total_versions <= 1:
         return ""
 
     selected_version = selected_version or current_version
@@ -327,7 +328,7 @@ def ProfileVersionSelector(
         Select(
             *options,
             name="version",
-            onchange=f"window.location.href = '/{route_prefix}/{encode_key(entity_key)}?version=' + this.value",
+            onchange=f"window.location.href = '/{route_prefix}/{frontend_utils.encode_key(entity_key)}?version=' + this.value",
             style="margin-right: 10px;",
         ),
         style="margin-bottom: 20px; padding: 15px; background: var(--surface-2); border-radius: 8px;",
