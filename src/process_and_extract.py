@@ -25,6 +25,7 @@ from src.constants import (
     OUTPUT_DIR,
     PEOPLE_OUTPUT_PATH,
 )
+from src.engine import ArticleProcessor
 from src.exceptions import ArticleLoadError
 from src.logging_config import get_logger, log, set_verbose
 from src.merge import (
@@ -39,7 +40,6 @@ from src.merge import (
 from src.merge import (
     merge_people_generic as merge_people,
 )
-from src.processing.article_processor import ArticleProcessor
 from src.utils.file_ops import write_entity_to_file
 
 # Get module-specific logger

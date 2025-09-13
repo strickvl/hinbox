@@ -3,9 +3,9 @@
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.constants import ENABLE_PROFILE_VERSIONING, SIMILARITY_THRESHOLD
+from src.engine.match_checker import cloud_model_check_match, local_model_check_match
+from src.engine.profiles import VersionedProfile, create_profile, update_profile
 from src.logging_config import display_markdown, get_logger, log
-from src.match_checker import cloud_model_check_match, local_model_check_match
-from src.profiles import VersionedProfile, create_profile, update_profile
 from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
 from src.utils.file_ops import write_entity_to_file
 from src.utils.profiles import extract_profile_text

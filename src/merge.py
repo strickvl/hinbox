@@ -27,7 +27,7 @@ def merge_people_generic(
     langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge people entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
+    from src.engine.mergers import EntityMerger
 
     merger = EntityMerger("people")
     merger.merge_entities(
@@ -64,7 +64,7 @@ def merge_organizations_generic(
     langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge organization entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
+    from src.engine.mergers import EntityMerger
 
     merger = EntityMerger("organizations")
     merger.merge_entities(
@@ -101,7 +101,7 @@ def merge_locations_generic(
     langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge location entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
+    from src.engine.mergers import EntityMerger
 
     merger = EntityMerger("locations")
     merger.merge_entities(
@@ -138,7 +138,7 @@ def merge_events_generic(
     langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge event entities using the generic EntityMerger."""
-    from src.mergers import EntityMerger
+    from src.engine.mergers import EntityMerger
 
     merger = EntityMerger("events")
     merger.merge_entities(

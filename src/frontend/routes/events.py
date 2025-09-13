@@ -6,7 +6,7 @@ from fasthtml.common import H2, A, Div, Li, NotStr, P, Response, Span, Ul
 
 from src.config_loader import DomainConfig
 from src.constants import ENABLE_PROFILE_VERSIONING
-from src.profiles import VersionedProfile
+from src.engine import VersionedProfile
 from src.utils.error_handler import ErrorHandler
 
 from ..app_config import get_current_domain, main_layout, rt

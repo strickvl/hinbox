@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+from src.engine import VersionedProfile
 from src.frontend.components import ProfileVersionSelector
-from src.profiles import VersionedProfile
 
 
 class TestProfileVersionSelector:

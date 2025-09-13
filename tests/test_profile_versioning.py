@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from src.constants import ENABLE_PROFILE_VERSIONING
-from src.profiles import (
+from src.engine import (
     ProfileVersion,
     VersionedProfile,
     create_profile,
@@ -165,7 +165,7 @@ class TestVersionedProfile:
 class TestProfileFunctionsWithVersioning:
     """Test profile creation and update functions with versioning."""
 
-    @patch("src.profiles.generate_profile")
+    @patch("src.engine.profiles.generate_profile")
     def test_create_profile_with_versioning_enabled(self, mock_generate):
         """Test create_profile when versioning is enabled."""
         # Mock the profile generation
@@ -178,7 +178,7 @@ class TestProfileFunctionsWithVersioning:
         mock_history = [{"iteration": 1, "valid": True}]
         mock_generate.return_value = (mock_profile, mock_history)
 
-        with patch("src.profiles.ENABLE_PROFILE_VERSIONING", True):
+        with patch("src.engine.profiles.ENABLE_PROFILE_VERSIONING", True):
             profile_dict, versioned_profile, history = create_profile(
                 entity_type="person",
                 entity_name="Test Person",
@@ -195,7 +195,7 @@ class TestProfileFunctionsWithVersioning:
             assert versioned_profile.get_latest().trigger_article_id == "article1"
             assert history == mock_history
 
-    @patch("src.profiles.generate_profile")
+    @patch("src.engine.profiles.generate_profile")
     def test_create_profile_with_versioning_disabled(self, mock_generate):
         """Test create_profile when versioning is disabled."""
         mock_profile = {
@@ -207,7 +207,7 @@ class TestProfileFunctionsWithVersioning:
         mock_history = [{"iteration": 1, "valid": True}]
         mock_generate.return_value = (mock_profile, mock_history)
 
-        with patch("src.profiles.ENABLE_PROFILE_VERSIONING", False):
+        with patch("src.engine.profiles.ENABLE_PROFILE_VERSIONING", False):
             profile_dict, versioned_profile, history = create_profile(
                 entity_type="person",
                 entity_name="Test Person",
@@ -224,7 +224,7 @@ class TestProfileFunctionsWithVersioning:
             assert versioned_profile.current_version == 1
             assert history == mock_history
 
-    @patch("src.profiles._update_profile_internal")
+    @patch("src.engine.profiles._update_profile_internal")
     def test_update_profile_with_versioning_enabled(self, mock_update):
         """Test update_profile when versioning is enabled."""
         # Setup existing versioned profile
@@ -255,7 +255,7 @@ class TestProfileFunctionsWithVersioning:
             "sources": ["article1"],
         }
 
-        with patch("src.profiles.ENABLE_PROFILE_VERSIONING", True):
+        with patch("src.engine.profiles.ENABLE_PROFILE_VERSIONING", True):
             result_profile, result_versioned, history = update_profile(
                 entity_type="person",
                 entity_name="Test Person",
@@ -274,7 +274,7 @@ class TestProfileFunctionsWithVersioning:
             assert result_versioned.get_latest().trigger_article_id == "article2"
             assert history == mock_history
 
-    @patch("src.profiles._update_profile_internal")
+    @patch("src.engine.profiles._update_profile_internal")
     def test_update_profile_with_versioning_disabled(self, mock_update):
         """Test update_profile when versioning is disabled."""
         # Setup existing versioned profile (but versioning disabled)
@@ -296,7 +296,7 @@ class TestProfileFunctionsWithVersioning:
             "sources": ["article1"],
         }
 
-        with patch("src.profiles.ENABLE_PROFILE_VERSIONING", False):
+        with patch("src.engine.profiles.ENABLE_PROFILE_VERSIONING", False):
             result_profile, result_versioned, history = update_profile(
                 entity_type="person",
                 entity_name="Test Person",

@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.mergers import EntityMerger
+from src.engine import EntityMerger
 
 
 def make_empty_entities():

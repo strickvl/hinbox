@@ -11,9 +11,7 @@ These tests:
 from typing import Any, Dict, List
 from unittest.mock import patch
 
-from src.match_checker import MatchCheckResult
-from src.mergers import EntityMerger
-from src.profiles import VersionedProfile
+from src.engine import EntityMerger, MatchCheckResult, VersionedProfile
 
 
 class StubEmbeddingManager:
@@ -102,10 +100,13 @@ class TestEntityMergerMergeSmoke:
         )  # arbitrary but consistent
 
         with (
-            patch("src.mergers.create_profile", side_effect=create_profile_stub),
-            patch("src.profiles.create_profile", side_effect=create_profile_stub),
-            patch("src.mergers.get_embedding_manager", return_value=stub_manager),
-            patch("src.mergers.write_entity_to_file", return_value=None),
+            patch(
+                "src.engine.profiles.create_profile", side_effect=create_profile_stub
+            ),
+            patch(
+                "src.engine.mergers.get_embedding_manager", return_value=stub_manager
+            ),
+            patch("src.engine.mergers.write_entity_to_file", return_value=None),
         ):
             merger.merge_entities(
                 extracted_entities=extracted_people,
@@ -198,16 +199,23 @@ class TestEntityMergerMergeSmoke:
             return MatchCheckResult(is_match=True, reason="forced-match")
 
         with (
-            patch("src.mergers.create_profile", side_effect=create_profile_stub),
-            patch("src.profiles.create_profile", side_effect=create_profile_stub),
-            patch("src.mergers.update_profile", side_effect=update_profile_stub),
-            patch("src.profiles.update_profile", side_effect=update_profile_stub),
-            patch("src.mergers.get_embedding_manager", return_value=stub_manager),
-            patch("src.mergers.cloud_model_check_match", side_effect=always_match),
             patch(
-                "src.match_checker.cloud_model_check_match", side_effect=always_match
+                "src.engine.profiles.create_profile", side_effect=create_profile_stub
             ),
-            patch("src.mergers.write_entity_to_file", return_value=None),
+            patch(
+                "src.engine.profiles.update_profile", side_effect=update_profile_stub
+            ),
+            patch(
+                "src.engine.mergers.get_embedding_manager", return_value=stub_manager
+            ),
+            patch(
+                "src.engine.mergers.cloud_model_check_match", side_effect=always_match
+            ),
+            patch(
+                "src.engine.match_checker.cloud_model_check_match",
+                side_effect=always_match,
+            ),
+            patch("src.engine.mergers.write_entity_to_file", return_value=None),
         ):
             merger.merge_entities(
                 extracted_entities=extracted_people,

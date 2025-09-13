@@ -40,7 +40,8 @@ class EntityExtractor:
         """Initialize extractor for a specific entity type and domain.
 
         Args:
-            entity_type: The type of entity to extract (people, organizations, locations, events)
+            entity_type: The type of entity to extract (people, organizations,
+                locations, events)
             domain: The domain configuration to use (default: guantanamo)
         """
         if entity_type not in self.ENTITY_MODEL_GETTERS:

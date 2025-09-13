@@ -13,7 +13,7 @@ from fasthtml.common import *
 
 from src.config_loader import DomainConfig
 from src.constants import ENABLE_PROFILE_VERSIONING
-from src.profiles import VersionedProfile
+from src.engine import VersionedProfile
 from src.utils.error_handler import ErrorHandler
 
 from ..app_config import (
