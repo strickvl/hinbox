@@ -34,7 +34,7 @@ logger = get_logger("utils.llm")
 # Configure litellm once for the entire module
 litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
-litellm.callbacks = ["langfuse"]
+litellm.callbacks = ["langfuse_otel"]
 
 # Common metadata for all LLM calls
 DEFAULT_METADATA = {

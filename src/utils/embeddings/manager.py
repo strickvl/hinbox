@@ -3,7 +3,7 @@
 import asyncio
 import os
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import numpy as np
 
@@ -13,7 +13,9 @@ from src.logging_config import get_logger
 
 from .base import EmbeddingConfig, EmbeddingProvider
 from .cloud import CloudEmbeddingProvider
-from .local import LocalEmbeddingProvider
+
+if TYPE_CHECKING:  # import only for type hints
+    pass  # pragma: no cover
 
 logger = get_logger("utils.embeddings.manager")
 
@@ -65,7 +67,8 @@ class EmbeddingManager:
 
         # Initialize providers based on mode
         self.cloud_provider: Optional[CloudEmbeddingProvider] = None
-        self.local_provider: Optional[LocalEmbeddingProvider] = None
+        # Use Any for runtime attribute to avoid import side effects
+        self.local_provider: Optional[Any] = None
 
         if self.mode in [EmbeddingMode.CLOUD, EmbeddingMode.HYBRID]:
             self.cloud_provider = CloudEmbeddingProvider(
@@ -73,6 +76,9 @@ class EmbeddingManager:
             )
 
         if self.mode in [EmbeddingMode.LOCAL, EmbeddingMode.HYBRID]:
+            # Lazy import to avoid importing sentence-transformers/torch unless needed
+            from .local import LocalEmbeddingProvider  # type: ignore
+
             self.local_provider = LocalEmbeddingProvider(
                 local_config or self._get_local_config_from_domain(embedding_config)
             )

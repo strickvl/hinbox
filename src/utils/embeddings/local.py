@@ -1,12 +1,19 @@
-"""Local embedding provider using sentence-transformers."""
+"""Local embedding provider using sentence-transformers.
 
-from typing import Any, Dict, List, Optional
+This module avoids importing heavy dependencies (sentence-transformers/torch)
+at import time so environments without proper NumPy/PyTorch support can still
+run the application when local embeddings are not used. The actual
+sentence-transformers import happens lazily inside `_get_model()`.
+"""
 
-from sentence_transformers import SentenceTransformer
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.logging_config import get_logger
 
 from .base import EmbeddingConfig, EmbeddingProvider, EmbeddingResult
+
+if TYPE_CHECKING:  # for type checkers only; avoids runtime import
+    pass  # pragma: no cover
 
 logger = get_logger("utils.embeddings.local")
 
@@ -16,14 +23,18 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
     def __init__(self, config: EmbeddingConfig):
         super().__init__(config)
-        self._model: Optional[SentenceTransformer] = None
+        # Use Any for runtime to avoid requiring the class at import time
+        self._model: Optional[Any] = None
 
-    def _get_model(self) -> SentenceTransformer:
+    def _get_model(self):
         """Lazy load the model."""
         if self._model is None:
             # Handle model name transformations
             model_name = self._transform_model_name(self.config.model_name)
             logger.info(f"Loading local embedding model: {model_name}")
+            # Import here to avoid importing torch/NumPy unless needed
+            from sentence_transformers import SentenceTransformer  # type: ignore
+
             self._model = SentenceTransformer(model_name)
             logger.info(f"Successfully loaded local embedding model: {model_name}")
         return self._model
