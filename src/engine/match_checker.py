@@ -18,8 +18,6 @@ def local_model_check_match(
     new_profile_text: str,
     existing_profile_text: str,
     model: str = OLLAMA_MODEL,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ) -> MatchCheckResult:
     """
     Check if a newly extracted profile refers to the same entity as an existing profile.
@@ -33,8 +31,6 @@ def local_model_check_match(
         new_profile_text: The profile text generated from the new article
         existing_profile_text: The existing profile text we're comparing against
         model: The LLM model to use for comparison
-        langfuse_session_id: The Langfuse session ID
-        langfuse_trace_id: The Langfuse trace ID
     """
     system_content = """You are an expert analyst specializing in entity
                                resolution for news articles about Guantánamo Bay.
@@ -71,8 +67,6 @@ Are these profiles referring to the same entity? Provide your analysis."""
             response_model=MatchCheckResult,
             model=model,
             temperature=0,
-            langfuse_session_id=langfuse_session_id,
-            langfuse_trace_id=langfuse_trace_id,
         )
     except Exception as e:
         log(f"Error with Ollama API", level="error", exception=e)
@@ -86,8 +80,6 @@ def cloud_model_check_match(
     new_profile_text: str,
     existing_profile_text: str,
     model: str = CLOUD_MODEL,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ) -> MatchCheckResult:
     """
     Check if a newly extracted profile refers to the same entity as an existing profile,
@@ -100,8 +92,6 @@ def cloud_model_check_match(
         new_profile_text: The profile text generated from the new article
         existing_profile_text: The existing profile text we're comparing against
         model: The LLM model to use for comparison
-        langfuse_session_id: The Langfuse session ID
-        langfuse_trace_id: The Langfuse trace ID
 
     Returns:
         MatchCheckResult with is_match flag and detailed reasoning
@@ -140,8 +130,6 @@ Are these profiles referring to the same entity? Provide your analysis."""
             response_model=MatchCheckResult,
             model=model,
             temperature=0,
-            langfuse_session_id=langfuse_session_id,
-            langfuse_trace_id=langfuse_trace_id,
         )
     except Exception as e:
         log(f"Error with Gemini API", level="error", exception=e)

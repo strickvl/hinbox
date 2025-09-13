@@ -4,7 +4,6 @@ import asyncio
 from typing import Any, Dict, List
 
 import litellm
-from langfuse import observe
 
 from src.logging_config import get_logger
 
@@ -25,7 +24,6 @@ class CloudEmbeddingProvider(EmbeddingProvider):
         litellm.suppress_debug_info = True
         litellm.callbacks = ["braintrust"]
 
-    @observe()
     async def embed_single(self, text: str) -> List[float]:
         """Embed a single text using cloud API."""
         if not text.strip():
@@ -34,7 +32,6 @@ class CloudEmbeddingProvider(EmbeddingProvider):
         result = await self.embed_batch([text])
         return result.embeddings[0]
 
-    @observe()
     async def embed_batch(self, texts: List[str]) -> EmbeddingResult:
         """Embed multiple texts using cloud API."""
         # Filter empty texts

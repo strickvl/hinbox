@@ -8,7 +8,7 @@ locations, and events.
 
 import random
 import time
-from typing import Any, List, Optional, Type, Union
+from typing import Any, List, Type, Union
 
 from pydantic import BaseModel
 
@@ -16,14 +16,15 @@ from src.constants import (
     BASE_DELAY,
     CLOUD_MODEL,
     MAX_RETRIES,
+    OLLAMA_API_URL,
     OLLAMA_MODEL,
+    get_ollama_model_name,
 )
 from src.logging_config import get_logger
 from src.utils.llm import (
     DEFAULT_METADATA,
     create_messages,
     get_litellm_client,
-    get_ollama_client,
 )
 
 logger = get_logger(__name__)
@@ -35,8 +36,6 @@ def extract_entities_cloud(
     response_model: Union[Type[BaseModel], List[Type[BaseModel]]],
     model: str = CLOUD_MODEL,
     temperature: float = 0,
-    langfuse_session_id: Optional[str] = None,
-    langfuse_trace_id: Optional[str] = None,
 ) -> Any:
     """Extract entities from text using cloud-based language models via litellm.
 
@@ -50,8 +49,6 @@ def extract_entities_cloud(
         response_model: Pydantic model or list of models defining the expected response structure
         model: Cloud model name to use for extraction (defaults to configured CLOUD_MODEL)
         temperature: Temperature parameter for generation (0 for deterministic output)
-        langfuse_session_id: Optional Langfuse session ID for request tracing
-        langfuse_trace_id: Optional Langfuse trace ID for request tracing
 
     Returns:
         Extracted entities structured according to the response_model specification
@@ -72,10 +69,6 @@ def extract_entities_cloud(
 
     metadata = dict(DEFAULT_METADATA)
     metadata["tags"] = ["dev", "extraction"]
-    if langfuse_trace_id is not None:
-        metadata["span_name"] = langfuse_trace_id
-    if langfuse_session_id is not None:
-        metadata["session_id"] = langfuse_session_id
 
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
@@ -120,8 +113,6 @@ def extract_entities_local(
     response_model: Type[BaseModel],
     model: str = OLLAMA_MODEL,
     temperature: float = 0,
-    langfuse_session_id: Optional[str] = None,
-    langfuse_trace_id: Optional[str] = None,
 ) -> Any:
     """Extract entities from text using local Ollama language models.
 
@@ -135,8 +126,6 @@ def extract_entities_local(
         response_model: Pydantic model defining the expected response structure
         model: Ollama model name to use for extraction (defaults to configured OLLAMA_MODEL)
         temperature: Temperature parameter for generation (0 for deterministic output)
-        langfuse_session_id: Optional Langfuse session ID for request tracing
-        langfuse_trace_id: Optional Langfuse trace ID for request tracing
 
     Returns:
         Extracted entities structured according to the response_model specification
@@ -149,9 +138,7 @@ def extract_entities_local(
         Model names are automatically mapped to Ollama-compatible format.
         No retry logic as local models typically don't have transient failures.
     """
-    from src.constants import get_ollama_model_name
-
-    client = get_ollama_client()
+    client = get_litellm_client()
 
     messages = create_messages(
         system_content=system_prompt,
@@ -160,17 +147,15 @@ def extract_entities_local(
 
     metadata = dict(DEFAULT_METADATA)
     metadata["tags"] = ["dev", "extraction"]
-    if langfuse_trace_id is not None:
-        metadata["span_name"] = langfuse_trace_id
-    if langfuse_session_id is not None:
-        metadata["session_id"] = langfuse_session_id
 
-    results = client.beta.chat.completions.parse(
+    results = client.chat.completions.create(
         model=get_ollama_model_name(model),
-        response_format=response_model,
+        response_model=response_model,
         temperature=temperature,
         messages=messages,
         metadata=metadata,
+        api_base=OLLAMA_API_URL,
+        custom_llm_provider="ollama",
     )
 
-    return results.choices[0].message.parsed
+    return results

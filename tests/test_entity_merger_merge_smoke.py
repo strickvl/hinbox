@@ -39,8 +39,6 @@ def create_profile_stub(
     article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ):
     """Deterministic create_profile stub returning a profile dict, a VersionedProfile with one version, and empty history."""
     profile_dict = {
@@ -64,8 +62,6 @@ def update_profile_stub(
     new_article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ):
     """Deterministic update_profile stub that appends a new version to the provided versioned_profile."""
     updated_profile = {
@@ -107,8 +103,8 @@ class TestEntityMergerMergeSmoke:
             patch("src.engine.mergers.write_entity_to_file", return_value=None),
         ):
             merger.merge_entities(
-                extracted_entities=extracted_people,
-                entities=entities,
+                extracted_people,
+                entities,
                 article_id="art-001",
                 article_title="First Article",
                 article_url="http://example.com/1",
@@ -212,8 +208,8 @@ class TestEntityMergerMergeSmoke:
             patch("src.engine.mergers.write_entity_to_file", return_value=None),
         ):
             merger.merge_entities(
-                extracted_entities=extracted_people,
-                entities=entities,
+                extracted_people,
+                entities,
                 article_id="art-002",
                 article_title="Update Article",
                 article_url="http://example.com/2",

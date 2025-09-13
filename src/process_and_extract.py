@@ -10,7 +10,6 @@ status tracking.
 
 import argparse
 import os
-import uuid
 from datetime import datetime
 from typing import Dict, List, Tuple
 
@@ -237,8 +236,6 @@ def merge_all_entities(
     model_type: str,
     processing_metadata: Dict,
     processor: ArticleProcessor,
-    langfuse_session_id: str,
-    langfuse_trace_id: str,
 ) -> None:
     """Merge all extracted entities with existing entities."""
     log("Merging extracted entities...", level="processing")
@@ -279,8 +276,6 @@ def merge_all_entities(
                 extraction_timestamp,
                 model_type,
                 domain=processor.domain,
-                langfuse_session_id=langfuse_session_id,
-                langfuse_trace_id=langfuse_trace_id,
             )
             merge_duration = (datetime.now() - merge_start).total_seconds()
             log(
@@ -409,8 +404,6 @@ def process_single_article(
     processor: ArticleProcessor,
     entities: Dict[str, Dict],
     args: argparse.Namespace,
-    langfuse_session_id: str,
-    langfuse_trace_id: str,
 ) -> Tuple[Dict, bool, str]:
     """Process a single article through the extraction pipeline.
 
@@ -439,8 +432,6 @@ def process_single_article(
         if not processor.check_relevance(
             article_info["content"],
             article_info["id"],
-            langfuse_session_id,
-            langfuse_trace_id,
         ):
             processing_metadata["processed"] = False
             processing_metadata["reason"] = "Not relevant"
@@ -454,8 +445,6 @@ def process_single_article(
         article_info["id"],
         processing_metadata,
         args.verbose,
-        langfuse_session_id,
-        langfuse_trace_id,
     )
 
     # Merge all entities
@@ -467,8 +456,6 @@ def process_single_article(
         processor.model_type,
         processing_metadata,
         processor,
-        langfuse_session_id,
-        langfuse_trace_id,
     )
 
     # Finalize processing metadata
@@ -488,7 +475,6 @@ def process_articles_batch(
     processor: ArticleProcessor,
     entities: Dict[str, Dict],
     args: argparse.Namespace,
-    langfuse_session_id: str,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Process a batch of articles and return results with statistics."""
     processed_rows = []
@@ -500,7 +486,6 @@ def process_articles_batch(
     }
 
     for row_index, row in enumerate(rows, 1):
-        langfuse_trace_id = f"{row['id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         if row_index > args.limit:
             # We've hit the limit; keep the rest unmodified
             processed_rows.append(row)
@@ -513,8 +498,6 @@ def process_articles_batch(
             processor,
             entities,
             args,
-            langfuse_session_id,
-            langfuse_trace_id,
         )
 
         processed_rows.append(updated_row)
@@ -535,9 +518,6 @@ def main():
     """Main processing function - orchestrates the entire article processing workflow."""
     log("Starting script...")
 
-    # create a unique session id
-    langfuse_session_id = f"{uuid.uuid4()}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
     # Setup and initialization
     args = setup_arguments_and_config()
     config = DomainConfig(args.domain)
@@ -555,9 +535,7 @@ def main():
 
     # Process articles
     article_count = len(rows)
-    processed_rows, counters = process_articles_batch(
-        rows, processor, entities, args, langfuse_session_id
-    )
+    processed_rows, counters = process_articles_batch(rows, processor, entities, args)
 
     # Write results and statistics
     write_results_and_statistics(

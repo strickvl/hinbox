@@ -13,8 +13,6 @@ def gemini_check_relevance(
     text: str,
     model: str = CLOUD_MODEL,
     domain: str = "guantanamo",
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ):
     """
     Check if an article is relevant to the domain using Gemini.
@@ -23,8 +21,6 @@ def gemini_check_relevance(
         text: The article text to check
         model: The Gemini model to use
         domain: The domain configuration to use
-        langfuse_session_id: Langfuse session ID
-        langfuse_trace_id: Langfuse trace ID
 
     Returns:
         ArticleRelevance object with is_relevant flag and reason
@@ -36,8 +32,6 @@ def gemini_check_relevance(
         response_model=ArticleRelevance,
         model=model,
         temperature=0,
-        langfuse_session_id=langfuse_session_id,
-        langfuse_trace_id=langfuse_trace_id,
     )
 
 
@@ -45,8 +39,6 @@ def ollama_check_relevance(
     text: str,
     model: str = OLLAMA_MODEL,
     domain: str = "guantanamo",
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ):
     """
     Check if an article is relevant to the domain using Ollama.
@@ -66,6 +58,4 @@ def ollama_check_relevance(
         response_model=ArticleRelevance,
         model=model,
         temperature=0,
-        langfuse_session_id=langfuse_session_id,
-        langfuse_trace_id=langfuse_trace_id,
     )

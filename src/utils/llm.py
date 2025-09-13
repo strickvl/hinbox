@@ -9,17 +9,6 @@ import instructor
 import litellm
 from pydantic import BaseModel
 
-# Langfuse OpenAI wrapper is optional. In some environments (e.g., tests) the
-# underlying OpenAI beta resources may be missing; importing the wrapper would
-# raise at import-time. We guard this to keep module import safe for tests.
-try:
-    from langfuse.openai import OpenAI as LangfuseOpenAI  # type: ignore
-
-    _LANGFUSE_AVAILABLE = True
-except Exception:
-    LangfuseOpenAI = None  # type: ignore[assignment]
-    _LANGFUSE_AVAILABLE = False
-
 from src.constants import (
     BASE_DELAY,
     BRAINTRUST_PROJECT_ID,
@@ -28,7 +17,6 @@ from src.constants import (
     DEFAULT_TEMPERATURE,
     MAX_ITERATIONS,
     MAX_RETRIES,
-    OLLAMA_API_KEY,
     OLLAMA_API_URL,
     OLLAMA_MODEL,
     get_ollama_model_name,
@@ -48,7 +36,7 @@ litellm.suppress_debug_info = True
 litellm.callbacks = ["braintrust"]
 
 # Common metadata for all LLM calls
-DEFAULT_METADATA = {
+DEFAULT_METADATA: Dict[str, Any] = {
     "tags": ["dev"],
 }
 if BRAINTRUST_PROJECT_ID:
@@ -72,43 +60,7 @@ class ReflectionResult(BaseModel):
 
 def get_litellm_client():
     """Get a configured litellm client with instructor."""
-    # Use default mode, but we'll handle multiple tool calls in error handling
     return instructor.from_litellm(litellm.completion)
-
-
-def get_ollama_client():
-    """Get a configured Ollama OpenAI-style client.
-
-    Preference is given to the Langfuse OpenAI wrapper when available. In test
-    environments where langfuse (or the OpenAI beta resources it patches) is
-    not installed, this returns a minimal stub that raises a clear error when
-    used. This keeps imports cheap and avoids hard dependencies during test
-    collection while preserving explicit failure if local_generation is invoked.
-    """
-    if _LANGFUSE_AVAILABLE and LangfuseOpenAI is not None:
-        return LangfuseOpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
-
-    class _MissingClient:
-        def __init__(self, base_url: str, api_key: str):
-            self.base_url = base_url
-            self.api_key = api_key
-
-        class _Beta:
-            class _Chat:
-                class _Completions:
-                    @staticmethod
-                    def parse(*args, **kwargs):
-                        raise RuntimeError(
-                            "Local LLM client unavailable: langfuse.openai is not installed in this environment."
-                        )
-
-                completions = _Completions()
-
-            chat = _Chat()
-
-        beta = _Beta()
-
-    return _MissingClient(OLLAMA_API_URL, OLLAMA_API_KEY)
 
 
 def cloud_generation(
@@ -117,8 +69,6 @@ def cloud_generation(
     model: str = CLOUD_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
     **kwargs: Any,
 ) -> Any:
     """
@@ -135,7 +85,6 @@ def cloud_generation(
     Returns:
         Parsed response according to response_model
     """
-    # Not using iteration-based logging for direct generation
     logger.debug(f"Generating response with cloud model: {model}")
 
     client = get_litellm_client()
@@ -144,10 +93,6 @@ def cloud_generation(
     base_delay = BASE_DELAY
 
     metadata = dict(DEFAULT_METADATA)
-    if langfuse_trace_id is not None:
-        metadata["span_name"] = langfuse_trace_id
-    if langfuse_session_id is not None:
-        metadata["session_id"] = langfuse_session_id
 
     for attempt in range(max_retries + 1):
         try:
@@ -219,7 +164,6 @@ def cloud_generation(
                     logger.error(
                         f"All recovery strategies failed, will raise original error"
                     )
-                    # Fall through to raise the original error
 
             # Check for retryable errors (503, 529, rate limiting)
             is_retryable = (
@@ -249,12 +193,10 @@ def local_generation(
     model: str = OLLAMA_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
     **kwargs: Any,
 ) -> Any:
     """
-    Generate a response using a local Ollama model.
+    Generate a response using a local Ollama model via LiteLLM + instructor.
 
     Args:
         messages: List of message dictionaries
@@ -267,33 +209,108 @@ def local_generation(
     Returns:
         Parsed response according to response_model
     """
-    # Not using iteration-based logging for direct generation
     logger.debug(f"Generating response with local model: {model}")
 
-    client = get_ollama_client()
+    client = get_litellm_client()
+
+    max_retries = MAX_RETRIES
+    base_delay = BASE_DELAY
 
     metadata = dict(DEFAULT_METADATA)
-    if langfuse_trace_id is not None:
-        metadata["span_name"] = langfuse_trace_id
-    if langfuse_session_id is not None:
-        metadata["session_id"] = langfuse_session_id
 
-    try:
-        response = client.beta.chat.completions.parse(
-            model=get_ollama_model_name(model),
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            response_format=response_model,
-            metadata=metadata,
-            **kwargs,
-        )
-        result = response.choices[0].message.parsed
-        logger.debug(f"Successfully generated response with {model}")
-        return result
-    except Exception as e:
-        logger.error(f"Local generation failed: {str(e)}")
-        raise
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=get_ollama_model_name(model),
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                response_model=response_model,
+                metadata=metadata,
+                api_base=OLLAMA_API_URL,
+                custom_llm_provider="ollama",
+                **kwargs,
+            )
+            logger.debug(f"Successfully generated response with {model}")
+            return response
+        except Exception as e:
+            error_str = str(e)
+
+            # Handle Instructor multiple tool calls error
+            if "multiple tool calls" in error_str.lower():
+                logger.warning(
+                    f"Multiple tool calls detected for local model {model}, attempting recovery strategies"
+                )
+
+                # Strategy 1: Try with lower temperature and max_retries=0
+                try:
+                    logger.info("Trying local with temperature=0 and max_retries=0")
+                    response = client.chat.completions.create(
+                        model=get_ollama_model_name(model),
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=0,
+                        response_model=response_model,
+                        metadata=metadata,
+                        api_base=OLLAMA_API_URL,
+                        custom_llm_provider="ollama",
+                        max_retries=0,
+                        **kwargs,
+                    )
+                    logger.info("✓ Successfully recovered locally with strategy 1")
+                    return response
+                except Exception as recovery_e1:
+                    logger.warning(f"Local strategy 1 failed: {recovery_e1}")
+
+                # Strategy 2: Modify system message
+                try:
+                    logger.info("Trying local with modified system message")
+                    modified_messages = messages.copy()
+                    if modified_messages and modified_messages[0]["role"] == "system":
+                        modified_messages[0]["content"] += (
+                            "\n\nIMPORTANT: Provide exactly ONE response. Do not make multiple tool calls."
+                        )
+
+                    response = client.chat.completions.create(
+                        model=get_ollama_model_name(model),
+                        messages=modified_messages,
+                        max_tokens=max_tokens,
+                        temperature=0,
+                        response_model=response_model,
+                        metadata=metadata,
+                        api_base=OLLAMA_API_URL,
+                        custom_llm_provider="ollama",
+                        max_retries=0,
+                        **kwargs,
+                    )
+                    logger.info("✓ Successfully recovered locally with strategy 2")
+                    return response
+                except Exception as recovery_e2:
+                    logger.warning(f"Local strategy 2 failed: {recovery_e2}")
+                    logger.error(
+                        "All local recovery strategies failed, will raise original error"
+                    )
+
+            # Check for retryable errors (503, 529, rate limiting)
+            is_retryable = (
+                "503" in error_str
+                or "529" in error_str
+                or "overloaded" in error_str.lower()
+                or "rate limit" in error_str.lower()
+                or "try again" in error_str.lower()
+            )
+
+            if is_retryable and attempt < max_retries:
+                delay = base_delay * (2**attempt) + random.uniform(0, 1)
+                logger.warning(
+                    f"Retryable local error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
+                )
+                logger.info(f"Retrying local in {delay:.2f} seconds...")
+                time.sleep(delay)
+                continue
+
+            logger.error(f"Local generation failed: {error_str}")
+            raise
 
 
 def reflect_and_check(
@@ -301,8 +318,6 @@ def reflect_and_check(
     reasoning_prompt: str,
     mode: GenerationMode = GenerationMode.CLOUD,
     model: str = None,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ) -> ReflectionResult:
     """
     Use an LLM to reflect on generated text and check if it meets requirements.
@@ -316,7 +331,6 @@ def reflect_and_check(
     Returns:
         ReflectionResult with validity and reasoning
     """
-    # Log evaluation without iteration context
     logger.debug(f"Starting reflection check with {mode.value} model")
 
     messages = [
@@ -336,16 +350,12 @@ def reflect_and_check(
                 messages=messages,
                 response_model=ReflectionResult,
                 model=model or CLOUD_MODEL,
-                langfuse_session_id=langfuse_session_id,
-                langfuse_trace_id=langfuse_trace_id,
             )
         else:
             result = local_generation(
                 messages=messages,
                 response_model=ReflectionResult,
                 model=model or OLLAMA_MODEL,
-                langfuse_session_id=langfuse_session_id,
-                langfuse_trace_id=langfuse_trace_id,
             )
 
         logger.debug(f"Reflection check completed - valid: {result.valid}")
@@ -383,8 +393,6 @@ def iterative_improve(
     max_iterations: int = MAX_ITERATIONS,
     mode: GenerationMode = GenerationMode.CLOUD,
     model: str = None,
-    langfuse_session_id: str = None,
-    langfuse_trace_id: str = None,
 ) -> Dict[str, Any]:
     """
     Iteratively improve text using generation and reflection.
@@ -401,7 +409,6 @@ def iterative_improve(
     Returns:
         Dict containing final text and reflection history
     """
-    # Log start of iterative process
     prompt_preview = (
         str(generation_messages)[:100] + "..."
         if len(str(generation_messages)) > 100
@@ -425,8 +432,6 @@ def iterative_improve(
             reflection_prompt,
             mode=mode,
             model=model,
-            langfuse_session_id=langfuse_session_id,
-            langfuse_trace_id=langfuse_trace_id,
         )
         reflection_result = extract_reflection_result(reflection)
 
@@ -456,16 +461,12 @@ def iterative_improve(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or CLOUD_MODEL,
-                langfuse_session_id=langfuse_session_id,
-                langfuse_trace_id=langfuse_trace_id,
             )
         else:
             improved = local_generation(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or OLLAMA_MODEL,
-                langfuse_session_id=langfuse_session_id,
-                langfuse_trace_id=langfuse_trace_id,
             )
 
         # Extract text from response

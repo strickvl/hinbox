@@ -35,8 +35,6 @@ class ArticleProcessor:
         self,
         article_content: str,
         article_id: str,
-        langfuse_session_id: str,
-        langfuse_trace_id: str,
     ) -> bool:
         """Check whether an article is relevant to the configured domain.
 
@@ -49,16 +47,12 @@ class ArticleProcessor:
                     text=article_content,
                     model=self.specific_model,
                     domain=self.domain,
-                    langfuse_session_id=langfuse_session_id,
-                    langfuse_trace_id=langfuse_trace_id,
                 )
             else:
                 result = gemini_check_relevance(
                     text=article_content,
                     model=self.specific_model,
                     domain=self.domain,
-                    langfuse_session_id=langfuse_session_id,
-                    langfuse_trace_id=langfuse_trace_id,
                 )
 
             # Normalise result to boolean
@@ -83,13 +77,11 @@ class ArticleProcessor:
         self,
         entity_type: str,
         article_content: str,
-        langfuse_session_id: str = None,
-        langfuse_trace_id: str = None,
     ) -> List[Dict]:
         """Extract a single entity type using the generic EntityExtractor.
 
         This central dispatcher replaces entity-specific wrapper calls. It
-        defers to cloud (Gemini via LiteLLM) unless running in \"ollama\" mode.
+        defers to cloud (Gemini via LiteLLM) unless running in "ollama" mode.
         """
         try:
             extractor = EntityExtractor(entity_type, self.domain)
@@ -98,16 +90,12 @@ class ArticleProcessor:
                     text=article_content,
                     model=self.specific_model,
                     temperature=0,
-                    langfuse_session_id=langfuse_session_id,
-                    langfuse_trace_id=langfuse_trace_id,
                 )
             else:
                 return extractor.extract_cloud(
                     text=article_content,
                     model=self.specific_model,
                     temperature=0,
-                    langfuse_session_id=langfuse_session_id,
-                    langfuse_trace_id=langfuse_trace_id,
                 )
         except Exception:
             # Preserve fallback behavior: no entities on failure
@@ -148,8 +136,6 @@ class ArticleProcessor:
         article_id: str,
         processing_metadata: Dict[str, Any],
         verbose: bool = False,
-        langfuse_session_id: str = None,
-        langfuse_trace_id: str = None,
     ) -> Dict[str, List[Dict]]:
         """Extract all supported entity types from an article."""
         entities: Dict[str, List[Dict]] = {
@@ -164,8 +150,6 @@ class ArticleProcessor:
                 items = self.extract_single_entity_type(
                     et,
                     article_content,
-                    langfuse_session_id=langfuse_session_id,
-                    langfuse_trace_id=langfuse_trace_id,
                 )
                 entities[et] = items or []
 

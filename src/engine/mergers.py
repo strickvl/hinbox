@@ -185,9 +185,6 @@ class EntityMerger:
         model_type: str = "gemini",
         similarity_threshold: float = SIMILARITY_THRESHOLD,
         domain: str = "guantanamo",
-        *,
-        langfuse_session_id: Optional[str] = None,
-        langfuse_trace_id: Optional[str] = None,
     ) -> None:
         """Merge extracted entities with existing entities database."""
         # Preserve legacy logging of "chosen mode"; EmbeddingManager itself is obtained via shared getter.
@@ -227,8 +224,6 @@ class EntityMerger:
                     article_id,
                     model_type,
                     domain,
-                    langfuse_session_id=langfuse_session_id,
-                    langfuse_trace_id=langfuse_trace_id,
                 )
             )
 
@@ -271,8 +266,6 @@ class EntityMerger:
                         self._format_key_for_display(similar_key),
                         proposed_profile_text,
                         existing_profile_text,
-                        langfuse_session_id=langfuse_session_id,
-                        langfuse_trace_id=langfuse_trace_id,
                     )
                 else:
                     result = cloud_model_check_match(
@@ -280,8 +273,6 @@ class EntityMerger:
                         self._format_key_for_display(similar_key),
                         proposed_profile_text,
                         existing_profile_text,
-                        langfuse_session_id=langfuse_session_id,
-                        langfuse_trace_id=langfuse_trace_id,
                     )
 
                 log(
@@ -338,8 +329,6 @@ class EntityMerger:
                                 article_id,
                                 model_type,
                                 domain,
-                                langfuse_session_id=langfuse_session_id,
-                                langfuse_trace_id=langfuse_trace_id,
                             )
                         )
                         existing_entity["profile"] = updated_profile
@@ -370,8 +359,6 @@ class EntityMerger:
                                 article_id,
                                 model_type,
                                 domain,
-                                langfuse_session_id=langfuse_session_id,
-                                langfuse_trace_id=langfuse_trace_id,
                             )
                         )
                         existing_entity["profile"] = new_profile

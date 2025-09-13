@@ -5,7 +5,7 @@ implementation for each entity type. This module intentionally contains no
 embedding logic and only imports SIMILARITY_THRESHOLD for default parameters.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from src.constants import SIMILARITY_THRESHOLD
 
@@ -22,9 +22,6 @@ def merge_people_generic(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
     domain: str = "guantanamo",
-    *,
-    langfuse_session_id: Optional[str] = None,
-    langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge people entities using the generic EntityMerger."""
     from src.engine.mergers import EntityMerger
@@ -42,8 +39,6 @@ def merge_people_generic(
         model_type,
         similarity_threshold,
         domain,
-        langfuse_session_id=langfuse_session_id,
-        langfuse_trace_id=langfuse_trace_id,
     )
 
 
@@ -59,9 +54,6 @@ def merge_organizations_generic(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
     domain: str = "guantanamo",
-    *,
-    langfuse_session_id: Optional[str] = None,
-    langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge organization entities using the generic EntityMerger."""
     from src.engine.mergers import EntityMerger
@@ -79,8 +71,6 @@ def merge_organizations_generic(
         model_type,
         similarity_threshold,
         domain,
-        langfuse_session_id=langfuse_session_id,
-        langfuse_trace_id=langfuse_trace_id,
     )
 
 
@@ -96,9 +86,6 @@ def merge_locations_generic(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
     domain: str = "guantanamo",
-    *,
-    langfuse_session_id: Optional[str] = None,
-    langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge location entities using the generic EntityMerger."""
     from src.engine.mergers import EntityMerger
@@ -116,8 +103,6 @@ def merge_locations_generic(
         model_type,
         similarity_threshold,
         domain,
-        langfuse_session_id=langfuse_session_id,
-        langfuse_trace_id=langfuse_trace_id,
     )
 
 
@@ -133,9 +118,6 @@ def merge_events_generic(
     model_type: str = "gemini",
     similarity_threshold: float = SIMILARITY_THRESHOLD,
     domain: str = "guantanamo",
-    *,
-    langfuse_session_id: Optional[str] = None,
-    langfuse_trace_id: Optional[str] = None,
 ) -> None:
     """Merge event entities using the generic EntityMerger."""
     from src.engine.mergers import EntityMerger
@@ -153,6 +135,4 @@ def merge_events_generic(
         model_type,
         similarity_threshold,
         domain,
-        langfuse_session_id=langfuse_session_id,
-        langfuse_trace_id=langfuse_trace_id,
     )
