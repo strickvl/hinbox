@@ -17,14 +17,7 @@ from typing import Dict, List, Tuple
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.constants import (
-    ARTICLES_PATH,
-    EVENTS_OUTPUT_PATH,
-    LOCATIONS_OUTPUT_PATH,
-    ORGANIZATIONS_OUTPUT_PATH,
-    OUTPUT_DIR,
-    PEOPLE_OUTPUT_PATH,
-)
+from src.config_loader import DomainConfig
 from src.engine import ArticleProcessor
 from src.exceptions import ArticleLoadError
 from src.logging_config import get_logger, log, set_verbose
@@ -59,7 +52,7 @@ def ensure_dir(directory: str) -> None:
         os.makedirs(directory)
 
 
-def load_existing_entities() -> Dict[str, Dict]:
+def load_existing_entities(base_dir: str) -> Dict[str, Dict]:
     """Load existing entities from Parquet files if they exist.
 
     Reads all existing entity Parquet files and loads them into memory for merging
@@ -82,27 +75,33 @@ def load_existing_entities() -> Dict[str, Dict]:
     locations = {}
     organizations = {}
 
+    # Build file paths under the domain's output directory
+    people_path = os.path.join(base_dir, "people.parquet")
+    events_path = os.path.join(base_dir, "events.parquet")
+    locations_path = os.path.join(base_dir, "locations.parquet")
+    orgs_path = os.path.join(base_dir, "organizations.parquet")
+
     # People
-    if os.path.exists(PEOPLE_OUTPUT_PATH):
-        people_table = pq.read_table(PEOPLE_OUTPUT_PATH)
+    if os.path.exists(people_path):
+        people_table = pq.read_table(people_path)
         for p in people_table.to_pylist():
             people[p["name"]] = p
 
     # Events
-    if os.path.exists(EVENTS_OUTPUT_PATH):
-        events_table = pq.read_table(EVENTS_OUTPUT_PATH)
+    if os.path.exists(events_path):
+        events_table = pq.read_table(events_path)
         for e in events_table.to_pylist():
             events[(e["title"], e.get("start_date", ""))] = e
 
     # Locations
-    if os.path.exists(LOCATIONS_OUTPUT_PATH):
-        locations_table = pq.read_table(LOCATIONS_OUTPUT_PATH)
+    if os.path.exists(locations_path):
+        locations_table = pq.read_table(locations_path)
         for l in locations_table.to_pylist():
             locations[(l["name"], l.get("type", ""))] = l
 
     # Organizations
-    if os.path.exists(ORGANIZATIONS_OUTPUT_PATH):
-        orgs_table = pq.read_table(ORGANIZATIONS_OUTPUT_PATH)
+    if os.path.exists(orgs_path):
+        orgs_table = pq.read_table(orgs_path)
         for o in orgs_table.to_pylist():
             organizations[(o["name"], o.get("type", ""))] = o
 
@@ -114,7 +113,7 @@ def load_existing_entities() -> Dict[str, Dict]:
     }
 
 
-def write_entities_to_files(entities: Dict[str, Dict]) -> None:
+def write_entities_to_files(entities: Dict[str, Dict], base_dir: str) -> None:
     """Write entities to their respective Parquet files.
 
     Iterates through all entity types and their entities, writing each one to its
@@ -129,7 +128,7 @@ def write_entities_to_files(entities: Dict[str, Dict]) -> None:
     """
     for entity_type, entity_dict in entities.items():
         for entity_key, entity_data in entity_dict.items():
-            write_entity_to_file(entity_type, entity_key, entity_data)
+            write_entity_to_file(entity_type, entity_key, entity_data, base_dir)
 
 
 def setup_arguments_and_config() -> argparse.Namespace:
@@ -168,8 +167,8 @@ def setup_arguments_and_config() -> argparse.Namespace:
     parser.add_argument(
         "--articles-path",
         type=str,
-        default=ARTICLES_PATH,
-        help="Path to the raw articles Parquet file",
+        default=None,
+        help="Path to the raw articles Parquet file (defaults to domain config)",
     )
     parser.add_argument(
         "--force-reprocess",
@@ -199,7 +198,12 @@ def setup_arguments_and_config() -> argparse.Namespace:
         f"[bold blue]Arguments:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}, force_reprocess={args.force_reprocess}"
     )
 
-    ensure_dir(OUTPUT_DIR)
+    # Resolve domain config and ensure output directory exists
+    config = DomainConfig(args.domain)
+    base_dir = config.get_output_dir()
+    if not args.articles_path:
+        args.articles_path = config.get_data_path()
+    ensure_dir(base_dir)
     return args
 
 
@@ -274,6 +278,7 @@ def merge_all_entities(
                 article_info["content"],
                 extraction_timestamp,
                 model_type,
+                domain=processor.domain,
                 langfuse_session_id=langfuse_session_id,
                 langfuse_trace_id=langfuse_trace_id,
             )
@@ -376,6 +381,7 @@ def write_results_and_statistics(
     skipped_relevance_count: int,
     skipped_already_processed: int,
     article_count: int,
+    base_dir: str,
 ) -> None:
     """Write results to files and log comprehensive statistics."""
     # Write updated articles
@@ -383,7 +389,7 @@ def write_results_and_statistics(
 
     # Write entity files
     log("Saving updated entity tables...", level="processing")
-    write_entities_to_files(entities)
+    write_entities_to_files(entities, base_dir)
     log("Entity tables successfully saved", level="success")
 
     # Log comprehensive summary
@@ -534,7 +540,9 @@ def main():
 
     # Setup and initialization
     args = setup_arguments_and_config()
-    entities = load_existing_entities()
+    config = DomainConfig(args.domain)
+    base_dir = config.get_output_dir()
+    entities = load_existing_entities(base_dir)
 
     # Initialize processor
     model_type = "ollama" if args.local else "gemini"
@@ -560,6 +568,7 @@ def main():
         counters["skipped_relevance_count"],
         counters["skipped_already_processed"],
         article_count,
+        base_dir,
     )
 
 

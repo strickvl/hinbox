@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from src.config_loader import DomainConfig
 from src.constants import ENABLE_PROFILE_VERSIONING, SIMILARITY_THRESHOLD
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
 from src.engine.profiles import VersionedProfile, create_profile, update_profile
@@ -197,6 +198,7 @@ class EntityMerger:
             f"Starting merge_{self.entity_type} with {len(extracted_entities)} {self.entity_type} to process",
             level="processing",
         )
+        base_dir = DomainConfig(domain).get_output_dir()
         log(
             f"Using model: {model_type}, embedding model: {embedding_model_type}",
             level="info",
@@ -408,7 +410,9 @@ class EntityMerger:
                     entity_updated = True
 
                 if entity_updated:
-                    write_entity_to_file(self.entity_type, similar_key, existing_entity)
+                    write_entity_to_file(
+                        self.entity_type, similar_key, existing_entity, base_dir
+                    )
                     entities[self.entity_type][similar_key] = existing_entity
                     log(
                         f"[{self.log_color}]Updated {self.entity_type[:-1]} entity saved to file:[/] "
@@ -438,7 +442,7 @@ class EntityMerger:
                 )
 
                 entities[self.entity_type][entity_key] = new_entity
-                write_entity_to_file(self.entity_type, entity_key, new_entity)
+                write_entity_to_file(self.entity_type, entity_key, new_entity, base_dir)
                 log(
                     f"[{self.log_color}]New {self.entity_type[:-1]} entity saved to file:[/] "
                     f"{self._format_key_for_display(entity_key)}",

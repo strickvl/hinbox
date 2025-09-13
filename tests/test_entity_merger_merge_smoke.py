@@ -100,9 +100,7 @@ class TestEntityMergerMergeSmoke:
         )  # arbitrary but consistent
 
         with (
-            patch(
-                "src.engine.mergers.create_profile", side_effect=create_profile_stub
-            ),
+            patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
             ),
@@ -199,12 +197,8 @@ class TestEntityMergerMergeSmoke:
             return MatchCheckResult(is_match=True, reason="forced-match")
 
         with (
-            patch(
-                "src.engine.mergers.create_profile", side_effect=create_profile_stub
-            ),
-            patch(
-                "src.engine.mergers.update_profile", side_effect=update_profile_stub
-            ),
+            patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
+            patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
             ),

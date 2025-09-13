@@ -22,15 +22,6 @@ def get_ollama_model_name(model: str) -> str:
     return model.replace("ollama/", "") if model.startswith("ollama/") else model
 
 
-# File paths (legacy - now use domain configs)
-ARTICLES_PATH = "data/guantanamo/raw_sources/miami_herald_articles.parquet"
-OUTPUT_DIR = "data/guantanamo/entities"
-
-PEOPLE_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "people.parquet")
-EVENTS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "events.parquet")
-LOCATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "locations.parquet")
-ORGANIZATIONS_OUTPUT_PATH = os.path.join(OUTPUT_DIR, "organizations.parquet")
-
 # Threshold for similarity matching
 SIMILARITY_THRESHOLD = 0.75
 

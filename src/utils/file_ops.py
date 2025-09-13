@@ -1,4 +1,9 @@
-"""File operations for entity data management."""
+"""File operations for entity data management.
+
+This module is now domain-agnostic. Callers must provide a `base_dir`
+that points to the current domain's output directory (typically from
+`DomainConfig(domain).get_output_dir()`).
+"""
 
 import copy
 import os
@@ -7,12 +12,6 @@ from typing import Any, Dict, List
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from src.constants import (
-    EVENTS_OUTPUT_PATH,
-    LOCATIONS_OUTPUT_PATH,
-    ORGANIZATIONS_OUTPUT_PATH,
-    PEOPLE_OUTPUT_PATH,
-)
 from src.logging_config import get_logger
 
 # Get logger for this module
@@ -126,12 +125,13 @@ def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized
 
 
-def get_entity_output_path(entity_type: str) -> str:
+def get_entity_output_path(entity_type: str, base_dir: str) -> str:
     """
-    Get the output path for a given entity type.
+    Get the output path for a given entity type under `base_dir`.
 
     Args:
         entity_type: Type of entity ("people", "events", "locations", "organizations")
+        base_dir: Directory where entity parquet files for this domain are stored
 
     Returns:
         Path to the output file
@@ -139,21 +139,21 @@ def get_entity_output_path(entity_type: str) -> str:
     Raises:
         ValueError: If entity_type is not recognized
     """
-    paths = {
-        "people": PEOPLE_OUTPUT_PATH,
-        "events": EVENTS_OUTPUT_PATH,
-        "locations": LOCATIONS_OUTPUT_PATH,
-        "organizations": ORGANIZATIONS_OUTPUT_PATH,
+    filenames = {
+        "people": "people.parquet",
+        "events": "events.parquet",
+        "locations": "locations.parquet",
+        "organizations": "organizations.parquet",
     }
 
-    if entity_type not in paths:
+    if entity_type not in filenames:
         raise ValueError(f"Unknown entity type: {entity_type}")
 
-    return paths[entity_type]
+    return os.path.join(base_dir, filenames[entity_type])
 
 
 def write_entity_to_file(
-    entity_type: str, entity_key: Any, entity_data: Dict[str, Any]
+    entity_type: str, entity_key: Any, entity_data: Dict[str, Any], base_dir: str
 ):
     """
     Write a single entity to its respective Parquet file. This function uses
@@ -166,8 +166,9 @@ def write_entity_to_file(
         entity_type: "people", "events", "locations", or "organizations"
         entity_key: Key to identify entity (name for people, tuple for others)
         entity_data: Entity data to write
+        base_dir: Domain-specific output directory
     """
-    output_path = get_entity_output_path(entity_type)
+    output_path = get_entity_output_path(entity_type, base_dir)
 
     # Sanitize incoming entity data to avoid storing objects that PyArrow can't handle
     entity_data = sanitize_for_parquet(entity_data)
@@ -263,17 +264,18 @@ def write_entity_to_file(
         logger.warning(f"No entities to write for {entity_type}")
 
 
-def read_entities_from_file(entity_type: str) -> List[Dict[str, Any]]:
+def read_entities_from_file(entity_type: str, base_dir: str) -> List[Dict[str, Any]]:
     """
     Read all entities of a given type from their Parquet file.
 
     Args:
         entity_type: Type of entity to read
+        base_dir: Domain-specific output directory
 
     Returns:
         List of entity dictionaries, empty list if file doesn't exist
     """
-    output_path = get_entity_output_path(entity_type)
+    output_path = get_entity_output_path(entity_type, base_dir)
 
     if not os.path.exists(output_path):
         logger.info(f"No existing file found at {output_path}")
@@ -289,18 +291,19 @@ def read_entities_from_file(entity_type: str) -> List[Dict[str, Any]]:
         return []
 
 
-def entity_exists(entity_type: str, entity_key: Any) -> bool:
+def entity_exists(entity_type: str, entity_key: Any, base_dir: str) -> bool:
     """
     Check if an entity already exists in the file.
 
     Args:
         entity_type: Type of entity
         entity_key: Key to identify the entity
+        base_dir: Domain-specific output directory
 
     Returns:
         True if entity exists, False otherwise
     """
-    entities = read_entities_from_file(entity_type)
+    entities = read_entities_from_file(entity_type, base_dir)
 
     for entity in entities:
         if entity_type == "people" and entity.get("name") == entity_key:
