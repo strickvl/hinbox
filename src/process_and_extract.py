@@ -27,7 +27,18 @@ from src.constants import (
 )
 from src.exceptions import ArticleLoadError
 from src.logging_config import get_logger, log, set_verbose
-from src.merge import merge_events, merge_locations, merge_organizations, merge_people
+from src.merge import (
+    merge_events_generic as merge_events,
+)
+from src.merge import (
+    merge_locations_generic as merge_locations,
+)
+from src.merge import (
+    merge_organizations_generic as merge_organizations,
+)
+from src.merge import (
+    merge_people_generic as merge_people,
+)
 from src.processing.article_processor import ArticleProcessor
 from src.utils.file_ops import write_entity_to_file
 

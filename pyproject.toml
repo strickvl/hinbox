@@ -5,8 +5,8 @@ build-backend = "hatchling.build"
 [project]
 name = "hinbox"
 version = "0.1.0"
-description = "A database for tracking events at Guantanamo Bay"
-requires-python = ">=3.10"
+description = "A flexible, domain-configurable entity extraction system designed for historians and researchers"
+requires-python = ">=3.12"
 dependencies = [
     "pydantic",
     "pyclean",
