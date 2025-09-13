@@ -7,8 +7,17 @@ from typing import Any, Dict, List, Optional, Type
 
 import instructor
 import litellm
-from langfuse.openai import OpenAI
 from pydantic import BaseModel
+
+# Langfuse OpenAI wrapper is optional. In some environments (e.g., tests) the
+# underlying OpenAI beta resources may be missing; importing the wrapper would
+# raise at import-time. We guard this to keep module import safe for tests.
+try:
+    from langfuse.openai import OpenAI as LangfuseOpenAI  # type: ignore
+    _LANGFUSE_AVAILABLE = True
+except Exception:
+    LangfuseOpenAI = None  # type: ignore[assignment]
+    _LANGFUSE_AVAILABLE = False
 
 from src.constants import (
     BASE_DELAY,
@@ -67,8 +76,38 @@ def get_litellm_client():
 
 
 def get_ollama_client():
-    """Get a configured Ollama OpenAI client."""
-    return OpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
+    """Get a configured Ollama OpenAI-style client.
+
+    Preference is given to the Langfuse OpenAI wrapper when available. In test
+    environments where langfuse (or the OpenAI beta resources it patches) is
+    not installed, this returns a minimal stub that raises a clear error when
+    used. This keeps imports cheap and avoids hard dependencies during test
+    collection while preserving explicit failure if local_generation is invoked.
+    """
+    if _LANGFUSE_AVAILABLE and LangfuseOpenAI is not None:
+        return LangfuseOpenAI(base_url=OLLAMA_API_URL, api_key=OLLAMA_API_KEY)
+
+    class _MissingClient:
+        def __init__(self, base_url: str, api_key: str):
+            self.base_url = base_url
+            self.api_key = api_key
+
+        class _Beta:
+            class _Chat:
+                class _Completions:
+                    @staticmethod
+                    def parse(*args, **kwargs):
+                        raise RuntimeError(
+                            "Local LLM client unavailable: langfuse.openai is not installed in this environment."
+                        )
+
+                completions = _Completions()
+
+            chat = _Chat()
+
+        beta = _Beta()
+
+    return _MissingClient(OLLAMA_API_URL, OLLAMA_API_KEY)
 
 
 def cloud_generation(
