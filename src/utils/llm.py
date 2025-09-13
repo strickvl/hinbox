@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from src.constants import (
     BASE_DELAY,
+    BRAINTRUST_PROJECT_ID,
     CLOUD_MODEL,
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
@@ -34,12 +35,14 @@ logger = get_logger("utils.llm")
 # Configure litellm once for the entire module
 litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
-litellm.callbacks = ["langfuse_otel"]
+litellm.callbacks = ["braintrust"]
 
 # Common metadata for all LLM calls
 DEFAULT_METADATA = {
     "tags": ["dev"],
 }
+if BRAINTRUST_PROJECT_ID:
+    DEFAULT_METADATA["project_id"] = BRAINTRUST_PROJECT_ID
 
 
 class GenerationMode(str, Enum):

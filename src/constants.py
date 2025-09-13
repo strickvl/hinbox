@@ -50,6 +50,9 @@ HASH_TRUNCATE_LENGTH = 6
 # Default embedding model
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+# Braintrust project id (optional)
+BRAINTRUST_PROJECT_ID = os.getenv("BRAINTRUST_PROJECT_ID", "").strip() or None
+
 # Profile versioning feature flag
 ENABLE_PROFILE_VERSIONING = (
     os.getenv("ENABLE_PROFILE_VERSIONING", "true").lower() == "true"
