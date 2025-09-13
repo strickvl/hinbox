@@ -101,7 +101,7 @@ class TestEntityMergerMergeSmoke:
 
         with (
             patch(
-                "src.engine.profiles.create_profile", side_effect=create_profile_stub
+                "src.engine.mergers.create_profile", side_effect=create_profile_stub
             ),
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
@@ -200,10 +200,10 @@ class TestEntityMergerMergeSmoke:
 
         with (
             patch(
-                "src.engine.profiles.create_profile", side_effect=create_profile_stub
+                "src.engine.mergers.create_profile", side_effect=create_profile_stub
             ),
             patch(
-                "src.engine.profiles.update_profile", side_effect=update_profile_stub
+                "src.engine.mergers.update_profile", side_effect=update_profile_stub
             ),
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
