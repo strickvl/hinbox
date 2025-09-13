@@ -45,18 +45,16 @@ class ArticleProcessor:
         """
         try:
             if self.model_type == "ollama":
-                result = ollama_check_relevance(  # type: ignore[call-arg]
-                    article_content,
-                    article_id,
+                result = ollama_check_relevance(
+                    text=article_content,
                     model=self.specific_model,
                     domain=self.domain,
                     langfuse_session_id=langfuse_session_id,
                     langfuse_trace_id=langfuse_trace_id,
                 )
             else:
-                result = gemini_check_relevance(  # type: ignore[call-arg]
-                    article_content,
-                    article_id,
+                result = gemini_check_relevance(
+                    text=article_content,
                     model=self.specific_model,
                     domain=self.domain,
                     langfuse_session_id=langfuse_session_id,
