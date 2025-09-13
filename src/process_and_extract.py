@@ -17,21 +17,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
-from src.engine import ArticleProcessor
+from src.engine import ArticleProcessor, EntityMerger
 from src.exceptions import ArticleLoadError
 from src.logging_config import get_logger, log, set_verbose
-from src.merge import (
-    merge_events_generic as merge_events,
-)
-from src.merge import (
-    merge_locations_generic as merge_locations,
-)
-from src.merge import (
-    merge_organizations_generic as merge_organizations,
-)
-from src.merge import (
-    merge_people_generic as merge_people,
-)
 from src.utils.file_ops import write_entity_to_file
 
 # Get module-specific logger
@@ -254,18 +242,19 @@ def merge_all_entities(
         extracted_entities.get("events", [])
     )
 
-    # Merge each entity type
-    merge_operations = [
-        ("people", people_dicts, merge_people),
-        ("organizations", org_dicts, merge_organizations),
-        ("locations", loc_dicts, merge_locations),
-        ("events", event_dicts, merge_events),
+    # Merge each entity type using EntityMerger directly
+    merge_inputs = [
+        ("people", people_dicts),
+        ("organizations", org_dicts),
+        ("locations", loc_dicts),
+        ("events", event_dicts),
     ]
 
-    for entity_type, entity_dicts, merge_func in merge_operations:
+    for entity_type, entity_dicts in merge_inputs:
         try:
             merge_start = datetime.now()
-            merge_func(
+            merger = EntityMerger(entity_type)
+            merger.merge_entities(
                 entity_dicts,
                 entities,
                 article_info["id"],

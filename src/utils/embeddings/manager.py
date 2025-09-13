@@ -5,8 +5,6 @@ import os
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-import numpy as np
-
 import src.config_loader as config_loader
 from src.constants import CLOUD_EMBEDDING_MODEL, DEFAULT_EMBEDDING_MODEL
 from src.logging_config import get_logger
@@ -158,25 +156,6 @@ class EmbeddingManager:
             if not self.cloud_provider:
                 raise ValueError("Cloud provider not initialized for hybrid mode")
             return self.cloud_provider
-
-    def compute_similarity(
-        self, embedding1: List[float], embedding2: List[float]
-    ) -> float:
-        """Compute cosine similarity between embeddings."""
-        if not embedding1 or not embedding2:
-            return 0.0
-
-        vec1 = np.array(embedding1)
-        vec2 = np.array(embedding2)
-
-        dot_product = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
-
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-
-        return float(dot_product / (norm1 * norm2))
 
     # Synchronous wrappers for backward compatibility
     def embed_text_sync(self, text: str) -> List[float]:

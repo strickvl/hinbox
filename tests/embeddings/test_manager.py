@@ -7,6 +7,7 @@ import pytest
 
 from src.utils.embeddings.base import EmbeddingResult
 from src.utils.embeddings.manager import EmbeddingManager, EmbeddingMode
+from src.utils.embeddings.similarity import compute_similarity
 
 
 class TestEmbeddingManager:
@@ -156,27 +157,27 @@ class TestEmbeddingManager:
 
         # Test identical vectors
         vec1 = [1.0, 0.0, 0.0]
-        similarity = manager.compute_similarity(vec1, vec1)
+        similarity = compute_similarity(vec1, vec1)
         assert similarity == pytest.approx(1.0)
 
         # Test orthogonal vectors
         vec2 = [0.0, 1.0, 0.0]
-        similarity = manager.compute_similarity(vec1, vec2)
+        similarity = compute_similarity(vec1, vec2)
         assert similarity == pytest.approx(0.0)
 
         # Test opposite vectors
         vec3 = [-1.0, 0.0, 0.0]
-        similarity = manager.compute_similarity(vec1, vec3)
+        similarity = compute_similarity(vec1, vec3)
         assert similarity == pytest.approx(-1.0)
 
         # Test empty vectors
-        assert manager.compute_similarity([], [1, 2, 3]) == 0.0
-        assert manager.compute_similarity([1, 2, 3], []) == 0.0
-        assert manager.compute_similarity([], []) == 0.0
+        assert compute_similarity([], [1, 2, 3]) == 0.0
+        assert compute_similarity([1, 2, 3], []) == 0.0
+        assert compute_similarity([], []) == 0.0
 
         # Test zero vectors
         zero_vec = [0.0, 0.0, 0.0]
-        assert manager.compute_similarity(zero_vec, vec1) == 0.0
+        assert compute_similarity(zero_vec, vec1) == 0.0
 
     def test_sync_wrappers(self):
         """Test synchronous wrapper methods."""
