@@ -24,7 +24,7 @@ class CloudEmbeddingProvider(EmbeddingProvider):
     def _setup_litellm(self):
         """Configure LiteLLM for embeddings."""
         litellm.suppress_debug_info = True
-        litellm.callbacks = ["langfuse_otel"]
+        litellm.callbacks = ["braintrust"]
 
     @observe()
     async def embed_single(self, text: str) -> List[float]:

@@ -36,7 +36,7 @@ from src.utils.profiles import extract_profile_text
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
-litellm.callbacks = ["langfuse_otel"]
+litellm.callbacks = ["braintrust"]
 
 logger = logging.getLogger(__name__)
 console = Console()

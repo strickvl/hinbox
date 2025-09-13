@@ -105,7 +105,7 @@ def cloud_generation(
 
     metadata = dict(DEFAULT_METADATA)
     if langfuse_trace_id is not None:
-        metadata["trace_id"] = langfuse_trace_id
+        metadata["span_name"] = langfuse_trace_id
     if langfuse_session_id is not None:
         metadata["session_id"] = langfuse_session_id
 
@@ -234,7 +234,7 @@ def local_generation(
 
     metadata = dict(DEFAULT_METADATA)
     if langfuse_trace_id is not None:
-        metadata["trace_id"] = langfuse_trace_id
+        metadata["span_name"] = langfuse_trace_id
     if langfuse_session_id is not None:
         metadata["session_id"] = langfuse_session_id
 
