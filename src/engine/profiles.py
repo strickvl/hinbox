@@ -2,7 +2,7 @@ import copy
 import json
 import logging
 import traceback
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, List, Optional, Tuple
 
 import litellm
@@ -47,7 +47,7 @@ class ProfileVersion(BaseModel):
 
     version_number: int
     profile_data: Dict  # Complete profile snapshot
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     trigger_article_id: Optional[str] = None
 
     @field_validator("profile_data")
