@@ -3,11 +3,13 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class EmbeddingConfig(BaseModel):
     """Configuration for embedding providers."""
+
+    model_config = ConfigDict(protected_namespaces=())
 
     model_name: str
     batch_size: int = 32
