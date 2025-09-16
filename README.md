@@ -18,6 +18,7 @@ through a simple configuration system.
 - **Entity Extraction**: Automatically extract people, organizations, locations, and events
 - **Smart Deduplication**: Uses embeddings to merge similar entities across sources
 - **Profile Versioning**: Track how entity profiles evolve as new sources are processed
+- **Modular Engine**: `src/engine` coordinates article processing, extraction, merging, and profile versioning so new domains can reuse the same pipeline
 - **Web Interface**: FastHTML-based UI for exploring research findings with version navigation
 - **Easy Setup**: Simple configuration files, no Python coding required
 
@@ -80,7 +81,7 @@ Edit the generated files in `configs/palestine_food_history/`:
 ## 📦 Installation
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.12+
 - `uv` (for dependency management)
 - Optional: Ollama (for local model support)
 - Optional: just (for easier command running)
@@ -180,27 +181,31 @@ Explore extracted entities at http://localhost:5001
 
 ```
 configs/
-├── guantanamo/              # Example: Guantánamo Bay research
-├── palestine_food_history/  # Your historical research domain
-├── template/                # Template for new research domains
-└── README.md               # Configuration guide
+├── guantanamo/        # Example domain shipped with the project
+├── template/          # Starter files copied by `run.py init`
+└── README.md          # Domain configuration walkthrough
 
 src/
-├── config_loader.py    # Domain configuration system
-├── dynamic_models.py   # Dynamic Pydantic model generation
-├── people.py          # People extraction
-├── organizations.py   # Organization extraction
-├── locations.py       # Location extraction
-├── events.py         # Event extraction
-└── frontend/         # Web interface
+├── process_and_extract.py  # CLI entry point for the article pipeline
+├── engine/                 # ArticleProcessor, EntityExtractor, mergers, profiles
+├── frontend/               # FastHTML UI (routes, components, static assets)
+├── utils/                  # Embeddings, LLM wrappers, logging, file helpers
+├── config_loader.py        # Domain configuration loader helpers
+├── dynamic_models.py       # Domain-driven Pydantic model factories
+├── constants.py            # Model defaults, embedding settings, thresholds
+└── exceptions.py           # Custom exception types used across the pipeline
+
+tests/
+├── embeddings/                     # Embedding manager and similarity unit tests
+├── test_domain_paths.py            # Validates domain-specific path resolution
+├── test_entity_merger_merge_smoke.py   # Embedding-based merge smoke tests
+├── test_entity_merger_similarity.py    # Similarity scoring behaviour
+├── test_profile_versioning.py          # Versioned profile regression tests
+└── test_frontend_versioning.py         # UI behaviour for profile history
 
 data/
-├── guantanamo/              # Guantánamo research data
-│   ├── raw_sources/         # Historical documents, articles
-│   └── entities/           # Extracted entities
-└── {research_domain}/      # Each research domain has its own directory
-    ├── raw_sources/        # Books, papers, articles, documents
-    └── entities/          # Research findings
+├── guantanamo/        # Default domain data directory (created locally)
+└── {domain}/          # Additional domains maintain their own raw/entity data
 ```
 
 ## 🔧 Configuration
@@ -250,6 +255,12 @@ Historical sources should be in Parquet format with columns:
 5. **Smart Deduplication**: Merge similar entities using embeddings
 6. **Profile Generation**: Create comprehensive entity profiles with automatic versioning
 7. **Version Management**: Track profile evolution as new sources are processed
+
+### Engine Modules
+- `ArticleProcessor` orchestrates relevance checks, extraction dispatch, and per-article metadata aggregation (`src/engine/article_processor.py`)
+- `EntityExtractor` unifies cloud and local model calls using domain-specific Pydantic schemas (`src/engine/extractors.py`)
+- `EntityMerger` compares embeddings, calls match-checkers, and updates persisted Parquet rows (`src/engine/mergers.py`)
+- `VersionedProfile` and helper functions maintain profile history for each entity (`src/engine/profiles.py`)
 
 ### Key Features
 - **Domain-Agnostic**: Easy to configure for any topic

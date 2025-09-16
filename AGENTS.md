@@ -4,12 +4,14 @@ This document helps contributors work effectively in this repository.
 
 ## Project Structure & Module Organization
 - `src/` — application code
+  - `engine/` (ArticleProcessor, EntityExtractor, EntityMerger, relevance helpers, profile versioning)
+  - `process_and_extract.py` (CLI pipeline entry point used by `just` and `run.py`)
   - `dynamic_models.py` (Pydantic models generated from domain configs)
   - `frontend/` (FastHTML app: routes, components, config)
   - `utils/` (embeddings, extraction helpers, logging, errors)
-  - Other modules: `events.py`, `people.py`, `organizations.py`, etc.
+  - `constants.py`, `config_loader.py`, `exceptions.py` (shared config primitives)
 - `configs/` — domain definitions (types, prompts) by domain (e.g., `guantanamo/`).
-- `tests/` — pytest tests (`test_*.py`).
+- `tests/` — pytest tests (`test_*.py`, embedding suites).
 - `scripts/` — ad‑hoc utilities (may be stale; prefer core modules).
 - `assets/`, `data/`, `design/` — static assets, datasets, notes.
 
@@ -25,7 +27,7 @@ This document helps contributors work effectively in this repository.
   - Alt: `uvicorn src.frontend:app --port 5001`
 
 ## Coding Style & Naming Conventions
-- Python 3.10+; 4‑space indent; max line length 88.
+- Python 3.12+; 4‑space indent; max line length 88.
 - Use type hints; Pydantic models for schemas.
 - Names: modules `snake_case.py`, classes `CapWords`, constants `UPPER_SNAKE`.
 - Import order and linting via Ruff; auto‑format with Black (see `pyproject.toml`).
@@ -47,4 +49,4 @@ This document helps contributors work effectively in this repository.
 
 ## Agent‑Specific Notes
 - Treat `configs/` as the source of truth for entity types/tags.
-- Prefer `src/extractors.py` abstractions over duplicating cloud/local logic.
+- Prefer `src/engine/extractors.py` abstractions over duplicating cloud/local logic.
