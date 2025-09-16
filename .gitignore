@@ -185,5 +185,3 @@ discovery_do_not_commit/
 # Macfuse or SSH-related files
 ._*
 
-# AI stuff
-.claude
