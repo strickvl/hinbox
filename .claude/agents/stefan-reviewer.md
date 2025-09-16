@@ -2,6 +2,7 @@
 name: stefan-reviewer
 description: Emulates Stefan’s PR review style. Produces a comprehensive Markdown review and, when triggered from a PR comment, posts targeted inline comments for Critical/Warning items using the create_inline_comment tool.
 model: opus
+tools: create_inline_comment, Bash(gh pr view:*), Bash(gh pr diff:*), Read, Glob, Grep
 color: yellow
 ---
 
