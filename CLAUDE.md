@@ -24,47 +24,49 @@ sure to update the other.
 - **Reset processing**: `./run.py reset` (reset article processing status)
 
 ### Testing
-No test suite is currently configured. The project uses runtime validation through Pydantic models.
+- Run `pytest` or `just test` to execute the suite under `tests/`.
+- Key coverage areas include embedding similarity, entity mergers, profile versioning, and frontend version navigation.
 
 ## Architecture Overview
 
 ### Entity Processing Pipeline
-The core functionality processes articles through a multi-stage pipeline:
+The CLI entry point `src/process_and_extract.py` coordinates the pipeline end to end:
 
-1. **Article Loading**: Loads articles from `data/raw_sources/miami_herald_articles.parquet`
-2. **Relevance Checking**: Filters articles relevant to Guantánamo Bay using LLMs (`src/relevance.py`)
-3. **Entity Extraction**: Extracts 4 entity types using structured LLM calls:
-   - People (`src/people.py`)
-   - Organizations (`src/organizations.py`) 
-   - Locations (`src/locations.py`)
-   - Events (`src/events.py`)
-4. **Entity Merging**: Deduplicates entities using embeddings similarity (`src/merge.py`)
-5. **Profile Generation**: Creates comprehensive profiles for entities (`src/profiles.py`)
+1. **Configuration Loading**: `DomainConfig` reads `configs/<domain>/` to resolve Parquet input paths and output directories.
+2. **Article Loading**: PyArrow loads the domain's article table and normalises rows before processing.
+3. **Relevance Checking**: `ArticleProcessor.check_relevance` calls the helpers in `src/engine/relevance.py` (Gemini or Ollama) to skip irrelevant sources.
+4. **Entity Extraction**: `ArticleProcessor.extract_all_entities` dispatches to `EntityExtractor` for people, organizations, locations, and events using dynamic Pydantic models.
+5. **Entity Merging**: `EntityMerger` compares embeddings via `src/utils/embeddings`, optionally consults the LLM match checker, and updates in-memory stores.
+6. **Profile Versioning**: `src/engine/profiles.py` maintains `VersionedProfile` history whenever entity content changes.
+7. **Persistence**: Updated article rows and entity tables are written back with `src/utils/file_ops.write_entity_to_file` and atomically swapped Parquet files.
 
 ### Data Flow Architecture
-- **Input**: Articles in Parquet format with columns like `title`, `content`, `url`, `processed`
-- **Processing**: Each entity type has parallel extraction functions for cloud (Gemini) and local (Ollama) models
-- **Output**: Separate Parquet files for each entity type in `data/entities/` with embeddings for similarity matching
-- **Storage**: All entities include profile text, source article metadata, processing timestamps, and vector embeddings
+- **Input**: Domain configs point to Parquet files with columns such as `id`, `title`, `content`, `url`, and `published_date`.
+- **Processing**: `ArticleProcessor` orchestrates extraction for four entity types, records reflection metadata, and keeps track of processing status.
+- **Output**: Each run updates people/organizations/locations/events tables under the domain's output directory (`DomainConfig.get_output_dir()`).
+- **Storage**: Entities include embeddings, provenance metadata, processing timestamps, and profile version histories.
 
 ### Model Architecture
-- **Cloud Models**: Uses Gemini 2.0 Flash via LiteLLM for production processing
-- **Local Models**: Supports Ollama with Gemma 27B for offline processing
-- **Embeddings**: Uses Jina v3 embeddings for entity similarity and deduplication
-- **Structured Output**: All LLM calls use Pydantic models with Instructor for type safety
+- **Cloud Models**: Defaults come from `CLOUD_MODEL` in `src/constants.py` and are executed through LiteLLM wrappers in `src/utils/llm.py`.
+- **Local Models**: Ollama is accessed via `OLLAMA_MODEL` for extraction, relevance checks, and match verification.
+- **Embeddings**: `EmbeddingManager` (`src/utils/embeddings/manager.py`) chooses cloud/local/hybrid providers and caches vectors for similarity scoring.
+- **Structured Output**: Dynamic Pydantic models in `src/dynamic_models.py` and list factories enforce schema consistency for both cloud and local responses.
 
 ### Frontend Architecture
 The web interface (`src/frontend/`) uses FastHTML and is organized as:
 - **Routes**: Modular route handlers in `routes/` (home, people, organizations, locations, events)
 - **Data Access**: Centralized data loading from Parquet files (`data_access.py`)
 - **Filtering**: Search and filter utilities (`filters.py`)
+- **Components & Helpers**: Shared UI building blocks (`components.py`) and helpers for profile versions (`entity_helpers.py`)
 - **Configuration**: App setup and shared state (`app_config.py`)
+- **Static Assets**: CSS and JS bundling lives under `static/`
 
 ### File Structure Patterns
-- **Entity Processing**: Each entity type follows the pattern: `{type}.py` (extraction) + merge logic in `merge.py`
-- **Dual Model Support**: All extraction modules have both `gemini_extract_*` and `ollama_extract_*` functions
-- **Utilities**: Common functionality in `src/utils/` (embeddings, extraction, file ops, LLM wrappers)
-- **Scripts**: Utility scripts in `scripts/` directory for maintenance tasks
+- **Engine Modules**: `article_processor.py`, `extractors.py`, `mergers.py`, `match_checker.py`, and `profiles.py` are surfaced via `src/engine/__init__.py` for a stable import path.
+- **LLM Helpers**: `src/utils/llm.py` and `src/utils/extraction.py` wrap LiteLLM/Ollama interactions and Instructor responses.
+- **Embeddings**: Providers, manager, and similarity helpers live in `src/utils/embeddings/`.
+- **Tests**: `tests/` covers embedding accuracy, merger behaviour, profile versioning, domain path resolution, and frontend history rendering.
+- **Scripts**: Utility scripts in `scripts/` support data fetching, resets, and diagnostics.
 
 ### Configuration
 - **Models**: Configured in `src/constants.py` with cloud/local model specifications
@@ -75,11 +77,12 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
 ## Workflow Notes
 - When finishing a chunk of work, check with the user to confirm the fix, then:
   1. Run the formatting script (`./scripts/format.sh`)
-  2. Fix any formatting errors
-  3. Commit and push changes
+  2. Run the lint script (`./scripts/lint.sh`) and fix issues
+  3. Execute the test suite (`pytest` or `just test`)
+  4. Commit and push changes
 
 ## Development Guidance
 - The application has no users yet, so don't worry too much about backwards compatibility. Just make it work.
 
 ## Code Conventions
-- When using type hints for dicts or tuples, we use the Tuple or Dict from the `typing` module and not `tuple` or `dict` FYI
+- When using type hints for dicts or tuples, prefer `typing.Dict` / `typing.Tuple` over the built-in generics for consistency with existing code.
