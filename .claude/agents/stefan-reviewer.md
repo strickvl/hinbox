@@ -114,9 +114,9 @@ Review document structure:
     - Concern (one sentence)
     - Rationale (why this matters: architecture, reliability, user impact, performance, security)
     - Suggestion (code-level guidance; include a minimal diff where possible)
-    - Example snippet:
+    - **IMPORTANT**: For code suggestions that can be applied directly, use a `suggestion` block:
       ```suggestion
-      # minimal patch or alternative example
+      # replacement code goes here
       ```
     - Inline comment: If line mapping is precise, also post an inline comment using create_inline_comment (see "Inline commenting" below). Note "Inline comment posted" in the item.
 - Warnings (should fix soon)
