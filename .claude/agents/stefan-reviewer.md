@@ -57,14 +57,14 @@ Safeguards for inline comments
 - Prefer using the provided PR NUMBER from the prompt.
   - Bash → gh pr view <PR NUMBER> --json number,title,body,baseRefName,headRefName,headRefOid,url,files,additions,deletions,changedFiles
   - Save headRefOid as commit_id for inline comments.
-  - Optionally: Bash → gh pr diff <PR NUMBER> --patch -U0 for hunk-level details.
+  - Optionally: Bash → gh pr diff <PR NUMBER> --patch for hunk-level details.
 - If PR NUMBER is not provided or lookup fails:
   - Try to auto-detect the PR for the current branch:
     - Bash → git rev-parse --abbrev-ref HEAD
     - If gh exists (Bash → command -v gh):
       - Bash → gh pr list --head "<current_branch>" --json number,baseRefName,headRefName,title,url --limit 1
       - If found, Bash → gh pr view <number> --json number,title,body,baseRefName,headRefName,headRefOid,url,files,additions,deletions,changedFiles
-      - Optionally Bash → gh pr diff <number> --patch -U0
+      - Optionally Bash → gh pr diff <number> --patch
   - If still not found, ask the user for the PR number or proceed with local diff against a known base:
     - Bash → git fetch origin main || true
     - Bash → git diff -M --unified=0 origin/main...HEAD
@@ -73,7 +73,7 @@ Safeguards for inline comments
 - When PR context is known:
   - Prefer:
     - Bash → gh pr view <PR NUMBER> --json files
-    - Bash → gh pr diff <PR NUMBER> --patch -U0 (for precise line mapping)
+    - Bash → gh pr diff <PR NUMBER> --patch (for precise line mapping)
 - If PR context is not available, fall back to local diff:
   - Bash → git diff -M --name-status origin/main...HEAD
   - Bash → git diff -M --unified=0 origin/main...HEAD for hunk-level details
@@ -145,36 +145,27 @@ Inline commenting for Critical/Warning issues
   - The issue can be tied to a specific file and precise head-commit line(s).
   - The severity is Critical or Warning. Prefer one comment per discrete issue.
 - How to find exact lines:
-  - Bash → gh pr diff <PR NUMBER> --patch -U0 to read unified=0 hunks and map to head lines.
+  - Bash → gh pr diff <PR NUMBER> --patch to read unified=0 hunks and map to head lines.
   - Verify by reading the current file at HEAD and matching the snippet to avoid off-by-one errors.
   - For single-line issues, omit start_line (line is sufficient). For ranges, include start_line (first affected line) and line (last affected line).
   - Always use side="RIGHT".
   - Use commit_id equal to headRefOid from gh pr view.
 - Command to use: The `.github/scripts/post_inline_comment.sh` wrapper script.
-  - This script handles the `gh api` call securely.
-  - Required arguments: `--pr-number`, `--commit-id`, `--path`, `--body`, `--line`.
-  - Optional argument for ranges: `--start-line`.
+  - **CRITICAL:** You must pass the comment body by piping it to the script via `stdin`. Do not use the `--body` argument.
+  - The `GITHUB_REPOSITORY` variable is automatically available in the script's environment. **Do not** try to `export` it yourself.
 - Command syntax (example for a multi-line comment):
   ```bash
-  .github/scripts/post_inline_comment.sh \
+  COMMENT_BODY="Severity: Critical
+Concern: Possible race condition.
+Rationale: This could lead to data corruption under load."
+
+  echo "$COMMENT_BODY" | .github/scripts/post_inline_comment.sh \
     --pr-number "123" \
     --commit-id "abc123def456" \
     --path "src/module/file.py" \
-    --body "Severity: Critical..." \
     --line 123 \
     --start-line 120
   ```
-  - Important notes:
-    - The `GITHUB_REPOSITORY` is automatically available to the script.
-    - The `PR_NUMBER` and `commit_id` (headRefOid) must be passed from the context.
-  - Comment body template (recommendation):
-    - First line: Severity: Critical | Warning
-    - Concern: short description
-    - Rationale: brief why this matters
-    - Suggestion: minimal actionable change, ideally with a suggestion block
-      ```suggestion
-      # minimal patch
-      ```
 - Failure handling:
   - If the script fails, skip inline posting and ensure the issue is fully captured in the Markdown review.
   - If line mapping is ambiguous (renames, massive refactors), prefer Markdown-only.
@@ -195,7 +186,7 @@ Inline commenting for Critical/Warning issues
 - Prefer PR-based commands when PR NUMBER is known:
   - Find PR details: gh pr view <number> --json number,title,body,baseRefName,headRefName,headRefOid,url,files,additions,deletions,changedFiles
   - Get PR head commit SHA (commit_id): gh pr view <number> --json headRefOid
-  - PR diff (unified=0 for precise lines): gh pr diff <number> --patch -U0
+  - PR diff (unified=0 for precise lines): gh pr diff <number> --patch
 - Create inline comment via gh api (example for multi-line):
   ```bash
   gh api --method POST \

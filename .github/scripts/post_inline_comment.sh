@@ -1,32 +1,41 @@
 #!/bin/bash
-set -e # Exit on error
+set -e
 
-# --- Parse Arguments ---
+# --- Initialize variables ---
+PR_NUMBER=""
+COMMIT_ID=""
+FILE_PATH=""
+BODY=""
+LINE=""
+START_LINE=""
+
+# --- Parse command-line arguments ---
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --pr-number) PR_NUMBER="$2"; shift ;;
         --commit-id) COMMIT_ID="$2"; shift ;;
         --path) FILE_PATH="$2"; shift ;;
-        --body) BODY="$2"; shift ;;
         --line) LINE="$2"; shift ;;
         --start-line) START_LINE="$2"; shift ;;
-        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+        *) echo "Unknown parameter passed: $1" >&2; exit 1 ;;
     esac
     shift
 done
 
-# --- Validate Required Arguments ---
+# --- Read the comment body from standard input ---
+BODY=$(cat)
+
+# --- Validate required arguments ---
 if [ -z "$PR_NUMBER" ] || [ -z "$COMMIT_ID" ] || [ -z "$FILE_PATH" ] || [ -z "$BODY" ] || [ -z "$LINE" ]; then
-    echo "Error: Missing required arguments: --pr-number, --commit-id, --path, --body, and --line are required."
+    echo "Error: Missing required arguments. PR_NUMBER, COMMIT_ID, FILE_PATH, BODY (via stdin), and LINE are required." >&2
     exit 1
 fi
 
-# --- Construct gh api command ---
+# --- Construct the gh api command arguments ---
 ARGS=(
     "--method" "POST"
     "-H" "Accept: application/vnd.github+json"
     "/repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/comments"
-    "-f" "body=${BODY}"
     "-f" "commit_id=${COMMIT_ID}"
     "-f" "path=${FILE_PATH}"
     "-F" "line=${LINE}"
@@ -38,8 +47,8 @@ if [ -n "$START_LINE" ]; then
     ARGS+=("-F" "start_line=${START_LINE}" "-f" "start_side=RIGHT")
 fi
 
-# --- Execute Command ---
-echo "Posting inline comment to ${FILE_PATH} at line ${LINE}..."
-gh api "${ARGS[@]}"
+# --- Execute the command, passing the body from stdin ---
+echo "Posting inline comment to ${FILE_PATH} on PR #${PR_NUMBER}..."
+echo "$BODY" | gh api "${ARGS[@]}" --input -
 
 echo "Successfully posted inline comment."
