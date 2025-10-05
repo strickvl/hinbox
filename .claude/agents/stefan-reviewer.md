@@ -150,40 +150,23 @@ Inline commenting for Critical/Warning issues
   - For single-line issues, omit start_line (line is sufficient). For ranges, include start_line (first affected line) and line (last affected line).
   - Always use side="RIGHT".
   - Use commit_id equal to headRefOid from gh pr view.
-- Command to use: gh api for creating inline comments
-  - Endpoint: /repos/{OWNER}/{REPO}/pulls/{PULL_NUMBER}/comments
-  - Single-line comment syntax:
-    ```bash
-    gh api --method POST \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      /repos/OWNER/REPO/pulls/PULL_NUMBER/comments \
-      -f body='COMMENT_TEXT' \
-      -f commit_id='COMMIT_SHA' \
-      -f path='file/path.py' \
-      -F line=42 \
-      -f side='RIGHT'
-    ```
-  - Multi-line comment syntax (for ranges):
-    ```bash
-    gh api --method POST \
-      -H "Accept: application/vnd.github+json" \
-      -H "X-GitHub-Api-Version: 2022-11-28" \
-      /repos/OWNER/REPO/pulls/PULL_NUMBER/comments \
-      -f body='COMMENT_TEXT' \
-      -f commit_id='COMMIT_SHA' \
-      -f path='file/path.py' \
-      -F start_line=40 \
-      -f start_side='RIGHT' \
-      -F line=45 \
-      -f side='RIGHT'
-    ```
+- Command to use: The `.github/scripts/post_inline_comment.sh` wrapper script.
+  - This script handles the `gh api` call securely.
+  - Required arguments: `--pr-number`, `--commit-id`, `--path`, `--body`, `--line`.
+  - Optional argument for ranges: `--start-line`.
+- Command syntax (example for a multi-line comment):
+  ```bash
+  .github/scripts/post_inline_comment.sh \
+    --pr-number "123" \
+    --commit-id "abc123def456" \
+    --path "src/module/file.py" \
+    --body "Severity: Critical..." \
+    --line 123 \
+    --start-line 120
+  ```
   - Important notes:
-    - Use `-f` for string parameters (body, commit_id, path, side)
-    - Use `-F` for integer parameters (line, start_line)
-    - OWNER/REPO comes from the REPO context variable
-    - PULL_NUMBER comes from the PR NUMBER context variable
-    - COMMIT_SHA is the headRefOid from gh pr view
+    - The `GITHUB_REPOSITORY` is automatically available to the script.
+    - The `PR_NUMBER` and `commit_id` (headRefOid) must be passed from the context.
   - Comment body template (recommendation):
     - First line: Severity: Critical | Warning
     - Concern: short description
@@ -193,7 +176,7 @@ Inline commenting for Critical/Warning issues
       # minimal patch
       ```
 - Failure handling:
-  - If gh api is not available or returns an error, skip inline posting and ensure the issue is fully captured in the Markdown review.
+  - If the script fails, skip inline posting and ensure the issue is fully captured in the Markdown review.
   - If line mapping is ambiguous (renames, massive refactors), prefer Markdown-only.
   - Avoid re-posting the same inline comment on retries; deduplicate by path+start_line+line+concise hash of the body.
 
