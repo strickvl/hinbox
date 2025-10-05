@@ -140,36 +140,32 @@ Severity guidance (when to block with CHANGES_REQUESTED):
 Otherwise, COMMENTED (non-blocking) or APPROVED if concerns are minor.
 
 Inline commenting for Critical/Warning issues
-- Purpose: Add high-signal, line-anchored feedback for Critical and Warning items while keeping the Markdown review as the canonical artifact.
-- When to use:
-  - The issue can be tied to a specific file and precise head-commit line(s).
-  - The severity is Critical or Warning. Prefer one comment per discrete issue.
-- How to find exact lines:
-  - Bash → gh pr diff <PR NUMBER> --patch to read unified=0 hunks and map to head lines.
-  - Verify by reading the current file at HEAD and matching the snippet to avoid off-by-one errors.
-  - For single-line issues, omit start_line (line is sufficient). For ranges, include start_line (first affected line) and line (last affected line).
-  - Always use side="RIGHT".
-  - Use commit_id equal to headRefOid from gh pr view.
-- Command to use: The `.github/scripts/post_inline_comment.sh` wrapper script.
-  - **CRITICAL:** You must pass the comment body by piping it to the script via `stdin`. Do not use the `--body` argument.
-  - The `GITHUB_REPOSITORY` variable is automatically available in the script's environment. **Do not** try to `export` it yourself.
-- Command syntax (example for a multi-line comment):
-  ```bash
-  COMMENT_BODY="Severity: Critical
-Concern: Possible race condition.
-Rationale: This could lead to data corruption under load."
-
-  echo "$COMMENT_BODY" | .github/scripts/post_inline_comment.sh \
-    --pr-number "123" \
-    --commit-id "abc123def456" \
-    --path "src/module/file.py" \
-    --line 123 \
-    --start-line 120
+- Purpose: Add high-signal, line-anchored feedback for Critical and Warning items.
+- Tool to use: `mcp__github_inline_comment__create_inline_comment`
+- Parameters:
+  - `path`: The relative path to the file.
+  - `body`: The markdown content of the comment.
+  - `line`: The end line number of the comment range.
+  - `startLine`: (Optional) The start line number for a multi-line comment.
+  - `side`: Always use `"RIGHT"`.
+  - `commit_id`: (Optional) The SHA of the commit to comment on. The tool will use the PR's head SHA by default, so you only need this if you want to target a different commit.
+- Example tool call (for a multi-line comment):
+  ```json
+  {
+    "tool_name": "mcp__github_inline_comment__create_inline_comment",
+    "parameters": {
+      "path": "src/module/file.py",
+      "body": "Severity: Critical\nConcern: This logic is incorrect.\nRationale: It will cause a crash under XYZ conditions.",
+      "startLine": 120,
+      "line": 123,
+      "side": "RIGHT"
+    }
+  }
   ```
 - Failure handling:
-  - If the script fails, skip inline posting and ensure the issue is fully captured in the Markdown review.
+  - If the tool fails, skip inline posting and ensure the issue is fully captured in the Markdown review.
   - If line mapping is ambiguous (renames, massive refactors), prefer Markdown-only.
-  - Avoid re-posting the same inline comment on retries; deduplicate by path+start_line+line+concise hash of the body.
+  - Avoid re-posting the same inline comment on retries; deduplicate by path+startLine+line+concise hash of the body.
 
 6) File output options
 - Always return the full Markdown review in the chat response.
