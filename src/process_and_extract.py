@@ -26,6 +26,7 @@ from src.utils.embeddings.similarity import (
     reset_embedding_manager_cache,
 )
 from src.utils.file_ops import write_entity_to_file
+from src.utils.processing_status import ProcessingStatus
 from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
 
 # Get module-specific logger
@@ -448,10 +449,12 @@ def write_results_and_statistics(
     skipped_already_processed: int,
     article_count: int,
     base_dir: str,
+    status_tracker: ProcessingStatus = None,
 ) -> None:
     """Write results to files and log comprehensive statistics."""
-    # Write updated articles
-    write_updated_articles(processed_rows, args.articles_path)
+    # Flush processing status sidecar (replaces full articles rewrite)
+    if status_tracker:
+        status_tracker.flush()
 
     # Write entity files
     log("Saving updated entity tables...", level="processing")
@@ -476,6 +479,7 @@ def process_single_article(
     entities: Dict[str, Dict],
     args: argparse.Namespace,
     domain_config: DomainConfig = None,
+    status_tracker: ProcessingStatus = None,
 ) -> Tuple[Dict, bool, str]:
     """Process a single article through the extraction pipeline.
 
@@ -487,17 +491,22 @@ def process_single_article(
     # Extract article information
     article_info = processor.prepare_article_info(row, row_index)
 
-    # Initialize processing metadata and persist it back into the row
+    # Initialize processing metadata
     processing_metadata = processor.initialize_processing_metadata(row)
-    row["processing_metadata"] = processing_metadata
 
-    # Skip if already processed and not forced
-    if processing_metadata.get("processed") and not args.force_reprocess:
+    # Skip if already processed (check sidecar first, fall back to row metadata)
+    article_id = article_info["id"]
+    already_processed = (
+        status_tracker and status_tracker.is_processed(article_id)
+    ) or processing_metadata.get("processed")
+    if already_processed and not args.force_reprocess:
         log("Article already processed, skipping...", level="warning")
         return row, False, "already_processed"
 
     if not article_info["content"]:
         log("Article has no content, skipping extraction", level="warning")
+        if status_tracker:
+            status_tracker.mark_skipped(article_id, "no_content")
         return row, False, "no_content"
 
     # Relevance check (returns PhaseOutcome)
@@ -514,6 +523,8 @@ def process_single_article(
         if not rel_outcome.value:
             processing_metadata["processed"] = False
             processing_metadata["reason"] = "Not relevant"
+            if status_tracker:
+                status_tracker.mark_skipped(article_id, "not_relevant")
             return row, False, "not_relevant"
 
     extraction_timestamp = datetime.now().isoformat()
@@ -547,6 +558,10 @@ def process_single_article(
         row_index,
     )
 
+    # Record in sidecar status tracker
+    if status_tracker:
+        status_tracker.mark_processed(article_id, processing_metadata)
+
     return row, True, "processed"
 
 
@@ -556,6 +571,7 @@ def process_articles_batch(
     entities: Dict[str, Dict],
     args: argparse.Namespace,
     domain_config: DomainConfig = None,
+    status_tracker: ProcessingStatus = None,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Process a batch of articles and return results with statistics."""
     processed_rows = []
@@ -580,6 +596,7 @@ def process_articles_batch(
             entities,
             args,
             domain_config=domain_config,
+            status_tracker=status_tracker,
         )
 
         processed_rows.append(updated_row)
@@ -623,6 +640,13 @@ def main():
 
     processor = ArticleProcessor(domain=args.domain, model_type=model_type)
 
+    # Initialize sidecar processing status tracker
+    status_tracker = ProcessingStatus(base_dir)
+    log(
+        f"Processing status: {status_tracker.total_processed} previously processed",
+        level="info",
+    )
+
     # Load articles
     rows = load_and_validate_articles(args.articles_path)
     if not rows:
@@ -631,7 +655,12 @@ def main():
     # Process articles
     article_count = len(rows)
     processed_rows, counters = process_articles_batch(
-        rows, processor, entities, args, domain_config=config
+        rows,
+        processor,
+        entities,
+        args,
+        domain_config=config,
+        status_tracker=status_tracker,
     )
 
     # Post-processing: verify profile grounding
@@ -660,6 +689,7 @@ def main():
         counters["skipped_already_processed"],
         article_count,
         base_dir,
+        status_tracker=status_tracker,
     )
 
 
