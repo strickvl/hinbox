@@ -65,6 +65,14 @@ class ProcessingStatus:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
 
+    def snapshot(self) -> Dict[str, Dict[str, Any]]:
+        """Return a shallow copy of the status dict for safe read-only use in workers.
+
+        Unlike ``processed_ids()`` which only returns IDs, this includes
+        the full metadata (e.g. ``content_hash``) needed for skip-if-unchanged.
+        """
+        return dict(self._status)
+
     def processed_ids(self) -> Set[str]:
         """Return a snapshot of article IDs currently marked as processed.
 

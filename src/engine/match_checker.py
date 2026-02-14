@@ -1,12 +1,15 @@
 """Entity match checking functionality."""
 
-from typing import Dict
+from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
-from src.logging_config import log
+from src.logging_config import get_logger, log
+from src.utils.cache_utils import LRUCache, sha256_text
 from src.utils.llm import cloud_generation, local_generation
+
+logger = get_logger("engine.match_checker")
 
 # ── Entity-type-specific matching rules ──
 # These supplement the generic prompt with hard rules that prevent
@@ -104,6 +107,61 @@ Profile: {existing_profile_text}
 Do these refer to the same {entity_label}? Provide your analysis with a confidence score."""
 
 
+# ---------------------------------------------------------------------------
+# Per-run match-check memoization
+# ---------------------------------------------------------------------------
+_MATCH_MEMO: Optional[LRUCache] = None
+_MATCH_MEMO_ENABLED: bool = False
+
+
+def configure_match_check_memo(*, enabled: bool, max_items: int = 8192) -> None:
+    """Configure per-run memoization for deterministic match checks.
+
+    Call once from pipeline startup after loading domain config.
+    """
+    global _MATCH_MEMO, _MATCH_MEMO_ENABLED
+    _MATCH_MEMO_ENABLED = enabled
+    if enabled:
+        _MATCH_MEMO = LRUCache(max_items=max_items)
+        logger.info(f"Match-check memoization enabled (max_items={max_items})")
+    else:
+        _MATCH_MEMO = None
+
+
+def reset_match_check_memo() -> None:
+    """Clear memoization state (useful between test runs)."""
+    global _MATCH_MEMO, _MATCH_MEMO_ENABLED
+    if _MATCH_MEMO is not None:
+        _MATCH_MEMO.clear()
+    _MATCH_MEMO_ENABLED = False
+    _MATCH_MEMO = None
+
+
+def _match_memo_key(
+    *,
+    backend: str,
+    model: str,
+    entity_type: str,
+    new_name: str,
+    existing_name: str,
+    new_profile_text: str,
+    existing_profile_text: str,
+) -> str:
+    """Build a stable hash key from all inputs that affect the match result."""
+    parts = "|".join(
+        [
+            backend,
+            model,
+            entity_type,
+            sha256_text(new_name),
+            sha256_text(existing_name),
+            sha256_text(new_profile_text),
+            sha256_text(existing_profile_text),
+        ]
+    )
+    return sha256_text(parts)
+
+
 class MatchCheckResult(BaseModel):
     is_match: bool
     confidence: float = Field(
@@ -159,12 +217,28 @@ def local_model_check_match(
         entity_type: The entity type being compared (people, organizations, locations, events)
         model: The LLM model to use for comparison
     """
+    # Memo lookup
+    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
+        memo_key = _match_memo_key(
+            backend="local",
+            model=model,
+            entity_type=entity_type,
+            new_name=new_name,
+            existing_name=existing_name,
+            new_profile_text=new_profile_text,
+            existing_profile_text=existing_profile_text,
+        )
+        cached = _MATCH_MEMO.get(memo_key)
+        if cached is not None:
+            logger.debug(f"Match-check memo hit for {new_name} vs {existing_name}")
+            return cached
+
     system_content, user_content = _build_prompts(
         new_name, existing_name, new_profile_text, existing_profile_text, entity_type
     )
 
     try:
-        return local_generation(
+        result = local_generation(
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content},
@@ -175,9 +249,15 @@ def local_model_check_match(
         )
     except Exception as e:
         log("Error with Ollama API", level="error", exception=e)
-        return MatchCheckResult(
+        result = MatchCheckResult(
             is_match=False, confidence=0.0, reason=f"API error: {str(e)}"
         )
+
+    # Memo store
+    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
+        _MATCH_MEMO.set(memo_key, result)
+
+    return result
 
 
 def cloud_model_check_match(
@@ -199,12 +279,28 @@ def cloud_model_check_match(
         entity_type: The entity type being compared (people, organizations, locations, events)
         model: The LLM model to use for comparison
     """
+    # Memo lookup
+    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
+        memo_key = _match_memo_key(
+            backend="cloud",
+            model=model,
+            entity_type=entity_type,
+            new_name=new_name,
+            existing_name=existing_name,
+            new_profile_text=new_profile_text,
+            existing_profile_text=existing_profile_text,
+        )
+        cached = _MATCH_MEMO.get(memo_key)
+        if cached is not None:
+            logger.debug(f"Match-check memo hit for {new_name} vs {existing_name}")
+            return cached
+
     system_content, user_content = _build_prompts(
         new_name, existing_name, new_profile_text, existing_profile_text, entity_type
     )
 
     try:
-        return cloud_generation(
+        result = cloud_generation(
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content},
@@ -215,6 +311,12 @@ def cloud_model_check_match(
         )
     except Exception as e:
         log("Error with Gemini API", level="error", exception=e)
-        return MatchCheckResult(
+        result = MatchCheckResult(
             is_match=False, confidence=0.0, reason=f"API error: {str(e)}"
         )
+
+    # Memo store
+    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
+        _MATCH_MEMO.set(memo_key, result)
+
+    return result

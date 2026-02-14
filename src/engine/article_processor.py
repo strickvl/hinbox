@@ -9,7 +9,10 @@ from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
 from src.utils.error_handler import handle_article_processing_error
 from src.utils.outcomes import PhaseOutcome
-from src.utils.quality_controls import run_extraction_qc
+from src.utils.quality_controls import (
+    filter_entities_by_article_relevance,
+    run_extraction_qc,
+)
 
 logger = get_logger("article_processor")
 
@@ -330,6 +333,30 @@ class ArticleProcessor:
             # Store outcomes in processing_metadata
             processing_metadata.setdefault("phase_outcomes", {})
             processing_metadata["phase_outcomes"]["extraction"] = extraction_outcomes
+
+            # Entity-level relevance filter (mention validation)
+            # Conservative: apply to people/orgs/locations; events opt-in
+            relevance_types = ["people", "organizations", "locations"]
+            relevance_outcomes: Dict[str, Any] = {}
+            for et in relevance_types:
+                if entities[et]:
+                    filtered, rel_report = filter_entities_by_article_relevance(
+                        entity_type=et,
+                        entities=entities[et],
+                        article_text=article_content,
+                        domain=self.domain,
+                        require_mention=True,
+                    )
+                    if rel_report.dropped > 0:
+                        logger.info(
+                            f"Relevance filter: dropped {rel_report.dropped}/{rel_report.input_count} "
+                            f"{et} entities (no mention in article)"
+                        )
+                    entities[et] = filtered
+                    relevance_outcomes[et] = rel_report.model_dump()
+            processing_metadata["phase_outcomes"]["entity_relevance"] = (
+                relevance_outcomes
+            )
 
             # Track reflection attempts across all types
             total_reflections = 0

@@ -46,6 +46,21 @@ dedup:
 #   embed_batch_size: 64        # texts per embedding API call
 #   embed_drain_timeout_ms: 100 # reserved for future async drain behaviour
 
+# Caching configuration (uncomment to customize)
+# cache:
+#   enabled: true
+#   embeddings:
+#     lru_max_items: 4096
+#   extraction:
+#     enabled: true
+#     subdir: "cache/extractions"
+#     version: 1
+#   match_check:
+#     enabled: true
+#     max_items: 8192
+#   articles:
+#     skip_if_unchanged: true
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction

@@ -199,6 +199,39 @@ class DomainConfig:
 
         return result
 
+    def get_cache_config(self) -> Dict[str, Any]:
+        """Get caching configuration with sensible defaults.
+
+        Reads from the ``cache`` section of the domain config.
+        Missing keys fall back to conservative defaults that keep caches
+        reasonably bounded.
+        """
+        config = self.load_config()
+        section = config.get("cache", {})
+
+        defaults: Dict[str, Any] = {
+            "enabled": True,
+            "embeddings": {"lru_max_items": 4096},
+            "extraction": {
+                "enabled": True,
+                "subdir": "cache/extractions",
+                "version": 1,
+            },
+            "match_check": {"enabled": True, "max_items": 8192},
+            "articles": {"skip_if_unchanged": True},
+        }
+
+        # Shallow merge: top-level bool, then nested dicts
+        result: Dict[str, Any] = {}
+        result["enabled"] = section.get("enabled", defaults["enabled"])
+        for key in ("embeddings", "extraction", "match_check", "articles"):
+            base = dict(defaults[key])
+            override = section.get(key, {})
+            base.update(override)
+            result[key] = base
+
+        return result
+
     def get_merge_evidence_config(self) -> Dict[str, Any]:
         """Get merge evidence configuration for evidence-first similarity search.
 

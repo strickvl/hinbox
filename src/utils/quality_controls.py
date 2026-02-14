@@ -307,6 +307,125 @@ def run_extraction_qc(
 
 
 # ──────────────────────────────────────────────
+# Entity-level relevance filtering (mention validation)
+# ──────────────────────────────────────────────
+
+
+class EntityRelevanceReport(BaseModel):
+    """Summary of entity-level relevance filtering."""
+
+    input_count: int = 0
+    dropped: int = 0
+    output_count: int = 0
+    reasons: Dict[str, int] = Field(default_factory=dict)
+
+
+def filter_entities_by_article_relevance(
+    *,
+    entity_type: str,
+    entities: List[Dict[str, Any]],
+    article_text: str,
+    domain: str = "guantanamo",
+    require_mention: bool = True,
+) -> Tuple[List[Dict[str, Any]], EntityRelevanceReport]:
+    """Filter out entities whose names don't appear in the source article text.
+
+    For each entity, builds a set of "needles" from its name, aliases,
+    computed acronyms, and domain equivalence group variants. If none of
+    those needles appear in the article text, the entity is dropped as
+    likely hallucinated.
+
+    Short needles (≤3 chars) use word-boundary regex matching to avoid
+    false positives from matching inside longer words.
+
+    Returns (filtered_entities, report). Never raises.
+    """
+    from src.utils.name_variants import compute_acronym
+
+    report = EntityRelevanceReport(input_count=len(entities))
+
+    if not require_mention or not entities or not article_text:
+        report.output_count = len(entities)
+        return entities, report
+
+    # Load equivalence groups from domain config (once for all entities)
+    try:
+        cfg = get_domain_config(domain)
+        variants_cfg = cfg.get_name_variants_config(entity_type)
+        equivalence_groups = variants_cfg.get("equivalence_groups", [])
+    except Exception:
+        equivalence_groups = []
+
+    # Pre-build equivalence group lookup: name.lower() -> set of all variants
+    eq_lookup: Dict[str, List[str]] = {}
+    for group in equivalence_groups:
+        lowered = [v.lower() for v in group]
+        for name in lowered:
+            eq_lookup[name] = [v for v in group]  # original case
+
+    article_lower = article_text.lower()
+    name_field = "title" if entity_type == "events" else "name"
+    kept: List[Dict[str, Any]] = []
+    reasons: Dict[str, int] = {}
+
+    for entity in entities:
+        raw_name = entity.get(name_field, "")
+        if not raw_name:
+            kept.append(entity)
+            continue
+
+        # Build needle set: canonical name, aliases, acronym, equivalence variants
+        needles: List[str] = [raw_name]
+
+        # Aliases from within-article dedup
+        for alias in entity.get("aliases", []):
+            if alias:
+                needles.append(alias)
+
+        # Computed acronym (for orgs/locations)
+        if entity_type in ("organizations", "locations"):
+            try:
+                acro = compute_acronym(raw_name)
+                if acro and len(acro) >= 2:
+                    needles.append(acro)
+            except Exception:
+                pass
+
+        # Equivalence group variants
+        name_lower = raw_name.lower()
+        if name_lower in eq_lookup:
+            needles.extend(eq_lookup[name_lower])
+
+        # Check if any needle is mentioned in article text
+        found = False
+        for needle in needles:
+            needle_lower = needle.lower()
+            if len(needle_lower) <= 3:
+                # Short needles: use word boundary to avoid matching inside words
+                pattern = r"\b" + re.escape(needle_lower) + r"\b"
+                if re.search(pattern, article_lower):
+                    found = True
+                    break
+            else:
+                if needle_lower in article_lower:
+                    found = True
+                    break
+
+        if found:
+            kept.append(entity)
+        else:
+            report.dropped += 1
+            reasons["no_mention"] = reasons.get("no_mention", 0) + 1
+            logger.debug(
+                f"Filtered {entity_type} entity '{raw_name}': no mention in article"
+            )
+
+    report.output_count = len(kept)
+    report.reasons = reasons
+    return kept, report
+
+
+# ──────────────────────────────────────────────
 # Profile QC
 # ──────────────────────────────────────────────
 

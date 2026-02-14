@@ -11,6 +11,7 @@ from src.engine.extractors import EntityExtractor
 from src.engine.match_checker import (
     MatchCheckResult,
     cloud_model_check_match,
+    configure_match_check_memo,
     local_model_check_match,
 )
 from src.engine.merge_dispute_agent import (
@@ -50,6 +51,7 @@ __all__ = [
     # Match checking
     "MatchCheckResult",
     "cloud_model_check_match",
+    "configure_match_check_memo",
     "local_model_check_match",
     # Merge dispute agent
     "MergeDisputeAction",

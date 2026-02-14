@@ -20,16 +20,17 @@ import argparse
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
 from src.constants import disable_llm_callbacks
-from src.engine import ArticleProcessor, EntityMerger
+from src.engine import ArticleProcessor, EntityMerger, configure_match_check_memo
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
+from src.utils.cache_utils import sha256_text
 from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
     reset_embedding_manager_cache,
@@ -514,13 +515,17 @@ def extract_single_article_only(
     processor: ArticleProcessor,
     args: argparse.Namespace,
     *,
-    processed_snapshot: Set[str],
+    status_snapshot: Dict[str, Dict[str, Any]],
+    skip_if_unchanged: bool = True,
     extract_per_article: int = 1,
 ) -> ArticleExtractionResult:
     """Run skip checks, relevance, and extraction for one article.
 
     This function is safe to call from a worker thread: it never mutates
     shared state (``entities``, ``ProcessingStatus``).
+
+    The ``status_snapshot`` contains full metadata per article ID (including
+    ``content_hash`` when available) for skip-if-unchanged detection.
     """
     article_info = processor.prepare_article_info(row, row_index)
     processing_metadata = processor.initialize_processing_metadata(row)
@@ -537,14 +542,27 @@ def extract_single_article_only(
         was_extracted=False,
     )
 
+    # Compute content hash for skip-if-unchanged and later persistence
+    content_hash = sha256_text(article_info.get("content") or "")
+    processing_metadata["content_hash"] = content_hash
+
     # Skip if already processed (use snapshot — no thread-safety issue)
-    already_processed = (article_id in processed_snapshot) or processing_metadata.get(
+    prior = status_snapshot.get(article_id, {})
+    already_processed = prior.get("processed", False) or processing_metadata.get(
         "processed"
     )
     if already_processed and not args.force_reprocess:
-        return ArticleExtractionResult(
-            **{**empty.__dict__, "skip_reason": "already_processed"}
-        )
+        # If skip_if_unchanged is active and we have a stored hash, check it
+        prior_hash = prior.get("content_hash")
+        if skip_if_unchanged and prior_hash and prior_hash != content_hash:
+            # Content changed — fall through to reprocess
+            logger.info(
+                f"Article {article_id}: content changed since last run, reprocessing"
+            )
+        else:
+            return ArticleExtractionResult(
+                **{**empty.__dict__, "skip_reason": "already_processed"}
+            )
 
     if not article_info["content"]:
         return ArticleExtractionResult(
@@ -683,10 +701,16 @@ def process_articles_batch(
     extract_workers = cc["extract_workers"]
     extract_per_article = cc["extract_per_article"]
 
-    # Snapshot of already-processed IDs (avoids touching ProcessingStatus
-    # from worker threads).
-    processed_snapshot: Set[str] = (
-        status_tracker.processed_ids() if status_tracker else set()
+    # Cache config for skip-if-unchanged
+    cache_cfg = domain_cfg.get_cache_config()
+    skip_if_unchanged = cache_cfg.get("enabled", True) and cache_cfg.get(
+        "articles", {}
+    ).get("skip_if_unchanged", True)
+
+    # Full metadata snapshot (avoids touching ProcessingStatus from workers).
+    # Includes content_hash for skip-if-unchanged detection.
+    status_snapshot: Dict[str, Dict[str, Any]] = (
+        status_tracker.snapshot() if status_tracker else {}
     )
 
     active_count = min(len(rows), args.limit)
@@ -713,7 +737,8 @@ def process_articles_batch(
                     row_index,
                     processor,
                     args,
-                    processed_snapshot=processed_snapshot,
+                    status_snapshot=status_snapshot,
+                    skip_if_unchanged=skip_if_unchanged,
                     extract_per_article=extract_per_article,
                 )
                 for row_index, row in enumerate(active_rows, 1)
@@ -780,6 +805,14 @@ def main():
         f"{cc['extract_per_article']} types/article, "
         f"{cc['llm_in_flight']} LLM in-flight",
         level="info",
+    )
+
+    # Configure match-check memoization (per-run LRU for temperature=0 calls)
+    cache_cfg = config.get_cache_config()
+    match_cfg = cache_cfg.get("match_check", {})
+    configure_match_check_memo(
+        enabled=cache_cfg.get("enabled", True) and match_cfg.get("enabled", True),
+        max_items=match_cfg.get("max_items", 8192),
     )
 
     # Initialize sidecar processing status tracker

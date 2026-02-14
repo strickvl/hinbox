@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import src.config_loader as config_loader
 from src.constants import CLOUD_EMBEDDING_MODEL, DEFAULT_EMBEDDING_MODEL
 from src.logging_config import get_logger
+from src.utils.cache_utils import LRUCache, sha256_text
 
 from .base import EmbeddingConfig, EmbeddingProvider, EmbeddingResult
 from .cloud import CloudEmbeddingProvider
@@ -52,6 +53,15 @@ class EmbeddingManager:
         # Load configuration from domain config file
         domain_config = self._load_domain_config()
         embedding_config = domain_config.get("embeddings", {})
+
+        # Embedding LRU cache keyed by (fingerprint, text_hash)
+        cache_cfg = self._load_cache_config()
+        emb_cache_cfg = cache_cfg.get("embeddings", {})
+        lru_max = emb_cache_cfg.get("lru_max_items", 4096)
+        self._cache_enabled: bool = cache_cfg.get("enabled", True) and lru_max > 0
+        self._embed_lru: LRUCache = LRUCache(max_items=lru_max)
+        # Resolved fingerprint per provider kind (populated on first embed call)
+        self._provider_fingerprint: Dict[str, Optional[str]] = {}
 
         # Determine mode: explicit param > env var > domain config
         requested_mode = self._resolve_requested_mode(mode, embedding_config)
@@ -130,6 +140,14 @@ class EmbeddingManager:
         except Exception:
             return {}
 
+    def _load_cache_config(self) -> Dict[str, Any]:
+        """Load cache configuration from domain config."""
+        try:
+            dc = config_loader.DomainConfig(self.domain)
+            return dc.get_cache_config()
+        except Exception:
+            return {"enabled": True, "embeddings": {"lru_max_items": 4096}}
+
     def _get_cloud_config_from_domain(
         self, embedding_config: Dict[str, Any]
     ) -> EmbeddingConfig:
@@ -154,12 +172,51 @@ class EmbeddingManager:
             device=local_config.get("device", "auto"),
         )
 
+    def _provider_kind(self) -> str:
+        """Return a string tag for the current primary provider (for cache key segregation)."""
+        if self.mode == EmbeddingMode.LOCAL:
+            return "local"
+        return "cloud"
+
+    def _try_cache_lookup(self, text: str) -> Optional[List[float]]:
+        """Look up a single text in the LRU cache. Returns None on miss."""
+        if not self._cache_enabled:
+            return None
+        fp = self._provider_fingerprint.get(self._provider_kind())
+        if fp is None:
+            return None
+        key = (fp, sha256_text(text))
+        return self._embed_lru.get(key)
+
+    def _cache_store(self, text: str, vec: List[float], fingerprint: str) -> None:
+        """Store a single (text → vec) mapping in the LRU cache."""
+        if not self._cache_enabled:
+            return
+        key = (fingerprint, sha256_text(text))
+        self._embed_lru.set(key, vec)
+
+    def _update_fingerprint_from_result(self, result: EmbeddingResult) -> Optional[str]:
+        """Compute and cache the provider fingerprint from an EmbeddingResult."""
+        fp = self.fingerprint_from_result(result)
+        if fp:
+            self._provider_fingerprint[self._provider_kind()] = fp
+        return fp
+
     async def embed_text(self, text: str, use_cache: bool = True) -> List[float]:
         """Embed a single text with mode-appropriate provider."""
-        provider = self._get_provider()
+        if use_cache:
+            cached = self._try_cache_lookup(text)
+            if cached is not None:
+                return cached
 
+        provider = self._get_provider()
         try:
-            return await provider.embed_single(text)
+            result = await provider.embed_batch([text])
+            fp = self._update_fingerprint_from_result(result)
+            vec = result.embeddings[0] if result.embeddings else []
+            if fp and use_cache:
+                self._cache_store(text, vec, fp)
+            return vec
         except Exception as e:
             if self.mode == EmbeddingMode.HYBRID and provider == self.cloud_provider:
                 logger.warning(f"Cloud embedding failed, falling back to local: {e}")
@@ -169,20 +226,51 @@ class EmbeddingManager:
     async def embed_batch(
         self, texts: List[str], use_cache: bool = True
     ) -> List[List[float]]:
-        """Embed multiple texts efficiently."""
+        """Embed multiple texts efficiently with per-text cache lookups."""
+        if not texts:
+            return []
+
+        # Split into hits and misses
+        results: List[Optional[List[float]]] = [None] * len(texts)
+        miss_indices: List[int] = []
+
+        if use_cache and self._cache_enabled:
+            for i, t in enumerate(texts):
+                cached = self._try_cache_lookup(t)
+                if cached is not None:
+                    results[i] = cached
+                else:
+                    miss_indices.append(i)
+        else:
+            miss_indices = list(range(len(texts)))
+
+        if not miss_indices:
+            return [r for r in results if r is not None]
+
+        # Embed only misses
+        miss_texts = [texts[i] for i in miss_indices]
         provider = self._get_provider()
 
         try:
-            result = await provider.embed_batch(texts)
-            return result.embeddings
+            batch_result = await provider.embed_batch(miss_texts)
         except Exception as e:
             if self.mode == EmbeddingMode.HYBRID and provider == self.cloud_provider:
                 logger.warning(
                     f"Cloud batch embedding failed, falling back to local: {e}"
                 )
-                result = await self.local_provider.embed_batch(texts)
-                return result.embeddings
-            raise
+                batch_result = await self.local_provider.embed_batch(miss_texts)
+            else:
+                raise
+
+        fp = self._update_fingerprint_from_result(batch_result)
+
+        for j, idx in enumerate(miss_indices):
+            vec = batch_result.embeddings[j] if j < len(batch_result.embeddings) else []
+            results[idx] = vec
+            if fp and use_cache:
+                self._cache_store(texts[idx], vec, fp)
+
+        return [r for r in results if r is not None]
 
     async def embed_text_result(self, text: str) -> EmbeddingResult:
         """Embed a single text and return full EmbeddingResult with metadata."""
@@ -190,6 +278,11 @@ class EmbeddingManager:
 
         try:
             result = await provider.embed_batch([text])
+            self._update_fingerprint_from_result(result)
+            # Cache the vector
+            fp = self._provider_fingerprint.get(self._provider_kind())
+            if fp and result.embeddings:
+                self._cache_store(text, result.embeddings[0], fp)
             return result
         except Exception as e:
             if self.mode == EmbeddingMode.HYBRID and provider == self.cloud_provider:
@@ -216,6 +309,11 @@ class EmbeddingManager:
         """Return the model name of the currently active (primary) provider."""
         provider = self._get_provider()
         return provider.config.model_name
+
+    @property
+    def cache_stats(self) -> dict:
+        """Return LRU cache hit/miss statistics for diagnostics."""
+        return self._embed_lru.stats
 
     @staticmethod
     def fingerprint_from_result(result: EmbeddingResult) -> Optional[str]:
@@ -265,24 +363,82 @@ class EmbeddingManager:
 
         This is the preferred method for batching — sentence-transformers
         encodes a batch in a single GPU/CPU pass, much faster than N × single.
+        Uses the LRU cache to skip already-embedded texts.
         """
+        if not texts:
+            return EmbeddingResult(embeddings=[], model=None, dimension=None)
+
+        # Split into cache hits and misses
+        all_vecs: List[Optional[List[float]]] = [None] * len(texts)
+        miss_indices: List[int] = []
+
+        if self._cache_enabled:
+            for i, t in enumerate(texts):
+                cached = self._try_cache_lookup(t)
+                if cached is not None:
+                    all_vecs[i] = cached
+                else:
+                    miss_indices.append(i)
+        else:
+            miss_indices = list(range(len(texts)))
+
         provider = self._get_provider()
 
-        async def _batch():
-            try:
-                return await provider.embed_batch(texts)
-            except Exception as e:
-                if (
-                    self.mode == EmbeddingMode.HYBRID
-                    and provider == self.cloud_provider
-                ):
-                    logger.warning(
-                        f"Cloud batch embedding failed, falling back to local: {e}"
-                    )
-                    return await self.local_provider.embed_batch(texts)
-                raise
+        if miss_indices:
+            miss_texts = [texts[i] for i in miss_indices]
 
-        return self._get_loop().run_until_complete(_batch())
+            async def _batch():
+                try:
+                    return await provider.embed_batch(miss_texts)
+                except Exception as e:
+                    if (
+                        self.mode == EmbeddingMode.HYBRID
+                        and provider == self.cloud_provider
+                    ):
+                        logger.warning(
+                            f"Cloud batch embedding failed, falling back to local: {e}"
+                        )
+                        return await self.local_provider.embed_batch(miss_texts)
+                    raise
+
+            batch_result = self._get_loop().run_until_complete(_batch())
+            fp = self._update_fingerprint_from_result(batch_result)
+
+            for j, idx in enumerate(miss_indices):
+                vec = (
+                    batch_result.embeddings[j]
+                    if j < len(batch_result.embeddings)
+                    else []
+                )
+                all_vecs[idx] = vec
+                if fp:
+                    self._cache_store(texts[idx], vec, fp)
+
+            # Build result with full metadata from the provider call
+            final_embeddings = [v for v in all_vecs if v is not None]
+            return EmbeddingResult(
+                embeddings=final_embeddings,
+                model=batch_result.model,
+                dimension=batch_result.dimension,
+            )
+        else:
+            # All hits — reconstruct metadata from cached fingerprint
+            final_embeddings = [v for v in all_vecs if v is not None]
+            fp = self._provider_fingerprint.get(self._provider_kind())
+            model_name = None
+            dim = None
+            if fp and ":" in fp:
+                parts = fp.rsplit(":", 1)
+                model_name = parts[0]
+                try:
+                    dim = int(parts[1])
+                except ValueError:
+                    dim = len(final_embeddings[0]) if final_embeddings else None
+            return EmbeddingResult(
+                embeddings=final_embeddings,
+                model=model_name,
+                dimension=dim,
+            )
 
 
 # Global default manager instance

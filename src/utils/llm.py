@@ -129,6 +129,7 @@ def cloud_generation(
     model: str = CLOUD_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> Any:
     """
@@ -140,6 +141,7 @@ def cloud_generation(
         model: Model name to use
         max_tokens: Maximum tokens in response
         temperature: Temperature for generation
+        metadata: Optional metadata to merge with defaults (e.g. extra tags)
         **kwargs: Additional arguments passed to the API
 
     Returns:
@@ -152,7 +154,15 @@ def cloud_generation(
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
 
-    metadata = dict(DEFAULT_METADATA)
+    merged_metadata = dict(DEFAULT_METADATA)
+    if metadata:
+        # Merge tags additively, overwrite other keys
+        extra_tags = metadata.pop("tags", [])
+        merged_metadata.update(metadata)
+        if extra_tags:
+            existing_tags = merged_metadata.get("tags", [])
+            merged_metadata["tags"] = list(set(existing_tags + extra_tags))
+    metadata = merged_metadata
 
     for attempt in range(max_retries + 1):
         try:
@@ -256,6 +266,7 @@ def local_generation(
     model: str = OLLAMA_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
+    metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> Any:
     """
@@ -267,6 +278,7 @@ def local_generation(
         model: Model name to use
         max_tokens: Maximum tokens in response
         temperature: Temperature for generation
+        metadata: Optional metadata to merge with defaults (e.g. extra tags)
         **kwargs: Additional arguments passed to the API
 
     Returns:
@@ -279,7 +291,14 @@ def local_generation(
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
 
-    metadata = dict(DEFAULT_METADATA)
+    merged_metadata = dict(DEFAULT_METADATA)
+    if metadata:
+        extra_tags = metadata.pop("tags", [])
+        merged_metadata.update(metadata)
+        if extra_tags:
+            existing_tags = merged_metadata.get("tags", [])
+            merged_metadata["tags"] = list(set(existing_tags + extra_tags))
+    metadata = merged_metadata
 
     for attempt in range(max_retries + 1):
         try:

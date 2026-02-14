@@ -61,6 +61,21 @@ batching:
   embed_batch_size: 64        # texts per embedding API call
   embed_drain_timeout_ms: 100 # reserved for future async drain behaviour
 
+# Caching configuration (Phase 4 speed audit)
+cache:
+  enabled: true
+  embeddings:
+    lru_max_items: 4096         # in-memory LRU for embedding vectors
+  extraction:
+    enabled: true
+    subdir: "cache/extractions"  # persistent sidecar under output dir
+    version: 1                   # bump to invalidate all cached extractions
+  match_check:
+    enabled: true
+    max_items: 8192              # per-run LRU for match-checker results
+  articles:
+    skip_if_unchanged: true      # skip articles whose content hash hasn't changed
+
 # Merge evidence configuration (for evidence-first similarity search)
 merge_evidence:
   max_chars: 1500         # truncate evidence text to this length
