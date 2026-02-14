@@ -6,7 +6,11 @@ from unittest.mock import patch
 import pytest
 
 from src.utils.embeddings.base import EmbeddingResult
-from src.utils.embeddings.manager import EmbeddingManager, EmbeddingMode
+from src.utils.embeddings.manager import (
+    EmbeddingManager,
+    EmbeddingMode,
+    _local_backend_available,
+)
 from src.utils.embeddings.similarity import compute_similarity
 
 
@@ -36,6 +40,31 @@ class TestEmbeddingManager:
         assert manager.mode == EmbeddingMode.LOCAL
         assert manager.local_provider is not None
         assert manager.cloud_provider is None
+
+    def test_init_auto_mode_with_local_available(self):
+        """Test AUTO mode resolves to LOCAL when sentence-transformers is available."""
+        with patch(
+            "src.utils.embeddings.manager._local_backend_available", return_value=True
+        ):
+            manager = EmbeddingManager(mode=EmbeddingMode.AUTO)
+            assert manager.mode == EmbeddingMode.LOCAL
+            assert manager.local_provider is not None
+            assert manager.cloud_provider is None
+
+    def test_init_auto_mode_without_local(self, mock_domain_config):
+        """Test AUTO mode resolves to CLOUD when sentence-transformers is not available."""
+        with patch(
+            "src.utils.embeddings.manager._local_backend_available", return_value=False
+        ):
+            with patch.object(
+                EmbeddingManager,
+                "_load_domain_config",
+                return_value=mock_domain_config,
+            ):
+                manager = EmbeddingManager(mode=EmbeddingMode.AUTO)
+                assert manager.mode == EmbeddingMode.CLOUD
+                assert manager.cloud_provider is not None
+                assert manager.local_provider is None
 
     def test_init_with_env_var(self, mock_domain_config):
         """Test initialization with environment variable."""
@@ -198,6 +227,31 @@ class TestEmbeddingManager:
         ) as mock_async_batch:
             result = manager.embed_batch_sync(["test1", "test2"])
             assert result == mock_batch
+
+    def test_embed_text_result_sync(self):
+        """Test embed_text_result_sync returns full EmbeddingResult with metadata."""
+        manager = EmbeddingManager(mode=EmbeddingMode.LOCAL)
+
+        mock_result = EmbeddingResult(
+            embeddings=[[0.1, 0.2, 0.3]],
+            model="test-model",
+            dimension=3,
+        )
+        with patch.object(
+            manager, "embed_text_result", return_value=mock_result
+        ):
+            result = manager.embed_text_result_sync("test")
+            assert result.model == "test-model"
+            assert result.dimension == 3
+            assert result.embeddings == [[0.1, 0.2, 0.3]]
+
+    def test_get_active_model_name(self):
+        """Test get_active_model_name returns primary provider's model."""
+        manager = EmbeddingManager(mode=EmbeddingMode.LOCAL)
+        assert manager.get_active_model_name() == "sentence-transformers/all-MiniLM-L6-v2"
+
+        manager_cloud = EmbeddingManager(mode=EmbeddingMode.CLOUD)
+        assert manager_cloud.get_active_model_name() == "jina_ai/jina-embeddings-v3"
 
     def test_get_provider_error(self):
         """Test error when provider not initialized."""

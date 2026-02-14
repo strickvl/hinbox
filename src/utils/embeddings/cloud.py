@@ -58,13 +58,20 @@ class CloudEmbeddingProvider(EmbeddingProvider):
             for i in range(len(texts)):
                 results.append(embeddings_map.get(i, []))
 
+            # Determine dimension from the first non-empty embedding
+            dim = next(
+                (len(emb) for emb in results if emb), None
+            )
+
             return EmbeddingResult(
                 embeddings=results,
-                model=response.model,
+                model=self.config.model_name,  # stable configured name
+                dimension=dim,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens,
                     "total_tokens": response.usage.total_tokens,
                 },
+                metadata={"resolved_model": response.model},
             )
 
         except Exception as e:

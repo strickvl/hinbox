@@ -96,7 +96,11 @@ Edit the generated files in `configs/palestine_food_history/`:
 
 2. **Install dependencies:**
    ```bash
+   # Cloud embeddings only (works on all platforms including Intel Mac):
    uv sync
+
+   # With local embeddings (requires PyTorch — Linux/Apple Silicon/Windows):
+   uv sync --extra local-embeddings
    ```
 
 3. **Set up environment variables:**

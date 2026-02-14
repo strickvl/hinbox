@@ -22,7 +22,7 @@ processing:
 
 # Embeddings configuration
 embeddings:
-  mode: hybrid  # Options: local, cloud, hybrid
+  mode: hybrid  # Options: auto, local, cloud, hybrid
   cloud:
     model: jina_ai/jina-embeddings-v3
     batch_size: 100
@@ -31,3 +31,4 @@ embeddings:
   local:
     model: sentence-transformers/all-MiniLM-L6-v2
     batch_size: 32
+    device: auto  # auto|cpu|cuda|mps

@@ -167,8 +167,8 @@ class DomainConfig:
         embeddings_config = config.get("embeddings", {})
 
         # Check mode
-        mode = embeddings_config.get("mode", "local")
-        valid_modes = ["local", "cloud", "hybrid"]
+        mode = embeddings_config.get("mode", "cloud")
+        valid_modes = ["auto", "local", "cloud", "hybrid"]
         if mode not in valid_modes:
             raise ValueError(
                 f"Invalid embeddings mode '{mode}'. Must be one of: {', '.join(valid_modes)}"
@@ -190,6 +190,17 @@ class DomainConfig:
                     "Local embeddings model must be specified when using local or hybrid mode"
                 )
 
+        # Validate device if specified in local config
+        local_config = embeddings_config.get("local", {})
+        device = local_config.get("device")
+        if device is not None:
+            valid_devices = ["auto", "cpu", "cuda", "mps"]
+            if device not in valid_devices:
+                raise ValueError(
+                    f"Invalid local embedding device '{device}'. "
+                    f"Must be one of: {', '.join(valid_devices)}"
+                )
+
         return True
 
     def get_embeddings_config(self) -> Dict[str, Any]:
@@ -199,7 +210,7 @@ class DomainConfig:
 
         # Set defaults
         defaults = {
-            "mode": "local",
+            "mode": "cloud",
             "cloud": {
                 "model": "jina_ai/jina-embeddings-v3",
                 "batch_size": 100,
@@ -209,6 +220,7 @@ class DomainConfig:
             "local": {
                 "model": "sentence-transformers/all-MiniLM-L6-v2",
                 "batch_size": 32,
+                "device": "auto",
             },
         }
 

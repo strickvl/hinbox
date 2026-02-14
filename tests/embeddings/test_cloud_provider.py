@@ -111,7 +111,9 @@ class TestCloudEmbeddingProvider:
             assert result.embeddings[0] == [0.1, 0.2, 0.3]
             assert result.embeddings[1] == [0.4, 0.5, 0.6]
             assert result.embeddings[2] == [0.7, 0.8, 0.9]
-            assert result.model == "jina-embeddings-v3"
+            assert result.model == "jina_ai/jina-embeddings-v3"  # stable configured name
+            assert result.metadata["resolved_model"] == "jina-embeddings-v3"  # provider-returned
+            assert result.dimension == 3
             assert result.usage == {"prompt_tokens": 15, "total_tokens": 15}
 
     @pytest.mark.asyncio

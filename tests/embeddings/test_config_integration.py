@@ -3,6 +3,7 @@
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -68,6 +69,62 @@ class TestEmbeddingsConfigIntegration:
             ):
                 config = DomainConfig("test_domain")
                 assert config.validate_embeddings_config() is True
+
+    def test_config_validation_auto_mode(self, temp_config_dir):
+        """Test that 'auto' is accepted as a valid embeddings mode."""
+        embeddings_config = {
+            "mode": "auto",
+            "cloud": {"model": "jina_ai/jina-embeddings-v3"},
+            "local": {"model": "sentence-transformers/all-MiniLM-L6-v2"},
+        }
+
+        self.create_config_file(temp_config_dir, embeddings_config)
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                config = DomainConfig("test_domain")
+                assert config.validate_embeddings_config() is True
+
+    def test_config_validation_device(self, temp_config_dir):
+        """Test device validation in local embeddings config."""
+        embeddings_config = {
+            "mode": "local",
+            "local": {
+                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                "device": "cuda",
+            },
+        }
+
+        self.create_config_file(temp_config_dir, embeddings_config)
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                config = DomainConfig("test_domain")
+                assert config.validate_embeddings_config() is True
+
+    def test_config_validation_invalid_device(self, temp_config_dir):
+        """Test invalid device in local embeddings config."""
+        embeddings_config = {
+            "mode": "local",
+            "local": {
+                "model": "sentence-transformers/all-MiniLM-L6-v2",
+                "device": "tpu",  # not a valid device
+            },
+        }
+
+        self.create_config_file(temp_config_dir, embeddings_config)
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                config = DomainConfig("test_domain")
+                with pytest.raises(ValueError, match="Invalid local embedding device"):
+                    config.validate_embeddings_config()
 
     def test_config_validation_invalid_mode(self, temp_config_dir):
         """Test invalid mode in embeddings configuration."""
@@ -200,5 +257,3 @@ class TestEmbeddingsConfigIntegration:
             assert manager.local_provider is None
 
 
-# Add missing import at the top
-from unittest.mock import patch

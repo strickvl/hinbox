@@ -148,3 +148,113 @@ class TestEntityMergerFindSimilarEntity:
 
         assert match_key is None
         assert score is None
+
+    def test_dimension_mismatch_scan_skips_incompatible(self):
+        """Scan should skip entities whose embedding dimension doesn't match."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Existing entity has 384-dim embedding (like MiniLM)
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.1] * 384,
+            "profile_embedding_dim": 384,
+            "profile_embedding_model": "local-model",
+            "profile": {"text": "Profile for Alice"},
+        }
+
+        # New embedding is 1024-dim (like Jina v3) — incompatible
+        new_embedding = [0.1] * 1024
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Bob Jones",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            embedding_model="cloud-model",
+            embedding_dim=1024,
+        )
+
+        # Should find no match because dimensions differ
+        assert match_key is None
+        assert score is None
+
+    def test_dimension_mismatch_exact_key_defers_to_match_check(self):
+        """Exact-key match with incompatible dims should return forced score=1.0."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Existing entity with 384-dim embedding
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.1] * 384,
+            "profile_embedding_dim": 384,
+            "profile_embedding_model": "local-model",
+            "profile": {"text": "Profile for Alice"},
+        }
+
+        # Same key but different dimension — should defer to match-check
+        new_embedding = [0.2] * 1024
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Alice Smith",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            embedding_model="cloud-model",
+            embedding_dim=1024,
+        )
+
+        assert match_key == "Alice Smith"
+        assert score == 1.0  # forced score for exact-key dim mismatch
+
+    def test_model_mismatch_skips_scan(self):
+        """Scan should skip entities whose embedding model name differs."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Same dimension but different model names
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile_embedding_dim": 3,
+            "profile_embedding_model": "model-A",
+            "profile": {"text": "Profile for Alice"},
+        }
+
+        new_embedding = [0.6, 0.8, 0.0]  # identical vector
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Bob Jones",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            embedding_model="model-B",
+            embedding_dim=3,
+        )
+
+        # Should skip because model names differ
+        assert match_key is None
+        assert score is None
+
+    def test_backward_compat_no_metadata(self):
+        """Entities without embedding metadata should still be comparable."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Old-style entity without metadata fields
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile": {"text": "Profile for Alice"},
+            # No profile_embedding_model or profile_embedding_dim
+        }
+
+        new_embedding = [0.6, 0.8, 0.0]
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Bob Jones",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            # No model/dim passed — backward compat
+        )
+
+        assert match_key == "Alice Smith"
+        assert score == pytest.approx(1.0, rel=1e-6)
