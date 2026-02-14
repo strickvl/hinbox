@@ -1,5 +1,6 @@
 """LLM utility functions and client management."""
 
+import json
 import random
 import time
 from enum import Enum
@@ -385,6 +386,24 @@ def extract_reflection_result(reflection: Any) -> ReflectionResult:
         raise ValueError(f"Cannot extract ReflectionResult from {type(reflection)}")
 
 
+def coerce_to_json_text(value: Any) -> str:
+    """Convert a structured LLM response into its full JSON string representation.
+
+    This preserves the entire schema envelope (e.g. tags, confidence, sources)
+    rather than extracting a single field like `.text` which would lose metadata.
+    """
+    if isinstance(value, BaseModel):
+        return value.model_dump_json()
+    if hasattr(value, "choices") and value.choices:
+        parsed = value.choices[0].message.parsed
+        if isinstance(parsed, BaseModel):
+            return parsed.model_dump_json()
+        return json.dumps(parsed) if parsed is not None else str(value)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return str(value)
+
+
 def iterative_improve(
     initial_text: str,
     generation_messages: List[Dict[str, Any]],
@@ -469,13 +488,9 @@ def iterative_improve(
                 model=model or OLLAMA_MODEL,
             )
 
-        # Extract text from response
-        if hasattr(improved, "text"):
-            current_text = improved.text
-        elif hasattr(improved, "content"):
-            current_text = improved.content
-        else:
-            current_text = str(improved)
+        # Serialize the full structured response to preserve all fields
+        # (tags, confidence, sources) — not just the inner prose `.text`
+        current_text = coerce_to_json_text(improved)
 
     # Log completion
     log_iterative_complete(

@@ -97,8 +97,11 @@ class ArticleProcessor:
                     model=self.specific_model,
                     temperature=0,
                 )
-        except Exception:
-            # Preserve fallback behavior: no entities on failure
+        except Exception as e:
+            self.logger.exception(
+                f"Extraction failed for entity_type={entity_type}, "
+                f"domain={self.domain}, model_type={self.model_type}: {e}"
+            )
             return []
 
     def track_reflection_attempts(

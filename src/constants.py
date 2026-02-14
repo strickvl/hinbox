@@ -12,7 +12,7 @@ CLOUD_EMBEDDING_MODEL = "jina_ai/jina-embeddings-v3"
 LOCAL_EMBEDDING_MODEL = "huggingface/jinaai/jina-embeddings-v3"
 
 # API endpoints
-OLLAMA_API_URL = "http://192.168.178.175:11434/v1"
+OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/v1").strip()
 OLLAMA_API_KEY = "ollama"
 
 

@@ -110,7 +110,7 @@ def extract_entities_cloud(
 def extract_entities_local(
     text: str,
     system_prompt: str,
-    response_model: Type[BaseModel],
+    response_model: Any,
     model: str = OLLAMA_MODEL,
     temperature: float = 0,
 ) -> Any:
