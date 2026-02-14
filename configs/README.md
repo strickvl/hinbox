@@ -4,15 +4,11 @@ This directory contains domain-specific configurations for the Hinbox entity ext
 
 ## Quick Start
 
-> **Note**: This project supports both `./run.py` commands and `just` commands. Use whichever you prefer!
-
 ### Creating a New Research Domain
 
 1. **Initialize a new research domain**:
    ```bash
-   ./run.py init palestine_food_history
-   # OR using justfile:
-   just init afghanistan_1980s
+   just init palestine_food_history
    ```
    This copies the template to `configs/palestine_food_history/`
 
@@ -23,9 +19,7 @@ This directory contains domain-specific configurations for the Hinbox entity ext
 
 3. **Process your historical sources**:
    ```bash
-   ./run.py process --domain palestine_food_history
-   # OR using justfile:
-   just process-domain afghanistan_1980s
+   just process-domain palestine_food_history
    ```
 
 ### Configuration Files
@@ -160,30 +154,22 @@ similarity_threshold: 0.75
 
 1. Start with a small number of sources:
    ```bash
-   ./run.py process --domain palestine_food_history --limit 2
-   # OR:
-   just process-domain afghanistan_1980s --limit 2
+   just process-domain palestine_food_history --limit 2
    ```
 2. Use verbose mode to see extraction details:
    ```bash
-   ./run.py process --domain palestine_food_history --limit 2 --verbose
-   # OR:
-   just process-domain afghanistan_1980s --limit 2 --verbose
+   just process-domain palestine_food_history --limit 2 --verbose
    ```
 3. Check the output files in your configured directory
 4. Iterate on prompts and categories based on results
 
 ### Available Commands
 
-**Using run.py:**
-- `./run.py domains` - List available domains
-- `./run.py init <domain>` - Create new domain
-- `./run.py process --domain <domain>` - Process historical sources
-
-**Using justfile:**
-- `just domains` - List available domains  
+- `just domains` - List available domains
 - `just init <domain>` - Create new domain
 - `just process-domain <domain>` - Process historical sources for domain
+- `just check` - View article database statistics
+- `just frontend` - Start the web interface
 
 ## Advanced Configuration
 
@@ -207,7 +193,7 @@ data_sources:
 
 - Check existing research domain configurations for examples
 - Review the template files for structure guidance
-- Run `./run.py --help` for CLI options
+- Run `just` to see all available commands
 - Use `--verbose` flag to debug extraction issues
 - Consider the historical context when defining entity categories
 - Test with different source types (books, articles, archival documents) to refine prompts

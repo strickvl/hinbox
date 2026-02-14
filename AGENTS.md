@@ -5,7 +5,7 @@ This document helps contributors work effectively in this repository.
 ## Project Structure & Module Organization
 - `src/` — application code
   - `engine/` (ArticleProcessor, EntityExtractor, EntityMerger, relevance helpers, profile versioning)
-  - `process_and_extract.py` (CLI pipeline entry point used by `just` and `run.py`)
+  - `process_and_extract.py` (CLI pipeline entry point used by `just`)
   - `dynamic_models.py` (Pydantic models generated from domain configs)
   - `frontend/` (FastHTML app: routes, components, config)
   - `utils/` (embeddings, extraction helpers, logging, errors)
@@ -20,8 +20,8 @@ This document helps contributors work effectively in this repository.
   - `source .venv/bin/activate`
   - `uv pip install -e .[dev]`
 - Run tests: `pytest`
-- Lint: `bash scripts/lint.sh`
-- Format: `bash scripts/format.sh`
+- Lint: `just lint`
+- Format: `just format`
 - Launch frontend locally (default port 5001):
   - `python -m src.frontend`
   - Alt: `uvicorn src.frontend:app --port 5001`

@@ -46,18 +46,14 @@ through a simple configuration system.
 
 ## 🚀 Quick Start
 
-> **Note**: This project supports both `./run.py` commands and `just` commands. Use whichever you prefer!
-
 ### 1. List Available Domains
 ```bash
-./run.py domains
-# OR: just domains
+just domains
 ```
 
 ### 2. Create a New Research Domain
 ```bash
-./run.py init palestine_food_history
-# OR: just init afghanistan_1980s
+just init palestine_food_history
 ```
 
 ### 3. Configure Your Research Domain
@@ -68,14 +64,12 @@ Edit the generated files in `configs/palestine_food_history/`:
 
 ### 4. Process Your Sources
 ```bash
-./run.py process --domain palestine_food_history --limit 5
-# OR: just process-domain afghanistan_1980s --limit 5
+just process-domain palestine_food_history --limit 5
 ```
 
 ### 5. Explore Results
 ```bash
-./run.py frontend
-# OR: just frontend
+just frontend
 ```
 
 ## 📦 Installation
@@ -84,7 +78,7 @@ Edit the generated files in `configs/palestine_food_history/`:
 - Python 3.12+
 - `uv` (for dependency management)
 - Optional: Ollama (for local model support)
-- Optional: just (for easier command running)
+- [`just`](https://just.systems/) (task runner)
 
 ### Setup
 
@@ -105,14 +99,15 @@ Edit the generated files in `configs/palestine_food_history/`:
 
 3. **Set up environment variables:**
    ```bash
-   export GEMINI_API_KEY="your-gemini-api-key"
+   # Create a .env file (auto-loaded by just):
+   echo 'GEMINI_API_KEY=your-gemini-api-key' > .env
    # Optional for local processing:
-   export OLLAMA_API_URL="http://localhost:11434/v1"
+   echo 'OLLAMA_API_URL=http://localhost:11434/v1' >> .env
    ```
 
 4. **Verify installation:**
    ```bash
-   ./run.py domains
+   just domains
    ```
 
 ## 📚 Research Domain Examples
@@ -152,33 +147,32 @@ just init medieval_trade
 ### Processing Historical Sources
 ```bash
 # Process with different options
-./run.py process --domain afghanistan_1980s -n 20 --verbose
-just process-domain palestine_food_history --limit 10 --relevance
+just process --domain afghanistan_1980s --limit 20 --verbose
+just process-domain palestine_food_history --limit 10 --relevance-check
 
 # Use local models (requires Ollama) - useful for sensitive historical research
-./run.py process --domain medieval_trade --local
+just process --domain medieval_trade --local
 
 # Force reprocessing when you update your configuration
-./run.py process --domain afghanistan_1980s --force
+just process --domain afghanistan_1980s --force-reprocess
 ```
 
 ### Web Interface
 ```bash
-./run.py frontend
-# OR: just frontend
+just frontend
 ```
 Explore extracted entities at http://localhost:5001
 
 ### Data Management
 ```bash
 # Check processing status
-./run.py check
+just check
 
 # Reset processing status
-./run.py reset
+just reset
 
 # View available domains
-./run.py domains
+just domains
 ```
 
 ## 📂 Project Structure
@@ -186,7 +180,7 @@ Explore extracted entities at http://localhost:5001
 ```
 configs/
 ├── guantanamo/        # Example domain shipped with the project
-├── template/          # Starter files copied by `run.py init`
+├── template/          # Starter files copied by `just init`
 └── README.md          # Domain configuration walkthrough
 
 src/
@@ -282,11 +276,11 @@ Historical sources should be in Parquet format with columns:
 ### Testing
 ```bash
 # Run all tests
-pytest tests/
+just test
 
 # Run specific test files
-pytest tests/test_profile_versioning.py
-pytest tests/test_entity_merger_similarity.py
+just test -k test_profile_versioning
+just test tests/test_entity_merger_similarity.py
 ```
 
 CI runs lint and tests automatically on every PR (`.github/workflows/test.yml`). The test suite covers embedding similarity, lexical blocking, per-type threshold resolution, entity merger behavior, profile versioning, and frontend components — all without requiring API keys or GPU.
@@ -294,13 +288,16 @@ CI runs lint and tests automatically on every PR (`.github/workflows/test.yml`).
 ### Code Quality
 ```bash
 # Format code
-./scripts/format.sh
+just format
 
-# Run linting
-./scripts/lint.sh
+# Lint code
+just lint
 
 # Both together
 just check-code
+
+# Run exactly what CI runs (recommended before pushing)
+just ci
 ```
 
 ## 🤝 Contributing
@@ -320,7 +317,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 For questions about:
 - **Configuration**: See `configs/README.md`
 - **Setup**: Check installation steps above
-- **Usage**: Try `./run.py --help` or `just --list`
+- **Usage**: Try `just` or `just --list`
 - **Issues**: Open a GitHub issue
 
 ---

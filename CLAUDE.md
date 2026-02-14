@@ -6,25 +6,28 @@ code in this repository. Any design docs that you write can be stored in the
 
 ## Running commands
 
-We have a `justfile` which allows you to run commands with `just <command>`. We
-also have a `run.py` script which does similar things. When you update one, make
-sure to update the other.
+We use a `justfile` as the single task runner. Run `just` to see all available
+commands, or `just <command>` to execute one. All recipes use `uv run` to
+guarantee the lockfile venv is used (matching CI).
 
 ## Common Commands
 
 ### Development
-- **Format code**: `./scripts/format.sh` (uses ruff for import sorting and formatting)
-- **Lint code**: `./scripts/lint.sh` (runs ruff check and format)
+- **Format code**: `just format` (ruff fix + format via `uv run`)
+- **Lint code**: `just lint` (ruff check + format verification)
+- **Run CI checks locally**: `just ci` (exactly what GitHub Actions runs)
 - **Install dependencies**: `uv sync`
 
 ### Main Application
-- **Process articles**: `./run.py process` (CLI interface to main functionality)
-- **Check database**: `./run.py check` (view article statistics)
-- **Start web interface**: `./run.py frontend` (FastHTML web UI on localhost:5001)
-- **Reset processing**: `./run.py reset` (reset article processing status)
+- **Process articles**: `just process` (CLI interface to main functionality)
+- **Check database**: `just check` (view article statistics)
+- **Start web interface**: `just frontend` (FastHTML web UI on localhost:5001)
+- **Reset processing**: `just reset` (reset article processing status)
+- **Domain management**: `just domains` / `just init <name>`
 
 ### Testing
-- Run `pytest` or `just test` to execute the suite under `tests/`.
+- Run `just test` to execute the suite under `tests/`.
+- Pass extra pytest args: `just test -k test_merger --tb=short`
 - CI runs lint + tests on every PR via `.github/workflows/test.yml`.
 - Key coverage areas include embedding similarity, lexical blocking, per-type threshold resolution, embedding fingerprints, entity mergers, profile versioning, and frontend version navigation.
 - Async tests (`@pytest.mark.asyncio`) are excluded in CI due to a missing pytest-asyncio configuration.
@@ -81,17 +84,17 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
 
 ## Workflow Notes
 - When finishing a chunk of work, check with the user to confirm the fix, then:
-  1. Run the formatting script (`./scripts/format.sh`)
-  2. Run the lint script (`./scripts/lint.sh`) and fix issues
-  3. Execute the test suite (`pytest` or `just test`)
+  1. Run `just format` to auto-fix formatting
+  2. Run `just lint` to verify no remaining issues
+  3. Run `just test` to execute the test suite
   4. Commit and push changes
-- **Before pushing / opening a PR**, always run the CI-equivalent lint checks to catch version mismatches:
+- **Before pushing / opening a PR**, run `just ci` which executes the exact same
+  checks as GitHub Actions:
   ```bash
-  uv run ruff check .
-  uv run ruff format --check .
-  uv run pytest tests/ -v -m "not asyncio" --tb=short
+  just ci
   ```
-  The local `./scripts/format.sh` may use a different ruff version than the lock file. CI uses the lock file version via `uv run ruff`, so always verify with `uv run` before pushing.
+  All justfile recipes use `uv run` so there are no version mismatches between
+  local and CI.
 
 ## Development Guidance
 - The application has no users yet, so don't worry too much about backwards compatibility. Just make it work.
