@@ -9,7 +9,6 @@ from src.utils.embeddings.base import EmbeddingResult
 from src.utils.embeddings.manager import (
     EmbeddingManager,
     EmbeddingMode,
-    _local_backend_available,
 )
 from src.utils.embeddings.similarity import compute_similarity
 
@@ -237,9 +236,7 @@ class TestEmbeddingManager:
             model="test-model",
             dimension=3,
         )
-        with patch.object(
-            manager, "embed_text_result", return_value=mock_result
-        ):
+        with patch.object(manager, "embed_text_result", return_value=mock_result):
             result = manager.embed_text_result_sync("test")
             assert result.model == "test-model"
             assert result.dimension == 3
@@ -248,7 +245,9 @@ class TestEmbeddingManager:
     def test_get_active_model_name(self):
         """Test get_active_model_name returns primary provider's model."""
         manager = EmbeddingManager(mode=EmbeddingMode.LOCAL)
-        assert manager.get_active_model_name() == "sentence-transformers/all-MiniLM-L6-v2"
+        assert (
+            manager.get_active_model_name() == "sentence-transformers/all-MiniLM-L6-v2"
+        )
 
         manager_cloud = EmbeddingManager(mode=EmbeddingMode.CLOUD)
         assert manager_cloud.get_active_model_name() == "jina_ai/jina-embeddings-v3"
@@ -276,6 +275,42 @@ class TestEmbeddingManager:
             # Should return empty dict on error
             config = manager._load_domain_config()
             assert config == {}
+
+    def test_fingerprint_from_result(self):
+        """fingerprint_from_result should produce 'model:dim' format."""
+        result = EmbeddingResult(
+            embeddings=[[0.1, 0.2, 0.3]],
+            model="jina_ai/jina-embeddings-v3",
+            dimension=3,
+        )
+        fp = EmbeddingManager.fingerprint_from_result(result)
+        assert fp == "jina_ai/jina-embeddings-v3:3"
+
+    def test_fingerprint_from_result_infers_dim(self):
+        """When dimension is None, fingerprint should infer from vector length."""
+        result = EmbeddingResult(
+            embeddings=[[0.1, 0.2, 0.3, 0.4]],
+            model="test-model",
+            dimension=None,
+        )
+        fp = EmbeddingManager.fingerprint_from_result(result)
+        assert fp == "test-model:4"
+
+    def test_fingerprint_from_result_no_model(self):
+        """No model name should return None."""
+        result = EmbeddingResult(
+            embeddings=[[0.1, 0.2]],
+            model="",
+            dimension=2,
+        )
+        fp = EmbeddingManager.fingerprint_from_result(result)
+        assert fp is None
+
+    def test_make_fingerprint(self):
+        """make_fingerprint should return 'model:dim' or None."""
+        assert EmbeddingManager.make_fingerprint("m", 3) == "m:3"
+        assert EmbeddingManager.make_fingerprint(None, 3) is None
+        assert EmbeddingManager.make_fingerprint("m", None) is None
 
     def test_get_configs_from_domain(self):
         """Test configuration extraction from domain config."""

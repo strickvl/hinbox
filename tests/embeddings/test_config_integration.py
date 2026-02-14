@@ -198,6 +198,122 @@ class TestEmbeddingsConfigIntegration:
                 assert embeddings["cloud"]["max_retries"] == 3
                 assert embeddings["cloud"]["timeout"] == 30
 
+    def create_config_with_dedup(self, config_dir, dedup_config, legacy_threshold=None):
+        """Create a config.yaml with dedup section."""
+        config = {
+            "domain": "test_domain",
+            "description": "Test domain",
+            "data_sources": {"default_path": "data/test/articles.parquet"},
+            "output": {"directory": "data/test/entities"},
+            "embeddings": {"mode": "cloud", "cloud": {"model": "test-model"}},
+        }
+        if legacy_threshold is not None:
+            config["similarity_threshold"] = legacy_threshold
+        if dedup_config is not None:
+            config["dedup"] = dedup_config
+
+        config_path = config_dir / "config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(config, f)
+        return config_path
+
+    def test_threshold_per_type_override(self, temp_config_dir):
+        """Per-type threshold should take priority over default."""
+        dedup = {
+            "similarity_thresholds": {
+                "default": 0.75,
+                "people": 0.82,
+                "events": 0.76,
+            }
+        }
+        self.create_config_with_dedup(temp_config_dir, dedup)
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                cfg = DomainConfig("test_domain")
+                assert cfg.get_similarity_threshold("people") == 0.82
+                assert cfg.get_similarity_threshold("events") == 0.76
+                # Unspecified type falls back to default
+                assert cfg.get_similarity_threshold("organizations") == 0.75
+
+    def test_threshold_default_fallback(self, temp_config_dir):
+        """When no per-type threshold exists, fall back to dedup.default."""
+        dedup = {"similarity_thresholds": {"default": 0.80}}
+        self.create_config_with_dedup(temp_config_dir, dedup)
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                cfg = DomainConfig("test_domain")
+                assert cfg.get_similarity_threshold("people") == 0.80
+                assert cfg.get_similarity_threshold() == 0.80
+
+    def test_threshold_legacy_fallback(self, temp_config_dir):
+        """When no dedup section exists, fall back to legacy similarity_threshold."""
+        self.create_config_with_dedup(
+            temp_config_dir, dedup_config=None, legacy_threshold=0.65
+        )
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                cfg = DomainConfig("test_domain")
+                assert cfg.get_similarity_threshold("people") == 0.65
+                assert cfg.get_similarity_threshold() == 0.65
+
+    def test_threshold_hardcoded_fallback(self, temp_config_dir):
+        """When neither dedup nor legacy threshold exist, fall back to 0.75."""
+        self.create_config_with_dedup(
+            temp_config_dir, dedup_config=None, legacy_threshold=None
+        )
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                cfg = DomainConfig("test_domain")
+                assert cfg.get_similarity_threshold() == 0.75
+
+    def test_lexical_blocking_config_from_dedup(self, temp_config_dir):
+        """Lexical blocking config should load from dedup section."""
+        dedup = {
+            "similarity_thresholds": {"default": 0.75},
+            "lexical_blocking": {
+                "enabled": True,
+                "threshold": 70,
+                "max_candidates": 30,
+            },
+        }
+        self.create_config_with_dedup(temp_config_dir, dedup)
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                cfg = DomainConfig("test_domain")
+                lb = cfg.get_lexical_blocking_config()
+                assert lb["enabled"] is True
+                assert lb["threshold"] == 70
+                assert lb["max_candidates"] == 30
+
+    def test_lexical_blocking_defaults_when_missing(self, temp_config_dir):
+        """Missing lexical_blocking section should return safe defaults."""
+        self.create_config_with_dedup(temp_config_dir, dedup_config=None)
+
+        with patch("os.path.exists", return_value=True):
+            with patch(
+                "src.config_loader.DomainConfig.config_dir", str(temp_config_dir)
+            ):
+                cfg = DomainConfig("test_domain")
+                lb = cfg.get_lexical_blocking_config()
+                assert lb["enabled"] is False
+                assert lb["threshold"] == 60
+                assert lb["max_candidates"] == 50
+
     def test_manager_loads_from_config(self, temp_config_dir, monkeypatch):
         """Test that EmbeddingManager loads configuration from domain config."""
         embeddings_config = {
@@ -255,5 +371,3 @@ class TestEmbeddingsConfigIntegration:
             assert manager.mode == EmbeddingMode.CLOUD
             assert manager.cloud_provider is not None
             assert manager.local_provider is None
-
-

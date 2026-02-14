@@ -119,9 +119,7 @@ class EmbeddingManager:
             logger.info("AUTO mode: sentence-transformers available → using LOCAL")
             return EmbeddingMode.LOCAL
         else:
-            logger.info(
-                "AUTO mode: sentence-transformers not available → using CLOUD"
-            )
+            logger.info("AUTO mode: sentence-transformers not available → using CLOUD")
             return EmbeddingMode.CLOUD
 
     def _load_domain_config(self) -> Dict[str, Any]:
@@ -218,6 +216,28 @@ class EmbeddingManager:
         """Return the model name of the currently active (primary) provider."""
         provider = self._get_provider()
         return provider.config.model_name
+
+    @staticmethod
+    def fingerprint_from_result(result: EmbeddingResult) -> Optional[str]:
+        """Build a stable fingerprint string from an EmbeddingResult.
+
+        Format: "{model}:{dimension}" — used to detect when an entity's
+        stored embedding was produced by a different model/dimension than
+        the currently active one.
+        """
+        if not result.model:
+            return None
+        dim = result.dimension
+        if dim is None and result.embeddings:
+            dim = len(result.embeddings[0])
+        return f"{result.model}:{dim}" if dim is not None else None
+
+    @staticmethod
+    def make_fingerprint(model: Optional[str], dim: Optional[int]) -> Optional[str]:
+        """Build a fingerprint from raw model name and dimension."""
+        if not model or dim is None:
+            return None
+        return f"{model}:{dim}"
 
     # Synchronous wrappers for backward compatibility
     def embed_text_sync(self, text: str) -> List[float]:

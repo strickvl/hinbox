@@ -146,9 +146,10 @@ class TestEntityMergerMergeSmoke:
         )
         assert person["profile_embedding"] == [0.25, 0.5, 0.75]
 
-        # Embedding metadata (Change F)
+        # Embedding metadata
         assert person["profile_embedding_model"] == "stub-model"
         assert person["profile_embedding_dim"] == 3
+        assert person["profile_embedding_fingerprint"] == "stub-model:3"
 
         # Versioning
         assert person["profile_versions"] is not None
@@ -263,9 +264,10 @@ class TestEntityMergerMergeSmoke:
         # Embedding updated to stub vector (from updated profile text)
         assert person["profile_embedding"] == [0.42, 0.58, 0.0]
 
-        # Embedding metadata persisted on update (Change F)
+        # Embedding metadata persisted on update
         assert person["profile_embedding_model"] == "stub-model"
         assert person["profile_embedding_dim"] == 3
+        assert person["profile_embedding_fingerprint"] == "stub-model:3"
 
         # Alternative names added since the incoming key was different
         assert "Alice B. Smith" in person.get("alternative_names", [])

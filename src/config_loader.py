@@ -2,7 +2,7 @@
 
 import os
 from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -103,10 +103,48 @@ class DomainConfig:
         config = self.load_config()
         return config["output"]["directory"]
 
-    def get_similarity_threshold(self) -> float:
-        """Get the similarity threshold for entity deduplication."""
+    def get_similarity_threshold(self, entity_type: Optional[str] = None) -> float:
+        """Get the similarity threshold for entity deduplication.
+
+        Fallback order:
+          dedup.similarity_thresholds.<entity_type> →
+          dedup.similarity_thresholds.default →
+          legacy top-level similarity_threshold →
+          0.75
+        """
         config = self.load_config()
-        return config.get("similarity_threshold", 0.75)
+        dedup = config.get("dedup", {})
+        thresholds = dedup.get("similarity_thresholds", {})
+
+        if entity_type and entity_type in thresholds:
+            return float(thresholds[entity_type])
+
+        if "default" in thresholds:
+            return float(thresholds["default"])
+
+        return float(config.get("similarity_threshold", 0.75))
+
+    def get_lexical_blocking_config(
+        self, entity_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get lexical blocking configuration for deduplication.
+
+        Merges dedup.lexical_blocking defaults with any per-type overrides
+        from dedup.per_type.<entity_type>.lexical_blocking.
+        """
+        config = self.load_config()
+        dedup = config.get("dedup", {})
+
+        defaults = {"enabled": False, "threshold": 60, "max_candidates": 50}
+        base = dedup.get("lexical_blocking", {})
+        result = {**defaults, **base}
+
+        if entity_type:
+            per_type = dedup.get("per_type", {}).get(entity_type, {})
+            per_type_blocking = per_type.get("lexical_blocking", {})
+            result.update(per_type_blocking)
+
+        return result
 
     def get_entity_types(self, entity_category: str) -> List[str]:
         """Get available entity types for a category."""

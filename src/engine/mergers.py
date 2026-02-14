@@ -2,11 +2,15 @@
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from rapidfuzz import fuzz
+from rapidfuzz import process as rfprocess
+
 from src.config_loader import DomainConfig
 from src.constants import ENABLE_PROFILE_VERSIONING, SIMILARITY_THRESHOLD
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
 from src.engine.profiles import VersionedProfile, create_profile, update_profile
 from src.logging_config import display_markdown, get_logger, log
+from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
 from src.utils.file_ops import write_entity_to_file
 from src.utils.profiles import extract_profile_text
@@ -92,6 +96,44 @@ class EntityMerger:
 
         return True
 
+    def _lexical_text(self, key: Union[str, Tuple]) -> str:
+        """Extract plain text from an entity key for lexical comparison.
+
+        For events (title, date) tuples, returns title only — the date is
+        part of the identity key but shouldn't drive fuzzy string matching.
+        """
+        if isinstance(key, tuple):
+            return str(key[0])
+        return str(key)
+
+    def _lexical_block(
+        self,
+        query_key: Union[str, Tuple],
+        candidate_keys: List[Union[str, Tuple]],
+        threshold: int = 60,
+        max_candidates: int = 50,
+    ) -> List[Union[str, Tuple]]:
+        """Pre-filter candidates using RapidFuzz fuzzy string matching.
+
+        Returns a shortlist of candidate keys whose lexical similarity to
+        the query is >= threshold, capped at max_candidates.
+        """
+        if not candidate_keys:
+            return []
+
+        query_text = self._lexical_text(query_key)
+        choices = [self._lexical_text(k) for k in candidate_keys]
+
+        results = rfprocess.extract(
+            query_text,
+            choices,
+            scorer=fuzz.WRatio,
+            score_cutoff=threshold,
+            limit=max_candidates,
+        )
+        # results: list of (match_str, score, index)
+        return [candidate_keys[idx] for _, _, idx in results]
+
     def find_similar_entity(
         self,
         entity_key: Union[str, Tuple],
@@ -101,6 +143,7 @@ class EntityMerger:
         *,
         embedding_model: Optional[str] = None,
         embedding_dim: Optional[int] = None,
+        lexical_blocking_config: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
         """Find the most similar entity in the entities database using embedding similarity.
 
@@ -110,6 +153,9 @@ class EntityMerger:
         incompatible embeddings, we return a forced similarity of 1.0 so the
         downstream LLM match-check can still confirm or deny the merge — this
         prevents accidental duplicates after a model change.
+
+        When lexical_blocking_config is provided and enabled, a RapidFuzz pre-filter
+        reduces the candidate set before running cosine similarity (O(n) → O(k)).
         """
         if not entity_embedding or not entities[self.entity_type]:
             return None, None
@@ -122,7 +168,9 @@ class EntityMerger:
         if entity_key in entities[self.entity_type]:
             existing_entity = entities[self.entity_type][entity_key]
             if "profile_embedding" in existing_entity:
-                if self._embeddings_compatible(new_dim, existing_entity, embedding_model):
+                if self._embeddings_compatible(
+                    new_dim, existing_entity, embedding_model
+                ):
                     similarity = compute_similarity(
                         entity_embedding, existing_entity["profile_embedding"]
                     )
@@ -141,13 +189,35 @@ class EntityMerger:
                     )
                     return entity_key, 1.0
 
-        # Otherwise scan all — skip incompatible embeddings
-        for existing_key, existing_entity in entities[self.entity_type].items():
-            if existing_key == entity_key:
-                continue
-            if "profile_embedding" not in existing_entity:
-                continue
-            if not self._embeddings_compatible(new_dim, existing_entity, embedding_model):
+        # Build candidate list (excluding exact key and entities without embeddings)
+        all_candidates = [
+            k
+            for k, e in entities[self.entity_type].items()
+            if k != entity_key and "profile_embedding" in e
+        ]
+
+        # Apply lexical blocking if configured
+        lb = lexical_blocking_config or {}
+        if lb.get("enabled", False) and all_candidates:
+            pre_count = len(all_candidates)
+            all_candidates = self._lexical_block(
+                entity_key,
+                all_candidates,
+                threshold=lb.get("threshold", 60),
+                max_candidates=lb.get("max_candidates", 50),
+            )
+            log(
+                f"Lexical blocking: {pre_count} → {len(all_candidates)} candidates "
+                f"for '{self._format_key_for_display(entity_key)}'",
+                level="info",
+            )
+
+        # Run cosine similarity on (shortlisted) candidates
+        for existing_key in all_candidates:
+            existing_entity = entities[self.entity_type][existing_key]
+            if not self._embeddings_compatible(
+                new_dim, existing_entity, embedding_model
+            ):
                 continue
             similarity = compute_similarity(
                 entity_embedding, existing_entity["profile_embedding"]
@@ -230,7 +300,7 @@ class EntityMerger:
         article_content: str,
         extraction_timestamp: str,
         model_type: str = "gemini",
-        similarity_threshold: float = SIMILARITY_THRESHOLD,
+        similarity_threshold: Optional[float] = None,
         domain: str = "guantanamo",
     ) -> None:
         """Merge extracted entities with existing entities database."""
@@ -238,13 +308,26 @@ class EntityMerger:
         embedding_model_type = "local" if model_type == "ollama" else "cloud"
         embedding_manager = get_embedding_manager(domain=domain)
 
+        # Resolve per-type similarity threshold from domain config
+        domain_cfg = DomainConfig(domain)
+        resolved_threshold = (
+            similarity_threshold
+            if similarity_threshold is not None
+            else domain_cfg.get_similarity_threshold(self.entity_type)
+        )
+
+        # Load lexical blocking config for this entity type
+        lexical_blocking_cfg = domain_cfg.get_lexical_blocking_config(self.entity_type)
+
         log(
             f"Starting merge_{self.entity_type} with {len(extracted_entities)} {self.entity_type} to process",
             level="processing",
         )
-        base_dir = DomainConfig(domain).get_output_dir()
+        base_dir = domain_cfg.get_output_dir()
         log(
-            f"Using model: {model_type}, embedding model: {embedding_model_type}",
+            f"Using model: {model_type}, embedding model: {embedding_model_type}, "
+            f"threshold: {resolved_threshold:.2f}, "
+            f"lexical_blocking: {'on' if lexical_blocking_cfg.get('enabled') else 'off'}",
             level="info",
         )
 
@@ -284,21 +367,25 @@ class EntityMerger:
 
             # --- Embedding computation ---
             proposed_profile_text = proposed_profile["text"]
-            emb_result = embedding_manager.embed_text_result_sync(
-                proposed_profile_text
+            emb_result = embedding_manager.embed_text_result_sync(proposed_profile_text)
+            proposed_entity_embedding = (
+                emb_result.embeddings[0] if emb_result.embeddings else []
             )
-            proposed_entity_embedding = emb_result.embeddings[0] if emb_result.embeddings else []
             emb_model_name = emb_result.model
-            emb_dim = emb_result.dimension or (len(proposed_entity_embedding) if proposed_entity_embedding else None)
+            emb_dim = emb_result.dimension or (
+                len(proposed_entity_embedding) if proposed_entity_embedding else None
+            )
+            emb_fingerprint = EmbeddingManager.fingerprint_from_result(emb_result)
 
             # --- Similarity search ---
             similar_key, similarity_score = self.find_similar_entity(
                 entity_key,
                 proposed_entity_embedding,
                 entities,
-                similarity_threshold,
+                resolved_threshold,
                 embedding_model=emb_model_name,
                 embedding_dim=emb_dim,
+                lexical_blocking_config=lexical_blocking_cfg,
             )
 
             if similar_key:
@@ -392,11 +479,20 @@ class EntityMerger:
                             if ENABLE_PROFILE_VERSIONING
                             else None
                         )
-                        upd_result = embedding_manager.embed_text_result_sync(updated_profile["text"])
-                        upd_vec = upd_result.embeddings[0] if upd_result.embeddings else []
+                        upd_result = embedding_manager.embed_text_result_sync(
+                            updated_profile["text"]
+                        )
+                        upd_vec = (
+                            upd_result.embeddings[0] if upd_result.embeddings else []
+                        )
                         existing_entity["profile_embedding"] = upd_vec
                         existing_entity["profile_embedding_model"] = upd_result.model
-                        existing_entity["profile_embedding_dim"] = upd_result.dimension or (len(upd_vec) if upd_vec else None)
+                        existing_entity["profile_embedding_dim"] = (
+                            upd_result.dimension or (len(upd_vec) if upd_vec else None)
+                        )
+                        existing_entity["profile_embedding_fingerprint"] = (
+                            EmbeddingManager.fingerprint_from_result(upd_result)
+                        )
 
                         # Reflection history
                         existing_entity.setdefault("reflection_history", [])
@@ -424,11 +520,25 @@ class EntityMerger:
                             if ENABLE_PROFILE_VERSIONING
                             else None
                         )
-                        new_emb_result = embedding_manager.embed_text_result_sync(new_profile["text"])
-                        new_vec = new_emb_result.embeddings[0] if new_emb_result.embeddings else []
+                        new_emb_result = embedding_manager.embed_text_result_sync(
+                            new_profile["text"]
+                        )
+                        new_vec = (
+                            new_emb_result.embeddings[0]
+                            if new_emb_result.embeddings
+                            else []
+                        )
                         existing_entity["profile_embedding"] = new_vec
-                        existing_entity["profile_embedding_model"] = new_emb_result.model
-                        existing_entity["profile_embedding_dim"] = new_emb_result.dimension or (len(new_vec) if new_vec else None)
+                        existing_entity["profile_embedding_model"] = (
+                            new_emb_result.model
+                        )
+                        existing_entity["profile_embedding_dim"] = (
+                            new_emb_result.dimension
+                            or (len(new_vec) if new_vec else None)
+                        )
+                        existing_entity["profile_embedding_fingerprint"] = (
+                            EmbeddingManager.fingerprint_from_result(new_emb_result)
+                        )
 
                         existing_entity.setdefault("reflection_history", [])
                         existing_entity["reflection_history"].extend(reflection_history)
@@ -487,6 +597,7 @@ class EntityMerger:
                     extraction_timestamp,
                     embedding_model=emb_model_name,
                     embedding_dim=emb_dim,
+                    embedding_fingerprint=emb_fingerprint,
                 )
 
                 entities[self.entity_type][entity_key] = new_entity
@@ -520,8 +631,12 @@ class EntityMerger:
         *,
         embedding_model: Optional[str] = None,
         embedding_dim: Optional[int] = None,
+        embedding_fingerprint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create a new entity dictionary with appropriate structure for each entity type."""
+        resolved_dim = embedding_dim or (
+            len(profile_embedding) if profile_embedding else None
+        )
         base_entity: Dict[str, Any] = {
             "profile": profile,
             "profile_versions": versioned_profile.model_dump()
@@ -537,7 +652,9 @@ class EntityMerger:
             ],
             "profile_embedding": profile_embedding,
             "profile_embedding_model": embedding_model,
-            "profile_embedding_dim": embedding_dim or (len(profile_embedding) if profile_embedding else None),
+            "profile_embedding_dim": resolved_dim,
+            "profile_embedding_fingerprint": embedding_fingerprint
+            or EmbeddingManager.make_fingerprint(embedding_model, resolved_dim),
             "extraction_timestamp": extraction_timestamp,
             self.alternative_field: [],
             "reflection_history": reflection_history or [],
