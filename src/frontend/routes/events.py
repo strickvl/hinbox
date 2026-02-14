@@ -10,7 +10,12 @@ from src.engine import VersionedProfile
 from src.utils.error_handler import ErrorHandler
 
 from ..app_config import get_current_domain, main_layout, rt
-from ..components import ProfileVersionSelector
+from ..components import (
+    AliasesDisplay,
+    ConfidenceBadge,
+    ProfileVersionSelector,
+    TagsDisplay,
+)
 from ..data_access import build_indexes, get_domain_data
 from ..filters import events_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
@@ -325,6 +330,14 @@ def show_event(key: str, request):
     conf = profile.get("confidence", "(none)")
     articles = ev.get("articles", [])
 
+    aliases = ev.get("aliases", [])
+    tags = profile.get("tags", [])
+    # Events also have top-level tags field
+    event_tags = ev.get("tags", [])
+    all_tags = list(
+        dict.fromkeys(tags + event_tags)
+    )  # Merge, deduplicate, preserve order
+
     detail_content = Div(
         version_selector,  # Add version selector at the top
         Div(
@@ -332,6 +345,8 @@ def show_event(key: str, request):
             Span(event_type, cls="tag"),
             style="margin-bottom:15px;",
         ),
+        AliasesDisplay(aliases),
+        TagsDisplay(all_tags),
         Div(
             Div(
                 Span("Start Date: ", style="font-weight:bold;"),
@@ -364,11 +379,7 @@ def show_event(key: str, request):
             else "No detailed profile information available for this event.",
             cls="profile-text",
         ),
-        Div(
-            Span("AI Confidence: ", style="font-weight:bold;"),
-            Span(conf, style="font-style:italic;"),
-            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
-        ),
+        ConfidenceBadge(conf),
         H2("Related Articles", style="margin-top:25px; font-size:1.25rem;"),
         format_article_list(articles),
         cls="entity-detail",

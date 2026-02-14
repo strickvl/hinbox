@@ -9,7 +9,12 @@ from src.engine import VersionedProfile
 from src.utils.error_handler import ErrorHandler
 
 from ..app_config import get_current_domain, main_layout, rt
-from ..components import ProfileVersionSelector
+from ..components import (
+    AliasesDisplay,
+    ConfidenceBadge,
+    ProfileVersionSelector,
+    TagsDisplay,
+)
 from ..data_access import build_indexes, get_domain_data
 from ..entity_helpers import filter_simple_entities, render_simple_entity_list
 from ..filters import locations_filter_panel
@@ -214,13 +219,17 @@ def show_location(key: str, request):
     conf = profile.get("confidence", "(none)")
     articles = loc.get("articles", [])
 
+    aliases = loc.get("aliases", [])
+
     detail_content = Div(
         version_selector,  # Add version selector at the top
         Div(
             Span("Type: ", style="font-weight:bold;"),
             Span(typ, cls="tag"),
-            style="margin-bottom:20px;",
+            style="margin-bottom:15px;",
         ),
+        AliasesDisplay(aliases),
+        TagsDisplay(profile.get("tags", [])),
         H2("Profile Information", style="margin-bottom:5px; font-size:1.25rem;"),
         Div(
             NotStr(markdown.markdown(transformed_text))
@@ -228,11 +237,7 @@ def show_location(key: str, request):
             else "No detailed profile information available for this location.",
             cls="profile-text",
         ),
-        Div(
-            Span("AI Confidence: ", style="font-weight:bold;"),
-            Span(conf, style="font-style:italic;"),
-            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
-        ),
+        ConfidenceBadge(conf),
         H2("Related Articles", style="margin-top:25px; font-size:1.25rem;"),
         format_article_list(articles),
         cls="entity-detail",

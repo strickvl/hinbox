@@ -294,6 +294,84 @@ def DateRangeInputs(start_date="", end_date="", cls="date-range"):
     )
 
 
+def AliasesDisplay(aliases):
+    """Display 'Also known as' section for entities with alternative names.
+
+    Only renders if the entity has non-empty aliases. Aliases are collected
+    during within-article dedup when the merger identifies two name variants
+    as referring to the same entity.
+    """
+    if not aliases:
+        return ""
+    cleaned = [a.strip() for a in aliases if a.strip()]
+    if not cleaned:
+        return ""
+    return Div(
+        Span("Also known as: ", style="font-weight:bold; color:var(--text-light);"),
+        Span(", ".join(cleaned), style="font-style:italic;"),
+        style="margin-bottom:15px; font-size:0.9rem;",
+    )
+
+
+def ConfidenceBadge(confidence):
+    """Render a color-coded confidence badge from the profile's confidence score.
+
+    Confidence is a 0-1 float produced by the LLM indicating how well-cited
+    and grounded the profile text is. The badge provides at-a-glance quality
+    signal: green (>= 0.7), amber (0.4-0.7), red (< 0.4).
+    """
+    if confidence is None or confidence == "(none)":
+        return Div(
+            Span("AI Confidence: ", style="font-weight:bold;"),
+            Span("N/A", cls="tag", style="background-color:var(--secondary);"),
+            style="margin-top:10px; font-size:0.9rem;",
+        )
+
+    try:
+        score = float(confidence)
+    except (ValueError, TypeError):
+        return Div(
+            Span("AI Confidence: ", style="font-weight:bold;"),
+            Span(str(confidence), style="font-style:italic;"),
+            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
+        )
+
+    if score >= 0.7:
+        color = "var(--success)"
+        label = "High"
+    elif score >= 0.4:
+        color = "var(--warning)"
+        label = "Medium"
+    else:
+        color = "var(--danger)"
+        label = "Low"
+
+    return Div(
+        Span("AI Confidence: ", style="font-weight:bold;"),
+        Span(
+            f"{label} ({score:.0%})",
+            cls="tag",
+            style=f"background-color:{color}; color:white;",
+        ),
+        style="margin-top:10px; font-size:0.9rem;",
+    )
+
+
+def TagsDisplay(tags):
+    """Render profile tags as styled chips.
+
+    Tags are keywords/categories assigned by the LLM during extraction.
+    Previously only displayed on person detail pages; now reusable across
+    all entity types.
+    """
+    if not tags:
+        return ""
+    elements = [Span(tag, cls="tag") for tag in tags if tag.strip()]
+    if not elements:
+        return ""
+    return Div(*elements, style="margin-bottom:20px;")
+
+
 def ProfileVersionSelector(
     entity_name: str,
     entity_type: str,

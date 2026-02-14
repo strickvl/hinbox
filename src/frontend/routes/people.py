@@ -21,7 +21,12 @@ from ..app_config import (
     main_layout,
     rt,
 )
-from ..components import ProfileVersionSelector
+from ..components import (
+    AliasesDisplay,
+    ConfidenceBadge,
+    ProfileVersionSelector,
+    TagsDisplay,
+)
 from ..data_access import build_indexes, get_domain_data
 from ..filters import people_filter_panel
 from ..utils import decode_key, encode_key, format_article_list, transform_profile_text
@@ -329,11 +334,7 @@ def show_person(key: str, request):
     conf = profile.get("confidence", "(none)")
     articles = person.get("articles", [])
 
-    tags = profile.get("tags", [])
-    tag_elements = []
-    for tag in tags:
-        if tag.strip():
-            tag_elements.append(Span(tag, cls="tag"))
+    aliases = person.get("aliases", [])
 
     detail_content = Div(
         version_selector,  # Add version selector at the top
@@ -342,7 +343,8 @@ def show_person(key: str, request):
             Span(typ, cls="tag"),
             style="margin-bottom:15px;",
         ),
-        Div(*tag_elements, style="margin-bottom:20px;") if tag_elements else "",
+        AliasesDisplay(aliases),
+        TagsDisplay(profile.get("tags", [])),
         H2("Profile Information", style="margin-bottom:5px; font-size:1.25rem;"),
         Div(
             NotStr(markdown.markdown(transformed_text))
@@ -350,11 +352,7 @@ def show_person(key: str, request):
             else "No detailed profile information available for this person.",
             cls="profile-text",
         ),
-        Div(
-            Span("AI Confidence: ", style="font-weight:bold;"),
-            Span(conf, style="font-style:italic;"),
-            style="margin-top:10px; color:var(--text-light); font-size:0.9rem;",
-        ),
+        ConfidenceBadge(conf),
         H2("Related Articles", style="margin-top:25px; font-size:1.25rem;"),
         format_article_list(articles, text),
         cls="entity-detail",
