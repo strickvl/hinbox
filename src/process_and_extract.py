@@ -35,6 +35,7 @@ from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
     reset_embedding_manager_cache,
 )
+from src.utils.extraction import configure_extraction_sidecar_cache
 from src.utils.file_ops import write_entities_table
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
@@ -814,6 +815,9 @@ def main():
         enabled=cache_cfg.get("enabled", True) and match_cfg.get("enabled", True),
         max_items=match_cfg.get("max_items", 8192),
     )
+
+    # Configure persistent extraction sidecar cache
+    configure_extraction_sidecar_cache(base_dir=base_dir, cache_cfg=cache_cfg)
 
     # Initialize sidecar processing status tracker
     status_tracker = ProcessingStatus(base_dir)

@@ -79,6 +79,7 @@ class EntityExtractor:
             response_model=List[Entity],
             model=model,
             temperature=temperature,
+            entity_type=self.entity_type,
         )
 
     def extract_local(
@@ -112,6 +113,7 @@ class EntityExtractor:
             response_model=List[Entity],
             model=model,
             temperature=temperature,
+            entity_type=self.entity_type,
         )
 
     def extract(
