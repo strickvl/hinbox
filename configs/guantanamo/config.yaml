@@ -25,6 +25,12 @@ dedup:
     threshold: 60        # RapidFuzz score cutoff (0-100)
     max_candidates: 50   # max entities to run cosine similarity against
 
+# Merge evidence configuration (for evidence-first similarity search)
+merge_evidence:
+  max_chars: 1500         # truncate evidence text to this length
+  window_chars: 240       # characters per context window around entity mentions
+  max_windows: 3          # max context windows to extract from article
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction

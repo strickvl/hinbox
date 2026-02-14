@@ -359,6 +359,8 @@ class EntityMerger:
         entity_dict: Dict[str, Any],
         article_content: str,
         max_chars: int = 1500,
+        window_chars: int = 240,
+        max_windows: int = 3,
     ) -> str:
         """Build a deterministic pseudo-profile from entity data + article context.
 
@@ -381,7 +383,9 @@ class EntityMerger:
             elif isinstance(alt, str):
                 needles.append(alt)
 
-        context = self._extract_context_windows(article_content, needles)
+        context = self._extract_context_windows(
+            article_content, needles, window_chars=window_chars, max_windows=max_windows
+        )
 
         # Build header by entity type
         parts: List[str] = []
@@ -450,6 +454,9 @@ class EntityMerger:
         # Load lexical blocking config for this entity type
         lexical_blocking_cfg = domain_cfg.get_lexical_blocking_config(self.entity_type)
 
+        # Load merge evidence config (window sizes, max chars)
+        evidence_cfg = domain_cfg.get_merge_evidence_config()
+
         log(
             f"Starting merge_{self.entity_type} with {len(extracted_entities)} {self.entity_type} to process",
             level="processing",
@@ -478,7 +485,12 @@ class EntityMerger:
 
             # --- Cheap evidence text (no LLM) ---
             evidence_text = self._build_evidence_text(
-                entity_key, entity_dict, article_content
+                entity_key,
+                entity_dict,
+                article_content,
+                max_chars=evidence_cfg["max_chars"],
+                window_chars=evidence_cfg["window_chars"],
+                max_windows=evidence_cfg["max_windows"],
             )
 
             # --- Embed evidence text ---

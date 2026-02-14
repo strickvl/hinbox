@@ -147,6 +147,17 @@ class DomainConfig:
 
         return result
 
+    def get_merge_evidence_config(self) -> Dict[str, Any]:
+        """Get merge evidence configuration for evidence-first similarity search.
+
+        Returns settings for _build_evidence_text() and _extract_context_windows()
+        with sensible defaults when the config section is absent.
+        """
+        config = self.load_config()
+        defaults = {"max_chars": 1500, "window_chars": 240, "max_windows": 3}
+        section = config.get("merge_evidence", {})
+        return {**defaults, **section}
+
     def get_entity_types(self, entity_category: str) -> List[str]:
         """Get available entity types for a category."""
         categories = self.load_categories(entity_category)
