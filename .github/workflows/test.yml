@@ -19,7 +19,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --extra dev --group dev
 
       - name: Ruff check
         run: uv run ruff check .
@@ -39,7 +39,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --extra dev --group dev
 
       - name: Run tests
         run: uv run pytest tests/ -v -k "not asyncio" --tb=short
