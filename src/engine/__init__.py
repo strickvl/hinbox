@@ -13,6 +13,11 @@ from src.engine.match_checker import (
     cloud_model_check_match,
     local_model_check_match,
 )
+from src.engine.merge_dispute_agent import (
+    MergeDisputeAction,
+    MergeDisputeDecision,
+    run_merge_dispute_agent,
+)
 from src.engine.mergers import EntityMerger
 from src.engine.profiles import (
     ProfileVersion,
@@ -46,6 +51,10 @@ __all__ = [
     "MatchCheckResult",
     "cloud_model_check_match",
     "local_model_check_match",
+    # Merge dispute agent
+    "MergeDisputeAction",
+    "MergeDisputeDecision",
+    "run_merge_dispute_agent",
     # Merging
     "EntityMerger",
 ]
