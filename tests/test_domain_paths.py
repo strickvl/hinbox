@@ -20,6 +20,7 @@ from src.process_and_extract import (
 from src.utils.file_ops import (
     entity_exists,
     read_entities_from_file,
+    write_entities_table,
     write_entity_to_file,
 )
 
@@ -141,3 +142,61 @@ def test_write_entities_to_files(tmp_path):
     assert len(read_entities_from_file("events", str(base_dir))) == 1
     assert len(read_entities_from_file("locations", str(base_dir))) == 1
     assert len(read_entities_from_file("organizations", str(base_dir))) == 1
+
+
+def test_write_entities_table_batch(tmp_path):
+    """write_entities_table writes all entities at once and is readable back."""
+    base_dir = tmp_path / "entities"
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    people = [
+        {"name": "Alice"},
+        {"name": "Bob"},
+        {"name": "Carol"},
+    ]
+    write_entities_table("people", people, str(base_dir))
+
+    assert (base_dir / "people.parquet").exists()
+    result = read_entities_from_file("people", str(base_dir))
+    assert len(result) == 3
+    names = {r["name"] for r in result}
+    assert names == {"Alice", "Bob", "Carol"}
+
+
+def test_write_entities_table_atomic_overwrite(tmp_path):
+    """write_entities_table atomically replaces the previous file."""
+    base_dir = tmp_path / "entities"
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write initial data
+    write_entities_table("people", [{"name": "Old"}], str(base_dir))
+    assert len(read_entities_from_file("people", str(base_dir))) == 1
+
+    # Overwrite with new data
+    write_entities_table("people", [{"name": "New1"}, {"name": "New2"}], str(base_dir))
+    result = read_entities_from_file("people", str(base_dir))
+    assert len(result) == 2
+    names = {r["name"] for r in result}
+    assert names == {"New1", "New2"}
+
+
+def test_write_entities_table_empty_skips(tmp_path):
+    """write_entities_table with empty list does not create a file."""
+    base_dir = tmp_path / "entities"
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    write_entities_table("people", [], str(base_dir))
+    assert not (base_dir / "people.parquet").exists()
+
+
+def test_write_entities_table_no_temp_file_on_success(tmp_path):
+    """After a successful write, no .tmp files remain."""
+    base_dir = tmp_path / "entities"
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    write_entities_table("people", [{"name": "X"}], str(base_dir))
+
+    import glob
+
+    tmp_files = glob.glob(str(base_dir / "*.tmp"))
+    assert tmp_files == []

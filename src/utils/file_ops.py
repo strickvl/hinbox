@@ -7,6 +7,7 @@ that points to the current domain's output directory (typically from
 
 import copy
 import os
+import tempfile
 from typing import Any, Dict, List
 
 import pyarrow as pa
@@ -262,6 +263,55 @@ def write_entity_to_file(
             raise
     else:
         logger.warning(f"No entities to write for {entity_type}")
+
+
+def write_entities_table(
+    entity_type: str, entities: List[Dict[str, Any]], base_dir: str
+) -> None:
+    """Write all entities of a given type to Parquet in a single atomic operation.
+
+    Instead of per-entity read-modify-write (O(N^2) I/O), this writes the
+    complete entity list once.  The write goes to a temporary file first and
+    is then atomically renamed into place, so readers never see a half-written
+    file.
+
+    Args:
+        entity_type: "people", "events", "locations", or "organizations"
+        entities: Full list of entity dicts for this type (already in-memory)
+        base_dir: Domain-specific output directory
+    """
+    if not entities:
+        logger.debug(f"No {entity_type} entities to write — skipping")
+        return
+
+    output_path = get_entity_output_path(entity_type, base_dir)
+
+    # Sanitize all entities for Parquet compatibility
+    sanitized = [sanitize_for_parquet(e) for e in entities]
+
+    try:
+        # Write to a temp file in the same directory (same filesystem) so
+        # os.replace is an atomic rename, not a cross-device copy.
+        dir_name = os.path.dirname(output_path)
+        fd, tmp_path = tempfile.mkstemp(
+            suffix=".parquet.tmp", dir=dir_name
+        )
+        os.close(fd)  # mkstemp opens the fd; we only need the path
+
+        table = pa.Table.from_pylist(sanitized)
+        pq.write_table(table, tmp_path)
+
+        # Atomic replace — overwrites any existing file safely.
+        os.replace(tmp_path, output_path)
+
+        logger.info(
+            f"Wrote {len(sanitized)} {entity_type} entities to {output_path}"
+        )
+    except Exception:
+        # Clean up the temp file if the rename didn't happen
+        if "tmp_path" in locals() and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
 
 
 def read_entities_from_file(entity_type: str, base_dir: str) -> List[Dict[str, Any]]:

@@ -25,7 +25,7 @@ from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
     reset_embedding_manager_cache,
 )
-from src.utils.file_ops import write_entity_to_file
+from src.utils.file_ops import write_entities_table
 from src.utils.processing_status import ProcessingStatus
 from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
 
@@ -110,19 +110,15 @@ def load_existing_entities(base_dir: str) -> Dict[str, Dict]:
 def write_entities_to_files(entities: Dict[str, Dict], base_dir: str) -> None:
     """Write entities to their respective Parquet files.
 
-    Iterates through all entity types and their entities, writing each one to its
-    corresponding Parquet file using the centralized file operations utility.
+    Writes each entity type as a single atomic Parquet file (one write per
+    type, 4 total) rather than per-entity read-modify-write cycles.
 
     Args:
         entities: Dictionary of entity types containing their entity dictionaries
-
-    Note:
-        Uses write_entity_to_file utility which handles individual entity file writes.
-        This ensures all entities are persisted to disk after processing.
+        base_dir: Domain-specific output directory
     """
     for entity_type, entity_dict in entities.items():
-        for entity_key, entity_data in entity_dict.items():
-            write_entity_to_file(entity_type, entity_key, entity_data, base_dir)
+        write_entities_table(entity_type, list(entity_dict.values()), base_dir)
 
 
 def setup_arguments_and_config() -> argparse.Namespace:
