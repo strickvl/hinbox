@@ -1,5 +1,6 @@
 """Generic entity merger classes to eliminate code duplication."""
 
+import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from rapidfuzz import fuzz
@@ -294,6 +295,132 @@ class EntityMerger:
 
         return False
 
+    def _extract_context_windows(
+        self,
+        article_content: str,
+        needles: List[str],
+        window_chars: int = 240,
+        max_windows: int = 3,
+    ) -> str:
+        """Extract text windows around entity mentions in the article.
+
+        Finds case-insensitive occurrences of each needle in article_content
+        and returns up to max_windows non-overlapping snippets of ~window_chars
+        each. Falls back to the first N characters of the article if no
+        mentions are found.
+        """
+        if not article_content:
+            return ""
+
+        # Normalise needles: strip, dedupe, drop empties
+        seen: set = set()
+        clean_needles: List[str] = []
+        for n in needles:
+            n = n.strip()
+            if n and n.lower() not in seen:
+                seen.add(n.lower())
+                clean_needles.append(n)
+
+        if not clean_needles:
+            return article_content[: window_chars * max_windows]
+
+        # Collect match positions across all needles
+        positions: List[Tuple[int, int]] = []
+        lower_content = article_content.lower()
+        for needle in clean_needles:
+            for m in re.finditer(re.escape(needle.lower()), lower_content):
+                positions.append((m.start(), m.end()))
+
+        positions.sort()
+
+        if not positions:
+            return article_content[: window_chars * max_windows]
+
+        # Build non-overlapping windows
+        half = window_chars // 2
+        windows: List[str] = []
+        last_end = -1
+
+        for start, end in positions:
+            if len(windows) >= max_windows:
+                break
+            win_start = max(0, start - half)
+            win_end = min(len(article_content), end + half)
+            if win_start < last_end:
+                continue  # overlaps previous window
+            windows.append(article_content[win_start:win_end].strip())
+            last_end = win_end
+
+        return "\n\n---\n\n".join(windows)
+
+    def _build_evidence_text(
+        self,
+        entity_key: Union[str, Tuple],
+        entity_dict: Dict[str, Any],
+        article_content: str,
+        max_chars: int = 1500,
+    ) -> str:
+        """Build a deterministic pseudo-profile from entity data + article context.
+
+        This is the cheap alternative to create_profile() — no LLM calls,
+        just string concatenation from extractor-provided structured fields
+        plus context windows around entity mentions in the article.
+        """
+        # Assemble search needles from key + any alternative names
+        needles: List[str] = []
+        if isinstance(entity_key, tuple):
+            needles.append(str(entity_key[0]))
+        else:
+            needles.append(str(entity_key))
+
+        # Include extractor-provided alternates when present
+        alt_field = self.alternative_field
+        for alt in entity_dict.get(alt_field, []):
+            if isinstance(alt, dict):
+                needles.append(str(alt.get("name", alt.get("title", ""))))
+            elif isinstance(alt, str):
+                needles.append(alt)
+
+        context = self._extract_context_windows(article_content, needles)
+
+        # Build header by entity type
+        parts: List[str] = []
+
+        if self.entity_type == "people":
+            parts.append(f"Name: {entity_key}")
+        elif self.entity_type in ("organizations", "locations"):
+            name = entity_key[0] if isinstance(entity_key, tuple) else str(entity_key)
+            etype = (
+                entity_key[1]
+                if isinstance(entity_key, tuple) and len(entity_key) > 1
+                else ""
+            )
+            parts.append(f"Name: {name}")
+            if etype:
+                parts.append(f"Type: {etype}")
+        elif self.entity_type == "events":
+            title = entity_key[0] if isinstance(entity_key, tuple) else str(entity_key)
+            start_date = (
+                entity_key[1]
+                if isinstance(entity_key, tuple) and len(entity_key) > 1
+                else ""
+            )
+            parts.append(f"Title: {title}")
+            if start_date:
+                parts.append(f"Start date: {start_date}")
+            event_type = entity_dict.get("event_type", "")
+            if event_type:
+                parts.append(f"Event type: {event_type}")
+            description = entity_dict.get("description", "")
+            if description:
+                parts.append(f"Description: {description}")
+
+        if context:
+            parts.append(f"\nCONTEXT:\n{context}")
+
+        text = "\n".join(parts)
+        return text[:max_chars]
+
     def merge_entities(
         self,
         extracted_entities: List[Dict[str, Any]],
@@ -349,42 +476,25 @@ class EntityMerger:
             )
             entity_updated = False
 
-            # --- Profile generation ---
-            proposed_profile, proposed_versioned_profile, reflection_history = (
-                create_profile(
-                    self.entity_type[:-1],
-                    self._format_key_for_display(entity_key),
-                    article_content,
-                    article_id,
-                    model_type,
-                    domain,
-                )
+            # --- Cheap evidence text (no LLM) ---
+            evidence_text = self._build_evidence_text(
+                entity_key, entity_dict, article_content
             )
 
-            proposed_profile = extract_profile_text(proposed_profile)
-            if not proposed_profile or not proposed_profile.get("text"):
-                log(
-                    f"Failed to generate profile for {self._format_key_for_display(entity_key)}. Profile data: {proposed_profile}",
-                    level="error",
-                )
-                continue
-
-            # --- Embedding computation ---
-            proposed_profile_text = proposed_profile["text"]
-            emb_result = embedding_manager.embed_text_result_sync(proposed_profile_text)
-            proposed_entity_embedding = (
+            # --- Embed evidence text ---
+            emb_result = embedding_manager.embed_text_result_sync(evidence_text)
+            evidence_embedding = (
                 emb_result.embeddings[0] if emb_result.embeddings else []
             )
             emb_model_name = emb_result.model
             emb_dim = emb_result.dimension or (
-                len(proposed_entity_embedding) if proposed_entity_embedding else None
+                len(evidence_embedding) if evidence_embedding else None
             )
-            emb_fingerprint = EmbeddingManager.fingerprint_from_result(emb_result)
 
-            # --- Similarity search ---
+            # --- Similarity search (unchanged function) ---
             similar_key, similarity_score = self.find_similar_entity(
                 entity_key,
-                proposed_entity_embedding,
+                evidence_embedding,
                 entities,
                 resolved_threshold,
                 embedding_model=emb_model_name,
@@ -393,7 +503,7 @@ class EntityMerger:
             )
 
             if similar_key:
-                # Final model-based match check
+                # --- MERGE PATH (no create_profile needed) ---
                 existing_profile_text = (
                     entities[self.entity_type][similar_key]
                     .get("profile", {})
@@ -406,18 +516,19 @@ class EntityMerger:
                     )
                     continue
 
+                # Match check: pass evidence_text as new_profile_text
                 if model_type == "ollama":
                     result = local_model_check_match(
                         self._format_key_for_display(entity_key),
                         self._format_key_for_display(similar_key),
-                        proposed_profile_text,
+                        evidence_text,
                         existing_profile_text,
                     )
                 else:
                     result = cloud_model_check_match(
                         self._format_key_for_display(entity_key),
                         self._format_key_for_display(similar_key),
-                        proposed_profile_text,
+                        evidence_text,
                         existing_profile_text,
                     )
 
@@ -449,7 +560,7 @@ class EntityMerger:
                         entity_type=self.entity_type,
                         new_name=self._format_key_for_display(entity_key),
                         existing_name=self._format_key_for_display(similar_key),
-                        new_profile_text=proposed_profile_text,
+                        new_profile_text=evidence_text,
                         existing_profile_text=existing_profile_text,
                         similarity_score=similarity_score,
                         similarity_threshold=resolved_threshold,
@@ -616,7 +727,41 @@ class EntityMerger:
                     )
 
             else:
-                # Create new entity
+                # --- CREATE PATH (expensive profile generation happens here) ---
+                proposed_profile, proposed_versioned_profile, reflection_history = (
+                    create_profile(
+                        self.entity_type[:-1],
+                        self._format_key_for_display(entity_key),
+                        article_content,
+                        article_id,
+                        model_type,
+                        domain,
+                    )
+                )
+
+                proposed_profile = extract_profile_text(proposed_profile)
+                if not proposed_profile or not proposed_profile.get("text"):
+                    log(
+                        f"Failed to generate profile for {self._format_key_for_display(entity_key)}. Profile data: {proposed_profile}",
+                        level="error",
+                    )
+                    continue
+
+                # Embed the FULL profile (this becomes the stored embedding)
+                prof_emb_result = embedding_manager.embed_text_result_sync(
+                    proposed_profile["text"]
+                )
+                profile_embedding = (
+                    prof_emb_result.embeddings[0] if prof_emb_result.embeddings else []
+                )
+                prof_model = prof_emb_result.model
+                prof_dim = prof_emb_result.dimension or (
+                    len(profile_embedding) if profile_embedding else None
+                )
+                prof_fingerprint = EmbeddingManager.fingerprint_from_result(
+                    prof_emb_result
+                )
+
                 log(
                     f"Creating new {self.entity_type[:-1]} entry for: {self._format_key_for_display(entity_key)}",
                     level="success",
@@ -627,16 +772,16 @@ class EntityMerger:
                     entity_key,
                     proposed_profile,
                     proposed_versioned_profile,
-                    proposed_entity_embedding,
+                    profile_embedding,
                     reflection_history,
                     article_id,
                     article_title,
                     article_url,
                     article_published_date,
                     extraction_timestamp,
-                    embedding_model=emb_model_name,
-                    embedding_dim=emb_dim,
-                    embedding_fingerprint=emb_fingerprint,
+                    embedding_model=prof_model,
+                    embedding_dim=prof_dim,
+                    embedding_fingerprint=prof_fingerprint,
                 )
 
                 entities[self.entity_type][entity_key] = new_entity
