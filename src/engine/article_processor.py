@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 
@@ -12,6 +12,25 @@ from src.utils.outcomes import PhaseOutcome
 from src.utils.quality_controls import run_extraction_qc
 
 logger = get_logger("article_processor")
+
+# QC flags that trigger a single extraction retry
+_RETRY_TRIGGER_FLAGS = {"zero_entities", "high_drop_rate", "many_duplicates"}
+
+
+def _should_retry_extraction(flags: List[str]) -> bool:
+    """Return True if any QC flag warrants a retry attempt."""
+    return bool(_RETRY_TRIGGER_FLAGS.intersection(flags))
+
+
+def _build_repair_hint(entity_type: str, flags: List[str]) -> str:
+    """Build a short prompt suffix describing what went wrong on the first attempt."""
+    flag_str = ", ".join(sorted(set(flags) & _RETRY_TRIGGER_FLAGS))
+    return (
+        f"IMPORTANT — Previous extraction of {entity_type} had quality issues "
+        f"({flag_str}). Please ensure all required fields are populated, "
+        f"avoid duplicate entries, and return every relevant entity found in "
+        f"the text as a complete JSON array."
+    )
 
 
 class ArticleProcessor:
@@ -92,13 +111,41 @@ class ArticleProcessor:
                 context={"article_id": article_id},
             )
 
+    def _run_extraction(
+        self,
+        extractor: EntityExtractor,
+        article_content: str,
+        repair_hint: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Run a single extraction attempt (cloud or local) and return raw dicts."""
+        if self.model_type == "ollama":
+            raw = extractor.extract_local(
+                text=article_content,
+                model=self.specific_model,
+                temperature=0,
+                repair_hint=repair_hint,
+            )
+        else:
+            raw = extractor.extract_cloud(
+                text=article_content,
+                model=self.specific_model,
+                temperature=0,
+                repair_hint=repair_hint,
+            )
+        return self.convert_pydantic_to_dict(raw or [])
+
     def extract_single_entity_type(
         self,
         entity_type: str,
         article_content: str,
         article_id: str = "",
     ) -> PhaseOutcome:
-        """Extract a single entity type, run QC, and return a PhaseOutcome.
+        """Extract a single entity type, run QC, optionally retry once, and return a PhaseOutcome.
+
+        When the first extraction attempt triggers severe QC flags (zero_entities,
+        high_drop_rate, many_duplicates), a single retry is attempted with a
+        repair hint appended to the system prompt.  The better result (by
+        output_count, then fewer severe flags) is kept.
 
         The outcome's value is always a List[Dict] (possibly empty on failure).
         QC flags and counts are surfaced in the outcome metadata.
@@ -107,28 +154,55 @@ class ArticleProcessor:
 
         try:
             extractor = EntityExtractor(entity_type, self.domain)
-            if self.model_type == "ollama":
-                raw = extractor.extract_local(
-                    text=article_content,
-                    model=self.specific_model,
-                    temperature=0,
-                )
-            else:
-                raw = extractor.extract_cloud(
-                    text=article_content,
-                    model=self.specific_model,
-                    temperature=0,
-                )
 
-            # Normalize Pydantic models to dicts
-            raw_dicts = self.convert_pydantic_to_dict(raw or [])
-
-            # Run deterministic QC
+            # --- Attempt 1 ---
+            raw_dicts = self._run_extraction(extractor, article_content)
             cleaned, qc_report = run_extraction_qc(
                 entity_type=entity_type,
                 entities=raw_dicts,
                 domain=self.domain,
             )
+
+            # --- Conditional retry ---
+            retry_meta: Dict[str, Any] = {"retry_attempted": False}
+
+            if _should_retry_extraction(qc_report.flags):
+                retry_meta["retry_attempted"] = True
+                retry_meta["retry_trigger_flags"] = sorted(
+                    set(qc_report.flags) & _RETRY_TRIGGER_FLAGS
+                )
+                logger.info(
+                    f"Retrying {entity_type} extraction "
+                    f"(triggers: {retry_meta['retry_trigger_flags']})"
+                )
+
+                hint = _build_repair_hint(entity_type, qc_report.flags)
+                raw_dicts_v2 = self._run_extraction(
+                    extractor, article_content, repair_hint=hint
+                )
+                cleaned_v2, qc_report_v2 = run_extraction_qc(
+                    entity_type=entity_type,
+                    entities=raw_dicts_v2,
+                    domain=self.domain,
+                )
+
+                retry_meta["retry_output_count"] = qc_report_v2.output_count
+
+                # Pick the better result: higher output_count wins; on tie,
+                # fewer severe flags wins.
+                v2_severe = len(set(qc_report_v2.flags) & _RETRY_TRIGGER_FLAGS)
+                v1_severe = len(set(qc_report.flags) & _RETRY_TRIGGER_FLAGS)
+
+                use_v2 = qc_report_v2.output_count > qc_report.output_count or (
+                    qc_report_v2.output_count == qc_report.output_count
+                    and v2_severe < v1_severe
+                )
+
+                if use_v2:
+                    cleaned, qc_report = cleaned_v2, qc_report_v2
+                    retry_meta["retry_used"] = True
+                else:
+                    retry_meta["retry_used"] = False
 
             return PhaseOutcome.ok(
                 phase,
@@ -140,7 +214,7 @@ class ArticleProcessor:
                     "final_count": qc_report.output_count,
                 },
                 flags=qc_report.flags,
-                meta={"qc_fixes": qc_report.fixes},
+                meta={"qc_fixes": qc_report.fixes, **retry_meta},
             )
         except Exception as e:
             self.logger.exception(

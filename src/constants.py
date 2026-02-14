@@ -34,6 +34,12 @@ DEFAULT_MAX_TOKENS = 2048
 DEFAULT_TEMPERATURE = 0
 MAX_ITERATIONS = 3
 
+# Merge dispute / gray-band thresholds
+MERGE_GRAY_BAND_DELTA = 0.05  # similarity within ±delta of threshold is "gray band"
+MERGE_UNCERTAIN_CONFIDENCE_CUTOFF = (
+    0.7  # match-check confidence below this is "uncertain"
+)
+
 # Quality control thresholds
 QC_MIN_NAME_LENGTH = 3
 PROFILE_QC_MIN_TEXT_LENGTH = 100

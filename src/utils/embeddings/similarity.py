@@ -98,4 +98,36 @@ def compute_similarity(vec1: List[float], vec2: List[float]) -> float:
     return float(np.dot(v1, v2) / (norm1 * norm2))
 
 
-__all__ = ["compute_similarity", "get_embedding_manager", "EmbeddingManager"]
+def reset_embedding_manager_cache() -> None:
+    """Clear the cached EmbeddingManager instances.
+
+    Call this after changing ``EMBEDDING_MODE`` at runtime so that subsequent
+    calls to :func:`get_embedding_manager` create a fresh manager under the
+    new mode rather than reusing a stale one.
+    """
+    _MANAGER_CACHE.clear()
+
+
+def ensure_local_embeddings_available() -> None:
+    """Raise immediately if local embedding dependencies are missing.
+
+    Intended to be called at CLI startup when ``--local`` is active, so the
+    user gets a clear error before any articles are processed — rather than
+    a cryptic failure mid-run when the first embedding call happens.
+    """
+    if find_spec("sentence_transformers") is None:
+        raise RuntimeError(
+            "Local embeddings require 'sentence-transformers' (and PyTorch), "
+            "but the package was not found.\n\n"
+            "  Install:  uv pip install 'sentence-transformers'\n"
+            "  Or drop the --local flag to use cloud embeddings.\n"
+        )
+
+
+__all__ = [
+    "compute_similarity",
+    "ensure_local_embeddings_available",
+    "get_embedding_manager",
+    "reset_embedding_manager_cache",
+    "EmbeddingManager",
+]

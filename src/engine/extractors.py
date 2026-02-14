@@ -1,6 +1,6 @@
 """Generic entity extraction classes to eliminate code duplication."""
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.config_loader import get_system_prompt
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
@@ -56,6 +56,7 @@ class EntityExtractor:
         text: str,
         model: str = CLOUD_MODEL,
         temperature: float = 0,
+        repair_hint: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Extract entities using cloud-based models (Gemini).
 
@@ -63,14 +64,18 @@ class EntityExtractor:
             text: The text to extract entities from
             model: The cloud model to use
             temperature: Temperature for generation
+            repair_hint: Optional suffix appended to the system prompt on retry
 
         Returns:
             List of extracted entities as dictionaries
         """
         Entity = self._model_getter(self.domain)
+        system_prompt = get_system_prompt(self.entity_type, self.domain)
+        if repair_hint:
+            system_prompt = system_prompt + "\n\n" + repair_hint
         return extract_entities_cloud(
             text=text,
-            system_prompt=get_system_prompt(self.entity_type, self.domain),
+            system_prompt=system_prompt,
             response_model=List[Entity],
             model=model,
             temperature=temperature,
@@ -81,6 +86,7 @@ class EntityExtractor:
         text: str,
         model: str = OLLAMA_MODEL,
         temperature: float = 0,
+        repair_hint: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Extract entities using local models (Ollama).
 
@@ -91,14 +97,18 @@ class EntityExtractor:
             text: The text to extract entities from
             model: The local model to use
             temperature: Temperature for generation
+            repair_hint: Optional suffix appended to the system prompt on retry
 
         Returns:
             List of extracted entities as dictionaries
         """
         Entity = self._model_getter(self.domain)
+        system_prompt = get_system_prompt(self.entity_type, self.domain)
+        if repair_hint:
+            system_prompt = system_prompt + "\n\n" + repair_hint
         return extract_entities_local(
             text=text,
-            system_prompt=get_system_prompt(self.entity_type, self.domain),
+            system_prompt=system_prompt,
             response_model=List[Entity],
             model=model,
             temperature=temperature,

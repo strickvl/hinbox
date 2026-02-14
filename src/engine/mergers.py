@@ -6,8 +6,14 @@ from rapidfuzz import fuzz
 from rapidfuzz import process as rfprocess
 
 from src.config_loader import DomainConfig
-from src.constants import ENABLE_PROFILE_VERSIONING, SIMILARITY_THRESHOLD
+from src.constants import (
+    ENABLE_PROFILE_VERSIONING,
+    MERGE_GRAY_BAND_DELTA,
+    MERGE_UNCERTAIN_CONFIDENCE_CUTOFF,
+    SIMILARITY_THRESHOLD,
+)
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
+from src.engine.merge_dispute_agent import MergeDisputeAction, run_merge_dispute_agent
 from src.engine.profiles import VersionedProfile, create_profile, update_profile
 from src.logging_config import display_markdown, get_logger, log
 from src.utils.embeddings.manager import EmbeddingManager
@@ -417,10 +423,47 @@ class EntityMerger:
                     )
 
                 log(
-                    f"Match check result: {result.is_match} - {result.reason}",
+                    f"Match check result: {result.is_match} (confidence={result.confidence:.2f}) - {result.reason}",
                     level="info",
                 )
-                if not result.is_match:
+
+                # Gray-band routing: when similarity is near the threshold
+                # AND the match checker is uncertain, ask the dispute agent
+                # for a second opinion before making the merge/skip decision.
+                should_merge = result.is_match
+                is_gray_band = (
+                    similarity_score is not None
+                    and abs(similarity_score - resolved_threshold)
+                    <= MERGE_GRAY_BAND_DELTA
+                )
+                is_uncertain = result.confidence < MERGE_UNCERTAIN_CONFIDENCE_CUTOFF
+
+                if is_gray_band and is_uncertain:
+                    log(
+                        f"Gray-band detected for '{self._format_key_for_display(entity_key)}' vs "
+                        f"'{self._format_key_for_display(similar_key)}' "
+                        f"(similarity={similarity_score:.4f}, threshold={resolved_threshold:.4f}, "
+                        f"confidence={result.confidence:.2f}). Routing to dispute agent.",
+                        level="info",
+                    )
+                    dispute_decision = run_merge_dispute_agent(
+                        entity_type=self.entity_type,
+                        new_name=self._format_key_for_display(entity_key),
+                        existing_name=self._format_key_for_display(similar_key),
+                        new_profile_text=proposed_profile_text,
+                        existing_profile_text=existing_profile_text,
+                        similarity_score=similarity_score,
+                        similarity_threshold=resolved_threshold,
+                        match_is_match=result.is_match,
+                        match_confidence=result.confidence,
+                        match_reason=result.reason,
+                        model_type=model_type,
+                        domain=domain,
+                        article_id=article_id,
+                    )
+                    should_merge = dispute_decision.action == MergeDisputeAction.MERGE
+
+                if not should_merge:
                     log(
                         f"The profiles do not match. Skipping merge for '{self._format_key_for_display(entity_key)}'",
                         level="error",

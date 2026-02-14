@@ -7,8 +7,10 @@ dedup, and suspicious-result flagging.
 QC functions never raise — they only drop invalid items and report.
 """
 
+import hashlib
 import re
 import unicodedata
+from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
@@ -262,3 +264,255 @@ def run_profile_qc(
         report.passed = True
 
     return profile, report
+
+
+# ──────────────────────────────────────────────
+# Profile Grounding Verification
+# ──────────────────────────────────────────────
+
+
+class SupportLevel(str, Enum):
+    SUPPORTED = "supported"
+    PARTIAL = "partial"
+    NOT_SUPPORTED = "not_supported"
+    UNCLEAR = "unclear"
+    MISSING_SOURCE = "missing_source"
+
+
+class ClaimVerification(BaseModel):
+    """Result of verifying a single citation-anchored claim against its source."""
+
+    article_id: str
+    citation: str = Field(..., description="Original citation marker, e.g. ^[art-123]")
+    claim: str = Field(..., description="The text span supported by the citation")
+    support_level: SupportLevel
+    reasoning: Optional[str] = None
+
+
+class _ClaimVerificationBatch(BaseModel):
+    """Internal wrapper for structured LLM output (list of verifications)."""
+
+    verifications: List[ClaimVerification]
+
+
+class GroundingReport(BaseModel):
+    """Summary of profile grounding verification."""
+
+    profile_text_hash: str = ""
+    total_citations: int = 0
+    verified: int = 0
+    unverified: int = 0
+    missing_source: int = 0
+    grounding_score: Optional[float] = None
+    passed: bool = True
+    flags: List[str] = Field(default_factory=list)
+    verifications: List[ClaimVerification] = Field(default_factory=list)
+
+
+def _extract_cited_claims(profile_text: str) -> List[Dict[str, str]]:
+    """Extract citation-anchored claims from profile text.
+
+    Uses CITATION_RE to find all ^[article_id] markers. For each citation,
+    the claim is the text span between the previous citation end and this
+    citation start.
+
+    Returns list of {"article_id": str, "citation": str, "claim": str}.
+    """
+    claims: List[Dict[str, str]] = []
+    last_end = 0
+    last_claim = ""
+
+    for match in CITATION_RE.finditer(profile_text):
+        article_id = match.group(1)
+        citation = match.group(0)  # e.g. "^[art-123]"
+
+        # Claim is the text between the end of the last citation and this one
+        claim_text = profile_text[last_end : match.start()].strip()
+        if not claim_text:
+            claim_text = last_claim  # reuse last non-empty claim for adjacent citations
+
+        if claim_text:
+            last_claim = claim_text
+
+        claims.append(
+            {
+                "article_id": article_id,
+                "citation": citation,
+                "claim": claim_text or "(no claim text)",
+            }
+        )
+        last_end = match.end()
+
+    return claims
+
+
+_GROUNDING_SYSTEM_PROMPT = """You are a fact-checking assistant verifying whether claims in an entity profile are supported by source article text.
+
+For each claim-citation pair, determine:
+- "supported": The source article clearly contains information that supports the claim
+- "partial": The source partially supports the claim but some details are not confirmed
+- "not_supported": The source does not contain information supporting this claim
+- "unclear": The source text is ambiguous or insufficient to determine support
+
+You MUST return a verification for every claim provided, in the same order."""
+
+_GROUNDING_USER_TEMPLATE = """Verify whether the following claims are supported by the source article.
+
+## SOURCE ARTICLE (ID: {article_id})
+{article_text}
+
+## CLAIMS TO VERIFY
+{claims_text}
+
+For each claim, provide: article_id, citation, claim, support_level, and brief reasoning."""
+
+
+def verify_profile_grounding(
+    *,
+    profile_text: str,
+    article_texts: Dict[str, str],
+    model_type: str = "gemini",
+    max_article_chars: int = 12000,
+    max_claim_chars: int = 600,
+    min_grounding_score: float = 0.7,
+) -> GroundingReport:
+    """Verify that profile claims are supported by their cited sources.
+
+    Extracts citations from profile text, groups them by article, and uses
+    an LLM call per article to verify each claim. Returns a GroundingReport
+    with per-claim details and summary statistics.
+
+    Never raises — returns a report with flags on any error.
+    """
+    from src.utils.llm import cloud_generation, local_generation
+
+    text_hash = hashlib.sha256(profile_text.encode()).hexdigest()
+    report = GroundingReport(profile_text_hash=text_hash)
+
+    cited_claims = _extract_cited_claims(profile_text)
+    report.total_citations = len(cited_claims)
+
+    if not cited_claims:
+        report.flags.append("no_citations")
+        report.grounding_score = None
+        return report
+
+    # Separate missing sources from verifiable claims
+    verifiable_by_article: Dict[str, List[Dict[str, str]]] = {}
+    all_verifications: List[ClaimVerification] = []
+
+    for claim_item in cited_claims:
+        aid = claim_item["article_id"]
+        if aid not in article_texts or not article_texts[aid].strip():
+            all_verifications.append(
+                ClaimVerification(
+                    article_id=aid,
+                    citation=claim_item["citation"],
+                    claim=claim_item["claim"][:max_claim_chars],
+                    support_level=SupportLevel.MISSING_SOURCE,
+                    reasoning="Source article not available for verification",
+                )
+            )
+        else:
+            verifiable_by_article.setdefault(aid, []).append(claim_item)
+
+    # Verify claims grouped by article (one LLM call per article)
+    for aid, claims_for_article in verifiable_by_article.items():
+        source_text = article_texts[aid][:max_article_chars]
+        claims_text = "\n".join(
+            f"{i + 1}. Citation: {c['citation']} | Claim: {c['claim'][:max_claim_chars]}"
+            for i, c in enumerate(claims_for_article)
+        )
+
+        user_content = _GROUNDING_USER_TEMPLATE.format(
+            article_id=aid,
+            article_text=source_text,
+            claims_text=claims_text,
+        )
+
+        messages = [
+            {"role": "system", "content": _GROUNDING_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+
+        try:
+            if model_type == "ollama":
+                batch_result = local_generation(
+                    messages=messages,
+                    response_model=_ClaimVerificationBatch,
+                    temperature=0,
+                )
+            else:
+                batch_result = cloud_generation(
+                    messages=messages,
+                    response_model=_ClaimVerificationBatch,
+                    temperature=0,
+                )
+
+            # Match returned verifications to input claims
+            for i, claim_item in enumerate(claims_for_article):
+                if i < len(batch_result.verifications):
+                    v = batch_result.verifications[i]
+                    all_verifications.append(v)
+                else:
+                    # LLM returned fewer results than expected
+                    all_verifications.append(
+                        ClaimVerification(
+                            article_id=aid,
+                            citation=claim_item["citation"],
+                            claim=claim_item["claim"][:max_claim_chars],
+                            support_level=SupportLevel.UNCLEAR,
+                            reasoning="LLM did not return verification for this claim",
+                        )
+                    )
+
+            if len(batch_result.verifications) != len(claims_for_article):
+                report.flags.append("llm_count_mismatch")
+
+        except Exception as e:
+            logger.error(f"Grounding verification failed for article {aid}: {e}")
+            for claim_item in claims_for_article:
+                all_verifications.append(
+                    ClaimVerification(
+                        article_id=aid,
+                        citation=claim_item["citation"],
+                        claim=claim_item["claim"][:max_claim_chars],
+                        support_level=SupportLevel.UNCLEAR,
+                        reasoning=f"Verification error: {str(e)}",
+                    )
+                )
+            report.flags.append("verification_error")
+
+    # Compute summary statistics
+    report.verifications = all_verifications
+    report.verified = sum(
+        1
+        for v in all_verifications
+        if v.support_level in (SupportLevel.SUPPORTED, SupportLevel.PARTIAL)
+    )
+    report.unverified = sum(
+        1
+        for v in all_verifications
+        if v.support_level in (SupportLevel.NOT_SUPPORTED, SupportLevel.UNCLEAR)
+    )
+    report.missing_source = sum(
+        1 for v in all_verifications if v.support_level == SupportLevel.MISSING_SOURCE
+    )
+
+    if report.total_citations > 0:
+        report.grounding_score = report.verified / report.total_citations
+    else:
+        report.grounding_score = None
+
+    if report.missing_source > 0:
+        report.flags.append("missing_sources")
+    if any(v.support_level == SupportLevel.NOT_SUPPORTED for v in all_verifications):
+        report.flags.append("unsupported_claims")
+    if (
+        report.grounding_score is not None
+        and report.grounding_score < min_grounding_score
+    ):
+        report.flags.append("low_grounding_score")
+        report.passed = False
+
+    return report

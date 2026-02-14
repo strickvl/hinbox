@@ -220,7 +220,9 @@ class TestEntityMergerMergeSmoke:
         stub_manager = StubEmbeddingManager(vec=[0.42, 0.58, 0.0])
 
         def always_match(*args, **kwargs):
-            return MatchCheckResult(is_match=True, reason="forced-match")
+            return MatchCheckResult(
+                is_match=True, confidence=0.95, reason="forced-match"
+            )
 
         with (
             patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
@@ -282,3 +284,27 @@ class TestEntityMergerMergeSmoke:
 
         # Alternative names added since the incoming key was different
         assert "Alice B. Smith" in person.get("alternative_names", [])
+
+
+class TestMatchCheckResultSchema:
+    """Ensure MatchCheckResult schema changes are backward compatible."""
+
+    def test_default_confidence(self):
+        """Constructing without confidence should default to 0.5."""
+        result = MatchCheckResult(is_match=False, reason="test")
+        assert result.confidence == 0.5
+
+    def test_explicit_confidence(self):
+        """Explicit confidence should be preserved."""
+        result = MatchCheckResult(is_match=True, confidence=0.9, reason="test")
+        assert result.confidence == 0.9
+
+    def test_confidence_clamped_by_validator(self):
+        """Confidence outside [0, 1] should raise validation error."""
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            MatchCheckResult(is_match=True, confidence=1.5, reason="test")
+        with pytest.raises(ValidationError):
+            MatchCheckResult(is_match=True, confidence=-0.1, reason="test")
