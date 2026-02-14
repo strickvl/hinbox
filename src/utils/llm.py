@@ -120,7 +120,7 @@ def cloud_generation(
 
                 # Strategy 1: Try with lower temperature and max_retries=0 to force single response
                 try:
-                    logger.info("Trying with temperature=0 and max_retries=0")
+                    logger.debug("Trying with temperature=0 and max_retries=0")
                     response = client.chat.completions.create(
                         model=model,
                         messages=messages,
@@ -131,8 +131,8 @@ def cloud_generation(
                         max_retries=0,
                         **kwargs,
                     )
-                    logger.info(
-                        "✓ Successfully recovered from multiple tool calls error with strategy 1"
+                    logger.debug(
+                        "Recovered from multiple tool calls error with strategy 1"
                     )
                     return response
                 except Exception as recovery_e1:
@@ -140,7 +140,7 @@ def cloud_generation(
 
                 # Strategy 2: Try modifying the messages to be more explicit
                 try:
-                    logger.info("Trying with modified system message")
+                    logger.debug("Trying with modified system message")
                     modified_messages = messages.copy()
                     if modified_messages and modified_messages[0]["role"] == "system":
                         modified_messages[0]["content"] += (
@@ -157,8 +157,8 @@ def cloud_generation(
                         max_retries=0,
                         **kwargs,
                     )
-                    logger.info(
-                        "✓ Successfully recovered from multiple tool calls error with strategy 2"
+                    logger.debug(
+                        "Recovered from multiple tool calls error with strategy 2"
                     )
                     return response
                 except Exception as recovery_e2:
@@ -181,7 +181,7 @@ def cloud_generation(
                 logger.warning(
                     f"Retryable error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
                 )
-                logger.info(f"Retrying in {delay:.2f} seconds...")
+                logger.debug(f"Retrying in {delay:.2f} seconds...")
                 time.sleep(delay)
                 continue
 
@@ -246,7 +246,7 @@ def local_generation(
 
                 # Strategy 1: Try with lower temperature and max_retries=0
                 try:
-                    logger.info("Trying local with temperature=0 and max_retries=0")
+                    logger.debug("Trying local with temperature=0 and max_retries=0")
                     response = client.chat.completions.create(
                         model=get_ollama_model_name(model),
                         messages=messages,
@@ -259,14 +259,14 @@ def local_generation(
                         max_retries=0,
                         **kwargs,
                     )
-                    logger.info("✓ Successfully recovered locally with strategy 1")
+                    logger.debug("Recovered locally with strategy 1")
                     return response
                 except Exception as recovery_e1:
                     logger.warning(f"Local strategy 1 failed: {recovery_e1}")
 
                 # Strategy 2: Modify system message
                 try:
-                    logger.info("Trying local with modified system message")
+                    logger.debug("Trying local with modified system message")
                     modified_messages = messages.copy()
                     if modified_messages and modified_messages[0]["role"] == "system":
                         modified_messages[0]["content"] += (
@@ -285,7 +285,7 @@ def local_generation(
                         max_retries=0,
                         **kwargs,
                     )
-                    logger.info("✓ Successfully recovered locally with strategy 2")
+                    logger.debug("Recovered locally with strategy 2")
                     return response
                 except Exception as recovery_e2:
                     logger.warning(f"Local strategy 2 failed: {recovery_e2}")
@@ -307,7 +307,7 @@ def local_generation(
                 logger.warning(
                     f"Retryable local error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
                 )
-                logger.info(f"Retrying local in {delay:.2f} seconds...")
+                logger.debug(f"Retrying local in {delay:.2f} seconds...")
                 time.sleep(delay)
                 continue
 
@@ -444,7 +444,7 @@ def iterative_improve(
     reflection_history = []
 
     for i in range(max_iterations):
-        logger.info(f"Iteration {i + 1}/{max_iterations}")
+        logger.debug(f"Iteration {i + 1}/{max_iterations}")
 
         # Reflect on current text
         reflection = reflect_and_check(
@@ -465,7 +465,7 @@ def iterative_improve(
         )
 
         if reflection_result.valid:
-            logger.info(f"Text validated after {i + 1} iterations")
+            logger.debug(f"Text validated after {i + 1} iterations")
             break
 
         # Generate improved version

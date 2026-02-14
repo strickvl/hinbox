@@ -3,6 +3,7 @@ Configuration and utilities for consistent logging across the application.
 """
 
 import logging
+from enum import Enum
 from typing import Optional
 
 from rich.console import Console
@@ -87,15 +88,73 @@ def log(
         )
 
 
+class DecisionKind(str, Enum):
+    """Merge-loop outcome for a single entity."""
+
+    NEW = "NEW"
+    MERGE = "MERGE"
+    SKIP = "SKIP"
+    DISPUTE = "DISPUTE"
+    DEFER = "DEFER"
+    ERROR = "ERROR"
+
+
+_DECISION_COLORS = {
+    DecisionKind.NEW: "green",
+    DecisionKind.MERGE: "yellow",
+    DecisionKind.SKIP: "dim",
+    DecisionKind.DISPUTE: "magenta",
+    DecisionKind.DEFER: "cyan",
+    DecisionKind.ERROR: "red",
+}
+
+
+def log_decision(
+    kind: DecisionKind,
+    entity_type: str,
+    name: str,
+    detail: str = "",
+) -> None:
+    """Emit a single colour-coded decision line for one entity.
+
+    Example output:
+      MERGE   person  "John Smith"  similarity=0.87
+    """
+    color = _DECISION_COLORS.get(kind, "white")
+    badge = f"[bold {color}]{kind.value:<8}[/]"
+    singular = entity_type.rstrip("s") if entity_type.endswith("s") else entity_type
+    parts = [badge, f"{singular:<13}", f'"{name}"']
+    if detail:
+        parts.append(f" {detail}")
+    line = "  ".join(parts)
+    logging.getLogger("hinbox").info(line)
+
+
+# Module-level flag controlling Rich profile panels.
+# Off by default; set via set_show_profiles() or --show-profiles CLI flag.
+_show_profiles = False
+
+
+def set_show_profiles(enabled: bool = True) -> None:
+    """Toggle display of full-profile Rich panels."""
+    global _show_profiles
+    _show_profiles = enabled
+
+
 def display_markdown(content: str, title: str = None, style: str = "green"):
     """
     Display content with markdown formatting in a panel.
+
+    Gated behind the --show-profiles flag: when disabled (the default),
+    this function is a no-op to keep output compact.
 
     Args:
         content: Markdown content to display
         title: Optional title for the panel
         style: Border style color for the panel
     """
+    if not _show_profiles:
+        return
     console.print(
         Panel(
             Markdown(content),

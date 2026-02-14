@@ -99,7 +99,7 @@ def extract_entities_cloud(
                 logger.warning(
                     f"Retryable error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
                 )
-                logger.info(f"Retrying in {delay:.2f} seconds...")
+                logger.debug(f"Retrying in {delay:.2f} seconds...")
                 time.sleep(delay)
                 continue
 

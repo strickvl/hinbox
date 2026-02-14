@@ -20,7 +20,7 @@ from src.config_loader import DomainConfig
 from src.constants import disable_llm_callbacks
 from src.engine import ArticleProcessor, EntityMerger
 from src.exceptions import ArticleLoadError
-from src.logging_config import get_logger, log, set_verbose
+from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
 from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
     reset_embedding_manager_cache,
@@ -181,12 +181,20 @@ def setup_arguments_and_config() -> argparse.Namespace:
         default="guantanamo",
         help="Domain configuration to use (default: guantanamo)",
     )
+    parser.add_argument(
+        "--show-profiles",
+        action="store_true",
+        help="Display full Rich profile panels during merge (off by default for compact output)",
+    )
     args = parser.parse_args()
 
     # Configure logger level based on verbosity flag
     if args.verbose:
         set_verbose(True)
         log("Verbose logging enabled")
+
+    if args.show_profiles:
+        set_show_profiles(True)
 
     log(
         f"[bold blue]Arguments:[/] limit={args.limit}, local={args.local}, relevance_check={args.relevance_check}, force_reprocess={args.force_reprocess}"
@@ -265,7 +273,7 @@ def merge_all_entities(
         try:
             merge_start = datetime.now()
             merger = EntityMerger(entity_type)
-            merger.merge_entities(
+            merge_stats = merger.merge_entities(
                 entity_dicts,
                 entities,
                 article_info["id"],
@@ -280,7 +288,8 @@ def merge_all_entities(
             )
             merge_duration = (datetime.now() - merge_start).total_seconds()
             log(
-                f"Merged {len(entity_dicts)} {entity_type} in {merge_duration:.2f}s",
+                f"Merged {len(entity_dicts)} {entity_type} in {merge_duration:.2f}s "
+                f"(new={merge_stats.new} merged={merge_stats.merged} skipped={merge_stats.skipped})",
                 level="success",
             )
         except Exception as e:
@@ -574,6 +583,14 @@ def process_articles_batch(
     status_tracker: ProcessingStatus = None,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Process a batch of articles and return results with statistics."""
+    from rich.progress import (
+        BarColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        TimeElapsedColumn,
+    )
+
     processed_rows = []
     counters = {
         "processed_count": 0,
@@ -582,33 +599,47 @@ def process_articles_batch(
         "skipped_no_content": 0,
     }
 
-    for row_index, row in enumerate(rows, 1):
-        if row_index > args.limit:
-            # We've hit the limit; keep the rest unmodified
-            processed_rows.append(row)
-            continue
+    active_count = min(len(rows), args.limit)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        task_id = progress.add_task("Articles", total=active_count)
 
-        # Process the article
-        updated_row, was_processed, skip_reason = process_single_article(
-            row,
-            row_index,
-            processor,
-            entities,
-            args,
-            domain_config=domain_config,
-            status_tracker=status_tracker,
-        )
+        for row_index, row in enumerate(rows, 1):
+            if row_index > args.limit:
+                # We've hit the limit; keep the rest unmodified
+                processed_rows.append(row)
+                continue
 
-        processed_rows.append(updated_row)
+            # Process the article
+            updated_row, was_processed, skip_reason = process_single_article(
+                row,
+                row_index,
+                processor,
+                entities,
+                args,
+                domain_config=domain_config,
+                status_tracker=status_tracker,
+            )
 
-        if was_processed:
-            counters["processed_count"] += 1
-        elif skip_reason == "not_relevant":
-            counters["skipped_relevance_count"] += 1
-        elif skip_reason == "already_processed":
-            counters["skipped_already_processed"] += 1
-        elif skip_reason == "no_content":
-            counters["skipped_no_content"] += 1
+            processed_rows.append(updated_row)
+
+            if was_processed:
+                counters["processed_count"] += 1
+            elif skip_reason == "not_relevant":
+                counters["skipped_relevance_count"] += 1
+            elif skip_reason == "already_processed":
+                counters["skipped_already_processed"] += 1
+            elif skip_reason == "no_content":
+                counters["skipped_no_content"] += 1
+
+            progress.update(task_id, advance=1)
 
     return processed_rows, counters
 

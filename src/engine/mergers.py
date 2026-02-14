@@ -1,6 +1,7 @@
 """Generic entity merger classes to eliminate code duplication."""
 
 import re
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from rapidfuzz import fuzz
@@ -16,13 +17,34 @@ from src.constants import (
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
 from src.engine.merge_dispute_agent import MergeDisputeAction, run_merge_dispute_agent
 from src.engine.profiles import VersionedProfile, create_profile, update_profile
-from src.logging_config import display_markdown, get_logger, log
+from src.logging_config import (
+    DecisionKind,
+    display_markdown,
+    get_logger,
+    log,
+    log_decision,
+)
 from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
 from src.utils.profiles import extract_profile_text
 
 # Module-specific logger
 logger = get_logger("mergers")
+
+
+@dataclass
+class MergeStats:
+    """Aggregate counts from a single merge_entities() run."""
+
+    new: int = 0
+    merged: int = 0
+    skipped: int = 0
+    disputed: int = 0
+    errors: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.new + self.merged + self.skipped + self.disputed + self.errors
 
 
 class EntityMerger:
@@ -439,8 +461,9 @@ class EntityMerger:
         similarity_threshold: Optional[float] = None,
         domain: str = "guantanamo",
         domain_config: Optional[DomainConfig] = None,
-    ) -> None:
+    ) -> MergeStats:
         """Merge extracted entities with existing entities database."""
+        stats = MergeStats()
         embedding_manager = get_embedding_manager(domain=domain)
 
         # Reuse caller-provided config or construct one
@@ -474,13 +497,11 @@ class EntityMerger:
             if not entity_key or (
                 isinstance(entity_key, str) and not entity_key.strip()
             ):
-                log(f"Skipping {self.entity_type[:-1]} with empty key", level="error")
+                log_decision(
+                    DecisionKind.ERROR, self.entity_type, "(empty key)", "empty key"
+                )
+                stats.errors += 1
                 continue
-
-            log(
-                f"Processing {self.entity_type[:-1]}: {self._format_key_for_display(entity_key)}",
-                level="processing",
-            )
             entity_updated = False
 
             # --- Cheap evidence text (no LLM) ---
@@ -522,10 +543,13 @@ class EntityMerger:
                     .get("text", "")
                 )
                 if not existing_profile_text:
-                    log(
-                        f"No existing profile text for {self._format_key_for_display(similar_key)}",
-                        level="error",
+                    log_decision(
+                        DecisionKind.ERROR,
+                        self.entity_type,
+                        self._format_key_for_display(entity_key),
+                        f"no profile text on candidate '{self._format_key_for_display(similar_key)}'",
                     )
+                    stats.errors += 1
                     continue
 
                 # Match check: pass evidence_text as new_profile_text
@@ -546,7 +570,7 @@ class EntityMerger:
 
                 log(
                     f"Match check result: {result.is_match} (confidence={result.confidence:.2f}) - {result.reason}",
-                    level="info",
+                    level="debug",
                 )
 
                 # Gray-band routing: when similarity is near the threshold
@@ -566,8 +590,9 @@ class EntityMerger:
                         f"'{self._format_key_for_display(similar_key)}' "
                         f"(similarity={similarity_score:.4f}, threshold={resolved_threshold:.4f}, "
                         f"confidence={result.confidence:.2f}). Routing to dispute agent.",
-                        level="info",
+                        level="debug",
                     )
+                    stats.disputed += 1
                     dispute_decision = run_merge_dispute_agent(
                         entity_type=self.entity_type,
                         new_name=self._format_key_for_display(entity_key),
@@ -586,17 +611,22 @@ class EntityMerger:
                     should_merge = dispute_decision.action == MergeDisputeAction.MERGE
 
                 if not should_merge:
-                    log(
-                        f"The profiles do not match. Skipping merge for '{self._format_key_for_display(entity_key)}'",
-                        level="error",
+                    log_decision(
+                        DecisionKind.SKIP,
+                        self.entity_type,
+                        self._format_key_for_display(entity_key),
+                        f"vs '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}",
                     )
+                    stats.skipped += 1
                     continue
 
-                log(
-                    f"Merging '{self._format_key_for_display(entity_key)}' with existing {self.entity_type[:-1]} "
-                    f"'[bold]{self._format_key_for_display(similar_key)}[/bold]' (similarity: {similarity_score:.4f})",
-                    level="processing",
+                log_decision(
+                    DecisionKind.MERGE,
+                    self.entity_type,
+                    self._format_key_for_display(entity_key),
+                    f"→ '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}",
                 )
+                stats.merged += 1
                 existing_entity = entities[self.entity_type][similar_key]
 
                 # Ensure article is linked
@@ -732,11 +762,6 @@ class EntityMerger:
 
                 if entity_updated:
                     entities[self.entity_type][similar_key] = existing_entity
-                    log(
-                        f"[{self.log_color}]Updated {self.entity_type[:-1]} entity:[/] "
-                        f"{self._format_key_for_display(similar_key)}",
-                        level="success",
-                    )
 
             else:
                 # --- CREATE PATH (expensive profile generation happens here) ---
@@ -753,10 +778,13 @@ class EntityMerger:
 
                 proposed_profile = extract_profile_text(proposed_profile)
                 if not proposed_profile or not proposed_profile.get("text"):
-                    log(
-                        f"Failed to generate profile for {self._format_key_for_display(entity_key)}. Profile data: {proposed_profile}",
-                        level="error",
+                    log_decision(
+                        DecisionKind.ERROR,
+                        self.entity_type,
+                        self._format_key_for_display(entity_key),
+                        "profile generation failed",
                     )
+                    stats.errors += 1
                     continue
 
                 # Embed the FULL profile (this becomes the stored embedding)
@@ -772,11 +800,6 @@ class EntityMerger:
                 )
                 prof_fingerprint = EmbeddingManager.fingerprint_from_result(
                     prof_emb_result
-                )
-
-                log(
-                    f"Creating new {self.entity_type[:-1]} entry for: {self._format_key_for_display(entity_key)}",
-                    level="success",
                 )
 
                 new_entity = self._create_new_entity(
@@ -797,18 +820,25 @@ class EntityMerger:
                 )
 
                 entities[self.entity_type][entity_key] = new_entity
-                log(
-                    f"[{self.log_color}]New {self.entity_type[:-1]} entity:[/] "
-                    f"{self._format_key_for_display(entity_key)}",
-                    level="info",
+                log_decision(
+                    DecisionKind.NEW,
+                    self.entity_type,
+                    self._format_key_for_display(entity_key),
                 )
+                stats.new += 1
                 display_markdown(
                     proposed_profile["text"],
                     title=f"New Profile: {self._format_key_for_display(entity_key)}",
                     style="green",
                 )
 
-        log(f"Completed merge_{self.entity_type} function", level="success")
+        log(
+            f"merge_{self.entity_type} done — "
+            f"new={stats.new} merged={stats.merged} skipped={stats.skipped} "
+            f"disputed={stats.disputed} errors={stats.errors}",
+            level="success",
+        )
+        return stats
 
     def _create_new_entity(
         self,

@@ -1,13 +1,11 @@
 import copy
 import json
-import logging
 import traceback
 from datetime import UTC, datetime
 from typing import Dict, List, Optional, Tuple
 
 import litellm
 from pydantic import BaseModel, Field, field_validator
-from rich.console import Console
 
 from src.config_loader import get_domain_config
 from src.constants import (
@@ -41,8 +39,9 @@ litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
 litellm.callbacks = get_llm_callbacks()
 
-logger = logging.getLogger(__name__)
-console = Console()
+from src.logging_config import get_logger, log  # noqa: E402
+
+logger = get_logger("profiles")
 
 
 class ProfileVersion(BaseModel):
@@ -260,14 +259,11 @@ def _update_profile_internal(
     We treat the existing profile text plus the new article text as input for improvement.
     Returns (updated_profile, improvement_history).
     """
-    console.print(f"\n[cyan]Updating profile for {entity_type} '{entity_name}'[/cyan]")
-    console.print(f"[cyan]Using model: {model_type}[/cyan]")
-    console.print(f"[cyan]New article ID: {new_article_id}[/cyan]")
-    console.print(
-        f"[cyan]Existing profile length: {len(existing_profile.get('text', ''))} characters[/cyan]"
-    )
-    console.print(
-        f"[cyan]New article text length: {len(new_article_text)} characters[/cyan]"
+    log(
+        f"Updating profile for {entity_type} '{entity_name}' "
+        f"(model={model_type}, article={new_article_id}, "
+        f"existing={len(existing_profile.get('text', ''))}ch, new={len(new_article_text)}ch)",
+        level="debug",
     )
 
     try:
@@ -296,7 +292,7 @@ New Article (ID: {new_article_id}):
 {new_article_text}
 """
 
-        console.print("[cyan]Starting iterative improvement process...[/cyan]")
+        log("Starting iterative improvement process", level="debug")
 
         # For the iterative process, we treat the entire text above as the 'prompt' so the LLM merges them.
         # Import already at module level
@@ -351,7 +347,7 @@ New Article (ID: {new_article_id}):
                         sources=existing_profile.get("sources", []) + [new_article_id],
                     )
         except Exception as e:
-            console.print(f"[red]Error parsing iterative improvement result: {e}[/red]")
+            log(f"Error parsing iterative improvement result: {e}", level="error")
             final_result = None
 
         if final_result is None:
@@ -362,26 +358,20 @@ New Article (ID: {new_article_id}):
                 new_article_id,
                 {"existing_profile": existing_profile, "history": history},
             )
-            console.print(
-                f"[red]Failed to generate updated profile for {entity_name}[/red]"
+            log(
+                f"Profile update failed for {entity_name}, falling back to existing profile",
+                level="warning",
             )
-            console.print("[yellow]Falling back to existing profile[/yellow]")
-            # Log the error but return existing profile as fallback
             logger.error(f"Profile update failed: {error}")
             return existing_profile, history
 
-        # Log reflection pass/fail results for each iteration
-        console.print(
-            f"\n[bold magenta]Reflection Iterations for {entity_name}:[/bold magenta]"
-        )
+        # Log reflection pass/fail results
         for idx, entry in enumerate(history):
-            passed_str = "✓ PASSED" if entry.get("valid", False) else "✗ FAILED"
-            console.print(f"[magenta]Iteration {idx + 1} - {passed_str}[/magenta]")
-            console.print(f"  Reasoning: {entry.get('reasoning', '')}")
-            if entry.get("issues"):
-                console.print(f"  Issues: {entry.get('issues', '')}\n")
-            else:
-                console.print()
+            passed_str = "PASSED" if entry.get("valid", False) else "FAILED"
+            log(
+                f"Reflection {idx + 1} for {entity_name}: {passed_str} — {entry.get('reasoning', '')}",
+                level="debug",
+            )
 
         # Convert final_result to a dict
         updated_profile_dict = final_result.model_dump()
@@ -390,8 +380,9 @@ New Article (ID: {new_article_id}):
         if "text" not in updated_profile_dict or not isinstance(
             updated_profile_dict["text"], str
         ):
-            console.print(
-                f"[red]Profile updated but no valid 'text' found. Using fallback text for {entity_name}.[/red]"
+            log(
+                f"Profile updated but no valid 'text' found. Using fallback for {entity_name}.",
+                level="warning",
             )
             updated_profile_dict["text"] = (
                 f"Profile update for {entity_name} is incomplete^[{new_article_id}]"
@@ -402,33 +393,24 @@ New Article (ID: {new_article_id}):
         all_sources = list(set(old_sources + [new_article_id]))
         updated_profile_dict["sources"] = all_sources
 
-        console.print(f"[green]Successfully updated profile for {entity_name}[/green]")
-        console.print(
-            f"[cyan]New profile length: {len(updated_profile_dict.get('text', ''))} characters[/cyan]"
-        )
-        console.print(
-            f"[cyan]New confidence score: {updated_profile_dict.get('confidence', 0.0)}[/cyan]"
-        )
-        console.print(
-            f"[cyan]Number of tags: {len(updated_profile_dict.get('tags', []))}[/cyan]"
-        )
-        console.print(f"[cyan]Improvement iterations: {len(history)}[/cyan]")
-
-        # Optional debug check: confirm final text length
         final_text_len = len(updated_profile_dict.get("text", ""))
-        console.print(f"[cyan]Final text length after update: {final_text_len}[/cyan]")
+        log(
+            f"Updated profile for {entity_name}: "
+            f"{final_text_len}ch, conf={updated_profile_dict.get('confidence', 0.0):.2f}, "
+            f"tags={len(updated_profile_dict.get('tags', []))}, iters={len(history)}",
+            level="debug",
+        )
         if final_text_len < 50:
-            console.print(
-                "[yellow]Warning: Final text is under 50 characters, may be incomplete.[/yellow]"
+            log(
+                f"Profile text for {entity_name} under 50 chars — may be incomplete",
+                level="warning",
             )
 
         return updated_profile_dict, history
 
     except Exception as e:
-        console.print(f"[red]Error updating profile for {entity_name}:[/red]")
-        console.print(f"[red]Error details: {str(e)}[/red]")
-
-        console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
+        log(f"Error updating profile for {entity_name}: {e}", level="error")
+        logger.debug(f"Traceback:\n{traceback.format_exc()}")
         raise
 
 
@@ -479,10 +461,11 @@ def create_profile(
     Create an initial profile for an entity based on article text using structured extraction.
     Returns (profile_dict, versioned_profile, improvement_history).
     """
-    console.print(f"\n[cyan]Creating profile for {entity_type} '{entity_name}'[/cyan]")
-    console.print(f"[cyan]Using model: {model_type}[/cyan]")
-    console.print(f"[cyan]Article ID: {article_id}[/cyan]")
-    console.print(f"[cyan]Article text length: {len(article_text)} characters[/cyan]")
+    log(
+        f"Creating profile for {entity_type} '{entity_name}' "
+        f"(model={model_type}, article={article_id}, {len(article_text)}ch)",
+        level="debug",
+    )
 
     try:
         profile_dict, improvement_history = generate_profile(
@@ -497,20 +480,12 @@ def create_profile(
         # Extract the actual text from nested/parsed fields before logging
         profile_dict = extract_profile_text(profile_dict)
 
-        console.print(
-            f"[green]Successfully generated profile for {entity_name}[/green]"
-        )
-        console.print(
-            f"[cyan]Profile length: {len(profile_dict.get('text', ''))} characters[/cyan]"
-        )
-        console.print(
-            f"[cyan]Confidence score: {profile_dict.get('confidence', 0.0)}[/cyan]"
-        )
-        console.print(
-            f"[cyan]Number of tags: {len(profile_dict.get('tags', []))}[/cyan]"
-        )
-        console.print(
-            f"[cyan]Improvement iterations: {len(improvement_history)}[/cyan]"
+        log(
+            f"Created profile for {entity_name}: "
+            f"{len(profile_dict.get('text', ''))}ch, "
+            f"conf={profile_dict.get('confidence', 0.0):.2f}, "
+            f"tags={len(profile_dict.get('tags', []))}, iters={len(improvement_history)}",
+            level="debug",
         )
 
         # Create versioned profile
@@ -522,9 +497,8 @@ def create_profile(
 
         return profile_dict, versioned_profile, improvement_history
     except Exception as e:
-        console.print(f"[red]Error creating profile for {entity_name}:[/red]")
-        console.print(f"[red]Error details: {str(e)}[/red]")
-        console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
+        log(f"Error creating profile for {entity_name}: {e}", level="error")
+        logger.debug(f"Traceback:\n{traceback.format_exc()}")
         raise
 
 
