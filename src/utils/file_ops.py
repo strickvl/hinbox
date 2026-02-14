@@ -293,9 +293,7 @@ def write_entities_table(
         # Write to a temp file in the same directory (same filesystem) so
         # os.replace is an atomic rename, not a cross-device copy.
         dir_name = os.path.dirname(output_path)
-        fd, tmp_path = tempfile.mkstemp(
-            suffix=".parquet.tmp", dir=dir_name
-        )
+        fd, tmp_path = tempfile.mkstemp(suffix=".parquet.tmp", dir=dir_name)
         os.close(fd)  # mkstemp opens the fd; we only need the path
 
         table = pa.Table.from_pylist(sanitized)
@@ -304,9 +302,7 @@ def write_entities_table(
         # Atomic replace — overwrites any existing file safely.
         os.replace(tmp_path, output_path)
 
-        logger.info(
-            f"Wrote {len(sanitized)} {entity_type} entities to {output_path}"
-        )
+        logger.info(f"Wrote {len(sanitized)} {entity_type} entities to {output_path}")
     except Exception:
         # Clean up the temp file if the rename didn't happen
         if "tmp_path" in locals() and os.path.exists(tmp_path):
