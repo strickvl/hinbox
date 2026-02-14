@@ -478,6 +478,7 @@ nav button:hover {
 }
 
 .home-card {
+    position: relative;
     background: var(--card);
     border-radius: var(--radius-lg);
     padding: 24px;
@@ -521,6 +522,15 @@ nav button:hover {
     font-size: 0.88rem;
     color: var(--primary);
     transition: all 0.15s;
+}
+
+.card-link::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
 }
 
 .card-link:hover {
