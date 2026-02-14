@@ -25,6 +25,7 @@ from src.utils.embeddings.similarity import (
     reset_embedding_manager_cache,
 )
 from src.utils.file_ops import write_entity_to_file
+from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
 
 # Get module-specific logger
 logger = get_logger("process_and_extract")
@@ -361,6 +362,77 @@ def log_processing_summary(
             )
 
 
+def run_profile_grounding_postprocess(
+    *,
+    entities: Dict[str, Dict],
+    rows: List[Dict],
+    processor: ArticleProcessor,
+    model_type: str,
+) -> Dict[str, int]:
+    """Run grounding verification on entity profiles as a batch post-processing step.
+
+    For each entity with citations in its profile, verifies that claims are
+    supported by source article text. Stores the grounding report on each
+    entity as entity["profile_grounding"]. Skips entities whose profile
+    hasn't changed since the last verification (hash-based).
+
+    Returns summary counts of verified/skipped/failed entities.
+    """
+    import hashlib
+
+    # Build article_id -> content map from rows
+    article_texts: Dict[str, str] = {}
+    for i, row in enumerate(rows):
+        info = processor.prepare_article_info(row, i)
+        if info["id"] and info["content"]:
+            article_texts[info["id"]] = info["content"]
+
+    counts = {"verified": 0, "skipped_unchanged": 0, "skipped_no_citations": 0}
+
+    for entity_type, entity_dict in entities.items():
+        for entity_key, entity_data in entity_dict.items():
+            profile_text = (entity_data.get("profile") or {}).get("text", "")
+            if not profile_text:
+                continue
+
+            # Check if profile has citations worth verifying
+            citations = CITATION_RE.findall(profile_text)
+            if not citations:
+                counts["skipped_no_citations"] += 1
+                continue
+
+            # Skip if profile hasn't changed since last grounding check
+            current_hash = hashlib.sha256(profile_text.encode()).hexdigest()
+            existing_grounding = entity_data.get("profile_grounding")
+            if (
+                existing_grounding
+                and isinstance(existing_grounding, dict)
+                and existing_grounding.get("profile_text_hash") == current_hash
+            ):
+                counts["skipped_unchanged"] += 1
+                continue
+
+            # Run grounding verification
+            report = verify_profile_grounding(
+                profile_text=profile_text,
+                article_texts=article_texts,
+                model_type=model_type,
+            )
+
+            entity_data["profile_grounding"] = report.model_dump(exclude_none=True)
+            counts["verified"] += 1
+
+            if report.grounding_score is not None:
+                log(
+                    f"Grounding for {entity_type}/{entity_key}: "
+                    f"score={report.grounding_score:.2f}, "
+                    f"verified={report.verified}/{report.total_citations}",
+                    level="info",
+                )
+
+    return counts
+
+
 def write_results_and_statistics(
     processed_rows: List[Dict],
     entities: Dict[str, Dict],
@@ -545,6 +617,22 @@ def main():
     # Process articles
     article_count = len(rows)
     processed_rows, counters = process_articles_batch(rows, processor, entities, args)
+
+    # Post-processing: verify profile grounding
+    if counters["processed_count"] > 0:
+        log("\nRunning profile grounding verification...", level="processing")
+        grounding_counts = run_profile_grounding_postprocess(
+            entities=entities,
+            rows=processed_rows,
+            processor=processor,
+            model_type=model_type,
+        )
+        log(
+            f"Grounding complete: {grounding_counts['verified']} verified, "
+            f"{grounding_counts['skipped_unchanged']} unchanged, "
+            f"{grounding_counts['skipped_no_citations']} no citations",
+            level="success",
+        )
 
     # Write results and statistics
     write_results_and_statistics(
