@@ -56,6 +56,11 @@ performance:
   queue:
     max_buffered_articles: 32  # backpressure limit for extraction -> merge
 
+# Batching configuration (for embedding calls during merge)
+batching:
+  embed_batch_size: 64        # texts per embedding API call
+  embed_drain_timeout_ms: 100 # reserved for future async drain behaviour
+
 # Merge evidence configuration (for evidence-first similarity search)
 merge_evidence:
   max_chars: 1500         # truncate evidence text to this length

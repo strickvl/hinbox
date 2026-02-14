@@ -41,6 +41,11 @@ dedup:
 #   queue:
 #     max_buffered_articles: 32  # backpressure limit for extraction -> merge
 
+# Batching configuration (uncomment to tune embedding batch sizes)
+# batching:
+#   embed_batch_size: 64        # texts per embedding API call
+#   embed_drain_timeout_ms: 100 # reserved for future async drain behaviour
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction

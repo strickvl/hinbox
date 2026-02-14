@@ -1,7 +1,7 @@
 """Generic entity merger classes to eliminate code duplication."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from rapidfuzz import fuzz
@@ -53,6 +53,58 @@ class MergeStats:
     @property
     def total(self) -> int:
         return self.new + self.merged + self.skipped + self.disputed + self.errors
+
+
+@dataclass
+class _EvidenceWorkItem:
+    """Pre-computed evidence data for one entity in the batch pipeline."""
+
+    idx: int
+    entity_dict: Dict[str, Any]
+    entity_key: Union[str, Tuple[str, str]]
+    evidence_text: str
+    evidence_embedding: List[float] = field(default_factory=list)
+    evidence_model: Optional[str] = None
+    evidence_dim: Optional[int] = None
+    evidence_fingerprint: Optional[str] = None
+
+
+@dataclass
+class _PendingProfileEmbedding:
+    """Tracks a profile that needs batch embedding after all merge decisions."""
+
+    entity_ref: Dict[str, Any]
+    profile_text: str
+
+
+def _batch_embed_texts(
+    embedding_manager: EmbeddingManager,
+    texts: List[str],
+    batch_size: int,
+) -> Tuple[List[List[float]], Optional[str], Optional[int], Optional[str]]:
+    """Batch-embed texts in chunks, returning (vectors, model, dim, fingerprint).
+
+    Vectors are aligned 1:1 with the input texts list.
+    """
+    if not texts:
+        return [], None, None, None
+
+    all_embeddings: List[List[float]] = []
+    model: Optional[str] = None
+    dim: Optional[int] = None
+    fingerprint: Optional[str] = None
+
+    for i in range(0, len(texts), batch_size):
+        chunk = texts[i : i + batch_size]
+        result = embedding_manager.embed_batch_result_sync(chunk)
+        all_embeddings.extend(result.embeddings)
+        model = result.model
+        dim = result.dimension or (
+            len(result.embeddings[0]) if result.embeddings else None
+        )
+        fingerprint = EmbeddingManager.fingerprint_from_result(result)
+
+    return all_embeddings, model, dim, fingerprint
 
 
 class EntityMerger:
@@ -701,19 +753,27 @@ class EntityMerger:
             level="info",
         )
 
-        for entity_dict in extracted_entities:
+        # Batching configuration for embedding calls
+        batching_cfg = domain_cfg.get_batching_config()
+        embed_batch_size = batching_cfg["embed_batch_size"]
+
+        # ── Phase 1: Build evidence texts for all valid entities ──
+        work_items: List[_EvidenceWorkItem] = []
+        for idx, entity_dict in enumerate(extracted_entities):
             entity_key = self._extract_key(entity_dict)
-            if not entity_key or (
-                isinstance(entity_key, str) and not entity_key.strip()
+            if (
+                not entity_key
+                or (isinstance(entity_key, str) and not entity_key.strip())
+                or (
+                    isinstance(entity_key, tuple)
+                    and (not entity_key[0] or not str(entity_key[0]).strip())
+                )
             ):
                 log_decision(
                     DecisionKind.ERROR, self.entity_type, "(empty key)", "empty key"
                 )
                 stats.errors += 1
                 continue
-            entity_updated = False
-
-            # --- Cheap evidence text (no LLM) ---
             evidence_text = self._build_evidence_text(
                 entity_key,
                 entity_dict,
@@ -722,16 +782,40 @@ class EntityMerger:
                 window_chars=evidence_cfg["window_chars"],
                 max_windows=evidence_cfg["max_windows"],
             )
+            work_items.append(
+                _EvidenceWorkItem(
+                    idx=idx,
+                    entity_dict=entity_dict,
+                    entity_key=entity_key,
+                    evidence_text=evidence_text,
+                )
+            )
 
-            # --- Embed evidence text ---
-            emb_result = embedding_manager.embed_text_result_sync(evidence_text)
-            evidence_embedding = (
-                emb_result.embeddings[0] if emb_result.embeddings else []
+        # ── Phase 2: Batch-embed all evidence texts ──
+        if work_items:
+            evidence_texts = [wi.evidence_text for wi in work_items]
+            all_evidence_vecs, ev_model, ev_dim, ev_fp = _batch_embed_texts(
+                embedding_manager, evidence_texts, embed_batch_size
             )
-            emb_model_name = emb_result.model
-            emb_dim = emb_result.dimension or (
-                len(evidence_embedding) if evidence_embedding else None
-            )
+            for j, wi in enumerate(work_items):
+                wi.evidence_embedding = all_evidence_vecs[j]
+                wi.evidence_model = ev_model
+                wi.evidence_dim = ev_dim or (
+                    len(all_evidence_vecs[j]) if all_evidence_vecs[j] else None
+                )
+                wi.evidence_fingerprint = ev_fp
+
+        # ── Phase 3: Sequential merge decisions (using precomputed embeddings) ──
+        pending_profiles: List[_PendingProfileEmbedding] = []
+
+        for wi in work_items:
+            entity_key = wi.entity_key
+            entity_dict = wi.entity_dict
+            evidence_text = wi.evidence_text
+            evidence_embedding = wi.evidence_embedding
+            emb_model_name = wi.evidence_model
+            emb_dim = wi.evidence_dim
+            entity_updated = False
 
             # --- Similarity search (variant-aware) ---
             similar_key, similarity_score = self.find_similar_entity(
@@ -764,20 +848,38 @@ class EntityMerger:
 
             if similar_key:
                 # --- MERGE PATH (no create_profile needed) ---
-                existing_profile_text = (
-                    entities[self.entity_type][similar_key]
-                    .get("profile", {})
-                    .get("text", "")
+                candidate_entity = entities[self.entity_type][similar_key]
+                existing_profile_text = candidate_entity.get("profile", {}).get(
+                    "text", ""
                 )
-                if not existing_profile_text:
-                    log_decision(
-                        DecisionKind.ERROR,
-                        self.entity_type,
-                        self._format_key_for_display(entity_key),
-                        f"no profile text on candidate '{self._format_key_for_display(similar_key)}'",
+                existing_profile_missing = not bool(existing_profile_text)
+                if existing_profile_missing:
+                    # Synthesise a deterministic stand-in so match-check /
+                    # dispute can still run; the real profile will be created
+                    # via the merge-path fallback if the merge is accepted.
+                    existing_profile_text = self._build_evidence_text(
+                        similar_key,
+                        candidate_entity,
+                        article_content,
+                        max_chars=evidence_cfg["max_chars"],
+                        window_chars=evidence_cfg["window_chars"],
+                        max_windows=evidence_cfg["max_windows"],
                     )
-                    stats.errors += 1
-                    continue
+                    if not existing_profile_text:
+                        log_decision(
+                            DecisionKind.ERROR,
+                            self.entity_type,
+                            self._format_key_for_display(entity_key),
+                            f"no profile text on candidate '{self._format_key_for_display(similar_key)}'"
+                            " and could not synthesise stand-in",
+                        )
+                        stats.errors += 1
+                        continue
+                    log(
+                        f"Candidate '{self._format_key_for_display(similar_key)}' "
+                        f"missing profile; using synthesised evidence for match-check",
+                        level="debug",
+                    )
 
                 # Match check: pass evidence_text as new_profile_text
                 if model_type == "ollama":
@@ -863,7 +965,9 @@ class EntityMerger:
                     similar_key, entity_key
                 )
                 if swapped:
-                    existing_entity = entities[self.entity_type].pop(similar_key)
+                    existing_entity = entities[self.entity_type].pop(
+                        similar_key
+                    )  # same object as candidate_entity
                     # Update the entity's own name/title field
                     if self.entity_type == "people":
                         existing_entity["name"] = canonical_key
@@ -893,7 +997,7 @@ class EntityMerger:
                         level="info",
                     )
                 else:
-                    existing_entity = entities[self.entity_type][similar_key]
+                    existing_entity = candidate_entity
 
                 # Ensure article is linked
                 existing_entity.setdefault("articles", [])
@@ -912,101 +1016,111 @@ class EntityMerger:
                     )
                     entity_updated = True
 
-                    # Update profile
-                    if "profile" in existing_entity:
-                        # Load or create versioned profile
-                        versioned_profile = (
-                            VersionedProfile(**existing_entity["profile_versions"])
-                            if ENABLE_PROFILE_VERSIONING
-                            and "profile_versions" in existing_entity
-                            else VersionedProfile()
-                        )
+                # Profile update or repair.
+                # Normal update: new article triggers update_profile on existing profile.
+                # Profile repair: matched entity with missing/empty profile gets
+                # create_profile regardless of whether the article was already linked
+                # (the entity is broken and needs a profile to function properly).
+                needs_profile_update = (
+                    not article_exists and not existing_profile_missing
+                )
+                needs_profile_repair = existing_profile_missing
 
-                        updated_profile, versioned_profile, reflection_history = (
-                            update_profile(
-                                self.entity_type[:-1],
-                                self._format_key_for_display(similar_key),
-                                existing_entity["profile"],
-                                versioned_profile,
-                                article_content,
-                                article_id,
-                                model_type,
-                                domain,
-                            )
-                        )
-                        existing_entity["profile"] = updated_profile
-                        existing_entity["profile_versions"] = (
-                            versioned_profile.model_dump()
-                            if ENABLE_PROFILE_VERSIONING
-                            else None
-                        )
-                        upd_result = embedding_manager.embed_text_result_sync(
-                            updated_profile["text"]
-                        )
-                        upd_vec = (
-                            upd_result.embeddings[0] if upd_result.embeddings else []
-                        )
-                        existing_entity["profile_embedding"] = upd_vec
-                        existing_entity["profile_embedding_model"] = upd_result.model
-                        existing_entity["profile_embedding_dim"] = (
-                            upd_result.dimension or (len(upd_vec) if upd_vec else None)
-                        )
-                        existing_entity["profile_embedding_fingerprint"] = (
-                            EmbeddingManager.fingerprint_from_result(upd_result)
-                        )
+                if needs_profile_update:
+                    # --- Normal update path: existing entity has a usable profile ---
+                    versioned_profile = (
+                        VersionedProfile(**existing_entity["profile_versions"])
+                        if ENABLE_PROFILE_VERSIONING
+                        and "profile_versions" in existing_entity
+                        else VersionedProfile()
+                    )
 
-                        # Reflection history
-                        existing_entity.setdefault("reflection_history", [])
-                        existing_entity["reflection_history"].extend(reflection_history)
-
-                        display_markdown(
-                            updated_profile["text"],
-                            title=f"Updated Profile: {self._format_key_for_display(similar_key)}",
-                            style="yellow",
+                    updated_profile, versioned_profile, reflection_history = (
+                        update_profile(
+                            self.entity_type[:-1],
+                            self._format_key_for_display(similar_key),
+                            existing_entity["profile"],
+                            versioned_profile,
+                            article_content,
+                            article_id,
+                            model_type,
+                            domain,
                         )
-
-                        # Update search_embedding with latest evidence
-                        existing_entity["search_embedding"] = evidence_embedding
-                        existing_entity["search_embedding_model"] = emb_model_name
-                        existing_entity["search_embedding_dim"] = emb_dim
-                        existing_entity["search_embedding_fingerprint"] = (
-                            EmbeddingManager.fingerprint_from_result(emb_result)
+                    )
+                    existing_entity["profile"] = updated_profile
+                    existing_entity["profile_versions"] = (
+                        versioned_profile.model_dump()
+                        if ENABLE_PROFILE_VERSIONING
+                        else None
+                    )
+                    # Defer profile embedding to batch phase 4
+                    pending_profiles.append(
+                        _PendingProfileEmbedding(
+                            entity_ref=existing_entity,
+                            profile_text=updated_profile["text"],
                         )
+                    )
+
+                    # Reflection history
+                    existing_entity.setdefault("reflection_history", [])
+                    existing_entity["reflection_history"].extend(reflection_history)
+
+                    display_markdown(
+                        updated_profile["text"],
+                        title=f"Updated Profile: {self._format_key_for_display(similar_key)}",
+                        style="yellow",
+                    )
+
+                    # Update search_embedding with latest evidence
+                    existing_entity["search_embedding"] = evidence_embedding
+                    existing_entity["search_embedding_model"] = emb_model_name
+                    existing_entity["search_embedding_dim"] = emb_dim
+                    existing_entity["search_embedding_fingerprint"] = (
+                        wi.evidence_fingerprint
+                    )
+                    entity_updated = True
+
+                elif needs_profile_repair:
+                    # --- Merge-path fallback: create profile for matched entity
+                    # that has a missing or empty profile (repair). ---
+                    log(
+                        f"Repairing missing profile for "
+                        f"'{self._format_key_for_display(similar_key)}'",
+                        level="info",
+                    )
+                    new_profile, new_versioned_profile, reflection_history = (
+                        create_profile(
+                            self.entity_type[:-1],
+                            self._format_key_for_display(similar_key),
+                            article_content,
+                            article_id,
+                            model_type,
+                            domain,
+                        )
+                    )
+                    new_profile = extract_profile_text(new_profile)
+                    if not new_profile or not new_profile.get("text"):
+                        log_decision(
+                            DecisionKind.ERROR,
+                            self.entity_type,
+                            self._format_key_for_display(similar_key),
+                            "profile repair failed",
+                        )
+                        stats.errors += 1
+                        # Still allow article link and alias absorption below
                     else:
-                        new_profile, new_versioned_profile, reflection_history = (
-                            create_profile(
-                                self.entity_type[:-1],
-                                self._format_key_for_display(similar_key),
-                                article_content,
-                                article_id,
-                                model_type,
-                                domain,
-                            )
-                        )
                         existing_entity["profile"] = new_profile
                         existing_entity["profile_versions"] = (
                             new_versioned_profile.model_dump()
                             if ENABLE_PROFILE_VERSIONING
                             else None
                         )
-                        new_emb_result = embedding_manager.embed_text_result_sync(
-                            new_profile["text"]
-                        )
-                        new_vec = (
-                            new_emb_result.embeddings[0]
-                            if new_emb_result.embeddings
-                            else []
-                        )
-                        existing_entity["profile_embedding"] = new_vec
-                        existing_entity["profile_embedding_model"] = (
-                            new_emb_result.model
-                        )
-                        existing_entity["profile_embedding_dim"] = (
-                            new_emb_result.dimension
-                            or (len(new_vec) if new_vec else None)
-                        )
-                        existing_entity["profile_embedding_fingerprint"] = (
-                            EmbeddingManager.fingerprint_from_result(new_emb_result)
+                        # Defer profile embedding to batch phase 4
+                        pending_profiles.append(
+                            _PendingProfileEmbedding(
+                                entity_ref=existing_entity,
+                                profile_text=new_profile["text"],
+                            )
                         )
 
                         existing_entity.setdefault("reflection_history", [])
@@ -1017,28 +1131,29 @@ class EntityMerger:
                         existing_entity["search_embedding_model"] = emb_model_name
                         existing_entity["search_embedding_dim"] = emb_dim
                         existing_entity["search_embedding_fingerprint"] = (
-                            EmbeddingManager.fingerprint_from_result(emb_result)
+                            wi.evidence_fingerprint
                         )
 
                         display_markdown(
                             new_profile["text"],
-                            title=f"New Profile: {self._format_key_for_display(similar_key)}",
+                            title=f"Repaired Profile: {self._format_key_for_display(similar_key)}",
                             style="green",
                         )
+                        entity_updated = True
 
-                    # Alternative names/titles if different
-                    if entity_key != similar_key:
-                        if self._add_alternative_name(
-                            existing_entity, entity_key, source_entity=entity_dict
-                        ):
-                            entity_updated = True
+                # Alternative names/titles if different
+                if entity_key != similar_key:
+                    if self._add_alternative_name(
+                        existing_entity, entity_key, source_entity=entity_dict
+                    ):
+                        entity_updated = True
 
-                    # Absorb incoming aliases so future blocking can find them
-                    existing_entity.setdefault("aliases", [])
-                    for alias in entity_dict.get("aliases", []):
-                        if alias and alias not in existing_entity["aliases"]:
-                            existing_entity["aliases"].append(alias)
-                            entity_updated = True
+                # Absorb incoming aliases so future blocking can find them
+                existing_entity.setdefault("aliases", [])
+                for alias in entity_dict.get("aliases", []):
+                    if alias and alias not in existing_entity["aliases"]:
+                        existing_entity["aliases"].append(alias)
+                        entity_updated = True
 
                 # Keep earliest extraction timestamp
                 existing_timestamp = existing_entity.get(
@@ -1076,36 +1191,22 @@ class EntityMerger:
                     stats.errors += 1
                     continue
 
-                # Embed the FULL profile (this becomes the stored embedding)
-                prof_emb_result = embedding_manager.embed_text_result_sync(
-                    proposed_profile["text"]
-                )
-                profile_embedding = (
-                    prof_emb_result.embeddings[0] if prof_emb_result.embeddings else []
-                )
-                prof_model = prof_emb_result.model
-                prof_dim = prof_emb_result.dimension or (
-                    len(profile_embedding) if profile_embedding else None
-                )
-                prof_fingerprint = EmbeddingManager.fingerprint_from_result(
-                    prof_emb_result
-                )
-
+                # Create entity with empty profile embedding (filled in phase 5)
                 new_entity = self._create_new_entity(
                     entity_dict,
                     entity_key,
                     proposed_profile,
                     proposed_versioned_profile,
-                    profile_embedding,
+                    [],  # profile_embedding — deferred to batch phase 4
                     reflection_history,
                     article_id,
                     article_title,
                     article_url,
                     article_published_date,
                     extraction_timestamp,
-                    embedding_model=prof_model,
-                    embedding_dim=prof_dim,
-                    embedding_fingerprint=prof_fingerprint,
+                    embedding_model=None,
+                    embedding_dim=None,
+                    embedding_fingerprint=None,
                     search_embedding=evidence_embedding,
                     search_embedding_model=emb_model_name,
                     search_embedding_dim=emb_dim,
@@ -1123,6 +1224,30 @@ class EntityMerger:
                     title=f"New Profile: {self._format_key_for_display(entity_key)}",
                     style="green",
                 )
+
+                # Defer profile embedding to batch phase 4
+                pending_profiles.append(
+                    _PendingProfileEmbedding(
+                        entity_ref=new_entity,
+                        profile_text=proposed_profile["text"],
+                    )
+                )
+
+        # ── Phase 4: Batch-embed all profile texts ──
+        # ── Phase 5: Commit profile embedding mutations ──
+        if pending_profiles:
+            profile_texts = [p.profile_text for p in pending_profiles]
+            prof_vecs, prof_model, prof_dim, prof_fp = _batch_embed_texts(
+                embedding_manager, profile_texts, embed_batch_size
+            )
+            for j, pending in enumerate(pending_profiles):
+                vec = prof_vecs[j]
+                pending.entity_ref["profile_embedding"] = vec
+                pending.entity_ref["profile_embedding_model"] = prof_model
+                pending.entity_ref["profile_embedding_dim"] = prof_dim or (
+                    len(vec) if vec else None
+                )
+                pending.entity_ref["profile_embedding_fingerprint"] = prof_fp
 
         log(
             f"merge_{self.entity_type} done — "

@@ -178,6 +178,27 @@ class DomainConfig:
 
         return result
 
+    def get_batching_config(self) -> Dict[str, int]:
+        """Get batching configuration for embedding calls during merge.
+
+        Reads from the ``batching`` section of the domain config.
+        Missing keys fall back to safe defaults.
+        """
+        config = self.load_config()
+        section = config.get("batching", {})
+
+        defaults: Dict[str, int] = {
+            "embed_batch_size": 64,
+            "embed_drain_timeout_ms": 100,
+        }
+
+        result = dict(defaults)
+        for key in defaults:
+            if key in section:
+                result[key] = max(1, int(section[key]))
+
+        return result
+
     def get_merge_evidence_config(self) -> Dict[str, Any]:
         """Get merge evidence configuration for evidence-first similarity search.
 

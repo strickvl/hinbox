@@ -30,10 +30,19 @@ from src.engine.merge_dispute_agent import (
 
 
 class StubEmbeddingResult:
-    def __init__(self, vec: List[float], model: str = "stub-model"):
-        self.embeddings = [list(vec)]
+    def __init__(
+        self,
+        vec: List[float] = None,
+        model: str = "stub-model",
+        *,
+        vecs: List[List[float]] = None,
+    ):
+        if vecs is not None:
+            self.embeddings = [list(v) for v in vecs]
+        else:
+            self.embeddings = [list(vec)] if vec is not None else []
         self.model = model
-        self.dimension = len(vec) if vec else None
+        self.dimension = len(self.embeddings[0]) if self.embeddings else None
 
 
 class _StubMode:
@@ -52,6 +61,10 @@ class StubEmbeddingManager:
 
     def embed_text_result_sync(self, text: str) -> StubEmbeddingResult:
         return StubEmbeddingResult(self._vec, self._model)
+
+    def embed_batch_result_sync(self, texts: List[str]) -> StubEmbeddingResult:
+        vecs = [list(self._vec) for _ in texts]
+        return StubEmbeddingResult(model=self._model, vecs=vecs)
 
     def get_active_model_name(self) -> str:
         return self._model
