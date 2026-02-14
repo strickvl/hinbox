@@ -28,7 +28,11 @@ from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
 from src.utils.name_variants import (
     compute_acronym,
+    is_acronym_form,
+    is_low_quality_name,
+    is_name_contained,
     names_likely_same,
+    score_canonical_name,
 )
 from src.utils.profiles import extract_profile_text
 
@@ -164,6 +168,58 @@ class EntityMerger:
         if isinstance(key, tuple):
             return str(key[0])
         return str(key)
+
+    def _score_canonical_name(self, name: str) -> float:
+        """Score how 'canonical' a name is.  Higher = better.
+
+        Delegates to the shared ``score_canonical_name()`` in name_variants.
+        """
+        return score_canonical_name(name)
+
+    def _pick_canonical_key(
+        self,
+        existing_key: Union[str, Tuple],
+        incoming_key: Union[str, Tuple],
+    ) -> Tuple[Union[str, Tuple], Union[str, Tuple], bool]:
+        """Decide which entity key should be canonical after a merge.
+
+        Returns (canonical_key, demoted_key, swapped) where *swapped* is
+        True when the incoming name is better and the entity should be
+        re-keyed.
+        """
+        existing_name = self._lexical_text(existing_key)
+        incoming_name = self._lexical_text(incoming_key)
+
+        # Identical (case-insensitive) — no swap needed
+        if existing_name.lower() == incoming_name.lower():
+            return existing_key, incoming_key, False
+
+        existing_score = self._score_canonical_name(existing_name)
+        incoming_score = self._score_canonical_name(incoming_name)
+
+        # Containment bonus: the longer, more complete name gets +1.0
+        if is_name_contained(existing_name, incoming_name):
+            # incoming contains existing → incoming is more complete
+            incoming_score += 1.0
+        elif is_name_contained(incoming_name, existing_name):
+            # existing contains incoming → existing is more complete
+            existing_score += 1.0
+
+        # Acronym derivation bonus: full form gets +2.0 over its acronym
+        if is_acronym_form(existing_name):
+            derived = compute_acronym(incoming_name)
+            if derived and derived.upper() == existing_name.replace(".", "").upper():
+                incoming_score += 2.0
+        if is_acronym_form(incoming_name):
+            derived = compute_acronym(existing_name)
+            if derived and derived.upper() == incoming_name.replace(".", "").upper():
+                existing_score += 2.0
+
+        # Swap only when the incoming name is meaningfully better
+        if incoming_score > existing_score + 0.3:
+            return incoming_key, existing_key, True
+
+        return existing_key, incoming_key, False
 
     def _collect_entity_variant_texts(
         self,
@@ -691,6 +747,22 @@ class EntityMerger:
             )
 
             if similar_key:
+                # ── Guard: reject merge into low-quality candidate ──
+                # If the existing entity has a generic/descriptive name like
+                # "Defense departments" or "military base in Cuba", skip the
+                # merge so the new (presumably better-named) entity gets
+                # created fresh instead.
+                similar_display = self._format_key_for_display(similar_key)
+                if is_low_quality_name(similar_display, entity_type=self.entity_type):
+                    log_decision(
+                        DecisionKind.SKIP,
+                        self.entity_type,
+                        self._format_key_for_display(entity_key),
+                        f"candidate '{similar_display}' has low-quality name, forcing creation",
+                    )
+                    similar_key = None  # fall through to creation path
+
+            if similar_key:
                 # --- MERGE PATH (no create_profile needed) ---
                 existing_profile_text = (
                     entities[self.entity_type][similar_key]
@@ -714,6 +786,7 @@ class EntityMerger:
                         self._format_key_for_display(similar_key),
                         evidence_text,
                         existing_profile_text,
+                        entity_type=self.entity_type,
                     )
                 else:
                     result = cloud_model_check_match(
@@ -721,6 +794,7 @@ class EntityMerger:
                         self._format_key_for_display(similar_key),
                         evidence_text,
                         existing_profile_text,
+                        entity_type=self.entity_type,
                     )
 
                 log(
@@ -782,7 +856,44 @@ class EntityMerger:
                     f"→ '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}",
                 )
                 stats.merged += 1
-                existing_entity = entities[self.entity_type][similar_key]
+
+                # ── Canonical name selection ──
+                # Pick the better name regardless of creation order
+                canonical_key, demoted_key, swapped = self._pick_canonical_key(
+                    similar_key, entity_key
+                )
+                if swapped:
+                    existing_entity = entities[self.entity_type].pop(similar_key)
+                    # Update the entity's own name/title field
+                    if self.entity_type == "people":
+                        existing_entity["name"] = canonical_key
+                    elif self.entity_type in ("organizations", "locations"):
+                        existing_entity["name"] = (
+                            canonical_key[0]
+                            if isinstance(canonical_key, tuple)
+                            else canonical_key
+                        )
+                        if isinstance(canonical_key, tuple) and len(canonical_key) > 1:
+                            existing_entity["type"] = canonical_key[1]
+                    elif self.entity_type == "events":
+                        existing_entity["title"] = (
+                            canonical_key[0]
+                            if isinstance(canonical_key, tuple)
+                            else canonical_key
+                        )
+                        if isinstance(canonical_key, tuple) and len(canonical_key) > 1:
+                            existing_entity["start_date"] = canonical_key[1]
+                    # Demoted name goes to alternative_names
+                    self._add_alternative_name(existing_entity, demoted_key)
+                    similar_key = canonical_key
+                    entity_updated = True
+                    log(
+                        f"Canonical name: '{self._format_key_for_display(canonical_key)}' "
+                        f"(demoted '{self._format_key_for_display(demoted_key)}' to alternative)",
+                        level="info",
+                    )
+                else:
+                    existing_entity = entities[self.entity_type][similar_key]
 
                 # Ensure article is linked
                 existing_entity.setdefault("articles", [])

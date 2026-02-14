@@ -142,7 +142,13 @@ Note: "Pentagon" and "DoD" are NOT extracted separately — they refer to the sa
 ## Common Mistakes to Avoid
 
 - **Extracting the same organization twice under different names** (e.g., both "ICE" and "Immigration and Customs Enforcement", or both "Pentagon" and "Department of Defense")
-- Extracting generic/vague references as organizations (e.g., "Defense departments", "intelligence agencies", "legal aid organizations")
+- **Extracting generic/vague references as organizations.** These are NEVER entities:
+  - "Defense departments" — use "Department of Defense" if that's what's meant
+  - "intelligence agencies" — name the specific agency (CIA, FBI, NSA)
+  - "legal aid organizations" — name the specific organization
+  - "military officials" — this is a group of people, not an organization
+  - "security forces" — name the specific force or unit
+  - If you cannot identify a specific named organization, OMIT it entirely
 - Including individual people instead of organizations
 - Missing organizational units mentioned in passing
 - Using incorrect organization types

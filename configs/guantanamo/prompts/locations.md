@@ -154,8 +154,33 @@ Return a JSON array of objects. Each location MUST have:
 - Military commission locations
 - Administrative hearing venues
 
+## Naming Rules (CRITICAL)
+
+1. **Use proper nouns, not descriptive phrases.** Every location name must be
+   a recognizable proper noun, not a description of what it is:
+   - CORRECT: "Naval Station Guantanamo Bay" — a proper name
+   - WRONG: "U.S. military base in Guantanamo Bay" — a description
+   - CORRECT: "Bagram Air Base" — a proper name
+   - WRONG: "military base in Afghanistan" — a description
+   - CORRECT: "Guantanamo Bay" — a proper name
+   - WRONG: "detention center at Guantanamo" — a description
+
+2. **Never use prepositional descriptions as names.** If a location is described
+   with "in", "at", "near", or "outside" followed by another place, that is a
+   description, not a proper name. Extract the underlying proper name instead.
+
+3. **Guantanamo canonicalization:** When articles refer to the base/detention
+   complex using phrases like "the Guantanamo Bay facility", "the base at
+   Guantanamo", or "GTMO", extract as "Guantanamo Bay" with type
+   "military_base". Only use "Naval Station Guantanamo Bay" if the article
+   specifically uses that name.
+
+4. **"U.S. soil" is not a location name.** When articles mention "on U.S. soil"
+   or "American territory", extract as "United States" with type "country".
+
 ## Common Mistakes to Avoid
 
+- **Using descriptive phrases instead of proper names** (e.g., "prison near Havana" instead of its actual name)
 - Missing specific camp names within Guantanamo
 - Ignoring foreign locations mentioned in detainee backgrounds
 - Confusing similar location names (e.g., Washington state vs. Washington D.C.)

@@ -22,7 +22,11 @@ from src.constants import (
     QC_MIN_NAME_LENGTH,
 )
 from src.logging_config import get_logger
-from src.utils.name_variants import names_likely_same
+from src.utils.name_variants import (
+    is_low_quality_name,
+    names_likely_same,
+    score_canonical_name,
+)
 
 logger = get_logger("quality_controls")
 
@@ -131,8 +135,8 @@ def _collapse_within_article_variants(
     For organizations and locations, detects when two extracted entities
     likely refer to the same real-world entity (via acronym matching,
     substring containment, or configured equivalence groups) and merges
-    them — keeping the longer/more descriptive name and adding the
-    shorter one to an ``aliases`` list.
+    them — keeping the more canonical name (proper nouns over descriptive
+    phrases) and adding the other to an ``aliases`` list.
 
     For people and events, this is a no-op (returns entities unchanged).
 
@@ -180,8 +184,8 @@ def _collapse_within_article_variants(
                 entity_type=entity_type,
                 equivalence_groups=equivalence_groups,
             ):
-                # Keep the longer/more descriptive name
-                if len(name_i) >= len(name_j):
+                # Keep the more canonical name (proper nouns over descriptions)
+                if score_canonical_name(name_i) >= score_canonical_name(name_j):
                     keep_idx, drop_idx = i, j
                 else:
                     keep_idx, drop_idx = j, i
@@ -286,6 +290,17 @@ def run_extraction_qc(
         flags.append("high_drop_rate")
     if report.deduped > len(entities) * 0.5 and len(entities) > 2:
         flags.append("many_duplicates")
+
+    # 6. Flag if many entities have generic/descriptive names
+    if cleaned:
+        name_field = "title" if entity_type == "events" else "name"
+        low_quality_count = sum(
+            1
+            for e in cleaned
+            if is_low_quality_name(e.get(name_field, ""), entity_type=entity_type)
+        )
+        if low_quality_count >= 2:
+            flags.append("many_low_quality_names")
 
     report.flags = flags
     return cleaned, report

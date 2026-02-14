@@ -279,3 +279,115 @@ def names_likely_same(
             return True
 
     return False
+
+
+# ──────────────────────────────────────────────
+# Name quality assessment
+# ──────────────────────────────────────────────
+
+# Generic plural heads that indicate a category, not a specific entity.
+# Only flagged when they appear as the LAST word (head noun) of the name.
+_GENERIC_PLURAL_HEADS: FrozenSet[str] = frozenset(
+    {
+        "departments",
+        "agencies",
+        "officials",
+        "authorities",
+        "forces",
+        "organizations",
+        "institutions",
+        "offices",
+        "committees",
+        "groups",
+        "teams",
+        "units",
+        "branches",
+        "divisions",
+    }
+)
+
+# Preposition patterns that signal a descriptive phrase rather than a proper noun.
+# e.g. "military base in Guantánamo Bay", "prison near Havana"
+_DESCRIPTIVE_LOCATION_RE = re.compile(
+    r"(?i)^(?:(?:u\.s\.?|american|cuban|military)\s+)?"
+    r"(?:military\s+)?(?:base|prison|facility|camp|detention\s+center|jail|compound|complex|site)"
+    r"\s+(?:in|at|near|outside|on)\s+",
+)
+
+# Leading articles to strip for scoring purposes
+_LEADING_ARTICLE_RE = re.compile(r"(?i)^the\s+")
+
+
+def is_low_quality_name(name: str, *, entity_type: str = "organizations") -> bool:
+    """Check if a name is likely a generic/descriptive phrase rather than a proper entity name.
+
+    Returns True for:
+    - Generic plurals used as the head noun: "Defense departments", "security agencies"
+    - Descriptive location phrases: "U.S. military base in Guantánamo Bay"
+
+    Conservative: only flags clear-cut cases to avoid false positives.
+    """
+    if not name or not name.strip():
+        return False
+
+    cleaned = name.strip()
+    words = cleaned.split()
+
+    # Generic plural head noun (last word is a generic plural)
+    if len(words) >= 2 and words[-1].lower() in _GENERIC_PLURAL_HEADS:
+        return True
+
+    # Descriptive location phrase (entity_type-agnostic check)
+    if _DESCRIPTIVE_LOCATION_RE.match(cleaned):
+        return True
+
+    return False
+
+
+def strip_leading_article(name: str) -> str:
+    """Strip a leading 'the' from a name for scoring.
+
+    'the Pentagon' → 'Pentagon', 'The New York Times' → 'New York Times'
+    """
+    return _LEADING_ARTICLE_RE.sub("", name).strip()
+
+
+# Metonymic / contextual location suffixes.
+# These indicate a colloquial reference ("U.S. soil", "Cuban waters")
+# rather than a proper name.
+_CONTEXTUAL_SUFFIXES: FrozenSet[str] = frozenset(
+    {"soil", "territory", "waters", "border", "grounds", "arena", "area"}
+)
+
+
+def score_canonical_name(name: str) -> float:
+    """Score how 'canonical' a name is.  Higher = better.
+
+    Shared scoring function used by both within-article variant collapse
+    and the merge-time canonical key picker.
+
+    Signals:
+    - Length bonus (normalized, capped at 50 chars): longer = more formal
+    - Acronym penalty (-2.0): abbreviations like "ICE", "DHS"
+    - Contextual suffix penalty (-3.0): metonymic references like "U.S. soil"
+    - Low-quality name penalty (-4.0): generic plurals and descriptive phrases
+    """
+    score = 0.0
+
+    # Prefer longer names (more specific / formal)
+    score += min(len(name) / 50.0, 1.0)
+
+    # Penalize pure acronym forms (ICE, DHS, FBI ...)
+    if is_acronym_form(name):
+        score -= 2.0
+
+    # Penalize metonymic / contextual location suffixes
+    words = name.lower().split()
+    if words and words[-1] in _CONTEXTUAL_SUFFIXES:
+        score -= 3.0
+
+    # Penalize generic plurals and descriptive phrases
+    if is_low_quality_name(name):
+        score -= 4.0
+
+    return score

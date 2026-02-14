@@ -6,10 +6,13 @@ from src.utils.name_variants import (
     compute_acronym,
     expand_equivalents,
     is_acronym_form,
+    is_low_quality_name,
     is_name_contained,
     names_likely_same,
     normalize_display,
     normalize_for_match,
+    score_canonical_name,
+    strip_leading_article,
 )
 
 # ──────────────────────────────────────────────
@@ -334,3 +337,102 @@ class TestNamesLikelySame:
             )
             is True
         )
+
+
+# ──────────────────────────────────────────────
+# Name quality assessment
+# ──────────────────────────────────────────────
+
+
+class TestIsLowQualityName:
+    """Tests for is_low_quality_name detecting generic/descriptive phrases."""
+
+    def test_generic_plural_organizations(self):
+        assert is_low_quality_name("Defense departments") is True
+        assert is_low_quality_name("intelligence agencies") is True
+        assert is_low_quality_name("security forces") is True
+        assert is_low_quality_name("government officials") is True
+
+    def test_proper_org_names_not_flagged(self):
+        assert is_low_quality_name("Department of Defense") is False
+        assert is_low_quality_name("FBI") is False
+        assert is_low_quality_name("Immigration and Customs Enforcement") is False
+        assert is_low_quality_name("Joint Task Force Guantanamo") is False
+
+    def test_single_word_not_flagged(self):
+        """Single words shouldn't be flagged even if they're plural."""
+        assert is_low_quality_name("departments") is False
+        assert is_low_quality_name("Navy") is False
+
+    def test_descriptive_location_phrases(self):
+        assert is_low_quality_name("U.S. military base in Guantanamo Bay") is True
+        assert is_low_quality_name("military base in Cuba") is True
+        assert is_low_quality_name("detention center at Guantanamo") is True
+        assert is_low_quality_name("prison near Havana") is True
+        assert is_low_quality_name("facility at Bagram") is True
+
+    def test_proper_location_names_not_flagged(self):
+        assert is_low_quality_name("Naval Station Guantanamo Bay") is False
+        assert is_low_quality_name("Guantanamo Bay") is False
+        assert is_low_quality_name("Camp Delta") is False
+        assert is_low_quality_name("Pentagon") is False
+
+    def test_empty_and_whitespace(self):
+        assert is_low_quality_name("") is False
+        assert is_low_quality_name("   ") is False
+
+
+class TestStripLeadingArticle:
+    """Tests for strip_leading_article."""
+
+    def test_strips_the(self):
+        assert strip_leading_article("the Pentagon") == "Pentagon"
+        assert strip_leading_article("The New York Times") == "New York Times"
+
+    def test_preserves_without_article(self):
+        assert strip_leading_article("Pentagon") == "Pentagon"
+        assert strip_leading_article("FBI") == "FBI"
+
+    def test_case_insensitive(self):
+        assert strip_leading_article("THE PENTAGON") == "PENTAGON"
+
+
+# ──────────────────────────────────────────────
+# score_canonical_name
+# ──────────────────────────────────────────────
+
+
+class TestScoreCanonicalName:
+    """Tests for the standalone canonical name scoring function."""
+
+    def test_longer_name_scores_higher(self):
+        assert score_canonical_name("Republic of Cuba") > score_canonical_name("Cuba")
+
+    def test_acronym_penalized(self):
+        assert score_canonical_name("ICE") < 0
+        assert score_canonical_name(
+            "Immigration and Customs Enforcement"
+        ) > score_canonical_name("ICE")
+
+    def test_contextual_suffix_penalized(self):
+        assert score_canonical_name("U.S. soil") < 0
+        assert score_canonical_name("United States") > score_canonical_name("U.S. soil")
+
+    def test_low_quality_name_penalized(self):
+        """Generic plurals and descriptive phrases get a heavy penalty."""
+        assert score_canonical_name("Defense departments") < 0
+        assert score_canonical_name("Department of Defense") > score_canonical_name(
+            "Defense departments"
+        )
+
+    def test_descriptive_location_penalized(self):
+        """Descriptive location phrases should score much lower than proper names."""
+        assert score_canonical_name(
+            "U.S. military base in Guantanamo Bay"
+        ) < score_canonical_name("Guantanamo Bay")
+
+    def test_normal_name_positive(self):
+        assert score_canonical_name("United States") > 0
+
+    def test_empty_zero(self):
+        assert score_canonical_name("") == 0.0

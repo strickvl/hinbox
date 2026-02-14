@@ -14,7 +14,12 @@ from src.utils.quality_controls import run_extraction_qc
 logger = get_logger("article_processor")
 
 # QC flags that trigger a single extraction retry
-_RETRY_TRIGGER_FLAGS = {"zero_entities", "high_drop_rate", "many_duplicates"}
+_RETRY_TRIGGER_FLAGS = {
+    "zero_entities",
+    "high_drop_rate",
+    "many_duplicates",
+    "many_low_quality_names",
+}
 
 
 def _should_retry_extraction(flags: List[str]) -> bool:
@@ -24,13 +29,21 @@ def _should_retry_extraction(flags: List[str]) -> bool:
 
 def _build_repair_hint(entity_type: str, flags: List[str]) -> str:
     """Build a short prompt suffix describing what went wrong on the first attempt."""
-    flag_str = ", ".join(sorted(set(flags) & _RETRY_TRIGGER_FLAGS))
-    return (
+    active = sorted(set(flags) & _RETRY_TRIGGER_FLAGS)
+    flag_str = ", ".join(active)
+    hint = (
         f"IMPORTANT — Previous extraction of {entity_type} had quality issues "
         f"({flag_str}). Please ensure all required fields are populated, "
         f"avoid duplicate entries, and return every relevant entity found in "
         f"the text as a complete JSON array."
     )
+    if "many_low_quality_names" in active:
+        hint += (
+            " Use proper nouns for entity names — avoid generic plurals like "
+            "'defense departments' or descriptive phrases like 'military base "
+            "in Cuba'. Name each entity with its specific, official name."
+        )
+    return hint
 
 
 class ArticleProcessor:

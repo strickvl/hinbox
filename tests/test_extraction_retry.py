@@ -9,6 +9,7 @@ from src.engine.article_processor import (
     _build_repair_hint,
     _should_retry_extraction,
 )
+from src.utils.quality_controls import run_extraction_qc
 
 
 class TestShouldRetryExtraction:
@@ -22,6 +23,9 @@ class TestShouldRetryExtraction:
 
     def test_many_duplicates_triggers_retry(self):
         assert _should_retry_extraction(["many_duplicates"]) is True
+
+    def test_many_low_quality_names_triggers_retry(self):
+        assert _should_retry_extraction(["many_low_quality_names"]) is True
 
     def test_non_trigger_flag_does_not_retry(self):
         assert _should_retry_extraction(["short_name:A"]) is False
@@ -48,6 +52,15 @@ class TestBuildRepairHint:
         assert "zero_entities" in hint
         assert "high_drop_rate" in hint
         assert "short_name" not in hint
+
+    def test_low_quality_names_hint_includes_naming_guidance(self):
+        hint = _build_repair_hint("organizations", ["many_low_quality_names"])
+        assert "proper nouns" in hint
+        assert "generic plurals" in hint
+
+    def test_non_low_quality_flags_omit_naming_guidance(self):
+        hint = _build_repair_hint("organizations", ["zero_entities"])
+        assert "proper nouns" not in hint
 
 
 # Valid entity dicts that pass QC required-field checks.
@@ -207,3 +220,47 @@ class TestExtractSingleEntityTypeRetry:
         assert outcome.meta["retry_attempted"] is True
         assert outcome.meta["retry_used"] is True
         assert outcome.counts["final_count"] == 2
+
+
+class TestLowQualityNameQCFlag:
+    """Test that QC flags many_low_quality_names when appropriate."""
+
+    def test_flags_many_low_quality_org_names(self):
+        """Two or more low-quality names should trigger the flag."""
+        entities = [
+            {"name": "Department of Defense", "type": "government"},
+            {"name": "Defense departments", "type": "government"},
+            {"name": "intelligence agencies", "type": "government"},
+        ]
+        _, report = run_extraction_qc(entity_type="organizations", entities=entities)
+        assert "many_low_quality_names" in report.flags
+
+    def test_no_flag_when_names_are_good(self):
+        """All proper names should not trigger the flag."""
+        entities = [
+            {"name": "Department of Defense", "type": "government"},
+            {"name": "FBI", "type": "intelligence"},
+            {"name": "Coast Guard", "type": "military"},
+        ]
+        _, report = run_extraction_qc(entity_type="organizations", entities=entities)
+        assert "many_low_quality_names" not in report.flags
+
+    def test_single_low_quality_name_not_flagged(self):
+        """A single low-quality name among many good ones should not trigger."""
+        entities = [
+            {"name": "Department of Defense", "type": "government"},
+            {"name": "FBI", "type": "intelligence"},
+            {"name": "defense departments", "type": "government"},
+        ]
+        _, report = run_extraction_qc(entity_type="organizations", entities=entities)
+        assert "many_low_quality_names" not in report.flags
+
+    def test_flags_low_quality_location_names(self):
+        """Descriptive location phrases should trigger the flag."""
+        entities = [
+            {"name": "military base in Cuba", "type": "military_base"},
+            {"name": "prison near Havana", "type": "detention_facility"},
+            {"name": "Guantanamo Bay", "type": "military_base"},
+        ]
+        _, report = run_extraction_qc(entity_type="locations", entities=entities)
+        assert "many_low_quality_names" in report.flags

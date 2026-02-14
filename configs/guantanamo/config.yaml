@@ -43,7 +43,8 @@ dedup:
         - ["United Nations", "UN", "U.N."]
     locations:
       equivalence_groups:
-        - ["Guantanamo Bay", "Guantanamo", "GTMO"]
+        - ["Guantanamo Bay", "Guantanamo", "GTMO", "Naval Station Guantanamo Bay", "Guantanamo Bay Naval Base"]
+        - ["United States", "U.S.", "US"]
 
 # Merge evidence configuration (for evidence-first similarity search)
 merge_evidence:
