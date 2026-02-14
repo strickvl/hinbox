@@ -18,7 +18,9 @@ from src.engine.profiles import (
     ProfileVersion,
     VersionedProfile,
     create_profile,
+    create_profile_with_outcome,
     update_profile,
+    update_profile_with_outcome,
 )
 from src.engine.relevance import (
     gemini_check_relevance,
@@ -37,7 +39,9 @@ __all__ = [
     "ProfileVersion",
     "VersionedProfile",
     "create_profile",
+    "create_profile_with_outcome",
     "update_profile",
+    "update_profile_with_outcome",
     # Match checking
     "MatchCheckResult",
     "cloud_model_check_match",

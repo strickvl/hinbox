@@ -8,6 +8,8 @@ from src.engine.relevance import gemini_check_relevance, ollama_check_relevance
 from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
 from src.utils.error_handler import handle_article_processing_error
+from src.utils.outcomes import PhaseOutcome
+from src.utils.quality_controls import run_extraction_qc
 
 logger = get_logger("article_processor")
 
@@ -18,9 +20,8 @@ class ArticleProcessor:
     extraction, and progress metadata aggregation. The processor is domain-
     aware and supports both cloud and local (Ollama) model modes.
 
-    This class intentionally keeps algorithmic behavior consistent with the
-    rest of the system; only the entity extraction dispatch is centralized
-    through EntityExtractor to avoid per-entity wrapper imports.
+    Methods return PhaseOutcome objects that carry both a usable value and
+    observability metadata (success/failure, QC flags, error details).
     """
 
     def __init__(self, domain: str, model_type: str = "gemini"):
@@ -35,11 +36,11 @@ class ArticleProcessor:
         self,
         article_content: str,
         article_id: str,
-    ) -> bool:
+    ) -> PhaseOutcome:
         """Check whether an article is relevant to the configured domain.
 
-        Robustly interprets return shapes from relevance helpers while preserving
-        existing import paths (src.relevance) which bridge to the engine module.
+        Returns PhaseOutcome[bool] — value is True/False, with error details
+        if the check itself failed.
         """
         try:
             if self.model_type == "ollama":
@@ -56,50 +57,108 @@ class ArticleProcessor:
                 )
 
             # Normalise result to boolean
+            is_relevant: bool
+            reason = ""
             if isinstance(result, bool):
-                return result
-            if hasattr(result, "is_relevant"):
-                return bool(getattr(result, "is_relevant"))
-            if isinstance(result, dict) and "is_relevant" in result:
-                return bool(result.get("is_relevant"))
+                is_relevant = result
+            elif hasattr(result, "is_relevant"):
+                is_relevant = bool(result.is_relevant)
+                reason = getattr(result, "reason", "")
+            elif isinstance(result, dict) and "is_relevant" in result:
+                is_relevant = bool(result.get("is_relevant"))
+                reason = result.get("reason", "")
+            else:
+                is_relevant = True
+                reason = "uncertain_result_shape"
 
-            # Default fallback: treat as relevant if uncertain
-            return True
-        except RelevanceCheckError:
-            # Known relevance failure path - treat as not relevant
-            return False
+            return PhaseOutcome.ok(
+                "relevance",
+                value=is_relevant,
+                meta={"reason": reason},
+            )
+        except RelevanceCheckError as e:
+            return PhaseOutcome.fail(
+                "relevance",
+                error=e,
+                fallback=False,
+                context={"article_id": article_id},
+            )
         except Exception as e:
-            # Standardized article processing error logging
             handle_article_processing_error(article_id, "relevance_check", e)
-            return False
+            return PhaseOutcome.fail(
+                "relevance",
+                error=e,
+                fallback=False,
+                context={"article_id": article_id},
+            )
 
     def extract_single_entity_type(
         self,
         entity_type: str,
         article_content: str,
-    ) -> List[Dict]:
-        """Extract a single entity type using the generic EntityExtractor.
+        article_id: str = "",
+    ) -> PhaseOutcome:
+        """Extract a single entity type, run QC, and return a PhaseOutcome.
 
-        This central dispatcher replaces entity-specific wrapper calls. It
-        defers to cloud (Gemini via LiteLLM) unless running in "ollama" mode.
+        The outcome's value is always a List[Dict] (possibly empty on failure).
+        QC flags and counts are surfaced in the outcome metadata.
         """
+        phase = f"extract.{entity_type}"
+
         try:
             extractor = EntityExtractor(entity_type, self.domain)
             if self.model_type == "ollama":
-                return extractor.extract_local(
+                raw = extractor.extract_local(
                     text=article_content,
                     model=self.specific_model,
                     temperature=0,
                 )
             else:
-                return extractor.extract_cloud(
+                raw = extractor.extract_cloud(
                     text=article_content,
                     model=self.specific_model,
                     temperature=0,
                 )
-        except Exception:
-            # Preserve fallback behavior: no entities on failure
-            return []
+
+            # Normalize Pydantic models to dicts
+            raw_dicts = self.convert_pydantic_to_dict(raw or [])
+
+            # Run deterministic QC
+            cleaned, qc_report = run_extraction_qc(
+                entity_type=entity_type,
+                entities=raw_dicts,
+                domain=self.domain,
+            )
+
+            return PhaseOutcome.ok(
+                phase,
+                value=cleaned,
+                counts={
+                    "raw_count": qc_report.input_count,
+                    "dropped_missing_required": qc_report.dropped_missing_required,
+                    "deduped": qc_report.deduped,
+                    "final_count": qc_report.output_count,
+                },
+                flags=qc_report.flags,
+                meta={"qc_fixes": qc_report.fixes},
+            )
+        except Exception as e:
+            self.logger.exception(
+                f"Extraction failed for entity_type={entity_type}, "
+                f"domain={self.domain}, model_type={self.model_type}: {e}"
+            )
+            return PhaseOutcome.fail(
+                phase,
+                error=e,
+                fallback=[],
+                context={
+                    "entity_type": entity_type,
+                    "domain": self.domain,
+                    "model_type": self.model_type,
+                    "article_id": article_id,
+                },
+                flags=["extraction_exception"],
+            )
 
     def track_reflection_attempts(
         self, extracted_entities: Any, entity_type: str, verbose: bool = False
@@ -137,7 +196,10 @@ class ArticleProcessor:
         processing_metadata: Dict[str, Any],
         verbose: bool = False,
     ) -> Dict[str, List[Dict]]:
-        """Extract all supported entity types from an article."""
+        """Extract all supported entity types from an article.
+
+        Writes per-type PhaseOutcome metadata into processing_metadata["phase_outcomes"].
+        """
         entities: Dict[str, List[Dict]] = {
             "people": [],
             "organizations": [],
@@ -146,12 +208,18 @@ class ArticleProcessor:
         }
 
         try:
+            extraction_outcomes: Dict[str, Any] = {}
+
             for et in entities.keys():
-                items = self.extract_single_entity_type(
-                    et,
-                    article_content,
+                outcome = self.extract_single_entity_type(
+                    et, article_content, article_id
                 )
-                entities[et] = items or []
+                entities[et] = outcome.value or []
+                extraction_outcomes[et] = outcome.to_metadata_dict()
+
+            # Store outcomes in processing_metadata
+            processing_metadata.setdefault("phase_outcomes", {})
+            processing_metadata["phase_outcomes"]["extraction"] = extraction_outcomes
 
             # Track reflection attempts across all types
             total_reflections = 0

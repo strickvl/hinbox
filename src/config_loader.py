@@ -1,8 +1,9 @@
 """Domain configuration loader and management."""
 
+import copy
 import os
 from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -103,10 +104,48 @@ class DomainConfig:
         config = self.load_config()
         return config["output"]["directory"]
 
-    def get_similarity_threshold(self) -> float:
-        """Get the similarity threshold for entity deduplication."""
+    def get_similarity_threshold(self, entity_type: Optional[str] = None) -> float:
+        """Get the similarity threshold for entity deduplication.
+
+        Fallback order:
+          dedup.similarity_thresholds.<entity_type> →
+          dedup.similarity_thresholds.default →
+          legacy top-level similarity_threshold →
+          0.75
+        """
         config = self.load_config()
-        return config.get("similarity_threshold", 0.75)
+        dedup = config.get("dedup", {})
+        thresholds = dedup.get("similarity_thresholds", {})
+
+        if entity_type and entity_type in thresholds:
+            return float(thresholds[entity_type])
+
+        if "default" in thresholds:
+            return float(thresholds["default"])
+
+        return float(config.get("similarity_threshold", 0.75))
+
+    def get_lexical_blocking_config(
+        self, entity_type: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get lexical blocking configuration for deduplication.
+
+        Merges dedup.lexical_blocking defaults with any per-type overrides
+        from dedup.per_type.<entity_type>.lexical_blocking.
+        """
+        config = self.load_config()
+        dedup = config.get("dedup", {})
+
+        defaults = {"enabled": False, "threshold": 60, "max_candidates": 50}
+        base = dedup.get("lexical_blocking", {})
+        result = {**defaults, **base}
+
+        if entity_type:
+            per_type = dedup.get("per_type", {}).get(entity_type, {})
+            per_type_blocking = per_type.get("lexical_blocking", {})
+            result.update(per_type_blocking)
+
+        return result
 
     def get_entity_types(self, entity_category: str) -> List[str]:
         """Get available entity types for a category."""
@@ -167,8 +206,8 @@ class DomainConfig:
         embeddings_config = config.get("embeddings", {})
 
         # Check mode
-        mode = embeddings_config.get("mode", "local")
-        valid_modes = ["local", "cloud", "hybrid"]
+        mode = embeddings_config.get("mode", "cloud")
+        valid_modes = ["auto", "local", "cloud", "hybrid"]
         if mode not in valid_modes:
             raise ValueError(
                 f"Invalid embeddings mode '{mode}'. Must be one of: {', '.join(valid_modes)}"
@@ -190,6 +229,17 @@ class DomainConfig:
                     "Local embeddings model must be specified when using local or hybrid mode"
                 )
 
+        # Validate device if specified in local config
+        local_config = embeddings_config.get("local", {})
+        device = local_config.get("device")
+        if device is not None:
+            valid_devices = ["auto", "cpu", "cuda", "mps"]
+            if device not in valid_devices:
+                raise ValueError(
+                    f"Invalid local embedding device '{device}'. "
+                    f"Must be one of: {', '.join(valid_devices)}"
+                )
+
         return True
 
     def get_embeddings_config(self) -> Dict[str, Any]:
@@ -199,7 +249,7 @@ class DomainConfig:
 
         # Set defaults
         defaults = {
-            "mode": "local",
+            "mode": "cloud",
             "cloud": {
                 "model": "jina_ai/jina-embeddings-v3",
                 "batch_size": 100,
@@ -209,11 +259,12 @@ class DomainConfig:
             "local": {
                 "model": "sentence-transformers/all-MiniLM-L6-v2",
                 "batch_size": 32,
+                "device": "auto",
             },
         }
 
-        # Merge with defaults
-        result = defaults.copy()
+        # Merge with defaults (deepcopy to avoid mutating nested dicts)
+        result = copy.deepcopy(defaults)
         if embeddings_config:
             result["mode"] = embeddings_config.get("mode", defaults["mode"])
             if "cloud" in embeddings_config:

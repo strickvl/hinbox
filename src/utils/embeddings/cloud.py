@@ -58,13 +58,18 @@ class CloudEmbeddingProvider(EmbeddingProvider):
             for i in range(len(texts)):
                 results.append(embeddings_map.get(i, []))
 
+            # Determine dimension from the first non-empty embedding
+            dim = next((len(emb) for emb in results if emb), None)
+
             return EmbeddingResult(
                 embeddings=results,
-                model=response.model,
+                model=self.config.model_name,  # stable configured name
+                dimension=dim,
                 usage={
                     "prompt_tokens": response.usage.prompt_tokens,
                     "total_tokens": response.usage.total_tokens,
                 },
+                metadata={"resolved_model": response.model},
             )
 
         except Exception as e:
@@ -73,20 +78,21 @@ class CloudEmbeddingProvider(EmbeddingProvider):
 
     async def _call_with_retry(self, texts: List[str]):
         """Call cloud API with exponential backoff retry."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         for attempt in range(self.config.max_retries):
             try:
                 # Run the synchronous embedding call in an executor
+                # Default arg binds `attempt` at lambda creation time (B023)
                 response = await loop.run_in_executor(
                     None,
-                    lambda: litellm.embedding(
+                    lambda _a=attempt: litellm.embedding(
                         model=self.config.model_name,
                         input=texts,
                         metadata={
                             **self.config.metadata,
                             "batch_size": len(texts),
-                            "attempt": attempt + 1,
+                            "attempt": _a + 1,
                         },
                     ),
                 )

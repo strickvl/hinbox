@@ -9,8 +9,21 @@ data_sources:
 output:
   directory: "data/guantanamo/entities"
 
-# Similarity threshold for entity deduplication (0.0-1.0)
+# Legacy similarity threshold (superseded by dedup section below)
 similarity_threshold: 0.75
+
+# Deduplication configuration
+dedup:
+  similarity_thresholds:
+    default: 0.75
+    people: 0.82
+    organizations: 0.78
+    locations: 0.80
+    events: 0.76
+  lexical_blocking:
+    enabled: true
+    threshold: 60        # RapidFuzz score cutoff (0-100)
+    max_candidates: 50   # max entities to run cosine similarity against
 
 # Processing configuration
 processing:
@@ -22,7 +35,7 @@ processing:
 
 # Embeddings configuration
 embeddings:
-  mode: hybrid  # Options: local, cloud, hybrid
+  mode: cloud  # Options: auto, local, cloud, hybrid
   cloud:
     model: jina_ai/jina-embeddings-v3
     batch_size: 100
@@ -31,3 +44,4 @@ embeddings:
   local:
     model: sentence-transformers/all-MiniLM-L6-v2
     batch_size: 32
+    device: auto  # auto|cpu|cuda|mps

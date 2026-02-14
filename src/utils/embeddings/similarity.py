@@ -4,22 +4,76 @@ These utilities are intentionally independent of src/merge.py to allow reuse
 across modules without coupling to merge logic.
 """
 
-from typing import Dict, List
+import os
+from importlib.util import find_spec
+from typing import Dict, List, Tuple
 
 import numpy as np
 
-from src.utils.embeddings.manager import EmbeddingManager
+from src.utils.embeddings.manager import EmbeddingManager, EmbeddingMode
 
-# Cache managers per domain to avoid re-initialization overhead
-_MANAGER_CACHE: Dict[str, EmbeddingManager] = {}
+# Cache managers per (domain, mode) to avoid re-initialization overhead
+# and ensure mode changes within a long-lived process are respected.
+_MANAGER_CACHE: Dict[Tuple[str, str], EmbeddingManager] = {}
+
+
+def _resolve_mode_for_cache(domain: str) -> str:
+    """Cheaply resolve the effective embedding mode without constructing a manager.
+
+    Mirrors the resolution logic in EmbeddingManager._resolve_requested_mode +
+    _resolve_auto but avoids loading domain config or constructing providers.
+    """
+    # 1. Check environment variable first
+    env_mode = os.getenv("EMBEDDING_MODE")
+    if env_mode:
+        try:
+            mode = EmbeddingMode(env_mode.lower())
+        except ValueError:
+            mode = None
+        if mode is not None:
+            if mode == EmbeddingMode.AUTO:
+                return (
+                    EmbeddingMode.LOCAL.value
+                    if find_spec("sentence_transformers") is not None
+                    else EmbeddingMode.CLOUD.value
+                )
+            return mode.value
+
+    # 2. Try loading domain config for mode
+    try:
+        import src.config_loader as config_loader
+
+        config = config_loader.DomainConfig(domain).load_config()
+        mode_str = config.get("embeddings", {}).get("mode", "cloud")
+        mode = EmbeddingMode(mode_str)
+    except Exception:
+        mode = EmbeddingMode.CLOUD
+
+    if mode == EmbeddingMode.AUTO:
+        return (
+            EmbeddingMode.LOCAL.value
+            if find_spec("sentence_transformers") is not None
+            else EmbeddingMode.CLOUD.value
+        )
+    return mode.value
 
 
 def get_embedding_manager(domain: str = "guantanamo") -> EmbeddingManager:
-    """Get a cached EmbeddingManager instance for the specified domain."""
-    manager = _MANAGER_CACHE.get(domain)
-    if manager is None:
-        manager = EmbeddingManager(domain=domain)
-        _MANAGER_CACHE[domain] = manager
+    """Get a cached EmbeddingManager instance for the specified domain.
+
+    The cache key includes the resolved mode so that environment variable
+    changes (EMBEDDING_MODE) in a long-running process create a new manager
+    rather than reusing one initialised under the old mode.
+    """
+    resolved_mode = _resolve_mode_for_cache(domain)
+    cache_key = (domain, resolved_mode)
+
+    cached = _MANAGER_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    manager = EmbeddingManager(domain=domain)
+    _MANAGER_CACHE[cache_key] = manager
     return manager
 
 

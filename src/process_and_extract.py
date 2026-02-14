@@ -83,8 +83,8 @@ def load_existing_entities(base_dir: str) -> Dict[str, Dict]:
     # Locations
     if os.path.exists(locations_path):
         locations_table = pq.read_table(locations_path)
-        for l in locations_table.to_pylist():
-            locations[(l["name"], l.get("type", ""))] = l
+        for loc in locations_table.to_pylist():
+            locations[(loc["name"], loc.get("type", ""))] = loc
 
     # Organizations
     if os.path.exists(orgs_path):
@@ -346,7 +346,7 @@ def log_processing_summary(
             processed_rows, processed_count
         )
         if total_reflection_attempts > 0:
-            log(f"\nReflection statistics:", level="info")
+            log("\nReflection statistics:", level="info")
             log(
                 f"• Total reflection attempts: {total_reflection_attempts}",
                 level="info",
@@ -404,8 +404,9 @@ def process_single_article(
     # Extract article information
     article_info = processor.prepare_article_info(row, row_index)
 
-    # Initialize processing metadata
+    # Initialize processing metadata and persist it back into the row
     processing_metadata = processor.initialize_processing_metadata(row)
+    row["processing_metadata"] = processing_metadata
 
     # Skip if already processed and not forced
     if processing_metadata.get("processed") and not args.force_reprocess:
@@ -416,12 +417,18 @@ def process_single_article(
         log("Article has no content, skipping extraction", level="warning")
         return row, False, "no_content"
 
-    # Relevance check
+    # Relevance check (returns PhaseOutcome)
     if args.relevance_check:
-        if not processor.check_relevance(
+        rel_outcome = processor.check_relevance(
             article_info["content"],
             article_info["id"],
-        ):
+        )
+        processing_metadata.setdefault("phase_outcomes", {})
+        processing_metadata["phase_outcomes"]["relevance"] = (
+            rel_outcome.to_metadata_dict()
+        )
+
+        if not rel_outcome.value:
             processing_metadata["processed"] = False
             processing_metadata["reason"] = "Not relevant"
             return row, False, "not_relevant"

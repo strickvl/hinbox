@@ -35,7 +35,7 @@ def parse_event_date(dt):
         return None
     try:
         return arrow.get(dt)
-    except:
+    except Exception:
         return None
 
 
@@ -49,12 +49,12 @@ def filter_events(events_index, q="", selected_types=None, start_date="", end_da
     if start_date:
         try:
             filter_start = arrow.get(start_date)
-        except:
+        except Exception:
             pass
     if end_date:
         try:
             filter_end = arrow.get(end_date)
-        except:
+        except Exception:
             pass
 
     # Create event tuples with parsed dates

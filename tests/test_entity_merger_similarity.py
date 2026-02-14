@@ -148,3 +148,230 @@ class TestEntityMergerFindSimilarEntity:
 
         assert match_key is None
         assert score is None
+
+    def test_dimension_mismatch_scan_skips_incompatible(self):
+        """Scan should skip entities whose embedding dimension doesn't match."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Existing entity has 384-dim embedding (like MiniLM)
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.1] * 384,
+            "profile_embedding_dim": 384,
+            "profile_embedding_model": "local-model",
+            "profile": {"text": "Profile for Alice"},
+        }
+
+        # New embedding is 1024-dim (like Jina v3) — incompatible
+        new_embedding = [0.1] * 1024
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Bob Jones",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            embedding_model="cloud-model",
+            embedding_dim=1024,
+        )
+
+        # Should find no match because dimensions differ
+        assert match_key is None
+        assert score is None
+
+    def test_dimension_mismatch_exact_key_defers_to_match_check(self):
+        """Exact-key match with incompatible dims should return forced score=1.0."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Existing entity with 384-dim embedding
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.1] * 384,
+            "profile_embedding_dim": 384,
+            "profile_embedding_model": "local-model",
+            "profile": {"text": "Profile for Alice"},
+        }
+
+        # Same key but different dimension — should defer to match-check
+        new_embedding = [0.2] * 1024
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Alice Smith",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            embedding_model="cloud-model",
+            embedding_dim=1024,
+        )
+
+        assert match_key == "Alice Smith"
+        assert score == 1.0  # forced score for exact-key dim mismatch
+
+    def test_model_mismatch_skips_scan(self):
+        """Scan should skip entities whose embedding model name differs."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Same dimension but different model names
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile_embedding_dim": 3,
+            "profile_embedding_model": "model-A",
+            "profile": {"text": "Profile for Alice"},
+        }
+
+        new_embedding = [0.6, 0.8, 0.0]  # identical vector
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Bob Jones",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            embedding_model="model-B",
+            embedding_dim=3,
+        )
+
+        # Should skip because model names differ
+        assert match_key is None
+        assert score is None
+
+    def test_lexical_blocking_excludes_dissimilar_names(self):
+        """Lexical blocking should exclude candidates with dissimilar names, even if embeddings match."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Candidate 1: lexically similar name, high embedding similarity
+        entities["people"]["Alice Smithson"] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile": {"text": "Profile for Alice Smithson"},
+        }
+        # Candidate 2: lexically dissimilar, but identical embedding (cosine=1.0)
+        entities["people"]["Zzyxvut Qqqppp"] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile": {"text": "Profile for Zzyxvut"},
+        }
+
+        # With lexical blocking ON at threshold 60, "Zzyxvut" should be excluded
+        match_key, score = merger.find_similar_entity(
+            entity_key="Alice Smith",
+            entity_embedding=[0.6, 0.8, 0.0],
+            entities=entities,
+            similarity_threshold=0.5,
+            lexical_blocking_config={
+                "enabled": True,
+                "threshold": 60,
+                "max_candidates": 50,
+            },
+        )
+
+        assert match_key == "Alice Smithson"
+        assert score == pytest.approx(1.0, rel=1e-6)
+
+    def test_lexical_blocking_disabled_returns_best_embedding_match(self):
+        """When lexical blocking is disabled, the best embedding match wins regardless of name."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        entities["people"]["Alice Smithson"] = {
+            "profile_embedding": [0.5, 0.5, 0.0],  # similarity ~0.98
+            "profile": {"text": "Profile for Alice Smithson"},
+        }
+        entities["people"]["Zzyxvut Qqqppp"] = {
+            "profile_embedding": [0.6, 0.8, 0.0],  # similarity = 1.0
+            "profile": {"text": "Profile for Zzyxvut"},
+        }
+
+        # With lexical blocking OFF, best embedding match wins
+        match_key, score = merger.find_similar_entity(
+            entity_key="Alice Smith",
+            entity_embedding=[0.6, 0.8, 0.0],
+            entities=entities,
+            similarity_threshold=0.5,
+            lexical_blocking_config={"enabled": False},
+        )
+
+        assert match_key == "Zzyxvut Qqqppp"
+        assert score == pytest.approx(1.0, rel=1e-6)
+
+    def test_lexical_blocking_events_uses_title_only(self):
+        """For events, lexical blocking should match on title only, ignoring date."""
+        merger = EntityMerger("events")
+        entities = make_empty_entities()
+
+        # Same title, different date — should still pass lexical blocking
+        entities["events"][("Detention hearing", "2025-01-01")] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile": {"text": "Detention hearing event"},
+        }
+        # Different title — should be excluded by lexical blocking
+        entities["events"][("Budget committee review", "2025-03-01")] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile": {"text": "Budget review event"},
+        }
+
+        match_key, score = merger.find_similar_entity(
+            entity_key=("Detention hearing", "2025-03-01"),
+            entity_embedding=[0.6, 0.8, 0.0],
+            entities=entities,
+            similarity_threshold=0.5,
+            lexical_blocking_config={
+                "enabled": True,
+                "threshold": 60,
+                "max_candidates": 50,
+            },
+        )
+
+        assert match_key == ("Detention hearing", "2025-01-01")
+        assert score == pytest.approx(1.0, rel=1e-6)
+
+    def test_lexical_blocking_max_candidates(self):
+        """Lexical blocking should respect max_candidates limit."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Create 10 candidates with similar names
+        for i in range(10):
+            entities["people"][f"Alice Smith {i}"] = {
+                "profile_embedding": [0.6, 0.8, 0.0],
+                "profile": {"text": f"Profile {i}"},
+            }
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Alice Smith",
+            entity_embedding=[0.6, 0.8, 0.0],
+            entities=entities,
+            similarity_threshold=0.5,
+            lexical_blocking_config={
+                "enabled": True,
+                "threshold": 30,
+                "max_candidates": 3,
+            },
+        )
+
+        # Should still find a match (one of the 3 shortlisted candidates)
+        assert match_key is not None
+        assert score == pytest.approx(1.0, rel=1e-6)
+
+    def test_backward_compat_no_metadata(self):
+        """Entities without embedding metadata should still be comparable."""
+        merger = EntityMerger("people")
+        entities = make_empty_entities()
+
+        # Old-style entity without metadata fields
+        entities["people"]["Alice Smith"] = {
+            "profile_embedding": [0.6, 0.8, 0.0],
+            "profile": {"text": "Profile for Alice"},
+            # No profile_embedding_model or profile_embedding_dim
+        }
+
+        new_embedding = [0.6, 0.8, 0.0]
+
+        match_key, score = merger.find_similar_entity(
+            entity_key="Bob Jones",
+            entity_embedding=new_embedding,
+            entities=entities,
+            similarity_threshold=0.5,
+            # No model/dim passed — backward compat
+        )
+
+        assert match_key == "Alice Smith"
+        assert score == pytest.approx(1.0, rel=1e-6)

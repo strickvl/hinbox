@@ -5,7 +5,6 @@ from typing import Any, Dict, List
 from src.config_loader import get_system_prompt
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.dynamic_models import (
-    create_list_models,
     get_event_model,
     get_location_model,
     get_organization_model,
@@ -85,6 +84,9 @@ class EntityExtractor:
     ) -> List[Dict[str, Any]]:
         """Extract entities using local models (Ollama).
 
+        Uses the same List[Entity] response model as cloud extraction so that
+        prompts (which teach bare JSON arrays) parse correctly in both modes.
+
         Args:
             text: The text to extract entities from
             model: The local model to use
@@ -93,19 +95,14 @@ class EntityExtractor:
         Returns:
             List of extracted entities as dictionaries
         """
-        list_models = create_list_models(self.domain)
-        ArticleEntities = list_models[self.entity_type]
-
-        results = extract_entities_local(
+        Entity = self._model_getter(self.domain)
+        return extract_entities_local(
             text=text,
             system_prompt=get_system_prompt(self.entity_type, self.domain),
-            response_model=ArticleEntities,
+            response_model=List[Entity],
             model=model,
             temperature=temperature,
         )
-
-        # Return the specific entity list attribute
-        return getattr(results, self._list_attr)
 
     def extract(
         self,

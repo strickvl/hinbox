@@ -102,7 +102,7 @@ def check_articles(sample: bool = False) -> None:
             oldest = sorted_articles[0]
             newest = sorted_articles[-1]
 
-            console.print(f"\n[blue]Date Range:[/blue]")
+            console.print("\n[blue]Date Range:[/blue]")
             console.print(
                 f"  Oldest: {oldest['title'][:60]}... ({oldest['published_date']})"
             )
@@ -112,7 +112,7 @@ def check_articles(sample: bool = False) -> None:
 
         # Show sample article if requested
         if sample and rows:
-            console.print(f"\n[magenta]Sample Article:[/magenta]")
+            console.print("\n[magenta]Sample Article:[/magenta]")
             sample_article = rows[0]
 
             # Create article details table

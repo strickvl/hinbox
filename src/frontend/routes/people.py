@@ -338,7 +338,7 @@ def show_person(key: str, request):
     detail_content = Div(
         version_selector,  # Add version selector at the top
         Div(
-            Span(f"Type: ", style="font-weight:bold;"),
+            Span("Type: ", style="font-weight:bold;"),
             Span(typ, cls="tag"),
             style="margin-bottom:15px;",
         ),

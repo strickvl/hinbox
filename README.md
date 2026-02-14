@@ -16,7 +16,7 @@ through a simple configuration system.
   anything that `litellm` supports) and local (Ollama default, but works with
   `litellm`) models  
 - **Entity Extraction**: Automatically extract people, organizations, locations, and events
-- **Smart Deduplication**: Uses embeddings to merge similar entities across sources
+- **Smart Deduplication**: RapidFuzz lexical blocking + embedding similarity with per-entity-type thresholds
 - **Profile Versioning**: Track how entity profiles evolve as new sources are processed
 - **Modular Engine**: `src/engine` coordinates article processing, extraction, merging, and profile versioning so new domains can reuse the same pipeline
 - **Web Interface**: FastHTML-based UI for exploring research findings with version navigation
@@ -96,7 +96,11 @@ Edit the generated files in `configs/palestine_food_history/`:
 
 2. **Install dependencies:**
    ```bash
+   # Cloud embeddings only (works on all platforms including Intel Mac):
    uv sync
+
+   # With local embeddings (requires PyTorch — Linux/Apple Silicon/Windows):
+   uv sync --extra local-embeddings
    ```
 
 3. **Set up environment variables:**
@@ -190,7 +194,9 @@ src/
 ├── engine/                 # ArticleProcessor, EntityExtractor, mergers, profiles
 ├── frontend/               # FastHTML UI (routes, components, static assets)
 ├── utils/                  # Embeddings, LLM wrappers, logging, file helpers
-├── config_loader.py        # Domain configuration loader helpers
+│   ├── outcomes.py         # PhaseOutcome structured result objects
+│   └── quality_controls.py # Extraction QC and profile QC validators
+├── config_loader.py        # Domain config loader (incl. per-type thresholds, lexical blocking)
 ├── dynamic_models.py       # Domain-driven Pydantic model factories
 ├── constants.py            # Model defaults, embedding settings, thresholds
 └── exceptions.py           # Custom exception types used across the pipeline
@@ -252,14 +258,15 @@ Historical sources should be in Parquet format with columns:
 2. **Source Loading**: Process historical documents in Parquet format
 3. **Relevance Filtering**: Domain-specific content filtering for research focus
 4. **Entity Extraction**: Extract people, organizations, locations, events from historical sources
-5. **Smart Deduplication**: Merge similar entities using embeddings
-6. **Profile Generation**: Create comprehensive entity profiles with automatic versioning
+5. **Quality Controls**: Deterministic validation of extraction output and profile quality
+6. **Smart Deduplication**: Lexical blocking pre-filter + embedding similarity with per-type thresholds
+7. **Profile Generation**: Create comprehensive entity profiles with automatic versioning
 7. **Version Management**: Track profile evolution as new sources are processed
 
 ### Engine Modules
 - `ArticleProcessor` orchestrates relevance checks, extraction dispatch, and per-article metadata aggregation (`src/engine/article_processor.py`)
 - `EntityExtractor` unifies cloud and local model calls using domain-specific Pydantic schemas (`src/engine/extractors.py`)
-- `EntityMerger` compares embeddings, calls match-checkers, and updates persisted Parquet rows (`src/engine/mergers.py`)
+- `EntityMerger` pre-filters with RapidFuzz lexical blocking, compares embeddings, calls match-checkers, and updates persisted Parquet rows (`src/engine/mergers.py`)
 - `VersionedProfile` and helper functions maintain profile history for each entity (`src/engine/profiles.py`)
 
 ### Key Features
@@ -268,21 +275,21 @@ Historical sources should be in Parquet format with columns:
 - **Smart Processing**: Automatic relevance filtering and deduplication
 - **Profile Versioning**: Track entity profile changes over time with full version history
 - **Modern Interface**: FastHTML-based web UI with version navigation
-- **Robust Pipeline**: Error handling and progress tracking
+- **Robust Pipeline**: Structured `PhaseOutcome` error handling, quality controls, and progress tracking
 
 ## Development
 
 ### Testing
 ```bash
-# Run tests (pytest)
+# Run all tests
 pytest tests/
 
 # Run specific test files
 pytest tests/test_profile_versioning.py
-pytest tests/test_frontend_versioning.py
+pytest tests/test_entity_merger_similarity.py
 ```
 
-The project includes unit tests for profile versioning functionality and frontend components.
+CI runs lint and tests automatically on every PR (`.github/workflows/test.yml`). The test suite covers embedding similarity, lexical blocking, per-type threshold resolution, entity merger behavior, profile versioning, and frontend components — all without requiring API keys or GPU.
 
 ### Code Quality
 ```bash
@@ -320,4 +327,4 @@ For questions about:
 
 **Built for**: Historians, researchers, and academics working with large document collections
 
-**Built with**: Python, Pydantic, FastHTML, LiteLLM, Jina Embeddings
+**Built with**: Python, Pydantic, FastHTML, LiteLLM, RapidFuzz, Jina Embeddings

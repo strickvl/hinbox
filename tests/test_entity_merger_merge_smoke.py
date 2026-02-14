@@ -14,17 +14,42 @@ from unittest.mock import patch
 from src.engine import EntityMerger, MatchCheckResult, VersionedProfile
 
 
+class StubEmbeddingResult:
+    """Minimal stub for EmbeddingResult returned by embed_text_result_sync."""
+
+    def __init__(self, vec: List[float], model: str = "stub-model"):
+        self.embeddings = [list(vec)]
+        self.model = model
+        self.dimension = len(vec) if vec else None
+
+
+class _StubMode:
+    """Minimal stub for EmbeddingMode enum value."""
+
+    def __init__(self, value: str = "local"):
+        self.value = value
+
+
 class StubEmbeddingManager:
     """Minimal stub that mimics the EmbeddingManager interface needed by mergers.
 
     The embed_text_sync returns a fixed vector to make similarity deterministic.
+    embed_text_result_sync returns a StubEmbeddingResult with model metadata.
     """
 
-    def __init__(self, vec: List[float] = None):
+    def __init__(self, vec: List[float] = None, model: str = "stub-model"):
         self._vec = vec or [0.1, 0.2, 0.3]
+        self._model = model
+        self.mode = _StubMode("local")
 
     def embed_text_sync(self, text: str) -> List[float]:
         return list(self._vec)
+
+    def embed_text_result_sync(self, text: str) -> StubEmbeddingResult:
+        return StubEmbeddingResult(self._vec, self._model)
+
+    def get_active_model_name(self) -> str:
+        return self._model
 
 
 def make_empty_entities() -> Dict[str, Dict]:
@@ -131,6 +156,11 @@ class TestEntityMergerMergeSmoke:
             == "Generated profile for Alice Smith from art-001"
         )
         assert person["profile_embedding"] == [0.25, 0.5, 0.75]
+
+        # Embedding metadata
+        assert person["profile_embedding_model"] == "stub-model"
+        assert person["profile_embedding_dim"] == 3
+        assert person["profile_embedding_fingerprint"] == "stub-model:3"
 
         # Versioning
         assert person["profile_versions"] is not None
@@ -244,6 +274,11 @@ class TestEntityMergerMergeSmoke:
 
         # Embedding updated to stub vector (from updated profile text)
         assert person["profile_embedding"] == [0.42, 0.58, 0.0]
+
+        # Embedding metadata persisted on update
+        assert person["profile_embedding_model"] == "stub-model"
+        assert person["profile_embedding_dim"] == 3
+        assert person["profile_embedding_fingerprint"] == "stub-model:3"
 
         # Alternative names added since the incoming key was different
         assert "Alice B. Smith" in person.get("alternative_names", [])

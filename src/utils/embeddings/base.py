@@ -1,9 +1,12 @@
 """Base classes and interfaces for embedding providers."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+# Valid device targets for local embedding models
+EmbeddingDevice = Literal["auto", "cpu", "cuda", "mps"]
 
 
 class EmbeddingConfig(BaseModel):
@@ -15,7 +18,8 @@ class EmbeddingConfig(BaseModel):
     batch_size: int = 32
     max_retries: int = 3
     timeout: int = 30
-    metadata: Dict[str, Any] = {}
+    device: EmbeddingDevice = "auto"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class EmbeddingResult(BaseModel):
@@ -23,8 +27,9 @@ class EmbeddingResult(BaseModel):
 
     embeddings: List[List[float]]
     model: str
+    dimension: Optional[int] = None
     usage: Optional[Dict[str, int]] = None
-    metadata: Dict[str, Any] = {}
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class EmbeddingProvider(ABC):

@@ -8,7 +8,7 @@ Extract ALL significant events, incidents, proceedings, and occurrences mentione
 
 ## Event Types
 
-Categorize each event using ONE of the following types:
+Categorize each event using ONE of the following `event_type` values:
 
 - **detention**: Events related to capture, arrest, transfer, or initial detention of individuals
 - **legal**: Court cases, hearings, trials, tribunals, legal proceedings, and rulings
@@ -20,16 +20,47 @@ Categorize each event using ONE of the following types:
 - **medical**: Medical events, treatments, health crises, and healthcare-related incidents
 - **other**: Any other event type not covered above (e.g., construction, visits, ceremonies)
 
+## Event Tags
+
+Tag events with zero or more of these tags for additional categorization:
+
+- **torture**: Torture allegations or incidents
+- **force_feeding**: Force-feeding of hunger strikers
+- **hunger_strike**: Hunger strike events
+- **transfer**: Detainee transfer events
+- **interrogation**: Interrogation sessions
+- **policy_change**: Changes in detention policies
+- **legal_challenge**: Legal challenges to detention
+- **habeas_corpus**: Habeas corpus proceedings
+- **medical_care**: Medical care issues
+- **isolation**: Isolation of detainees
+- **suicide_attempt**: Suicide attempts
+- **abuse**: Detainee abuse incidents
+- **official_statement**: Official statements about Guantanamo
+
 ## Output Format
 
-Return a JSON array of objects. Each event MUST have:
-- `title`: Concise event description (noun phrase, not full sentence)
-- `type`: One event type from the list above
-- `date`: Date in YYYY-MM-DD format when available, or null if not specified
+Return a JSON array of event objects. Each event object MUST have these fields:
+
+- `title` (string, required): Concise event description (noun phrase, not full sentence)
+- `description` (string, required): Detailed explanation of what happened, including key participants and context
+- `event_type` (string, required): One of the event types listed above
+- `start_date` (string, required): ISO 8601 date-time format (see Date Guidelines below)
+- `end_date` (string or null, optional): ISO 8601 date-time if the event spans a period, otherwise null
+- `is_fuzzy_date` (boolean, optional): Set to true if the date is approximate; defaults to false
+- `tags` (array of strings, optional): Zero or more tags from the list above
 
 ```json
 [
-  {"title": "Event Description", "type": "category", "date": "YYYY-MM-DD"}
+  {
+    "title": "Event Description",
+    "description": "Detailed explanation of what happened",
+    "event_type": "legal",
+    "start_date": "2023-03-15T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": false,
+    "tags": ["legal_challenge"]
+  }
 ]
 ```
 
@@ -42,9 +73,33 @@ Return a JSON array of objects. Each event MUST have:
 **Output**:
 ```json
 [
-  {"title": "Military commission hearing for Khalid Sheikh Mohammed", "type": "legal", "date": "2023-03-15"},
-  {"title": "Capture of Khalid Sheikh Mohammed in Pakistan", "type": "detention", "date": "2003-01-01"},
-  {"title": "Transfer of Khalid Sheikh Mohammed to Guantanamo", "type": "detention", "date": "2006-01-01"}
+  {
+    "title": "Military commission hearing for Khalid Sheikh Mohammed",
+    "description": "The military commission heard testimony in the case of Khalid Sheikh Mohammed at Guantanamo Bay.",
+    "event_type": "legal",
+    "start_date": "2023-03-15T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": false,
+    "tags": ["legal_challenge"]
+  },
+  {
+    "title": "Capture of Khalid Sheikh Mohammed in Pakistan",
+    "description": "Khalid Sheikh Mohammed was captured in Pakistan prior to his transfer to Guantanamo.",
+    "event_type": "detention",
+    "start_date": "2003-01-01T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": true,
+    "tags": []
+  },
+  {
+    "title": "Transfer of Khalid Sheikh Mohammed to Guantanamo",
+    "description": "Khalid Sheikh Mohammed was transferred to the Guantanamo Bay detention facility.",
+    "event_type": "detention",
+    "start_date": "2006-01-01T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": true,
+    "tags": ["transfer"]
+  }
 ]
 ```
 
@@ -55,8 +110,24 @@ Return a JSON array of objects. Each event MUST have:
 **Output**:
 ```json
 [
-  {"title": "FBI investigation into interrogation practices", "type": "investigation", "date": "2004-01-01"},
-  {"title": "Pentagon announcement of new detention policies", "type": "policy_change", "date": "2004-01-01"}
+  {
+    "title": "FBI investigation into interrogation practices",
+    "description": "The FBI launched a formal investigation into interrogation practices at detention facilities.",
+    "event_type": "investigation",
+    "start_date": "2004-01-01T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": true,
+    "tags": ["interrogation"]
+  },
+  {
+    "title": "Pentagon announcement of new detention policies",
+    "description": "The Pentagon announced new detention policies in response to the Abu Ghraib scandal.",
+    "event_type": "policy_change",
+    "start_date": "2004-01-01T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": true,
+    "tags": ["policy_change"]
+  }
 ]
 ```
 
@@ -67,98 +138,53 @@ Return a JSON array of objects. Each event MUST have:
 **Output**:
 ```json
 [
-  {"title": "Mass hunger strike by 130+ detainees", "type": "protest", "date": "2005-01-01"},
-  {"title": "Medical examination of hunger strike participants", "type": "medical", "date": "2005-06-10"}
+  {
+    "title": "Mass hunger strike by 130+ detainees",
+    "description": "Over 130 detainees participated in a hunger strike to protest detention conditions at Guantanamo.",
+    "event_type": "protest",
+    "start_date": "2005-01-01T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": true,
+    "tags": ["hunger_strike"]
+  },
+  {
+    "title": "Medical examination of hunger strike participants",
+    "description": "Dr. Smith examined several hunger strike participants for medical complications.",
+    "event_type": "medical",
+    "start_date": "2005-06-10T00:00:00",
+    "end_date": null,
+    "is_fuzzy_date": false,
+    "tags": ["medical_care", "hunger_strike"]
+  }
 ]
 ```
 
-### Example 4: Release and Military Events
+## Date Guidelines
 
-**Input excerpt**: "Operation Enduring Freedom began in October 2001. The first detainee transfers to Guantanamo occurred on January 11, 2002. Three detainees were released to their home countries on December 20, 2016."
+All dates must be in ISO 8601 date-time format (`YYYY-MM-DDT00:00:00`):
 
-**Output**:
-```json
-[
-  {"title": "Operation Enduring Freedom begins", "type": "military_operation", "date": "2001-10-01"},
-  {"title": "First detainee transfers to Guantanamo", "type": "detention", "date": "2002-01-11"},
-  {"title": "Release of three detainees to home countries", "type": "release", "date": "2016-12-20"}
-]
-```
+- **Full date known**: `"2023-03-15T00:00:00"` with `is_fuzzy_date: false`
+- **Month/year known**: `"2023-03-01T00:00:00"` with `is_fuzzy_date: true`
+- **Year only known**: `"2023-01-01T00:00:00"` with `is_fuzzy_date: true`
+- **No date at all**: Do NOT extract the event (since `start_date` is required). Only extract events that have at least a year mentioned or inferable from context.
 
 ## Important Guidelines
 
 1. **Discrete Events**: Focus on specific, time-bound occurrences rather than ongoing states or conditions
 2. **Concise Titles**: Use noun phrases that clearly identify the event without being a full sentence
-3. **Date Precision**: Use the most specific date available (full date > month/year > year only)
-4. **Multiple Events**: If an article mentions several related events, extract each separately
-5. **Context Relevance**: Include events that are directly related to Guantanamo or have clear implications
-6. **ASCII Only**: Convert any non-ASCII characters to their ASCII equivalents
-
-## Date Format Guidelines
-
-- Full date: "2023-03-15" (when exact date is known)
-- Month/year: "2023-03-01" (use first day of month when only month/year known)
-- Year only: "2023-01-01" (use January 1st when only year is known)
-- No date: null (when no temporal information is provided)
-
-## Common Event Categories
-
-### Legal Events
-- Court hearings and trials
-- Legal rulings and decisions
-- Filing of lawsuits or appeals
-- Habeas corpus proceedings
-- Military commission sessions
-
-### Detention Events
-- Initial captures and arrests
-- Transfers between facilities
-- Arrival at Guantanamo
-- Change in detention status
-- Classification reviews
-
-### Policy Events
-- New military directives
-- Changes in detention procedures
-- Congressional legislation
-- Executive orders
-- International agreements
-
-### Investigation Events
-- FBI inquiries
-- Inspector General reports
-- Congressional investigations
-- Military investigations
-- International monitoring
-
-### Medical Events
-- Health crises or incidents
-- Medical examinations
-- Treatment programs
-- Psychological assessments
-- Health policy changes
+3. **Meaningful Descriptions**: Provide enough context to understand the event without reading the source article
+4. **Date Precision**: Use the most specific date available and set `is_fuzzy_date` accordingly
+5. **Multiple Events**: If an article mentions several related events, extract each separately
+6. **Context Relevance**: Include events that are directly related to Guantanamo or have clear implications
+7. **ASCII Only**: Convert any non-ASCII characters to their ASCII equivalents
+8. **Use Tags**: Apply relevant tags from the list above to aid categorization
 
 ## Common Mistakes to Avoid
 
-- Including ongoing states rather than discrete events (e.g., "being detained" vs. "transfer to detention")
+- Using `type` instead of `event_type` (must be `event_type`)
+- Using `date` instead of `start_date` (must be `start_date`)
+- Omitting the `description` field (it is required)
+- Using plain date strings like "2023-03-15" instead of ISO date-time "2023-03-15T00:00:00"
+- Including ongoing states rather than discrete events
 - Using full sentences instead of concise titles
-- Missing dates that are clearly mentioned in the text
-- Extracting too many minor or irrelevant events
-- Confusing event types (e.g., a court ruling about policy is "legal" not "policy_change")
-- Including vague or unclear event descriptions
-- Forgetting to extract events mentioned in passing or background context
-
-## Special Considerations
-
-### Timeline Events
-- Pay attention to historical context and chronological information
-- Include both recent and historical events mentioned
-
-### Multiple Participants
-- When events involve multiple people, focus on the event itself rather than individual actions
-
-### Causal Relationships
-- Extract both triggering events and resulting events when both are mentioned
-
-### International Events
-- Include events that occurred outside the US but are relevant to Guantanamo matters
+- Extracting events with no temporal anchor at all

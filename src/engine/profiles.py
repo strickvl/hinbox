@@ -31,7 +31,9 @@ from src.utils.llm import (
     iterative_improve,
     local_generation,
 )
+from src.utils.outcomes import PhaseOutcome
 from src.utils.profiles import extract_profile_text
+from src.utils.quality_controls import run_profile_qc
 
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
@@ -307,7 +309,7 @@ New Article (ID: {new_article_id}):
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": f"Please create an updated profile by merging the existing profile with new information from the article.",
+                "content": "Please create an updated profile by merging the existing profile with new information from the article.",
             },
         ]
 
@@ -521,7 +523,118 @@ def create_profile(
     except Exception as e:
         console.print(f"[red]Error creating profile for {entity_name}:[/red]")
         console.print(f"[red]Error details: {str(e)}[/red]")
-        import traceback
-
         console.print(f"[red]Traceback:\n{traceback.format_exc()}[/red]")
         raise
+
+
+def create_profile_with_outcome(
+    entity_type: str,
+    entity_name: str,
+    article_text: str,
+    article_id: str,
+    model_type: str = "gemini",
+    domain: str = "guantanamo",
+) -> Tuple[Dict, VersionedProfile, list, PhaseOutcome]:
+    """Create a profile and return a PhaseOutcome alongside the normal return value.
+
+    Never raises — returns a fallback profile + failure outcome on error.
+    Runs deterministic profile QC on the result.
+    """
+    try:
+        profile_dict, versioned_profile, history = create_profile(
+            entity_type, entity_name, article_text, article_id, model_type, domain
+        )
+
+        # Run profile QC
+        profile_dict, qc_report = run_profile_qc(profile=profile_dict)
+
+        outcome = PhaseOutcome.ok(
+            f"profile.create.{entity_type}",
+            value=profile_dict,
+            counts={
+                "text_length": qc_report.text_length,
+                "citations": qc_report.citation_count,
+                "tags": qc_report.tag_count,
+            },
+            flags=qc_report.flags,
+            meta={"qc_fixes": qc_report.fixes, "qc_passed": qc_report.passed},
+        )
+        return profile_dict, versioned_profile, history, outcome
+
+    except Exception as e:
+        logger.error(f"create_profile_with_outcome failed for {entity_name}: {e}")
+        fallback = handle_profile_error(
+            entity_name, entity_type, article_id, e, "creation"
+        )
+        versioned_profile = VersionedProfile()
+        outcome = PhaseOutcome.fail(
+            f"profile.create.{entity_type}",
+            error=e,
+            fallback=fallback,
+            context={
+                "entity_name": entity_name,
+                "entity_type": entity_type,
+                "article_id": article_id,
+            },
+            flags=["profile_creation_exception"],
+        )
+        return fallback, versioned_profile, [], outcome
+
+
+def update_profile_with_outcome(
+    entity_type: str,
+    entity_name: str,
+    existing_profile: Dict,
+    versioned_profile: VersionedProfile,
+    new_article_text: str,
+    new_article_id: str,
+    model_type: str = "gemini",
+    domain: str = "guantanamo",
+) -> Tuple[Dict, VersionedProfile, list, PhaseOutcome]:
+    """Update a profile and return a PhaseOutcome alongside the normal return value.
+
+    Never raises — returns existing profile as fallback on error.
+    Runs deterministic profile QC on the result.
+    """
+    try:
+        updated_profile, versioned_profile, history = update_profile(
+            entity_type,
+            entity_name,
+            existing_profile,
+            versioned_profile,
+            new_article_text,
+            new_article_id,
+            model_type,
+            domain,
+        )
+
+        # Run profile QC
+        updated_profile, qc_report = run_profile_qc(profile=updated_profile)
+
+        outcome = PhaseOutcome.ok(
+            f"profile.update.{entity_type}",
+            value=updated_profile,
+            counts={
+                "text_length": qc_report.text_length,
+                "citations": qc_report.citation_count,
+                "tags": qc_report.tag_count,
+            },
+            flags=qc_report.flags,
+            meta={"qc_fixes": qc_report.fixes, "qc_passed": qc_report.passed},
+        )
+        return updated_profile, versioned_profile, history, outcome
+
+    except Exception as e:
+        logger.error(f"update_profile_with_outcome failed for {entity_name}: {e}")
+        outcome = PhaseOutcome.fail(
+            f"profile.update.{entity_type}",
+            error=e,
+            fallback=existing_profile,
+            context={
+                "entity_name": entity_name,
+                "entity_type": entity_type,
+                "article_id": new_article_id,
+            },
+            flags=["profile_update_exception", "fallback_to_existing"],
+        )
+        return existing_profile, versioned_profile, [], outcome
