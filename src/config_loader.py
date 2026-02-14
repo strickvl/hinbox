@@ -147,6 +147,37 @@ class DomainConfig:
 
         return result
 
+    def get_concurrency_config(self) -> Dict[str, int]:
+        """Get concurrency configuration with conservative defaults.
+
+        Reads from the ``performance.concurrency`` and ``performance.queue``
+        sections of the domain config.  Missing keys fall back to safe
+        defaults that preserve serial behaviour (1 worker, 1 in-flight).
+        """
+        config = self.load_config()
+        perf = config.get("performance", {})
+        concurrency = perf.get("concurrency", {})
+        queue_cfg = perf.get("queue", {})
+
+        defaults: Dict[str, int] = {
+            "extract_workers": 1,
+            "extract_per_article": 1,
+            "llm_in_flight": 4,
+            "ollama_in_flight": 1,
+            "max_buffered_articles": 2,
+        }
+
+        result = dict(defaults)
+        for key in defaults:
+            if key in concurrency:
+                result[key] = max(1, int(concurrency[key]))
+        if "max_buffered_articles" in queue_cfg:
+            result["max_buffered_articles"] = max(
+                1, int(queue_cfg["max_buffered_articles"])
+            )
+
+        return result
+
     def get_merge_evidence_config(self) -> Dict[str, Any]:
         """Get merge evidence configuration for evidence-first similarity search.
 

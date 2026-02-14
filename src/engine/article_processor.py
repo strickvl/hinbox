@@ -282,27 +282,50 @@ class ArticleProcessor:
         article_id: str,
         processing_metadata: Dict[str, Any],
         verbose: bool = False,
+        max_workers: int = 1,
     ) -> Dict[str, List[Dict]]:
         """Extract all supported entity types from an article.
 
-        Writes per-type PhaseOutcome metadata into processing_metadata["phase_outcomes"].
+        When *max_workers* > 1 the four entity-type extractions run
+        concurrently via a thread pool (bounded by the global LLM
+        semaphore).  Results are assembled in stable type order.
+
+        Writes per-type PhaseOutcome metadata into
+        processing_metadata["phase_outcomes"].
         """
-        entities: Dict[str, List[Dict]] = {
-            "people": [],
-            "organizations": [],
-            "locations": [],
-            "events": [],
-        }
+        entity_types = ["people", "organizations", "locations", "events"]
+        entities: Dict[str, List[Dict]] = {et: [] for et in entity_types}
 
         try:
             extraction_outcomes: Dict[str, Any] = {}
 
-            for et in entities.keys():
-                outcome = self.extract_single_entity_type(
-                    et, article_content, article_id
-                )
-                entities[et] = outcome.value or []
-                extraction_outcomes[et] = outcome.to_metadata_dict()
+            if max_workers > 1:
+                from concurrent.futures import ThreadPoolExecutor
+
+                with ThreadPoolExecutor(
+                    max_workers=min(max_workers, len(entity_types))
+                ) as pool:
+                    futures = {
+                        et: pool.submit(
+                            self.extract_single_entity_type,
+                            et,
+                            article_content,
+                            article_id,
+                        )
+                        for et in entity_types
+                    }
+                    # Iterate in stable order, not completion order
+                    for et in entity_types:
+                        outcome = futures[et].result()
+                        entities[et] = outcome.value or []
+                        extraction_outcomes[et] = outcome.to_metadata_dict()
+            else:
+                for et in entity_types:
+                    outcome = self.extract_single_entity_type(
+                        et, article_content, article_id
+                    )
+                    entities[et] = outcome.value or []
+                    extraction_outcomes[et] = outcome.to_metadata_dict()
 
             # Store outcomes in processing_metadata
             processing_metadata.setdefault("phase_outcomes", {})

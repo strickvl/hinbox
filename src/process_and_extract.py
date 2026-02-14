@@ -6,12 +6,21 @@ dataset, extracts entities (people, events, locations, organizations) using eith
 (Gemini) or local (Ollama) language models, and merges the results with existing entity data.
 The pipeline includes relevance checking, entity deduplication, and comprehensive processing
 status tracking.
+
+Concurrency model (Phase 2 speed audit):
+  - Multiple extraction workers process articles in parallel via ThreadPoolExecutor.
+  - Within each article, the 4 entity-type extractions also run concurrently.
+  - A shared LLM semaphore bounds cloud API concurrency.
+  - A single merge actor (the main thread) consumes extraction results in article
+    order and is the *only* writer to the shared ``entities`` dict and
+    ``ProcessingStatus`` sidecar, so no locking is needed.
 """
 
 import argparse
 import os
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -26,11 +35,33 @@ from src.utils.embeddings.similarity import (
     reset_embedding_manager_cache,
 )
 from src.utils.file_ops import write_entities_table
+from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
 from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
 
 # Get module-specific logger
 logger = get_logger("process_and_extract")
+
+
+# ---------------------------------------------------------------------------
+# Data structures for producer / consumer pipeline
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ArticleExtractionResult:
+    """Immutable result produced by an extraction worker.
+
+    Contains everything the merge actor needs to apply the result without
+    re-reading the article.
+    """
+
+    row_index: int
+    row: Dict[str, Any]
+    article_info: Dict[str, str]
+    processing_metadata: Dict[str, Any]
+    extraction_timestamp: str
+    extracted_entities: Dict[str, List[Dict[str, Any]]]
+    was_extracted: bool
+    skip_reason: Optional[str] = None
 
 
 def ensure_dir(directory: str) -> None:
@@ -477,97 +508,141 @@ def write_results_and_statistics(
     )
 
 
-def process_single_article(
+def extract_single_article_only(
     row: Dict,
     row_index: int,
     processor: ArticleProcessor,
-    entities: Dict[str, Dict],
     args: argparse.Namespace,
-    domain_config: DomainConfig = None,
-    status_tracker: ProcessingStatus = None,
-) -> Tuple[Dict, bool, str]:
-    """Process a single article through the extraction pipeline.
+    *,
+    processed_snapshot: Set[str],
+    extract_per_article: int = 1,
+) -> ArticleExtractionResult:
+    """Run skip checks, relevance, and extraction for one article.
 
-    Returns:
-        Tuple of (updated_row, was_processed, skip_reason)
+    This function is safe to call from a worker thread: it never mutates
+    shared state (``entities``, ``ProcessingStatus``).
     """
-    log(f"\n[bold]Processing article #{row_index}[/bold]")
-
-    # Extract article information
     article_info = processor.prepare_article_info(row, row_index)
-
-    # Initialize processing metadata
     processing_metadata = processor.initialize_processing_metadata(row)
-
-    # Skip if already processed (check sidecar first, fall back to row metadata)
     article_id = article_info["id"]
-    already_processed = (
-        status_tracker and status_tracker.is_processed(article_id)
-    ) or processing_metadata.get("processed")
+    extraction_timestamp = datetime.now().isoformat()
+
+    empty = ArticleExtractionResult(
+        row_index=row_index,
+        row=row,
+        article_info=article_info,
+        processing_metadata=processing_metadata,
+        extraction_timestamp=extraction_timestamp,
+        extracted_entities={},
+        was_extracted=False,
+    )
+
+    # Skip if already processed (use snapshot — no thread-safety issue)
+    already_processed = (article_id in processed_snapshot) or processing_metadata.get(
+        "processed"
+    )
     if already_processed and not args.force_reprocess:
-        log("Article already processed, skipping...", level="warning")
-        return row, False, "already_processed"
+        return ArticleExtractionResult(
+            **{**empty.__dict__, "skip_reason": "already_processed"}
+        )
 
     if not article_info["content"]:
-        log("Article has no content, skipping extraction", level="warning")
-        if status_tracker:
-            status_tracker.mark_skipped(article_id, "no_content")
-        return row, False, "no_content"
-
-    # Relevance check (returns PhaseOutcome)
-    if args.relevance_check:
-        rel_outcome = processor.check_relevance(
-            article_info["content"],
-            article_info["id"],
+        return ArticleExtractionResult(
+            **{**empty.__dict__, "skip_reason": "no_content"}
         )
+
+    # Relevance check
+    if args.relevance_check:
+        rel_outcome = processor.check_relevance(article_info["content"], article_id)
         processing_metadata.setdefault("phase_outcomes", {})
         processing_metadata["phase_outcomes"]["relevance"] = (
             rel_outcome.to_metadata_dict()
         )
-
         if not rel_outcome.value:
             processing_metadata["processed"] = False
             processing_metadata["reason"] = "Not relevant"
-            if status_tracker:
-                status_tracker.mark_skipped(article_id, "not_relevant")
-            return row, False, "not_relevant"
+            return ArticleExtractionResult(
+                **{**empty.__dict__, "skip_reason": "not_relevant"}
+            )
 
-    extraction_timestamp = datetime.now().isoformat()
-
-    # Extract all entity types
+    # Extract all entity types (potentially parallel within this article)
     extracted_entities = processor.extract_all_entities(
         article_info["content"],
-        article_info["id"],
+        article_id,
         processing_metadata,
         args.verbose,
+        max_workers=extract_per_article,
     )
 
-    # Merge all entities
+    return ArticleExtractionResult(
+        row_index=row_index,
+        row=row,
+        article_info=article_info,
+        processing_metadata=processing_metadata,
+        extraction_timestamp=extraction_timestamp,
+        extracted_entities=extracted_entities,
+        was_extracted=True,
+    )
+
+
+def merge_and_finalize(
+    result: ArticleExtractionResult,
+    *,
+    entities: Dict[str, Dict],
+    processor: ArticleProcessor,
+    args: argparse.Namespace,
+    domain_config: DomainConfig,
+    status_tracker: Optional[ProcessingStatus],
+    counters: Dict[str, int],
+) -> None:
+    """Apply merge + status updates for one extraction result.
+
+    **Must only be called from the single merge actor** (main thread).
+    """
+    article_id = result.article_info["id"]
+
+    if not result.was_extracted:
+        reason = result.skip_reason or "unknown"
+        if reason == "not_relevant":
+            counters["skipped_relevance_count"] += 1
+            if status_tracker:
+                status_tracker.mark_skipped(article_id, "not_relevant")
+        elif reason == "already_processed":
+            counters["skipped_already_processed"] += 1
+        elif reason == "no_content":
+            counters["skipped_no_content"] += 1
+            if status_tracker:
+                status_tracker.mark_skipped(article_id, "no_content")
+        return
+
+    log(f"\n[bold]Merging article #{result.row_index}[/bold]")
+
+    # Merge extracted entities into shared entities dict
     merge_all_entities(
-        extracted_entities,
+        result.extracted_entities,
         entities,
-        article_info,
-        extraction_timestamp,
+        result.article_info,
+        result.extraction_timestamp,
         processor.model_type,
-        processing_metadata,
+        result.processing_metadata,
         processor,
         domain_config=domain_config,
     )
 
     # Finalize processing metadata
     processor.finalize_processing_metadata(
-        processing_metadata,
-        extracted_entities,
-        extraction_timestamp,
+        result.processing_metadata,
+        result.extracted_entities,
+        result.extraction_timestamp,
         args.verbose,
-        row_index,
+        result.row_index,
     )
 
-    # Record in sidecar status tracker
+    # Record in sidecar
     if status_tracker:
-        status_tracker.mark_processed(article_id, processing_metadata)
+        status_tracker.mark_processed(article_id, result.processing_metadata)
 
-    return row, True, "processed"
+    counters["processed_count"] += 1
 
 
 def process_articles_batch(
@@ -578,7 +653,14 @@ def process_articles_batch(
     domain_config: DomainConfig = None,
     status_tracker: ProcessingStatus = None,
 ) -> Tuple[List[Dict], Dict[str, int]]:
-    """Process a batch of articles and return results with statistics."""
+    """Process a batch of articles with concurrent extraction + serial merge.
+
+    Extraction workers run in a thread pool (``extract_workers``).  The main
+    thread consumes results **in article order** and is the only writer to
+    ``entities`` / ``status_tracker``.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     from rich.progress import (
         BarColumn,
         Progress,
@@ -587,15 +669,30 @@ def process_articles_batch(
         TimeElapsedColumn,
     )
 
-    processed_rows = []
-    counters = {
+    processed_rows: List[Dict] = []
+    counters: Dict[str, int] = {
         "processed_count": 0,
         "skipped_relevance_count": 0,
         "skipped_already_processed": 0,
         "skipped_no_content": 0,
     }
 
+    # Read concurrency settings
+    domain_cfg = domain_config or DomainConfig(processor.domain)
+    cc = domain_cfg.get_concurrency_config()
+    extract_workers = cc["extract_workers"]
+    extract_per_article = cc["extract_per_article"]
+
+    # Snapshot of already-processed IDs (avoids touching ProcessingStatus
+    # from worker threads).
+    processed_snapshot: Set[str] = (
+        status_tracker.processed_ids() if status_tracker else set()
+    )
+
     active_count = min(len(rows), args.limit)
+    active_rows = rows[:active_count]
+    remaining_rows = rows[active_count:]
+
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -607,35 +704,40 @@ def process_articles_batch(
     ) as progress:
         task_id = progress.add_task("Articles", total=active_count)
 
-        for row_index, row in enumerate(rows, 1):
-            if row_index > args.limit:
-                # We've hit the limit; keep the rest unmodified
-                processed_rows.append(row)
-                continue
+        # --- Submit extraction work to thread pool ---
+        with ThreadPoolExecutor(max_workers=extract_workers) as pool:
+            futures = [
+                pool.submit(
+                    extract_single_article_only,
+                    row,
+                    row_index,
+                    processor,
+                    args,
+                    processed_snapshot=processed_snapshot,
+                    extract_per_article=extract_per_article,
+                )
+                for row_index, row in enumerate(active_rows, 1)
+            ]
 
-            # Process the article
-            updated_row, was_processed, skip_reason = process_single_article(
-                row,
-                row_index,
-                processor,
-                entities,
-                args,
-                domain_config=domain_config,
-                status_tracker=status_tracker,
-            )
+            # --- Consume results in submission (article) order ---
+            for future in futures:
+                result = future.result()
+                processed_rows.append(result.row)
 
-            processed_rows.append(updated_row)
+                merge_and_finalize(
+                    result,
+                    entities=entities,
+                    processor=processor,
+                    args=args,
+                    domain_config=domain_cfg,
+                    status_tracker=status_tracker,
+                    counters=counters,
+                )
 
-            if was_processed:
-                counters["processed_count"] += 1
-            elif skip_reason == "not_relevant":
-                counters["skipped_relevance_count"] += 1
-            elif skip_reason == "already_processed":
-                counters["skipped_already_processed"] += 1
-            elif skip_reason == "no_content":
-                counters["skipped_no_content"] += 1
+                progress.update(task_id, advance=1)
 
-            progress.update(task_id, advance=1)
+    # Append rows beyond the limit unchanged
+    processed_rows.extend(remaining_rows)
 
     return processed_rows, counters
 
@@ -666,6 +768,19 @@ def main():
         )
 
     processor = ArticleProcessor(domain=args.domain, model_type=model_type)
+
+    # Configure LLM concurrency limiter
+    cc = config.get_concurrency_config()
+    configure_llm_concurrency(
+        cloud_in_flight=cc["llm_in_flight"] if model_type == "gemini" else None,
+        local_in_flight=cc["ollama_in_flight"] if model_type == "ollama" else None,
+    )
+    log(
+        f"Concurrency: {cc['extract_workers']} workers, "
+        f"{cc['extract_per_article']} types/article, "
+        f"{cc['llm_in_flight']} LLM in-flight",
+        level="info",
+    )
 
     # Initialize sidecar processing status tracker
     status_tracker = ProcessingStatus(base_dir)

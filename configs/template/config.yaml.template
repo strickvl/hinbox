@@ -31,6 +31,16 @@ dedup:
   #     equivalence_groups:
   #       - ["Full Name", "Abbreviation", "Alternate Name"]
 
+# Performance / concurrency configuration (uncomment to enable parallelism)
+# performance:
+#   concurrency:
+#     extract_workers: 8        # parallel articles in extraction phase
+#     extract_per_article: 4    # parallel entity types within article
+#     llm_in_flight: 16         # max concurrent cloud LLM calls
+#     ollama_in_flight: 2       # max concurrent Ollama calls (local mode)
+#   queue:
+#     max_buffered_articles: 32  # backpressure limit for extraction -> merge
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction

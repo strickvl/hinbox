@@ -7,7 +7,7 @@ the "has this article been processed?" bookkeeping.
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Set
 
 from src.logging_config import get_logger
 
@@ -64,6 +64,14 @@ class ProcessingStatus:
             logger.error(f"Failed to write processing status: {e}")
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
+
+    def processed_ids(self) -> Set[str]:
+        """Return a snapshot of article IDs currently marked as processed.
+
+        Thread-safe when called before concurrent work begins (the returned
+        set is an independent copy).
+        """
+        return {aid for aid, meta in self._status.items() if meta.get("processed")}
 
     @property
     def total_processed(self) -> int:

@@ -2,9 +2,11 @@
 
 import json
 import random
+import threading
 import time
+from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, Iterator, List, Optional, Type
 
 import instructor
 import litellm
@@ -31,6 +33,62 @@ from src.utils.logging import (
 
 # Get logger for this module
 logger = get_logger("utils.llm")
+
+# ---------------------------------------------------------------------------
+# Global LLM concurrency limiters
+# ---------------------------------------------------------------------------
+_cloud_llm_semaphore: Optional[threading.Semaphore] = None
+_local_llm_semaphore: Optional[threading.Semaphore] = None
+
+
+def configure_llm_concurrency(
+    *,
+    cloud_in_flight: Optional[int] = None,
+    local_in_flight: Optional[int] = None,
+) -> None:
+    """Set global concurrency caps for cloud / local LLM calls.
+
+    Call once at pipeline startup. ``None`` or ``<= 0`` disables the limiter
+    (unlimited concurrency).
+    """
+    global _cloud_llm_semaphore, _local_llm_semaphore
+    if cloud_in_flight and cloud_in_flight > 0:
+        _cloud_llm_semaphore = threading.Semaphore(cloud_in_flight)
+        logger.info(f"Cloud LLM concurrency limited to {cloud_in_flight} in-flight")
+    else:
+        _cloud_llm_semaphore = None
+    if local_in_flight and local_in_flight > 0:
+        _local_llm_semaphore = threading.Semaphore(local_in_flight)
+        logger.info(f"Local LLM concurrency limited to {local_in_flight} in-flight")
+    else:
+        _local_llm_semaphore = None
+
+
+@contextmanager
+def cloud_llm_slot() -> Iterator[None]:
+    """Acquire / release a slot in the global cloud semaphore (no-op if unconfigured)."""
+    if _cloud_llm_semaphore is not None:
+        _cloud_llm_semaphore.acquire()
+        try:
+            yield
+        finally:
+            _cloud_llm_semaphore.release()
+    else:
+        yield
+
+
+@contextmanager
+def local_llm_slot() -> Iterator[None]:
+    """Acquire / release a slot in the global local semaphore (no-op if unconfigured)."""
+    if _local_llm_semaphore is not None:
+        _local_llm_semaphore.acquire()
+        try:
+            yield
+        finally:
+            _local_llm_semaphore.release()
+    else:
+        yield
+
 
 # Configure litellm once for the entire module
 litellm.enable_json_schema_validation = True
@@ -98,15 +156,16 @@ def cloud_generation(
 
     for attempt in range(max_retries + 1):
         try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                response_model=response_model,
-                metadata=metadata,
-                **kwargs,
-            )
+            with cloud_llm_slot():
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    response_model=response_model,
+                    metadata=metadata,
+                    **kwargs,
+                )
             logger.debug(f"Successfully generated response with {model}")
             return response
         except Exception as e:
@@ -121,16 +180,17 @@ def cloud_generation(
                 # Strategy 1: Try with lower temperature and max_retries=0 to force single response
                 try:
                     logger.debug("Trying with temperature=0 and max_retries=0")
-                    response = client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=0,
-                        response_model=response_model,
-                        metadata=metadata,
-                        max_retries=0,
-                        **kwargs,
-                    )
+                    with cloud_llm_slot():
+                        response = client.chat.completions.create(
+                            model=model,
+                            messages=messages,
+                            max_tokens=max_tokens,
+                            temperature=0,
+                            response_model=response_model,
+                            metadata=metadata,
+                            max_retries=0,
+                            **kwargs,
+                        )
                     logger.debug(
                         "Recovered from multiple tool calls error with strategy 1"
                     )
@@ -147,16 +207,17 @@ def cloud_generation(
                             "\n\nIMPORTANT: Provide exactly ONE response. Do not make multiple tool calls."
                         )
 
-                    response = client.chat.completions.create(
-                        model=model,
-                        messages=modified_messages,
-                        max_tokens=max_tokens,
-                        temperature=0,
-                        response_model=response_model,
-                        metadata=metadata,
-                        max_retries=0,
-                        **kwargs,
-                    )
+                    with cloud_llm_slot():
+                        response = client.chat.completions.create(
+                            model=model,
+                            messages=modified_messages,
+                            max_tokens=max_tokens,
+                            temperature=0,
+                            response_model=response_model,
+                            metadata=metadata,
+                            max_retries=0,
+                            **kwargs,
+                        )
                     logger.debug(
                         "Recovered from multiple tool calls error with strategy 2"
                     )
@@ -222,17 +283,18 @@ def local_generation(
 
     for attempt in range(max_retries + 1):
         try:
-            response = client.chat.completions.create(
-                model=get_ollama_model_name(model),
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                response_model=response_model,
-                metadata=metadata,
-                api_base=OLLAMA_API_URL,
-                custom_llm_provider="ollama",
-                **kwargs,
-            )
+            with local_llm_slot():
+                response = client.chat.completions.create(
+                    model=get_ollama_model_name(model),
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    response_model=response_model,
+                    metadata=metadata,
+                    api_base=OLLAMA_API_URL,
+                    custom_llm_provider="ollama",
+                    **kwargs,
+                )
             logger.debug(f"Successfully generated response with {model}")
             return response
         except Exception as e:
@@ -247,18 +309,19 @@ def local_generation(
                 # Strategy 1: Try with lower temperature and max_retries=0
                 try:
                     logger.debug("Trying local with temperature=0 and max_retries=0")
-                    response = client.chat.completions.create(
-                        model=get_ollama_model_name(model),
-                        messages=messages,
-                        max_tokens=max_tokens,
-                        temperature=0,
-                        response_model=response_model,
-                        metadata=metadata,
-                        api_base=OLLAMA_API_URL,
-                        custom_llm_provider="ollama",
-                        max_retries=0,
-                        **kwargs,
-                    )
+                    with local_llm_slot():
+                        response = client.chat.completions.create(
+                            model=get_ollama_model_name(model),
+                            messages=messages,
+                            max_tokens=max_tokens,
+                            temperature=0,
+                            response_model=response_model,
+                            metadata=metadata,
+                            api_base=OLLAMA_API_URL,
+                            custom_llm_provider="ollama",
+                            max_retries=0,
+                            **kwargs,
+                        )
                     logger.debug("Recovered locally with strategy 1")
                     return response
                 except Exception as recovery_e1:
@@ -273,18 +336,19 @@ def local_generation(
                             "\n\nIMPORTANT: Provide exactly ONE response. Do not make multiple tool calls."
                         )
 
-                    response = client.chat.completions.create(
-                        model=get_ollama_model_name(model),
-                        messages=modified_messages,
-                        max_tokens=max_tokens,
-                        temperature=0,
-                        response_model=response_model,
-                        metadata=metadata,
-                        api_base=OLLAMA_API_URL,
-                        custom_llm_provider="ollama",
-                        max_retries=0,
-                        **kwargs,
-                    )
+                    with local_llm_slot():
+                        response = client.chat.completions.create(
+                            model=get_ollama_model_name(model),
+                            messages=modified_messages,
+                            max_tokens=max_tokens,
+                            temperature=0,
+                            response_model=response_model,
+                            metadata=metadata,
+                            api_base=OLLAMA_API_URL,
+                            custom_llm_provider="ollama",
+                            max_retries=0,
+                            **kwargs,
+                        )
                     logger.debug("Recovered locally with strategy 2")
                     return response
                 except Exception as recovery_e2:

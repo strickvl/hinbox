@@ -46,6 +46,16 @@ dedup:
         - ["Guantanamo Bay", "Guantanamo", "GTMO", "Naval Station Guantanamo Bay", "Guantanamo Bay Naval Base"]
         - ["United States", "U.S.", "US"]
 
+# Performance / concurrency configuration
+performance:
+  concurrency:
+    extract_workers: 8        # parallel articles in extraction phase
+    extract_per_article: 4    # parallel entity types within article
+    llm_in_flight: 16         # max concurrent cloud LLM calls
+    ollama_in_flight: 2       # max concurrent Ollama calls (local mode)
+  queue:
+    max_buffered_articles: 32  # backpressure limit for extraction -> merge
+
 # Merge evidence configuration (for evidence-first similarity search)
 merge_evidence:
   max_chars: 1500         # truncate evidence text to this length

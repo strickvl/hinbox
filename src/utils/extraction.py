@@ -23,6 +23,7 @@ from src.constants import (
 from src.logging_config import get_logger
 from src.utils.llm import (
     DEFAULT_METADATA,
+    cloud_llm_slot,
     create_messages,
     get_litellm_client,
 )
@@ -75,13 +76,14 @@ def extract_entities_cloud(
 
     for attempt in range(max_retries + 1):
         try:
-            return client.chat.completions.create(
-                model=model,
-                response_model=response_model,
-                temperature=temperature,
-                messages=messages,
-                metadata=metadata,
-            )
+            with cloud_llm_slot():
+                return client.chat.completions.create(
+                    model=model,
+                    response_model=response_model,
+                    temperature=temperature,
+                    messages=messages,
+                    metadata=metadata,
+                )
         except Exception as e:
             error_str = str(e)
 
