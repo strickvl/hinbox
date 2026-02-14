@@ -105,7 +105,28 @@ just frontend
    echo 'OLLAMA_API_URL=http://localhost:11434/v1' >> .env
    ```
 
-4. **Verify installation:**
+4. **Set up local model (optional, requires [Ollama](https://ollama.com)):**
+   ```bash
+   # Pull the default local model (Qwen 2.5 32B, ~23GB download):
+   ollama pull qwen2.5:32b-instruct-q5_K_M
+
+   # Set a realistic context window (Ollama defaults are modest;
+   # Qwen 2.5 supports up to 131K tokens but more context = more VRAM).
+   # Add to your shell profile or systemd unit for the Ollama server:
+   export OLLAMA_CONTEXT_LENGTH=32768
+   ```
+
+   You can override the default models without editing code by setting
+   environment variables in your `.env` file:
+   ```bash
+   # Override the local model (default: ollama/qwen2.5:32b-instruct-q5_K_M):
+   echo 'HINBOX_OLLAMA_MODEL=ollama/gemma3:27b' >> .env
+
+   # Override the cloud model (default: gemini/gemini-2.0-flash):
+   echo 'HINBOX_CLOUD_MODEL=gemini/gemini-2.5-flash' >> .env
+   ```
+
+5. **Verify installation:**
    ```bash
    just domains
    ```
