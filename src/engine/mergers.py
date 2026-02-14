@@ -18,7 +18,6 @@ from src.engine.profiles import VersionedProfile, create_profile, update_profile
 from src.logging_config import display_markdown, get_logger, log
 from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
-from src.utils.file_ops import write_entity_to_file
 from src.utils.profiles import extract_profile_text
 
 # Module-specific logger
@@ -308,12 +307,13 @@ class EntityMerger:
         model_type: str = "gemini",
         similarity_threshold: Optional[float] = None,
         domain: str = "guantanamo",
+        domain_config: Optional[DomainConfig] = None,
     ) -> None:
         """Merge extracted entities with existing entities database."""
         embedding_manager = get_embedding_manager(domain=domain)
 
-        # Resolve per-type similarity threshold from domain config
-        domain_cfg = DomainConfig(domain)
+        # Reuse caller-provided config or construct one
+        domain_cfg = domain_config or DomainConfig(domain)
         resolved_threshold = (
             similarity_threshold
             if similarity_threshold is not None
@@ -327,7 +327,6 @@ class EntityMerger:
             f"Starting merge_{self.entity_type} with {len(extracted_entities)} {self.entity_type} to process",
             level="processing",
         )
-        base_dir = domain_cfg.get_output_dir()
         log(
             f"Using model: {model_type}, embedding: {embedding_manager.mode.value} "
             f"({embedding_manager.get_active_model_name()}), "
@@ -609,12 +608,9 @@ class EntityMerger:
                     entity_updated = True
 
                 if entity_updated:
-                    write_entity_to_file(
-                        self.entity_type, similar_key, existing_entity, base_dir
-                    )
                     entities[self.entity_type][similar_key] = existing_entity
                     log(
-                        f"[{self.log_color}]Updated {self.entity_type[:-1]} entity saved to file:[/] "
+                        f"[{self.log_color}]Updated {self.entity_type[:-1]} entity:[/] "
                         f"{self._format_key_for_display(similar_key)}",
                         level="success",
                     )
@@ -644,9 +640,8 @@ class EntityMerger:
                 )
 
                 entities[self.entity_type][entity_key] = new_entity
-                write_entity_to_file(self.entity_type, entity_key, new_entity, base_dir)
                 log(
-                    f"[{self.log_color}]New {self.entity_type[:-1]} entity saved to file:[/] "
+                    f"[{self.log_color}]New {self.entity_type[:-1]} entity:[/] "
                     f"{self._format_key_for_display(entity_key)}",
                     level="info",
                 )

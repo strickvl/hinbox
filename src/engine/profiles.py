@@ -16,6 +16,7 @@ from src.constants import (
     ENABLE_PROFILE_VERSIONING,
     MAX_ITERATIONS,
     OLLAMA_MODEL,
+    get_llm_callbacks,
 )
 from src.exceptions import (
     ProfileGenerationError,
@@ -38,7 +39,7 @@ from src.utils.quality_controls import run_profile_qc
 # Enable JSON schema validation for structured responses
 litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
-litellm.callbacks = ["braintrust"]
+litellm.callbacks = get_llm_callbacks()
 
 logger = logging.getLogger(__name__)
 console = Console()

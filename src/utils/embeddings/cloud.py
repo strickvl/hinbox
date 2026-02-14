@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 import litellm
 
+from src.constants import get_llm_callbacks
 from src.logging_config import get_logger
 
 from .base import EmbeddingConfig, EmbeddingProvider, EmbeddingResult
@@ -22,7 +23,7 @@ class CloudEmbeddingProvider(EmbeddingProvider):
     def _setup_litellm(self):
         """Configure LiteLLM for embeddings."""
         litellm.suppress_debug_info = True
-        litellm.callbacks = ["braintrust"]
+        litellm.callbacks = get_llm_callbacks()
 
     async def embed_single(self, text: str) -> List[float]:
         """Embed a single text using cloud API."""

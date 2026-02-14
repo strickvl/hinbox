@@ -17,6 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
+from src.constants import disable_llm_callbacks
 from src.engine import ArticleProcessor, EntityMerger
 from src.exceptions import ArticleLoadError
 from src.logging_config import get_logger, log, set_verbose
@@ -229,9 +230,13 @@ def merge_all_entities(
     model_type: str,
     processing_metadata: Dict,
     processor: ArticleProcessor,
+    domain_config: DomainConfig = None,
 ) -> None:
     """Merge all extracted entities with existing entities."""
     log("Merging extracted entities...", level="processing")
+
+    # Reuse caller-provided config or construct once for all entity types
+    domain_cfg = domain_config or DomainConfig(processor.domain)
 
     # Convert Pydantic to dict if needed
     people_dicts = processor.convert_pydantic_to_dict(
@@ -270,6 +275,7 @@ def merge_all_entities(
                 extraction_timestamp,
                 model_type,
                 domain=processor.domain,
+                domain_config=domain_cfg,
             )
             merge_duration = (datetime.now() - merge_start).total_seconds()
             log(
@@ -469,6 +475,7 @@ def process_single_article(
     processor: ArticleProcessor,
     entities: Dict[str, Dict],
     args: argparse.Namespace,
+    domain_config: DomainConfig = None,
 ) -> Tuple[Dict, bool, str]:
     """Process a single article through the extraction pipeline.
 
@@ -528,6 +535,7 @@ def process_single_article(
         processor.model_type,
         processing_metadata,
         processor,
+        domain_config=domain_config,
     )
 
     # Finalize processing metadata
@@ -547,6 +555,7 @@ def process_articles_batch(
     processor: ArticleProcessor,
     entities: Dict[str, Dict],
     args: argparse.Namespace,
+    domain_config: DomainConfig = None,
 ) -> Tuple[List[Dict], Dict[str, int]]:
     """Process a batch of articles and return results with statistics."""
     processed_rows = []
@@ -570,6 +579,7 @@ def process_articles_batch(
             processor,
             entities,
             args,
+            domain_config=domain_config,
         )
 
         processed_rows.append(updated_row)
@@ -599,13 +609,17 @@ def main():
     # Initialize processor
     model_type = "ollama" if args.local else "gemini"
 
-    # Enforce privacy: when --local is active, force local embeddings so no
-    # data leaves the machine — regardless of what config.yaml says.
+    # Enforce privacy: when --local is active, force local embeddings and
+    # disable telemetry so no data leaves the machine.
     if args.local:
+        disable_llm_callbacks()
         os.environ["EMBEDDING_MODE"] = "local"
         reset_embedding_manager_cache()
         ensure_local_embeddings_available()
-        log("Privacy mode: embeddings forced to LOCAL (--local flag)", level="info")
+        log(
+            "Privacy mode: embeddings + callbacks forced LOCAL (--local flag)",
+            level="info",
+        )
 
     processor = ArticleProcessor(domain=args.domain, model_type=model_type)
 
@@ -616,7 +630,9 @@ def main():
 
     # Process articles
     article_count = len(rows)
-    processed_rows, counters = process_articles_batch(rows, processor, entities, args)
+    processed_rows, counters = process_articles_batch(
+        rows, processor, entities, args, domain_config=config
+    )
 
     # Post-processing: verify profile grounding
     if counters["processed_count"] > 0:

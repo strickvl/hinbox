@@ -20,6 +20,7 @@ from src.constants import (
     MAX_RETRIES,
     OLLAMA_API_URL,
     OLLAMA_MODEL,
+    get_llm_callbacks,
     get_ollama_model_name,
 )
 from src.logging_config import get_logger
@@ -34,7 +35,7 @@ logger = get_logger("utils.llm")
 # Configure litellm once for the entire module
 litellm.enable_json_schema_validation = True
 litellm.suppress_debug_info = True
-litellm.callbacks = ["braintrust"]
+litellm.callbacks = get_llm_callbacks()
 
 # Common metadata for all LLM calls
 DEFAULT_METADATA: Dict[str, Any] = {

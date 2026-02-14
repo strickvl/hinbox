@@ -207,7 +207,6 @@ class TestDisputeAgentRouting:
                 side_effect=always_return_match_result,
             ),
             patch("src.engine.mergers.run_merge_dispute_agent", dispute_mock),
-            patch("src.engine.mergers.write_entity_to_file", return_value=None),
             patch.object(
                 merger,
                 "find_similar_entity",

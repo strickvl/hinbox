@@ -4,8 +4,8 @@ These tests:
 - Patch profile creation/update to deterministic stubs
 - Patch embedding manager to a simple stub with embed_text_sync
 - Patch cloud_model_check_match to always match in the update path
-- Patch write_entity_to_file to no-op to avoid filesystem writes
 - Verify key fields updated: articles, profile text, profile_versions, profile_embedding, alternative names
+  (merge_entities no longer writes to disk — persistence is handled by end-of-run flush)
 """
 
 from typing import Any, Dict, List
@@ -125,7 +125,6 @@ class TestEntityMergerMergeSmoke:
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
             ),
-            patch("src.engine.mergers.write_entity_to_file", return_value=None),
         ):
             merger.merge_entities(
                 extracted_people,
@@ -237,7 +236,6 @@ class TestEntityMergerMergeSmoke:
                 "src.engine.match_checker.cloud_model_check_match",
                 side_effect=always_match,
             ),
-            patch("src.engine.mergers.write_entity_to_file", return_value=None),
         ):
             merger.merge_entities(
                 extracted_people,

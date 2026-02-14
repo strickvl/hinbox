@@ -55,6 +55,36 @@ DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 # Braintrust project id (optional)
 BRAINTRUST_PROJECT_ID = os.getenv("BRAINTRUST_PROJECT_ID", "").strip() or None
 
+# Whether LLM telemetry callbacks are enabled (disabled in --local mode for privacy)
+_CALLBACKS_ENABLED = True
+
+
+def disable_llm_callbacks() -> None:
+    """Disable all LiteLLM telemetry callbacks (for --local / privacy mode).
+
+    Call this early in main() before any LLM work begins. It clears the
+    callbacks list that modules set at import time.
+    """
+    global _CALLBACKS_ENABLED
+    _CALLBACKS_ENABLED = False
+    try:
+        import litellm
+
+        litellm.callbacks = []
+    except ImportError:
+        pass
+
+
+def get_llm_callbacks() -> list:
+    """Return the callbacks list that LLM modules should use.
+
+    Returns ["braintrust"] when telemetry is enabled, [] when disabled.
+    """
+    if _CALLBACKS_ENABLED and BRAINTRUST_PROJECT_ID:
+        return ["braintrust"]
+    return []
+
+
 # Profile versioning feature flag
 ENABLE_PROFILE_VERSIONING = (
     os.getenv("ENABLE_PROFILE_VERSIONING", "true").lower() == "true"
