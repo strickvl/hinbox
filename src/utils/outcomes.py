@@ -36,7 +36,7 @@ class PhaseOutcome(BaseModel):
 
     def to_metadata_dict(self) -> Dict[str, Any]:
         """Serialize for storage in processing_metadata (drops `value` to save space)."""
-        d = self.model_dump()
+        d = self.model_dump(exclude_none=True)
         d.pop("value", None)
         return d
 

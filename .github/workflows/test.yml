@@ -42,4 +42,4 @@ jobs:
         run: uv sync --extra dev --group dev
 
       - name: Run tests
-        run: uv run pytest tests/ -v -k "not asyncio" --tb=short
+        run: uv run pytest tests/ -v -m "not asyncio" --tb=short

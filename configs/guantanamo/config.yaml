@@ -35,7 +35,7 @@ processing:
 
 # Embeddings configuration
 embeddings:
-  mode: hybrid  # Options: auto, local, cloud, hybrid
+  mode: cloud  # Options: auto, local, cloud, hybrid
   cloud:
     model: jina_ai/jina-embeddings-v3
     batch_size: 100

@@ -78,7 +78,7 @@ class CloudEmbeddingProvider(EmbeddingProvider):
 
     async def _call_with_retry(self, texts: List[str]):
         """Call cloud API with exponential backoff retry."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         for attempt in range(self.config.max_retries):
             try:

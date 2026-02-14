@@ -8,6 +8,7 @@ QC functions never raise — they only drop invalid items and report.
 """
 
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
@@ -28,13 +29,47 @@ CITATION_RE = re.compile(r"\^\[([^\]\s]+)\]")
 # Extraction QC
 # ──────────────────────────────────────────────
 
-# Required fields per entity type (derived from dynamic_models schemas)
-REQUIRED_FIELDS: Dict[str, Set[str]] = {
+# Fallback required fields — used when Pydantic schema lookup fails
+_FALLBACK_REQUIRED_FIELDS: Dict[str, Set[str]] = {
     "people": {"name"},
     "organizations": {"name"},
     "locations": {"name"},
     "events": {"title", "description", "event_type", "start_date"},
 }
+
+
+def _get_required_fields(entity_type: str, domain: str) -> Set[str]:
+    """Derive required fields from the domain's Pydantic schema.
+
+    Falls back to _FALLBACK_REQUIRED_FIELDS if schema loading fails.
+    """
+    try:
+        from src.dynamic_models import (
+            get_event_model,
+            get_location_model,
+            get_organization_model,
+            get_person_model,
+        )
+
+        model_getters = {
+            "people": get_person_model,
+            "organizations": get_organization_model,
+            "locations": get_location_model,
+            "events": get_event_model,
+        }
+        getter = model_getters.get(entity_type)
+        if getter:
+            model = getter(domain)
+            return {
+                name
+                for name, field in model.model_fields.items()
+                if field.is_required()
+            }
+    except Exception:
+        logger.debug(
+            f"Could not load schema for {entity_type}/{domain}, using fallback required fields"
+        )
+    return _FALLBACK_REQUIRED_FIELDS.get(entity_type, set())
 
 
 class ExtractionQCReport(BaseModel):
@@ -49,8 +84,10 @@ class ExtractionQCReport(BaseModel):
 
 
 def normalize_name(s: Any) -> str:
-    """Normalize an entity name: strip whitespace and title-case."""
-    return str(s or "").strip().title()
+    """Normalize an entity name: strip/collapse whitespace, normalize unicode."""
+    text = str(s or "").strip()
+    text = " ".join(text.split())  # collapse whitespace runs
+    return unicodedata.normalize("NFC", text)
 
 
 def _entity_dedup_key(entity_type: str, e: Dict[str, Any]) -> Tuple:
@@ -67,9 +104,11 @@ def _entity_dedup_key(entity_type: str, e: Dict[str, Any]) -> Tuple:
     return (id(e),)
 
 
-def _check_required_fields(entity_type: str, entity: Dict[str, Any]) -> Optional[str]:
+def _check_required_fields(
+    entity_type: str, entity: Dict[str, Any], domain: str = "guantanamo"
+) -> Optional[str]:
     """Return the name of the first missing required field, or None if all present."""
-    required = REQUIRED_FIELDS.get(entity_type, set())
+    required = _get_required_fields(entity_type, domain)
     for field in sorted(required):
         val = entity.get(field)
         if val is None or (isinstance(val, str) and not val.strip()):
@@ -102,7 +141,7 @@ def run_extraction_qc(
 
     for entity in entities:
         # 1. Required-field check
-        missing = _check_required_fields(entity_type, entity)
+        missing = _check_required_fields(entity_type, entity, domain)
         if missing:
             report.dropped_missing_required += 1
             flags.append(f"missing_required:{missing}")

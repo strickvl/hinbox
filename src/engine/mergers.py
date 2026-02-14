@@ -304,8 +304,6 @@ class EntityMerger:
         domain: str = "guantanamo",
     ) -> None:
         """Merge extracted entities with existing entities database."""
-        # Preserve legacy logging of "chosen mode"; EmbeddingManager itself is obtained via shared getter.
-        embedding_model_type = "local" if model_type == "ollama" else "cloud"
         embedding_manager = get_embedding_manager(domain=domain)
 
         # Resolve per-type similarity threshold from domain config
@@ -325,7 +323,8 @@ class EntityMerger:
         )
         base_dir = domain_cfg.get_output_dir()
         log(
-            f"Using model: {model_type}, embedding model: {embedding_model_type}, "
+            f"Using model: {model_type}, embedding: {embedding_manager.mode.value} "
+            f"({embedding_manager.get_active_model_name()}), "
             f"threshold: {resolved_threshold:.2f}, "
             f"lexical_blocking: {'on' if lexical_blocking_cfg.get('enabled') else 'off'}",
             level="info",
@@ -436,6 +435,7 @@ class EntityMerger:
                 existing_entity = entities[self.entity_type][similar_key]
 
                 # Ensure article is linked
+                existing_entity.setdefault("articles", [])
                 article_exists = any(
                     a.get("article_id") == article_id
                     for a in existing_entity["articles"]

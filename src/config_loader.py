@@ -1,5 +1,6 @@
 """Domain configuration loader and management."""
 
+import copy
 import os
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
@@ -262,8 +263,8 @@ class DomainConfig:
             },
         }
 
-        # Merge with defaults
-        result = defaults.copy()
+        # Merge with defaults (deepcopy to avoid mutating nested dicts)
+        result = copy.deepcopy(defaults)
         if embeddings_config:
             result["mode"] = embeddings_config.get("mode", defaults["mode"])
             if "cloud" in embeddings_config:

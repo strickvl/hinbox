@@ -23,6 +23,13 @@ class StubEmbeddingResult:
         self.dimension = len(vec) if vec else None
 
 
+class _StubMode:
+    """Minimal stub for EmbeddingMode enum value."""
+
+    def __init__(self, value: str = "local"):
+        self.value = value
+
+
 class StubEmbeddingManager:
     """Minimal stub that mimics the EmbeddingManager interface needed by mergers.
 
@@ -33,12 +40,16 @@ class StubEmbeddingManager:
     def __init__(self, vec: List[float] = None, model: str = "stub-model"):
         self._vec = vec or [0.1, 0.2, 0.3]
         self._model = model
+        self.mode = _StubMode("local")
 
     def embed_text_sync(self, text: str) -> List[float]:
         return list(self._vec)
 
     def embed_text_result_sync(self, text: str) -> StubEmbeddingResult:
         return StubEmbeddingResult(self._vec, self._model)
+
+    def get_active_model_name(self) -> str:
+        return self._model
 
 
 def make_empty_entities() -> Dict[str, Dict]:
