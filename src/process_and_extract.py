@@ -20,6 +20,10 @@ from src.config_loader import DomainConfig
 from src.engine import ArticleProcessor, EntityMerger
 from src.exceptions import ArticleLoadError
 from src.logging_config import get_logger, log, set_verbose
+from src.utils.embeddings.similarity import (
+    ensure_local_embeddings_available,
+    reset_embedding_manager_cache,
+)
 from src.utils.file_ops import write_entity_to_file
 
 # Get module-specific logger
@@ -522,6 +526,15 @@ def main():
 
     # Initialize processor
     model_type = "ollama" if args.local else "gemini"
+
+    # Enforce privacy: when --local is active, force local embeddings so no
+    # data leaves the machine — regardless of what config.yaml says.
+    if args.local:
+        os.environ["EMBEDDING_MODE"] = "local"
+        reset_embedding_manager_cache()
+        ensure_local_embeddings_available()
+        log("Privacy mode: embeddings forced to LOCAL (--local flag)", level="info")
+
     processor = ArticleProcessor(domain=args.domain, model_type=model_type)
 
     # Load articles

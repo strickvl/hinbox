@@ -76,6 +76,23 @@ class TestEmbeddingManager:
                 assert manager.cloud_provider is not None
                 assert manager.local_provider is None
 
+    def test_env_var_local_overrides_cloud_config(self):
+        """EMBEDDING_MODE=local must override a cloud config — privacy enforcement."""
+        cloud_config = {
+            "embeddings": {
+                "mode": "cloud",
+                "cloud": {"model": "jina_ai/jina-embeddings-v3"},
+            }
+        }
+        with patch.dict(os.environ, {"EMBEDDING_MODE": "local"}):
+            with patch.object(
+                EmbeddingManager, "_load_domain_config", return_value=cloud_config
+            ):
+                manager = EmbeddingManager()
+                assert manager.mode == EmbeddingMode.LOCAL
+                assert manager.local_provider is not None
+                assert manager.cloud_provider is None
+
     def test_init_with_invalid_env_var(self, mock_domain_config):
         """Test initialization with invalid environment variable."""
         with patch.dict(os.environ, {"EMBEDDING_MODE": "invalid"}):
