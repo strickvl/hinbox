@@ -15,12 +15,14 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
+from src.config_loader import get_domain_config
 from src.constants import (
     PROFILE_QC_MIN_TAG_COUNT,
     PROFILE_QC_MIN_TEXT_LENGTH,
     QC_MIN_NAME_LENGTH,
 )
 from src.logging_config import get_logger
+from src.utils.name_variants import names_likely_same
 
 logger = get_logger("quality_controls")
 
@@ -118,6 +120,97 @@ def _check_required_fields(
     return None
 
 
+def _collapse_within_article_variants(
+    *,
+    entity_type: str,
+    entities: List[Dict[str, Any]],
+    domain: str = "guantanamo",
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Collapse name variants within a single article's extraction results.
+
+    For organizations and locations, detects when two extracted entities
+    likely refer to the same real-world entity (via acronym matching,
+    substring containment, or configured equivalence groups) and merges
+    them — keeping the longer/more descriptive name and adding the
+    shorter one to an ``aliases`` list.
+
+    For people and events, this is a no-op (returns entities unchanged).
+
+    Returns (consolidated_entities, collapsed_count).
+    """
+    if entity_type not in ("organizations", "locations"):
+        return entities, 0
+
+    if len(entities) <= 1:
+        return entities, 0
+
+    # Load equivalence groups from domain config
+    try:
+        cfg = get_domain_config(domain)
+        variants_cfg = cfg.get_name_variants_config(entity_type)
+        equivalence_groups = variants_cfg.get("equivalence_groups", [])
+    except Exception:
+        equivalence_groups = []
+
+    name_field = "name"
+    collapsed_count = 0
+
+    # Track which entities have been absorbed into another
+    absorbed: Set[int] = set()
+
+    for i in range(len(entities)):
+        if i in absorbed:
+            continue
+        for j in range(i + 1, len(entities)):
+            if j in absorbed:
+                continue
+
+            name_i = entities[i].get(name_field, "")
+            name_j = entities[j].get(name_field, "")
+            type_i = str(entities[i].get("type") or "").strip()
+            type_j = str(entities[j].get("type") or "").strip()
+
+            # Only collapse entities of the same type
+            if type_i and type_j and type_i != type_j:
+                continue
+
+            if names_likely_same(
+                name_i,
+                name_j,
+                entity_type=entity_type,
+                equivalence_groups=equivalence_groups,
+            ):
+                # Keep the longer/more descriptive name
+                if len(name_i) >= len(name_j):
+                    keep_idx, drop_idx = i, j
+                else:
+                    keep_idx, drop_idx = j, i
+
+                keep = entities[keep_idx]
+                drop = entities[drop_idx]
+
+                # Add dropped name to aliases
+                keep.setdefault("aliases", [])
+                drop_name = drop.get(name_field, "")
+                if drop_name and drop_name not in keep["aliases"]:
+                    keep["aliases"].append(drop_name)
+
+                # Also absorb any aliases from the dropped entity
+                for alias in drop.get("aliases", []):
+                    if alias not in keep["aliases"]:
+                        keep["aliases"].append(alias)
+
+                absorbed.add(drop_idx)
+                collapsed_count += 1
+                logger.debug(
+                    f"Collapsed '{drop_name}' into '{keep.get(name_field)}' "
+                    f"(aliases: {keep['aliases']})"
+                )
+
+    result = [e for idx, e in enumerate(entities) if idx not in absorbed]
+    return result, collapsed_count
+
+
 def run_extraction_qc(
     *,
     entity_type: str,
@@ -166,7 +259,7 @@ def run_extraction_qc(
         if len(normed) < min_name_len:
             flags.append(f"short_name:{normed}")
 
-        # 4. Within-article dedup
+        # 4. Within-article dedup (exact key match)
         key = _entity_dedup_key(entity_type, entity)
         if key in seen_keys:
             report.deduped += 1
@@ -175,8 +268,19 @@ def run_extraction_qc(
 
         cleaned.append(entity)
 
+    # 5. Variant consolidation (acronym/substring/equivalence-group dedup)
+    cleaned, collapsed_count = _collapse_within_article_variants(
+        entity_type=entity_type,
+        entities=cleaned,
+        domain=domain,
+    )
+    report.deduped += collapsed_count
+
     report.output_count = len(cleaned)
-    report.fixes = {"normalized_names": normalized_count}
+    report.fixes = {
+        "normalized_names": normalized_count,
+        "collapsed_variants": collapsed_count,
+    }
 
     if report.dropped_missing_required > len(entities) * 0.5 and len(entities) > 2:
         flags.append("high_drop_rate")
@@ -287,12 +391,6 @@ class ClaimVerification(BaseModel):
     claim: str = Field(..., description="The text span supported by the citation")
     support_level: SupportLevel
     reasoning: Optional[str] = None
-
-
-class _ClaimVerificationBatch(BaseModel):
-    """Internal wrapper for structured LLM output (list of verifications)."""
-
-    verifications: List[ClaimVerification]
 
 
 class GroundingReport(BaseModel):
@@ -437,22 +535,22 @@ def verify_profile_grounding(
 
         try:
             if model_type == "ollama":
-                batch_result = local_generation(
+                verifications_list = local_generation(
                     messages=messages,
-                    response_model=_ClaimVerificationBatch,
+                    response_model=List[ClaimVerification],
                     temperature=0,
                 )
             else:
-                batch_result = cloud_generation(
+                verifications_list = cloud_generation(
                     messages=messages,
-                    response_model=_ClaimVerificationBatch,
+                    response_model=List[ClaimVerification],
                     temperature=0,
                 )
 
             # Match returned verifications to input claims
             for i, claim_item in enumerate(claims_for_article):
-                if i < len(batch_result.verifications):
-                    v = batch_result.verifications[i]
+                if i < len(verifications_list):
+                    v = verifications_list[i]
                     all_verifications.append(v)
                 else:
                     # LLM returned fewer results than expected
@@ -466,7 +564,7 @@ def verify_profile_grounding(
                         )
                     )
 
-            if len(batch_result.verifications) != len(claims_for_article):
+            if len(verifications_list) != len(claims_for_article):
                 report.flags.append("llm_count_mismatch")
 
         except Exception as e:

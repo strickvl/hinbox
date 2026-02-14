@@ -15,7 +15,6 @@ from src.utils.quality_controls import (
     ClaimVerification,
     GroundingReport,
     SupportLevel,
-    _ClaimVerificationBatch,
     _extract_cited_claims,
     verify_profile_grounding,
 )
@@ -113,17 +112,15 @@ class TestVerifyProfileGrounding:
 
     def test_missing_source_handling(self):
         """Citations referencing unavailable articles should be flagged."""
-        supported_result = _ClaimVerificationBatch(
-            verifications=[
-                ClaimVerification(
-                    article_id="a1",
-                    citation="^[a1]",
-                    claim="known claim",
-                    support_level=SupportLevel.SUPPORTED,
-                    reasoning="found in text",
-                )
-            ]
-        )
+        supported_result = [
+            ClaimVerification(
+                article_id="a1",
+                citation="^[a1]",
+                claim="known claim",
+                support_level=SupportLevel.SUPPORTED,
+                reasoning="found in text",
+            )
+        ]
         with patch(
             "src.utils.llm.cloud_generation",
             return_value=supported_result,
@@ -140,20 +137,18 @@ class TestVerifyProfileGrounding:
 
     def test_cloud_generation_called_for_gemini(self):
         """model_type='gemini' should use cloud_generation."""
-        batch = _ClaimVerificationBatch(
-            verifications=[
-                ClaimVerification(
-                    article_id="a1",
-                    citation="^[a1]",
-                    claim="test",
-                    support_level=SupportLevel.SUPPORTED,
-                )
-            ]
-        )
+        result = [
+            ClaimVerification(
+                article_id="a1",
+                citation="^[a1]",
+                claim="test",
+                support_level=SupportLevel.SUPPORTED,
+            )
+        ]
         with (
             patch(
                 "src.utils.llm.cloud_generation",
-                return_value=batch,
+                return_value=result,
             ) as mock_cloud,
             patch(
                 "src.utils.llm.local_generation",
@@ -169,23 +164,21 @@ class TestVerifyProfileGrounding:
 
     def test_local_generation_called_for_ollama(self):
         """model_type='ollama' should use local_generation."""
-        batch = _ClaimVerificationBatch(
-            verifications=[
-                ClaimVerification(
-                    article_id="a1",
-                    citation="^[a1]",
-                    claim="test",
-                    support_level=SupportLevel.SUPPORTED,
-                )
-            ]
-        )
+        result = [
+            ClaimVerification(
+                article_id="a1",
+                citation="^[a1]",
+                claim="test",
+                support_level=SupportLevel.SUPPORTED,
+            )
+        ]
         with (
             patch(
                 "src.utils.llm.cloud_generation",
             ) as mock_cloud,
             patch(
                 "src.utils.llm.local_generation",
-                return_value=batch,
+                return_value=result,
             ) as mock_local,
         ):
             verify_profile_grounding(
@@ -198,25 +191,23 @@ class TestVerifyProfileGrounding:
 
     def test_all_supported_gives_perfect_score(self):
         """When all claims are supported, grounding_score should be 1.0."""
-        batch = _ClaimVerificationBatch(
-            verifications=[
-                ClaimVerification(
-                    article_id="a1",
-                    citation="^[a1]",
-                    claim="first",
-                    support_level=SupportLevel.SUPPORTED,
-                ),
-                ClaimVerification(
-                    article_id="a1",
-                    citation="^[a1]",
-                    claim="second",
-                    support_level=SupportLevel.PARTIAL,
-                ),
-            ]
-        )
+        result = [
+            ClaimVerification(
+                article_id="a1",
+                citation="^[a1]",
+                claim="first",
+                support_level=SupportLevel.SUPPORTED,
+            ),
+            ClaimVerification(
+                article_id="a1",
+                citation="^[a1]",
+                claim="second",
+                support_level=SupportLevel.PARTIAL,
+            ),
+        ]
         with patch(
             "src.utils.llm.cloud_generation",
-            return_value=batch,
+            return_value=result,
         ):
             report = verify_profile_grounding(
                 profile_text="First claim.^[a1] Second claim.^[a1]",
@@ -227,19 +218,17 @@ class TestVerifyProfileGrounding:
 
     def test_low_score_flags_and_fails(self):
         """Score below threshold should flag low_grounding_score and set passed=False."""
-        batch = _ClaimVerificationBatch(
-            verifications=[
-                ClaimVerification(
-                    article_id="a1",
-                    citation="^[a1]",
-                    claim="unsupported",
-                    support_level=SupportLevel.NOT_SUPPORTED,
-                ),
-            ]
-        )
+        result = [
+            ClaimVerification(
+                article_id="a1",
+                citation="^[a1]",
+                claim="unsupported",
+                support_level=SupportLevel.NOT_SUPPORTED,
+            ),
+        ]
         with patch(
             "src.utils.llm.cloud_generation",
-            return_value=batch,
+            return_value=result,
         ):
             report = verify_profile_grounding(
                 profile_text="Unsupported claim.^[a1]",
@@ -271,19 +260,17 @@ class TestVerifyProfileGrounding:
 
         text = "Claim.^[a1]"
         expected_hash = hashlib.sha256(text.encode()).hexdigest()
-        batch = _ClaimVerificationBatch(
-            verifications=[
-                ClaimVerification(
-                    article_id="a1",
-                    citation="^[a1]",
-                    claim="Claim",
-                    support_level=SupportLevel.SUPPORTED,
-                )
-            ]
-        )
+        result = [
+            ClaimVerification(
+                article_id="a1",
+                citation="^[a1]",
+                claim="Claim",
+                support_level=SupportLevel.SUPPORTED,
+            )
+        ]
         with patch(
             "src.utils.llm.cloud_generation",
-            return_value=batch,
+            return_value=result,
         ):
             report = verify_profile_grounding(
                 profile_text=text,

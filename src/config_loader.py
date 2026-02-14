@@ -158,6 +158,37 @@ class DomainConfig:
         section = config.get("merge_evidence", {})
         return {**defaults, **section}
 
+    def get_name_variants_config(self, entity_type: str) -> Dict[str, Any]:
+        """Get name-variant configuration for within-article dedup and merge blocking.
+
+        Returns dedup.name_variants.<entity_type> config with defaults:
+          equivalence_groups: []
+          acronym_stopwords: ["the", "of", "for", "and", "to", "in", "on", "a", "an", "at", "by"]
+        """
+        config = self.load_config()
+        dedup = config.get("dedup", {})
+        all_variants = dedup.get("name_variants", {})
+
+        defaults: Dict[str, Any] = {
+            "equivalence_groups": [],
+            "acronym_stopwords": [
+                "the",
+                "of",
+                "for",
+                "and",
+                "to",
+                "in",
+                "on",
+                "a",
+                "an",
+                "at",
+                "by",
+            ],
+        }
+
+        type_config = all_variants.get(entity_type, {})
+        return {**defaults, **type_config}
+
     def get_entity_types(self, entity_category: str) -> List[str]:
         """Get available entity types for a category."""
         categories = self.load_categories(entity_category)

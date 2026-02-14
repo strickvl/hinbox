@@ -31,7 +31,7 @@ Example:
 
 ## Style Guidelines
 
-Extract organizations as they appear in the source. Use full official names when available, but common abbreviations are acceptable if that's how they're referenced in the document. Consider historical variations in organization names.
+Extract organizations using their full official names whenever the full name appears anywhere in the source. If both an abbreviation and the full name appear (e.g., "DoD" and "Department of Defense"), extract only ONE entity using the full name. Only use abbreviations when the full name is not present in the source. Do not extract the same organization multiple times under different names or variants. Consider historical variations in organization names.
 
 ---
 

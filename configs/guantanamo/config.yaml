@@ -24,6 +24,26 @@ dedup:
     enabled: true
     threshold: 60        # RapidFuzz score cutoff (0-100)
     max_candidates: 50   # max entities to run cosine similarity against
+  name_variants:
+    organizations:
+      equivalence_groups:
+        - ["Department of Defense", "Defense Department", "DoD", "Pentagon"]
+        - ["Department of Justice", "Justice Department", "DoJ"]
+        - ["Department of Homeland Security", "Homeland Security", "DHS"]
+        - ["Department of State", "State Department"]
+        - ["Immigration and Customs Enforcement", "ICE"]
+        - ["Customs and Border Protection", "CBP"]
+        - ["Central Intelligence Agency", "CIA"]
+        - ["Federal Bureau of Investigation", "FBI"]
+        - ["National Security Agency", "NSA"]
+        - ["Defense Intelligence Agency", "DIA"]
+        - ["Joint Task Force Guantanamo", "JTF-GTMO", "JTF GTMO"]
+        - ["American Civil Liberties Union", "ACLU"]
+        - ["International Committee of the Red Cross", "ICRC", "Red Cross"]
+        - ["United Nations", "UN", "U.N."]
+    locations:
+      equivalence_groups:
+        - ["Guantanamo Bay", "Guantanamo", "GTMO"]
 
 # Merge evidence configuration (for evidence-first similarity search)
 merge_evidence:

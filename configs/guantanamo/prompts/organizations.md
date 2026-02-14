@@ -34,9 +34,9 @@ Return a JSON array of objects. Each organization MUST have:
 
 ## Examples
 
-### Example 1: Military and Government Context
+### Example 1: Military and Government Context (with deduplication)
 
-**Input excerpt**: "Joint Task Force Guantanamo (JTF-GTMO) coordinated with the Department of Defense and FBI agents regarding interrogation protocols. The Senate Armed Services Committee held hearings."
+**Input excerpt**: "Joint Task Force Guantanamo (JTF-GTMO) coordinated with the Department of Defense and FBI agents regarding interrogation protocols. The Senate Armed Services Committee held hearings. The Pentagon confirmed that DoD policy was followed."
 
 **Output**:
 ```json
@@ -47,6 +47,7 @@ Return a JSON array of objects. Each organization MUST have:
   {"name": "Senate Armed Services Committee", "type": "government"}
 ]
 ```
+Note: "Pentagon" and "DoD" are NOT extracted separately — they refer to the same entity as "Department of Defense".
 
 ### Example 2: Legal and Advocacy Context
 
@@ -92,12 +93,18 @@ Return a JSON array of objects. Each organization MUST have:
 ## Important Guidelines
 
 1. **Organization vs. Person**: Verify that each entry is truly an organization, not an individual person
-2. **Full Names**: Use the complete organizational name when available (e.g., "American Civil Liberties Union" not just "ACLU")
-3. **Abbreviations**: Include well-known abbreviations if that's how they appear in the text (e.g., "FBI" is acceptable)
-4. **Subsidiaries**: Treat organizational units as separate entities if they have distinct roles (e.g., "Senate Armed Services Committee" separate from "US Senate")
-5. **Government Levels**: Include federal, state, and local government entities
-6. **International**: Include foreign governments and international organizations when relevant
-7. **ASCII Only**: Convert any non-ASCII characters to their ASCII equivalents
+2. **One Entity Per Organization (CRITICAL)**: If an article mentions the same organization by different names, abbreviations, or variants, extract it only ONCE using the most complete official name. For example:
+   - If "ICE" and "Immigration and Customs Enforcement" both appear, extract only "Immigration and Customs Enforcement"
+   - If "DoD" and "Department of Defense" both appear, extract only "Department of Defense"
+   - If "the Pentagon" is used as a synonym for "Department of Defense", extract only "Department of Defense"
+   - If "Homeland Security" and "Department of Homeland Security" both appear, extract only "Department of Homeland Security"
+3. **Prefer Official Names**: Always use the full official name when it appears anywhere in the article, even if the text more often uses an abbreviation or shorthand
+4. **Abbreviation-Only References**: Only use an abbreviation as the entity name (e.g., "FBI", "CIA") when the full name does NOT appear in the article
+5. **Avoid Generic References**: Do not extract vague or generic references like "Defense departments", "intelligence agencies", or "legal aid organizations" as entities. Extract only specific, named organizations
+6. **Subsidiaries**: Treat organizational units as separate entities only if they are genuinely distinct bodies with different roles (e.g., "Senate Armed Services Committee" separate from "US Senate"), NOT just different ways of referring to the same entity
+7. **Government Levels**: Include federal, state, and local government entities
+8. **International**: Include foreign governments and international organizations when relevant
+9. **ASCII Only**: Convert any non-ASCII characters to their ASCII equivalents
 
 ## Common Organization Categories
 
@@ -134,6 +141,8 @@ Return a JSON array of objects. Each organization MUST have:
 
 ## Common Mistakes to Avoid
 
+- **Extracting the same organization twice under different names** (e.g., both "ICE" and "Immigration and Customs Enforcement", or both "Pentagon" and "Department of Defense")
+- Extracting generic/vague references as organizations (e.g., "Defense departments", "intelligence agencies", "legal aid organizations")
 - Including individual people instead of organizations
 - Missing organizational units mentioned in passing
 - Using incorrect organization types

@@ -26,6 +26,10 @@ from src.logging_config import (
 )
 from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
+from src.utils.name_variants import (
+    compute_acronym,
+    names_likely_same,
+)
 from src.utils.profiles import extract_profile_text
 
 # Module-specific logger
@@ -102,6 +106,32 @@ class EntityMerger:
         return key[0] if isinstance(key, tuple) else key
 
     @staticmethod
+    def _get_search_embedding(entity: Dict[str, Any]) -> List[float]:
+        """Return the best embedding for similarity search.
+
+        Prefers search_embedding (evidence-derived) over profile_embedding
+        (LLM-narrative-derived) for apples-to-apples comparison with incoming
+        evidence queries. Falls back to profile_embedding for backward
+        compatibility with entities created before search_embedding was stored.
+        """
+        return entity.get("search_embedding") or entity.get("profile_embedding", [])
+
+    @staticmethod
+    def _get_search_embedding_meta(
+        entity: Dict[str, Any],
+    ) -> Tuple[Optional[str], Optional[int]]:
+        """Return (model, dim) for the best available search embedding."""
+        if entity.get("search_embedding"):
+            emb = entity["search_embedding"]
+            model = entity.get("search_embedding_model")
+            dim = entity.get("search_embedding_dim") or (len(emb) if emb else None)
+            return model, dim
+        emb = entity.get("profile_embedding", [])
+        model = entity.get("profile_embedding_model")
+        dim = entity.get("profile_embedding_dim") or (len(emb) if emb else None)
+        return model, dim
+
+    @staticmethod
     def _embeddings_compatible(
         new_dim: int,
         existing_entity: Dict[str, Any],
@@ -109,16 +139,17 @@ class EntityMerger:
     ) -> bool:
         """Check whether two embeddings can be meaningfully compared.
 
-        Incompatible when:
+        Prefers search_embedding metadata when available, falls back to
+        profile_embedding. Incompatible when:
         - Dimensions differ (cosine similarity would be 0.0 anyway)
         - Both model names are known and they differ
         """
-        existing_emb = existing_entity.get("profile_embedding", [])
-        existing_dim = existing_entity.get("profile_embedding_dim") or len(existing_emb)
+        existing_model, existing_dim = EntityMerger._get_search_embedding_meta(
+            existing_entity
+        )
         if existing_dim != new_dim:
             return False
 
-        existing_model = existing_entity.get("profile_embedding_model")
         if new_model and existing_model and new_model != existing_model:
             return False
 
@@ -134,33 +165,146 @@ class EntityMerger:
             return str(key[0])
         return str(key)
 
+    def _collect_entity_variant_texts(
+        self,
+        key: Union[str, Tuple],
+        entity: Dict[str, Any],
+    ) -> List[str]:
+        """Collect all name variant strings for an entity (canonical + aliases + alternatives).
+
+        Used to build a richer lexical index for blocking.
+        """
+        texts = [self._lexical_text(key)]
+
+        # Aliases (uniform string list added by QC consolidation)
+        for alias in entity.get("aliases", []):
+            if isinstance(alias, str) and alias.strip():
+                texts.append(alias.strip())
+
+        # Alternative names/titles (legacy format varies by entity type)
+        alt_field = self.alternative_field
+        for alt in entity.get(alt_field, []):
+            if isinstance(alt, str) and alt.strip():
+                texts.append(alt.strip())
+            elif isinstance(alt, dict):
+                name = alt.get("name", alt.get("title", ""))
+                if name and isinstance(name, str):
+                    texts.append(name.strip())
+
+        # Derived acronym from canonical name
+        canonical = self._lexical_text(key)
+        acronym = compute_acronym(canonical)
+        if acronym:
+            texts.append(acronym)
+
+        # Deduplicate while preserving order
+        seen: set = set()
+        unique: List[str] = []
+        for t in texts:
+            lower = t.lower()
+            if lower not in seen:
+                seen.add(lower)
+                unique.append(t)
+
+        return unique
+
     def _lexical_block(
         self,
         query_key: Union[str, Tuple],
         candidate_keys: List[Union[str, Tuple]],
         threshold: int = 60,
         max_candidates: int = 50,
+        *,
+        entities_data: Optional[Dict[Union[str, Tuple], Dict[str, Any]]] = None,
+        query_entity: Optional[Dict[str, Any]] = None,
+        equivalence_groups: Optional[List[List[str]]] = None,
     ) -> List[Union[str, Tuple]]:
-        """Pre-filter candidates using RapidFuzz fuzzy string matching.
+        """Pre-filter candidates using RapidFuzz fuzzy string matching + variant-aware bypass.
+
+        When entities_data is provided, the blocking considers aliases,
+        alternative names, and derived acronyms for each candidate entity,
+        plus equivalence group membership from config.
 
         Returns a shortlist of candidate keys whose lexical similarity to
-        the query is >= threshold, capped at max_candidates.
+        the query (or any of its variants) is >= threshold, capped at max_candidates.
         """
         if not candidate_keys:
             return []
 
-        query_text = self._lexical_text(query_key)
-        choices = [self._lexical_text(k) for k in candidate_keys]
+        matched_keys: set = set()
 
-        results = rfprocess.extract(
-            query_text,
-            choices,
-            scorer=fuzz.WRatio,
-            score_cutoff=threshold,
-            limit=max_candidates,
-        )
-        # results: list of (match_str, score, index)
-        return [candidate_keys[idx] for _, _, idx in results]
+        # Build query variants (canonical + aliases + acronym)
+        query_variants = [self._lexical_text(query_key)]
+        if query_entity:
+            query_variants = self._collect_entity_variant_texts(query_key, query_entity)
+
+        # Build flattened candidate index: (text, key) pairs
+        # Each candidate contributes multiple texts (canonical + variants)
+        choice_texts: List[str] = []
+        choice_to_key: List[Union[str, Tuple]] = []
+
+        for ck in candidate_keys:
+            if entities_data:
+                entity_data = entities_data.get(ck, {})
+                variants = self._collect_entity_variant_texts(ck, entity_data)
+            else:
+                variants = [self._lexical_text(ck)]
+
+            for variant_text in variants:
+                choice_texts.append(variant_text)
+                choice_to_key.append(ck)
+
+        # Run RapidFuzz against flattened index for each query variant
+        for q_text in query_variants:
+            results = rfprocess.extract(
+                q_text,
+                choice_texts,
+                scorer=fuzz.WRatio,
+                score_cutoff=threshold,
+                limit=max_candidates,
+            )
+            for _, _, idx in results:
+                matched_keys.add(choice_to_key[idx])
+
+        # Equivalence group bypass: if query name is in an equivalence group,
+        # add all candidates whose names are in the same group
+        if equivalence_groups:
+            query_text_lower = self._lexical_text(query_key).lower()
+            for group in equivalence_groups:
+                group_lower = {g.lower() for g in group}
+                if query_text_lower in group_lower:
+                    for ck in candidate_keys:
+                        ck_text_lower = self._lexical_text(ck).lower()
+                        if ck_text_lower in group_lower:
+                            matched_keys.add(ck)
+                        # Also check candidate aliases
+                        if entities_data:
+                            entity_data = entities_data.get(ck, {})
+                            for variant in self._collect_entity_variant_texts(
+                                ck, entity_data
+                            ):
+                                if variant.lower() in group_lower:
+                                    matched_keys.add(ck)
+                    break  # Only one group can match
+
+        # names_likely_same bypass: if deterministic heuristics say they match,
+        # include the candidate even if WRatio was too low
+        query_display = self._lexical_text(query_key)
+        for ck in candidate_keys:
+            if ck in matched_keys:
+                continue
+            ck_display = self._lexical_text(ck)
+            if names_likely_same(
+                query_display,
+                ck_display,
+                entity_type=self.entity_type,
+                equivalence_groups=equivalence_groups or [],
+            ):
+                matched_keys.add(ck)
+
+        # Respect max_candidates
+        result = [ck for ck in candidate_keys if ck in matched_keys]
+        return result[:max_candidates]
 
     def find_similar_entity(
         self,
@@ -172,6 +316,8 @@ class EntityMerger:
         embedding_model: Optional[str] = None,
         embedding_dim: Optional[int] = None,
         lexical_blocking_config: Optional[Dict[str, Any]] = None,
+        query_entity: Optional[Dict[str, Any]] = None,
+        equivalence_groups: Optional[List[List[str]]] = None,
     ) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
         """Find the most similar entity in the entities database using embedding similarity.
 
@@ -182,8 +328,10 @@ class EntityMerger:
         downstream LLM match-check can still confirm or deny the merge — this
         prevents accidental duplicates after a model change.
 
-        When lexical_blocking_config is provided and enabled, a RapidFuzz pre-filter
-        reduces the candidate set before running cosine similarity (O(n) → O(k)).
+        When lexical_blocking_config is provided and enabled, a variant-aware
+        RapidFuzz pre-filter reduces the candidate set before running cosine
+        similarity (O(n) → O(k)). The blocking now considers aliases, alternative
+        names, derived acronyms, and configured equivalence groups.
         """
         if not entity_embedding or not entities[self.entity_type]:
             return None, None
@@ -195,13 +343,12 @@ class EntityMerger:
         # Exact key match first
         if entity_key in entities[self.entity_type]:
             existing_entity = entities[self.entity_type][entity_key]
-            if "profile_embedding" in existing_entity:
+            existing_emb = self._get_search_embedding(existing_entity)
+            if existing_emb:
                 if self._embeddings_compatible(
                     new_dim, existing_entity, embedding_model
                 ):
-                    similarity = compute_similarity(
-                        entity_embedding, existing_entity["profile_embedding"]
-                    )
+                    similarity = compute_similarity(entity_embedding, existing_emb)
                     log(
                         f"Exact match for {self.entity_type[:-1]} '{self._format_key_for_display(entity_key)}' with similarity: {similarity:.4f}",
                         level="info",
@@ -221,7 +368,7 @@ class EntityMerger:
         all_candidates = [
             k
             for k, e in entities[self.entity_type].items()
-            if k != entity_key and "profile_embedding" in e
+            if k != entity_key and self._get_search_embedding(e)
         ]
 
         # Apply lexical blocking if configured
@@ -233,6 +380,9 @@ class EntityMerger:
                 all_candidates,
                 threshold=lb.get("threshold", 60),
                 max_candidates=lb.get("max_candidates", 50),
+                entities_data=entities.get(self.entity_type),
+                query_entity=query_entity,
+                equivalence_groups=equivalence_groups,
             )
             log(
                 f"Lexical blocking: {pre_count} → {len(all_candidates)} candidates "
@@ -247,9 +397,8 @@ class EntityMerger:
                 new_dim, existing_entity, embedding_model
             ):
                 continue
-            similarity = compute_similarity(
-                entity_embedding, existing_entity["profile_embedding"]
-            )
+            existing_emb = self._get_search_embedding(existing_entity)
+            similarity = compute_similarity(entity_embedding, existing_emb)
             if similarity > best_score:
                 best_score = similarity
                 best_match = existing_key
@@ -480,6 +629,10 @@ class EntityMerger:
         # Load merge evidence config (window sizes, max chars)
         evidence_cfg = domain_cfg.get_merge_evidence_config()
 
+        # Load name-variant config (equivalence groups for alias-aware blocking)
+        name_variants_cfg = domain_cfg.get_name_variants_config(self.entity_type)
+        equivalence_groups = name_variants_cfg.get("equivalence_groups", [])
+
         log(
             f"Starting merge_{self.entity_type} with {len(extracted_entities)} {self.entity_type} to process",
             level="processing",
@@ -524,7 +677,7 @@ class EntityMerger:
                 len(evidence_embedding) if evidence_embedding else None
             )
 
-            # --- Similarity search (unchanged function) ---
+            # --- Similarity search (variant-aware) ---
             similar_key, similarity_score = self.find_similar_entity(
                 entity_key,
                 evidence_embedding,
@@ -533,6 +686,8 @@ class EntityMerger:
                 embedding_model=emb_model_name,
                 embedding_dim=emb_dim,
                 lexical_blocking_config=lexical_blocking_cfg,
+                query_entity=entity_dict,
+                equivalence_groups=equivalence_groups,
             )
 
             if similar_key:
@@ -698,6 +853,14 @@ class EntityMerger:
                             title=f"Updated Profile: {self._format_key_for_display(similar_key)}",
                             style="yellow",
                         )
+
+                        # Update search_embedding with latest evidence
+                        existing_entity["search_embedding"] = evidence_embedding
+                        existing_entity["search_embedding_model"] = emb_model_name
+                        existing_entity["search_embedding_dim"] = emb_dim
+                        existing_entity["search_embedding_fingerprint"] = (
+                            EmbeddingManager.fingerprint_from_result(emb_result)
+                        )
                     else:
                         new_profile, new_versioned_profile, reflection_history = (
                             create_profile(
@@ -738,6 +901,14 @@ class EntityMerger:
                         existing_entity.setdefault("reflection_history", [])
                         existing_entity["reflection_history"].extend(reflection_history)
 
+                        # Update search_embedding with latest evidence
+                        existing_entity["search_embedding"] = evidence_embedding
+                        existing_entity["search_embedding_model"] = emb_model_name
+                        existing_entity["search_embedding_dim"] = emb_dim
+                        existing_entity["search_embedding_fingerprint"] = (
+                            EmbeddingManager.fingerprint_from_result(emb_result)
+                        )
+
                         display_markdown(
                             new_profile["text"],
                             title=f"New Profile: {self._format_key_for_display(similar_key)}",
@@ -749,6 +920,13 @@ class EntityMerger:
                         if self._add_alternative_name(
                             existing_entity, entity_key, source_entity=entity_dict
                         ):
+                            entity_updated = True
+
+                    # Absorb incoming aliases so future blocking can find them
+                    existing_entity.setdefault("aliases", [])
+                    for alias in entity_dict.get("aliases", []):
+                        if alias and alias not in existing_entity["aliases"]:
+                            existing_entity["aliases"].append(alias)
                             entity_updated = True
 
                 # Keep earliest extraction timestamp
@@ -817,6 +995,9 @@ class EntityMerger:
                     embedding_model=prof_model,
                     embedding_dim=prof_dim,
                     embedding_fingerprint=prof_fingerprint,
+                    search_embedding=evidence_embedding,
+                    search_embedding_model=emb_model_name,
+                    search_embedding_dim=emb_dim,
                 )
 
                 entities[self.entity_type][entity_key] = new_entity
@@ -857,10 +1038,16 @@ class EntityMerger:
         embedding_model: Optional[str] = None,
         embedding_dim: Optional[int] = None,
         embedding_fingerprint: Optional[str] = None,
+        search_embedding: Optional[List[float]] = None,
+        search_embedding_model: Optional[str] = None,
+        search_embedding_dim: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a new entity dictionary with appropriate structure for each entity type."""
         resolved_dim = embedding_dim or (
             len(profile_embedding) if profile_embedding else None
+        )
+        search_dim = search_embedding_dim or (
+            len(search_embedding) if search_embedding else None
         )
         base_entity: Dict[str, Any] = {
             "profile": profile,
@@ -880,8 +1067,17 @@ class EntityMerger:
             "profile_embedding_dim": resolved_dim,
             "profile_embedding_fingerprint": embedding_fingerprint
             or EmbeddingManager.make_fingerprint(embedding_model, resolved_dim),
+            "search_embedding": search_embedding or [],
+            "search_embedding_model": search_embedding_model,
+            "search_embedding_dim": search_dim,
+            "search_embedding_fingerprint": EmbeddingManager.make_fingerprint(
+                search_embedding_model, search_dim
+            )
+            if search_embedding
+            else None,
             "extraction_timestamp": extraction_timestamp,
             self.alternative_field: [],
+            "aliases": entity_dict.get("aliases", []),
             "reflection_history": reflection_history or [],
         }
 

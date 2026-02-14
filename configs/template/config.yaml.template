@@ -24,6 +24,12 @@ dedup:
     enabled: true
     threshold: 60        # RapidFuzz score cutoff (0-100)
     max_candidates: 50   # max entities to run cosine similarity against
+  # Name variant configuration for within-article dedup and merge blocking
+  # Uncomment and customize for your domain:
+  # name_variants:
+  #   organizations:
+  #     equivalence_groups:
+  #       - ["Full Name", "Abbreviation", "Alternate Name"]
 
 # Processing configuration
 processing:

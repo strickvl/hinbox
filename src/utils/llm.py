@@ -67,7 +67,7 @@ def get_litellm_client():
 
 def cloud_generation(
     messages: List[Dict[str, Any]],
-    response_model: Type[BaseModel],
+    response_model: Any,
     model: str = CLOUD_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
@@ -191,7 +191,7 @@ def cloud_generation(
 
 def local_generation(
     messages: List[Dict[str, Any]],
-    response_model: Type[BaseModel],
+    response_model: Any,
     model: str = OLLAMA_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
