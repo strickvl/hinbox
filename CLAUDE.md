@@ -25,7 +25,9 @@ sure to update the other.
 
 ### Testing
 - Run `pytest` or `just test` to execute the suite under `tests/`.
-- Key coverage areas include embedding similarity, entity mergers, profile versioning, and frontend version navigation.
+- CI runs lint + tests on every PR via `.github/workflows/test.yml`.
+- Key coverage areas include embedding similarity, lexical blocking, per-type threshold resolution, embedding fingerprints, entity mergers, profile versioning, and frontend version navigation.
+- Async tests (`@pytest.mark.asyncio`) are excluded in CI due to a missing pytest-asyncio configuration.
 
 ## Architecture Overview
 
@@ -36,15 +38,16 @@ The CLI entry point `src/process_and_extract.py` coordinates the pipeline end to
 2. **Article Loading**: PyArrow loads the domain's article table and normalises rows before processing.
 3. **Relevance Checking**: `ArticleProcessor.check_relevance` calls the helpers in `src/engine/relevance.py` (Gemini or Ollama) to skip irrelevant sources.
 4. **Entity Extraction**: `ArticleProcessor.extract_all_entities` dispatches to `EntityExtractor` for people, organizations, locations, and events using dynamic Pydantic models.
-5. **Entity Merging**: `EntityMerger` compares embeddings via `src/utils/embeddings`, optionally consults the LLM match checker, and updates in-memory stores.
-6. **Profile Versioning**: `src/engine/profiles.py` maintains `VersionedProfile` history whenever entity content changes.
-7. **Persistence**: Updated article rows and entity tables are written back with `src/utils/file_ops.write_entity_to_file` and atomically swapped Parquet files.
+5. **Quality Controls**: `src/utils/quality_controls.py` validates extraction output (required fields, name normalisation, within-article dedup) and profile quality (min length, citation regex, tag count, confidence range). Failures are captured in `PhaseOutcome` objects (`src/utils/outcomes.py`) rather than silently swallowed.
+6. **Entity Merging**: `EntityMerger` pre-filters candidates with RapidFuzz lexical blocking, compares embeddings via `src/utils/embeddings`, optionally consults the LLM match checker, and updates in-memory stores. Per-entity-type similarity thresholds and lexical blocking settings are loaded from the `dedup` section of domain config. Embedding fingerprints (`"{model}:{dim}"`) are stored on each entity for model-change detection.
+7. **Profile Versioning**: `src/engine/profiles.py` maintains `VersionedProfile` history whenever entity content changes.
+8. **Persistence**: Updated article rows and entity tables are written back with `src/utils/file_ops.write_entity_to_file` and atomically swapped Parquet files.
 
 ### Data Flow Architecture
 - **Input**: Domain configs point to Parquet files with columns such as `id`, `title`, `content`, `url`, and `published_date`.
-- **Processing**: `ArticleProcessor` orchestrates extraction for four entity types, records reflection metadata, and keeps track of processing status.
+- **Processing**: `ArticleProcessor` orchestrates extraction for four entity types, records reflection metadata, runs QC checks, and keeps track of processing status. Each phase returns a `PhaseOutcome` carrying success/failure context.
 - **Output**: Each run updates people/organizations/locations/events tables under the domain's output directory (`DomainConfig.get_output_dir()`).
-- **Storage**: Entities include embeddings, provenance metadata, processing timestamps, and profile version histories.
+- **Storage**: Entities include embeddings (with model/dimension/fingerprint metadata), provenance metadata, processing timestamps, and profile version histories.
 
 ### Model Architecture
 - **Cloud Models**: Defaults come from `CLOUD_MODEL` in `src/constants.py` and are executed through LiteLLM wrappers in `src/utils/llm.py`.
@@ -65,11 +68,13 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
 - **Engine Modules**: `article_processor.py`, `extractors.py`, `mergers.py`, `match_checker.py`, and `profiles.py` are surfaced via `src/engine/__init__.py` for a stable import path.
 - **LLM Helpers**: `src/utils/llm.py` and `src/utils/extraction.py` wrap LiteLLM/Ollama interactions and Instructor responses.
 - **Embeddings**: Providers, manager, and similarity helpers live in `src/utils/embeddings/`.
-- **Tests**: `tests/` covers embedding accuracy, merger behaviour, profile versioning, domain path resolution, and frontend history rendering.
+- **Quality Controls**: `src/utils/quality_controls.py` (extraction QC) and `src/utils/outcomes.py` (`PhaseOutcome` structured results) provide deterministic validation.
+- **Tests**: `tests/` covers embedding accuracy, merger behaviour (including lexical blocking and per-type thresholds), config threshold resolution, embedding fingerprints, profile versioning, domain path resolution, and frontend history rendering.
 - **Scripts**: Utility scripts in `scripts/` support data fetching, resets, and diagnostics.
 
 ### Configuration
 - **Models**: Configured in `src/constants.py` with cloud/local model specifications
+- **Dedup**: Per-entity-type similarity thresholds and lexical blocking configured in the `dedup` section of `configs/<domain>/config.yaml`
 - **Logging**: Centralized Rich-based logging in `src/logging_config.py` with color-coded levels
 - **Environment**: Requires `GEMINI_API_KEY` for cloud processing, optional
   `OLLAMA_API_URL` for local
