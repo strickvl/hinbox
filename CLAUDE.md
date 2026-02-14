@@ -85,6 +85,13 @@ The web interface (`src/frontend/`) uses FastHTML and is organized as:
   2. Run the lint script (`./scripts/lint.sh`) and fix issues
   3. Execute the test suite (`pytest` or `just test`)
   4. Commit and push changes
+- **Before pushing / opening a PR**, always run the CI-equivalent lint checks to catch version mismatches:
+  ```bash
+  uv run ruff check .
+  uv run ruff format --check .
+  uv run pytest tests/ -v -m "not asyncio" --tb=short
+  ```
+  The local `./scripts/format.sh` may use a different ruff version than the lock file. CI uses the lock file version via `uv run ruff`, so always verify with `uv run` before pushing.
 
 ## Development Guidance
 - The application has no users yet, so don't worry too much about backwards compatibility. Just make it work.
