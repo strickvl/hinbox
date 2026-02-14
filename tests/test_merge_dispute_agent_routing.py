@@ -307,9 +307,9 @@ class TestDisputeAgentRouting:
 
         person = entities["people"]["Alice Smith"]
         article_ids = [a["article_id"] for a in person["articles"]]
-        assert (
-            "art-002" in article_ids
-        ), "Dispute agent override to merge should add the new article"
+        assert "art-002" in article_ids, (
+            "Dispute agent override to merge should add the new article"
+        )
 
     def test_dispute_overrides_match_to_skip(self):
         """Match checker says yes, dispute agent says skip → entity should NOT be updated."""
