@@ -40,8 +40,8 @@ class MergeDisputeDecision(BaseModel):
 
 _SYSTEM_PROMPT = """You are an expert entity-resolution adjudicator for news articles about Guantánamo Bay.
 
-A primary match checker has already compared two entity profiles but returned an UNCERTAIN result.
-Your job is to make a final determination: should these profiles be merged, kept separate, or deferred for human review?
+A primary match checker has already compared evidence from a new article against an existing entity profile but returned an UNCERTAIN result.
+Your job is to make a final determination: should these entities be merged, kept separate, or deferred for human review?
 
 Consider carefully:
 1. Name variations: Different spellings, nicknames, titles, or partial names
@@ -53,7 +53,7 @@ Consider carefully:
 You MUST provide:
 - action: "merge" (same entity), "skip" (different entities), or "defer" (too ambiguous for automated decision)
 - confidence: a float from 0.0 to 1.0 indicating how certain you are
-- reason: a detailed explanation citing specific evidence from both profiles
+- reason: a detailed explanation citing specific evidence
 
 Choose "defer" only when evidence is genuinely contradictory or insufficient to decide."""
 
@@ -69,15 +69,15 @@ _USER_TEMPLATE = """The primary match checker was uncertain about these two prof
 - Merge threshold: {similarity_threshold:.4f}
 - This falls within the ambiguous "gray band" around the threshold.
 
-## PROFILE FROM NEW ARTICLE
+## EVIDENCE FROM NEW ARTICLE
 Name: {new_name}
-Profile: {new_profile_text}
+{new_profile_text}
 
 ## EXISTING PROFILE IN DATABASE
 Name: {existing_name}
 Profile: {existing_profile_text}
 
-Based on ALL available evidence, should these profiles be merged, kept separate, or deferred for human review?"""
+Based on ALL available evidence, should these entities be merged, kept separate, or deferred for human review?"""
 
 
 def run_merge_dispute_agent(

@@ -25,16 +25,12 @@ def local_model_check_match(
     existing_profile_text: str,
     model: str = OLLAMA_MODEL,
 ) -> MatchCheckResult:
-    """
-    Check if a newly extracted profile refers to the same entity as an existing profile.
-
-    This function uses an LLM to determine if two profiles refer to the same person,
-    even when names might have variations or additional context is needed to establish identity.
+    """Check if new article evidence refers to the same entity as an existing profile.
 
     Args:
         new_name: The name extracted from the new article
         existing_name: The name from an existing profile in our database
-        new_profile_text: The profile text generated from the new article
+        new_profile_text: Evidence text (or profile) from the new article
         existing_profile_text: The existing profile text we're comparing against
         model: The LLM model to use for comparison
     """
@@ -51,21 +47,21 @@ Consider the following when making your determination:
 You MUST provide:
 - is_match: true or false
 - confidence: a float from 0.0 to 1.0 indicating how certain you are (0.9+ = very confident, 0.5-0.7 = uncertain, below 0.5 = guessing)
-- reason: a detailed explanation citing specific evidence from both profiles
+- reason: a detailed explanation citing specific evidence
 
 If one is a sub-location or facility inside a bigger one, do NOT merge them."""
 
-    user_content = f"""I need to determine if these two profiles refer to the same entity:
+    user_content = f"""I need to determine if these two entities refer to the same real-world entity:
 
-## PROFILE FROM NEW ARTICLE:
+## EVIDENCE FROM NEW ARTICLE:
 Name: {new_name}
-Profile: {new_profile_text}
+{new_profile_text}
 
 ## EXISTING PROFILE IN DATABASE:
 Name: {existing_name}
 Profile: {existing_profile_text}
 
-Are these profiles referring to the same entity? Provide your analysis with a confidence score."""
+Do these refer to the same entity? Provide your analysis with a confidence score."""
 
     try:
         return local_generation(
@@ -92,20 +88,14 @@ def cloud_model_check_match(
     existing_profile_text: str,
     model: str = CLOUD_MODEL,
 ) -> MatchCheckResult:
-    """
-    Check if a newly extracted profile refers to the same entity as an existing profile,
-    using a cloud-based LLM. This function specifically ensures sub-locations
-    are not merged with their larger locations.
+    """Check if new article evidence refers to the same entity as an existing profile.
 
     Args:
         new_name: The name extracted from the new article
         existing_name: The name from an existing profile in our database
-        new_profile_text: The profile text generated from the new article
+        new_profile_text: Evidence text (or profile) from the new article
         existing_profile_text: The existing profile text we're comparing against
         model: The LLM model to use for comparison
-
-    Returns:
-        MatchCheckResult with is_match flag and detailed reasoning
     """
     system_content = """You are an expert analyst specializing in entity resolution for news articles about Guantánamo Bay.
 
@@ -120,21 +110,21 @@ Consider the following when making your determination:
 You MUST provide:
 - is_match: true or false
 - confidence: a float from 0.0 to 1.0 indicating how certain you are (0.9+ = very confident, 0.5-0.7 = uncertain, below 0.5 = guessing)
-- reason: a detailed explanation citing specific evidence from both profiles
+- reason: a detailed explanation citing specific evidence
 
 If one is a sub-location or facility inside a bigger one, do NOT merge them."""
 
-    user_content = f"""I need to determine if these two profiles refer to the same entity:
+    user_content = f"""I need to determine if these two entities refer to the same real-world entity:
 
-## PROFILE FROM NEW ARTICLE:
+## EVIDENCE FROM NEW ARTICLE:
 Name: {new_name}
-Profile: {new_profile_text}
+{new_profile_text}
 
 ## EXISTING PROFILE IN DATABASE:
 Name: {existing_name}
 Profile: {existing_profile_text}
 
-Are these profiles referring to the same entity? Provide your analysis with a confidence score."""
+Do these refer to the same entity? Provide your analysis with a confidence score."""
 
     try:
         return cloud_generation(
