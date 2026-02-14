@@ -400,6 +400,17 @@ nav button:hover {
     border-left-color: transparent;
 }
 
+.article-list a {
+    font-size: 0.85rem;
+    color: var(--primary-light);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.article-list a:hover {
+    color: var(--primary-dark);
+}
+
 
 /* ─── Filter Chips ─────────────────────────────────────────── */
 
@@ -455,6 +466,111 @@ nav button:hover {
     border: 1px solid var(--border);
     background-color: white;
     font-family: var(--font-body);
+}
+
+
+/* ─── Home Page ────────────────────────────────────────────── */
+
+.home-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 20px;
+}
+
+.home-card {
+    background: var(--card);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    border: 1px solid var(--border);
+    transition: all 0.2s ease;
+}
+
+.home-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+    border-color: var(--primary-light);
+}
+
+.home-card-count {
+    font-family: var(--font-heading);
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    line-height: 1;
+    display: block;
+    margin-bottom: 2px;
+}
+
+.home-card h3 {
+    color: var(--primary-dark);
+    margin: 0 0 8px;
+    font-size: 1.2rem;
+}
+
+.home-card p {
+    color: var(--text-light);
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin-bottom: 12px;
+}
+
+.card-link {
+    display: inline-block;
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--primary);
+    transition: all 0.15s;
+}
+
+.card-link:hover {
+    color: var(--primary-dark);
+}
+
+
+/* ─── Breadcrumb Navigation ────────────────────────────────── */
+
+.breadcrumb {
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.breadcrumb a {
+    font-size: 0.9rem;
+    color: var(--text-light);
+    font-weight: 500;
+    transition: color 0.15s;
+}
+
+.breadcrumb a:hover {
+    color: var(--primary);
+}
+
+
+/* ─── Version Selector ─────────────────────────────────────── */
+
+.version-selector {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: var(--sidebar);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+
+.version-selector label {
+    font-weight: 600;
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    margin-right: 10px;
+}
+
+.version-selector select {
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+    background: var(--card);
 }
 
 

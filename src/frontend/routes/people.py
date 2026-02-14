@@ -361,14 +361,8 @@ def show_person(key: str, request):
     return main_layout(
         get_page_title(f"People - {name}"),
         Div(
-            H2("Navigation"),
-            A(
-                "← Back to People",
-                href=f"/people?domain={current_domain}",
-                cls="primary",
-                style="display:block; margin-bottom:10px;",
-            ),
-            style="margin-bottom:20px;",
+            A("← Back to People", href=f"/people?domain={current_domain}"),
+            cls="breadcrumb",
         ),
         detail_content,
         page_header_title=name,

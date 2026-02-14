@@ -41,6 +41,15 @@ app, rt = fast_app(
             href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600&display=swap",
         ),
         Link(rel="stylesheet", href="/styles.css", type="text/css"),
+        Link(
+            rel="icon",
+            href="data:image/svg+xml,"
+            "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E"
+            "%3Crect rx='15' width='100' height='100' fill='%232c5f7c'/%3E"
+            "%3Ctext x='50' y='55' font-size='50' text-anchor='middle' "
+            "dominant-baseline='middle' fill='white' font-family='serif'%3E"
+            "H%3C/text%3E%3C/svg%3E",
+        ),
     ),
 )
 
@@ -167,7 +176,7 @@ def nav_bar(current_domain: str = "guantanamo") -> Nav:
             "About",
             cls="secondary",
             style="margin-left:auto;",
-            onclick=f"alert('Entity Browser helps researchers explore entities mentioned in documents related to {get_domain_description(current_domain)}.');",
+            title=f"Entity Browser: explore entities from documents related to {get_domain_description(current_domain)}.",
         ),
     )
 

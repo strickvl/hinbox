@@ -3,6 +3,7 @@ from fasthtml.common import *
 from src.config_loader import DomainConfig
 
 from ..app_config import get_current_domain, nav_bar, rt, titled_with_domain_picker
+from ..data_access import get_domain_data
 
 
 @rt("/")
@@ -20,67 +21,65 @@ def get_home(domain: str = None, request=None):
     except Exception:
         domain_title = "Entity Browser"
 
+    # Get entity counts for the current domain
+    try:
+        domain_data = get_domain_data(current_domain)
+        counts = {
+            "people": len(domain_data["people"]),
+            "events": len(domain_data["events"]),
+            "locations": len(domain_data["locations"]),
+            "organizations": len(domain_data["organizations"]),
+        }
+    except Exception:
+        counts = {"people": 0, "events": 0, "locations": 0, "organizations": 0}
+
+    cards = [
+        ("People", "people", "Browse individuals mentioned in the research documents."),
+        (
+            "Events",
+            "events",
+            "Timeline of significant events mentioned in the documents.",
+        ),
+        (
+            "Locations",
+            "locations",
+            "Explore locations mentioned in the research documents.",
+        ),
+        (
+            "Organizations",
+            "organizations",
+            "Organizations mentioned in the research documents.",
+        ),
+    ]
+
     return titled_with_domain_picker(
         "Hinbox Local Browser",
         current_domain,
         [
             nav_bar(current_domain),
             Div(
-                Div(
-                    H2("Browse Entities"),
-                    P(
-                        f"Explore entities extracted from documents related to {domain_title.lower()}."
-                    ),
-                    style="text-align:center; margin-bottom:30px;",
+                H2("Browse Entities"),
+                P(
+                    f"Explore entities extracted from documents related to {domain_title.lower()}."
                 ),
-                Div(
+                style="text-align:center; margin-bottom:30px;",
+            ),
+            Div(
+                *[
                     Div(
-                        H2("People", style="color:var(--primary);"),
-                        P("Browse individuals mentioned in the research documents."),
+                        Span(str(counts[key]), cls="home-card-count"),
+                        H3(label),
+                        P(desc),
                         A(
-                            "View People →",
-                            href=f"/people?domain={current_domain}",
-                            cls="primary",
-                            style="display:inline-block; margin-top:10px;",
+                            f"View {label} \u2192",
+                            href=f"/{key}?domain={current_domain}",
+                            cls="card-link",
                         ),
-                        style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
-                    ),
-                    Div(
-                        H2("Events", style="color:var(--primary);"),
-                        P("Timeline of significant events mentioned in the documents."),
-                        A(
-                            "View Events →",
-                            href=f"/events?domain={current_domain}",
-                            cls="primary",
-                            style="display:inline-block; margin-top:10px;",
-                        ),
-                        style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
-                    ),
-                    Div(
-                        H2("Locations", style="color:var(--primary);"),
-                        P("Explore locations mentioned in the research documents."),
-                        A(
-                            "View Locations →",
-                            href=f"/locations?domain={current_domain}",
-                            cls="primary",
-                            style="display:inline-block; margin-top:10px;",
-                        ),
-                        style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
-                    ),
-                    Div(
-                        H2("Organizations", style="color:var(--primary);"),
-                        P("Organizations mentioned in the research documents."),
-                        A(
-                            "View Organizations →",
-                            href=f"/organizations?domain={current_domain}",
-                            cls="primary",
-                            style="display:inline-block; margin-top:10px;",
-                        ),
-                        style="background:var(--card); border-radius:8px; padding:20px; box-shadow:0 2px 4px rgba(0,0,0,0.05);",
-                    ),
-                    style="display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:20px;",
-                ),
-                style="background-color: var(--card); border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);",
+                        cls="home-card",
+                    )
+                    for label, key, desc in cards
+                ],
+                cls="home-grid",
             ),
         ],
     )

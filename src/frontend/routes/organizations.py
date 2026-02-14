@@ -247,14 +247,11 @@ def show_org(key: str, request):
     return main_layout(
         get_page_title(f"Organizations - {nm}"),
         Div(
-            H2("Navigation"),
             A(
                 "← Back to Organizations",
                 href=f"/organizations?domain={current_domain}",
-                cls="primary",
-                style="display:block; margin-bottom:10px;",
             ),
-            style="margin-bottom:20px;",
+            cls="breadcrumb",
         ),
         detail_content,
         page_header_title=nm,

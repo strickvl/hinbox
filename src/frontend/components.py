@@ -402,12 +402,11 @@ def ProfileVersionSelector(
         )
 
     return Div(
-        Label("Profile Version:", style="font-weight: bold; margin-right: 10px;"),
+        Label("Profile Version:"),
         Select(
             *options,
             name="version",
             onchange=f"window.location.href = '/{route_prefix}/{frontend_utils.encode_key(entity_key)}?version=' + this.value",
-            style="margin-right: 10px;",
         ),
-        style="margin-bottom: 20px; padding: 15px; background: var(--surface-2); border-radius: 8px;",
+        cls="version-selector",
     )

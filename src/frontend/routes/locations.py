@@ -246,14 +246,8 @@ def show_location(key: str, request):
     return main_layout(
         get_page_title(f"Locations - {nm}"),
         Div(
-            H2("Navigation"),
-            A(
-                "← Back to Locations",
-                href=f"/locations?domain={current_domain}",
-                cls="primary",
-                style="display:block; margin-bottom:10px;",
-            ),
-            style="margin-bottom:20px;",
+            A("← Back to Locations", href=f"/locations?domain={current_domain}"),
+            cls="breadcrumb",
         ),
         detail_content,
         page_header_title=nm,
