@@ -239,18 +239,50 @@ class EmbeddingManager:
             return None
         return f"{model}:{dim}"
 
-    # Synchronous wrappers for backward compatibility
+    # --- Synchronous wrappers ---
+    # Use a single cached event loop to avoid asyncio.run() overhead per call.
+
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        """Return a persistent event loop for sync wrappers."""
+        if not hasattr(self, "_loop") or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+        return self._loop
+
     def embed_text_sync(self, text: str) -> List[float]:
         """Synchronous wrapper for embed_text."""
-        return asyncio.run(self.embed_text(text))
+        return self._get_loop().run_until_complete(self.embed_text(text))
 
     def embed_batch_sync(self, texts: List[str]) -> List[List[float]]:
         """Synchronous wrapper for embed_batch."""
-        return asyncio.run(self.embed_batch(texts))
+        return self._get_loop().run_until_complete(self.embed_batch(texts))
 
     def embed_text_result_sync(self, text: str) -> EmbeddingResult:
         """Synchronous wrapper for embed_text_result — returns full metadata."""
-        return asyncio.run(self.embed_text_result(text))
+        return self._get_loop().run_until_complete(self.embed_text_result(text))
+
+    def embed_batch_result_sync(self, texts: List[str]) -> EmbeddingResult:
+        """Embed multiple texts synchronously, returning full metadata.
+
+        This is the preferred method for batching — sentence-transformers
+        encodes a batch in a single GPU/CPU pass, much faster than N × single.
+        """
+        provider = self._get_provider()
+
+        async def _batch():
+            try:
+                return await provider.embed_batch(texts)
+            except Exception as e:
+                if (
+                    self.mode == EmbeddingMode.HYBRID
+                    and provider == self.cloud_provider
+                ):
+                    logger.warning(
+                        f"Cloud batch embedding failed, falling back to local: {e}"
+                    )
+                    return await self.local_provider.embed_batch(texts)
+                raise
+
+        return self._get_loop().run_until_complete(_batch())
 
 
 # Global default manager instance
