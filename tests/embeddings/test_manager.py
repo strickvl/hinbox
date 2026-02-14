@@ -181,8 +181,6 @@ class TestEmbeddingManager:
 
     def test_compute_similarity(self):
         """Test similarity computation."""
-        manager = EmbeddingManager(mode=EmbeddingMode.LOCAL)
-
         # Test identical vectors
         vec1 = [1.0, 0.0, 0.0]
         similarity = compute_similarity(vec1, vec1)
@@ -215,15 +213,11 @@ class TestEmbeddingManager:
         mock_embedding = [0.1, 0.2, 0.3]
         mock_batch = [[0.1, 0.2], [0.3, 0.4]]
 
-        with patch.object(
-            manager, "embed_text", return_value=mock_embedding
-        ) as mock_async_single:
+        with patch.object(manager, "embed_text", return_value=mock_embedding):
             result = manager.embed_text_sync("test")
             assert result == mock_embedding
 
-        with patch.object(
-            manager, "embed_batch", return_value=mock_batch
-        ) as mock_async_batch:
+        with patch.object(manager, "embed_batch", return_value=mock_batch):
             result = manager.embed_batch_sync(["test1", "test2"])
             assert result == mock_batch
 

@@ -61,6 +61,13 @@ select = [
     "I", # isort
     "B", # flake8-bugbear
 ]
+ignore = [
+    "E501", # line too long — handled by ruff format
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/frontend/**" = ["F403", "F405"]  # FastHTML uses `from fasthtml.common import *`
+"src/config_loader.py" = ["B019"]  # lru_cache on methods is intentional; instances are module-cached
 
 [dependency-groups]
 dev = [

@@ -195,7 +195,7 @@ def build_indexes(domain_data: Dict[str, List[Any]]) -> Dict[str, Dict[str, Any]
     return {
         "people": {make_person_key(p): p for p in domain_data["people"]},
         "events": {make_event_key(e): e for e in domain_data["events"]},
-        "locations": {make_location_key(l): l for l in domain_data["locations"]},
+        "locations": {make_location_key(loc): loc for loc in domain_data["locations"]},
         "organizations": {make_org_key(o): o for o in domain_data["organizations"]},
     }
 

@@ -83,8 +83,8 @@ def load_existing_entities(base_dir: str) -> Dict[str, Dict]:
     # Locations
     if os.path.exists(locations_path):
         locations_table = pq.read_table(locations_path)
-        for l in locations_table.to_pylist():
-            locations[(l["name"], l.get("type", ""))] = l
+        for loc in locations_table.to_pylist():
+            locations[(loc["name"], loc.get("type", ""))] = loc
 
     # Organizations
     if os.path.exists(orgs_path):
@@ -346,7 +346,7 @@ def log_processing_summary(
             processed_rows, processed_count
         )
         if total_reflection_attempts > 0:
-            log(f"\nReflection statistics:", level="info")
+            log("\nReflection statistics:", level="info")
             log(
                 f"• Total reflection attempts: {total_reflection_attempts}",
                 level="info",

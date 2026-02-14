@@ -309,7 +309,7 @@ New Article (ID: {new_article_id}):
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": f"Please create an updated profile by merging the existing profile with new information from the article.",
+                "content": "Please create an updated profile by merging the existing profile with new information from the article.",
             },
         ]
 

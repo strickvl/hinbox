@@ -59,9 +59,7 @@ class CloudEmbeddingProvider(EmbeddingProvider):
                 results.append(embeddings_map.get(i, []))
 
             # Determine dimension from the first non-empty embedding
-            dim = next(
-                (len(emb) for emb in results if emb), None
-            )
+            dim = next((len(emb) for emb in results if emb), None)
 
             return EmbeddingResult(
                 embeddings=results,
@@ -85,15 +83,16 @@ class CloudEmbeddingProvider(EmbeddingProvider):
         for attempt in range(self.config.max_retries):
             try:
                 # Run the synchronous embedding call in an executor
+                # Default arg binds `attempt` at lambda creation time (B023)
                 response = await loop.run_in_executor(
                     None,
-                    lambda: litellm.embedding(
+                    lambda _a=attempt: litellm.embedding(
                         model=self.config.model_name,
                         input=texts,
                         metadata={
                             **self.config.metadata,
                             "batch_size": len(texts),
-                            "attempt": attempt + 1,
+                            "attempt": _a + 1,
                         },
                     ),
                 )

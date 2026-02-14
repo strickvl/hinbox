@@ -62,7 +62,7 @@ class ArticleProcessor:
             if isinstance(result, bool):
                 is_relevant = result
             elif hasattr(result, "is_relevant"):
-                is_relevant = bool(getattr(result, "is_relevant"))
+                is_relevant = bool(result.is_relevant)
                 reason = getattr(result, "reason", "")
             elif isinstance(result, dict) and "is_relevant" in result:
                 is_relevant = bool(result.get("is_relevant"))

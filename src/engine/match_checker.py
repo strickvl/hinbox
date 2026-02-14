@@ -69,7 +69,7 @@ Are these profiles referring to the same entity? Provide your analysis."""
             temperature=0,
         )
     except Exception as e:
-        log(f"Error with Ollama API", level="error", exception=e)
+        log("Error with Ollama API", level="error", exception=e)
         # Return a default result indicating failure
         return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")
 
@@ -132,5 +132,5 @@ Are these profiles referring to the same entity? Provide your analysis."""
             temperature=0,
         )
     except Exception as e:
-        log(f"Error with Gemini API", level="error", exception=e)
+        log("Error with Gemini API", level="error", exception=e)
         return MatchCheckResult(is_match=False, reason=f"API error: {str(e)}")

@@ -163,7 +163,7 @@ def cloud_generation(
                 except Exception as recovery_e2:
                     logger.warning(f"Strategy 2 failed: {recovery_e2}")
                     logger.error(
-                        f"All recovery strategies failed, will raise original error"
+                        "All recovery strategies failed, will raise original error"
                     )
 
             # Check for retryable errors (503, 529, rate limiting)

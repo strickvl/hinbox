@@ -64,7 +64,7 @@ class EntityMerger:
 
     def _extract_key(self, entity_dict: Dict[str, Any]) -> Union[str, Tuple[str, str]]:
         """Extract the entity key from an entity dictionary."""
-        if self.key_type == str:
+        if self.key_type is str:
             return entity_dict.get(self.key_field, "")
         # tuple key
         return tuple(entity_dict.get(field, "") for field in self.key_field)  # type: ignore[index]
