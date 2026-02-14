@@ -66,13 +66,13 @@ def get_home(domain: str = None, request=None):
             ),
             Div(
                 *[
-                    A(
+                    Div(
                         Span(str(counts[key]), cls="home-card-count"),
                         H3(label),
                         P(desc),
                         Span(f"View {label} \u2192", cls="card-link"),
-                        href=f"/{key}?domain={current_domain}",
                         cls="home-card",
+                        onclick=f"window.location.href='/{key}?domain={current_domain}'",
                     )
                     for label, key, desc in cards
                 ],
