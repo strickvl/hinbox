@@ -29,7 +29,19 @@ from src.config_loader import DomainConfig
 # Use fast_app() for automatic setup with better defaults
 app, rt = fast_app(
     static_path="src/frontend/static",
-    hdrs=(Link(rel="stylesheet", href="/styles.css", type="text/css"),),
+    hdrs=(
+        Link(rel="preconnect", href="https://fonts.googleapis.com"),
+        Link(
+            rel="preconnect",
+            href="https://fonts.gstatic.com",
+            crossorigin="anonymous",
+        ),
+        Link(
+            rel="stylesheet",
+            href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600&display=swap",
+        ),
+        Link(rel="stylesheet", href="/styles.css", type="text/css"),
+    ),
 )
 
 

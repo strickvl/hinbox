@@ -1,175 +1,351 @@
+/* ─── Archival Elegance Theme ─────────────────────────────── */
+/* A warm, refined palette for research & document exploration */
+
 :root {
-    --primary: #004080;
-    --primary-light: #3374a5;
-    --secondary: #6c757d;
-    --background: #f8f9fa;
-    --sidebar: #f0f2f5;
-    --text: #333;
-    --text-light: #6c757d;
-    --border: #dee2e6;
-    --card: #fff;
-    --highlight: #e8f4f8;
-    --danger: #dc3545;
-    --success: #28a745;
-    --warning: #ffc107;
-    --info: #17a2b8;
+    /* Primary — warm teal-slate */
+    --primary: #2c5f7c;
+    --primary-light: #4a8ca8;
+    --primary-dark: #1a3d52;
+    --primary-faint: rgba(44, 95, 124, 0.05);
+
+    /* Accent — warm amber */
+    --accent: #c97b3a;
+    --accent-light: #e8a85c;
+
+    /* Neutral surfaces */
+    --secondary: #7c8a94;
+    --background: #faf8f5;
+    --sidebar: #f4f1ec;
+    --card: #ffffff;
+    --highlight: #f0ebe3;
+    --surface-2: #eae6df;
+
+    /* Text */
+    --text: #2d3436;
+    --text-light: #636e72;
+    --text-muted: #95a5a6;
+
+    /* Borders */
+    --border: #e0dcd4;
+    --border-strong: #c8c2b8;
+
+    /* Status */
+    --danger: #c0392b;
+    --success: #27ae60;
+    --warning: #e67e22;
+    --info: #2980b9;
+
+    /* Typography */
+    --font-heading: 'Crimson Pro', Georgia, 'Times New Roman', serif;
+    --font-body: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+
+    /* Spacing & shape */
+    --radius: 6px;
+    --radius-lg: 10px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
 }
+
+
+/* ─── Base ─────────────────────────────────────────────────── */
 
 body {
     background-color: var(--background);
     color: var(--text);
-    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    font-family: var(--font-body);
+    font-weight: 400;
+    line-height: 1.65;
+    font-size: 0.95rem;
 }
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    color: var(--primary-dark);
+}
+
+h1 { font-size: 2rem; font-weight: 700; }
+h2 { font-size: 1.45rem; }
+h3 { font-size: 1.15rem; }
+h4 { font-size: 1rem; }
+
+a {
+    color: var(--primary);
+    text-decoration: none;
+    transition: color 0.15s;
+}
+
+a:hover {
+    color: var(--primary-dark);
+}
+
+
+/* ─── Container ────────────────────────────────────────────── */
 
 .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 20px;
+    padding: 24px 32px;
 }
 
+
+/* ─── Navigation ───────────────────────────────────────────── */
+
 nav {
-    border-radius: 8px;
-    background-color: var(--primary);
-    padding: 12px 20px;
-    margin-bottom: 1.5em;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 100%);
+    padding: 0;
+    margin-bottom: 2em;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    display: flex;
+    align-items: center;
+    overflow: hidden;
 }
 
 nav a {
-    color: white !important;
-    margin-right: 20px;
-    font-weight: 600;
+    color: rgba(255,255,255,0.8) !important;
+    font-family: var(--font-body);
+    font-weight: 500;
+    font-size: 0.85rem;
     text-decoration: none;
-    transition: opacity 0.2s;
-    padding: 8px 12px;
-    border-radius: 4px;
+    padding: 14px 18px;
+    transition: all 0.2s ease;
+    border-bottom: 2px solid transparent;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-right: 0;
 }
 
 nav a:hover {
-    background-color: var(--primary-light);
-    opacity: 0.9;
+    color: white !important;
+    background-color: rgba(255,255,255,0.1);
+    border-bottom-color: var(--accent);
 }
 
 nav button {
-    background-color: white !important;
-    color: var(--primary) !important;
+    background-color: rgba(255,255,255,0.12) !important;
+    color: rgba(255,255,255,0.9) !important;
+    border: 1px solid rgba(255,255,255,0.2) !important;
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    font-weight: 500;
+    padding: 7px 16px;
+    margin: 8px 14px 8px auto;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
+
+nav button:hover {
+    background-color: rgba(255,255,255,0.22) !important;
+    color: white !important;
+}
+
+
+/* ─── Filter Panel (sidebar) ───────────────────────────────── */
 
 .filter-panel {
     background-color: var(--sidebar);
-    padding: 15px;
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    padding: 20px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    box-shadow: none;
 }
 
 .filter-panel h3 {
     margin-top: 0;
-    color: var(--primary);
-    border-bottom: 2px solid var(--primary-light);
-    padding-bottom: 8px;
-    margin-bottom: 15px;
+    color: var(--primary-dark);
+    font-family: var(--font-heading);
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 10px;
+    margin-bottom: 18px;
+    font-size: 1.15rem;
 }
 
 .filter-panel h4 {
     color: var(--text);
-    margin: 15px 0 10px 0;
-    font-size: 1rem;
+    margin: 18px 0 10px;
+    font-size: 0.95rem;
+    font-family: var(--font-heading);
+    font-weight: 600;
 }
 
 .filter-panel label {
     display: inline-flex;
     align-items: center;
     margin-bottom: 8px;
+    font-size: 0.9rem;
 }
 
 .filter-panel input[type="checkbox"] {
     margin-right: 8px;
+    accent-color: var(--primary);
 }
 
 .filter-panel button {
     width: 100%;
     margin-top: 15px;
+    font-family: var(--font-body);
+    font-weight: 500;
+    letter-spacing: 0.02em;
 }
+
+
+/* ─── Content Area (main panel) ────────────────────────────── */
 
 .content-area {
     background-color: var(--card);
-    border-radius: 8px;
-    padding: 20px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    border-radius: var(--radius-lg);
+    padding: 28px 32px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
 }
 
 .content-area h2 {
-    color: var(--primary);
+    color: var(--primary-dark);
+    font-family: var(--font-heading);
     margin-top: 0;
-    border-bottom: 2px solid var(--border);
-    padding-bottom: 10px;
-    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 24px;
 }
 
 .content-area ul {
-    padding-left: 20px;
+    padding-left: 0;
+    list-style: none;
 }
 
 .content-area li {
-    margin-bottom: 10px;
-    padding: 8px 12px;
-    border-radius: 4px;
-    transition: background-color 0.2s;
+    margin-bottom: 2px;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    transition: all 0.15s ease;
+    border-left: 3px solid transparent;
 }
 
 .content-area li:hover {
-    background-color: var(--highlight);
+    background-color: var(--primary-faint);
+    border-left-color: var(--accent);
 }
 
 .content-area a {
     color: var(--primary);
     text-decoration: none;
     font-weight: 500;
+    transition: color 0.15s;
 }
 
 .content-area a:hover {
+    color: var(--primary-dark);
     text-decoration: underline;
+    text-decoration-color: var(--accent);
+    text-underline-offset: 3px;
 }
 
+
+/* ─── Entity Detail Pages ──────────────────────────────────── */
+
 .entity-detail h2 {
-    color: var(--primary);
-    margin-bottom: 15px;
+    color: var(--primary-dark);
+    font-family: var(--font-heading);
+    margin-bottom: 16px;
+    font-size: 1.3rem;
 }
 
 .entity-detail h3 {
     color: var(--primary);
-    margin: 25px 0 10px 0;
+    font-family: var(--font-heading);
+    margin: 28px 0 12px;
     border-top: 1px solid var(--border);
-    padding-top: 15px;
+    padding-top: 18px;
 }
 
 .entity-detail p {
-    margin-bottom: 15px;
-    line-height: 1.5;
+    margin-bottom: 16px;
+    line-height: 1.7;
 }
+
+/* Profile text — optimised for long-form reading */
+.profile-text {
+    line-height: 1.8;
+    font-size: 0.95rem;
+}
+
+.profile-text p {
+    margin-bottom: 1em;
+}
+
+.profile-text ul,
+.profile-text ol {
+    padding-left: 1.5em;
+    margin-bottom: 1em;
+}
+
+.profile-text li {
+    margin-bottom: 0.4em;
+    padding: 0;
+    border-left: none;
+}
+
+.profile-text li:hover {
+    background: none;
+    border-left-color: transparent;
+}
+
+
+/* ─── Tags & Badges ────────────────────────────────────────── */
 
 .tag {
     display: inline-block;
     background-color: var(--primary-light);
     color: white;
-    padding: 3px 8px;
-    border-radius: 12px;
-    font-size: 0.8rem;
-    margin-right: 5px;
-    margin-bottom: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 500;
+    font-family: var(--font-body);
+    margin-right: 6px;
+    margin-bottom: 6px;
+    letter-spacing: 0.02em;
 }
+
+
+/* ─── Search Box ───────────────────────────────────────────── */
 
 .search-box {
     margin-top: 15px;
     margin-bottom: 15px;
 }
 
+.search-box label {
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: var(--text);
+}
+
 .search-box input {
     width: 100%;
-    padding: 8px 12px;
-    border-radius: 4px;
+    padding: 9px 12px;
+    border-radius: var(--radius);
     border: 1px solid var(--border);
+    background: var(--card);
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
 }
+
+.search-box input:focus {
+    border-color: var(--primary-light);
+    box-shadow: 0 0 0 3px rgba(44, 95, 124, 0.1);
+    outline: none;
+}
+
+
+/* ─── Date Range ───────────────────────────────────────────── */
 
 .date-range {
     display: flex;
@@ -178,69 +354,127 @@ nav button {
     margin-bottom: 15px;
 }
 
+.date-range label {
+    font-weight: 500;
+    font-size: 0.85rem;
+}
+
+.date-range input {
+    font-family: var(--font-body);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 10px;
+}
+
+
+/* ─── Empty State ──────────────────────────────────────────── */
+
 .empty-state {
     text-align: center;
-    padding: 30px;
+    padding: 48px 24px;
     color: var(--text-light);
+    font-style: italic;
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
 }
+
+
+/* ─── Article List ─────────────────────────────────────────── */
 
 .article-list {
     margin-top: 15px;
 }
 
 .article-list li {
-    padding: 10px;
+    padding: 12px 14px;
     border-bottom: 1px solid var(--border);
+    border-left: none;
 }
 
 .article-list li:last-child {
     border-bottom: none;
 }
 
-/* New chip styling for toggles */
+.article-list li:hover {
+    background-color: var(--highlight);
+    border-left-color: transparent;
+}
+
+
+/* ─── Filter Chips ─────────────────────────────────────────── */
+
 .filter-chip {
     display: inline-block;
     font-size: 0.8rem;
-    padding: 3px 6px;
-    border-radius: 16px;
-    border: 1px solid #ddd;
-    transition: transform 0.2s, color 0.2s;
+    font-family: var(--font-body);
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    transition: all 0.2s ease;
     user-select: none;
     margin-right: 5px;
-    margin-bottom: 5px;
+    margin-bottom: 6px;
     cursor: pointer;
 }
 
 .filter-chip:hover {
-    transform: scale(1.05);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm);
 }
 
 .filter-chip.selected {
-    background-color: #ffe98e !important; /* a distinct color for selected */
-    box-shadow: 0 0 0 1px var(--primary-light);
-    color: #000;
-    border: 1px solid var(--primary-light);
+    background-color: var(--accent-light) !important;
+    border-color: var(--accent);
+    color: var(--primary-dark);
+    box-shadow: 0 0 0 1px var(--accent);
 }
 
-/* Domain switcher styles */
+
+/* ─── Domain Switcher ──────────────────────────────────────── */
+
 .domain-switcher {
     margin-bottom: 20px;
     padding: 15px;
     background-color: var(--card);
-    border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
 }
 
 .domain-switcher h3 {
-    margin: 0 0 10px 0;
+    margin: 0 0 10px;
     color: var(--primary);
+    font-family: var(--font-heading);
     font-size: 1rem;
 }
 
 .domain-switcher select {
     width: 100%;
     padding: 8px 12px;
-    border-radius: 4px;
+    border-radius: var(--radius);
     border: 1px solid var(--border);
     background-color: white;
+    font-family: var(--font-body);
+}
+
+
+/* ─── Responsive ───────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+    .container {
+        padding: 16px;
+    }
+
+    nav {
+        flex-wrap: wrap;
+    }
+
+    nav a {
+        padding: 10px 12px;
+        font-size: 0.8rem;
+    }
+
+    .content-area {
+        padding: 20px;
+    }
 }
