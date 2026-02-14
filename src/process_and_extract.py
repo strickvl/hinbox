@@ -404,8 +404,9 @@ def process_single_article(
     # Extract article information
     article_info = processor.prepare_article_info(row, row_index)
 
-    # Initialize processing metadata
+    # Initialize processing metadata and persist it back into the row
     processing_metadata = processor.initialize_processing_metadata(row)
+    row["processing_metadata"] = processing_metadata
 
     # Skip if already processed and not forced
     if processing_metadata.get("processed") and not args.force_reprocess:
@@ -416,12 +417,18 @@ def process_single_article(
         log("Article has no content, skipping extraction", level="warning")
         return row, False, "no_content"
 
-    # Relevance check
+    # Relevance check (returns PhaseOutcome)
     if args.relevance_check:
-        if not processor.check_relevance(
+        rel_outcome = processor.check_relevance(
             article_info["content"],
             article_info["id"],
-        ):
+        )
+        processing_metadata.setdefault("phase_outcomes", {})
+        processing_metadata["phase_outcomes"]["relevance"] = (
+            rel_outcome.to_metadata_dict()
+        )
+
+        if not rel_outcome.value:
             processing_metadata["processed"] = False
             processing_metadata["reason"] = "Not relevant"
             return row, False, "not_relevant"
