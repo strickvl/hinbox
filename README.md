@@ -17,9 +17,16 @@ through a simple configuration system.
   `litellm`) models  
 - **Entity Extraction**: Automatically extract people, organizations, locations, and events
 - **Smart Deduplication**: RapidFuzz lexical blocking + embedding similarity with per-entity-type thresholds
+- **Merge Dispute Agent**: Second-stage LLM arbitration for ambiguous gray-band entity matches
+- **5-Layer Canonical Name Selection**: Deterministic scoring picks the best display name across aliases, penalizing acronyms and generic phrases
 - **Profile Versioning**: Track how entity profiles evolve as new sources are processed
+- **Profile Grounding**: Citation-backed claim verification checks that profile text is supported by source articles
+- **Extraction Quality Controls**: Deterministic QC with automatic retry when severe issues (zero entities, high drop rates) are detected
+- **Extraction Caching**: Persistent sidecar cache avoids redundant LLM calls when re-processing unchanged articles
+- **Parallel Pipeline**: Concurrent article extraction with LLM rate limiting and batched embedding computation
 - **Modular Engine**: `src/engine` coordinates article processing, extraction, merging, and profile versioning so new domains can reuse the same pipeline
-- **Web Interface**: FastHTML-based UI for exploring research findings with version navigation
+- **Privacy Mode**: `--local` flag enforces local-only embeddings and disables all LLM telemetry callbacks
+- **Web Interface**: FastHTML-based "Archival Elegance" UI with confidence badges, alias display, tag pills, and profile version navigation
 - **Easy Setup**: Simple configuration files, no Python coding required
 
 ## 📸 Screenshots
@@ -205,22 +212,47 @@ configs/
 └── README.md          # Domain configuration walkthrough
 
 src/
-├── process_and_extract.py  # CLI entry point for the article pipeline
-├── engine/                 # ArticleProcessor, EntityExtractor, mergers, profiles
-├── frontend/               # FastHTML UI (routes, components, static assets)
-├── utils/                  # Embeddings, LLM wrappers, logging, file helpers
+├── process_and_extract.py  # CLI entry point — parallel producer/consumer pipeline
+├── engine/
+│   ├── article_processor.py   # Relevance → extraction → QC retry orchestration
+│   ├── extractors.py          # Unified cloud/local entity extraction
+│   ├── mergers.py             # Lexical blocking → embedding similarity → match check → dispute
+│   ├── match_checker.py       # LLM-based match verification
+│   ├── merge_dispute_agent.py # Second-stage arbitration for gray-band matches
+│   ├── profiles.py            # VersionedProfile history management
+│   └── relevance.py           # Domain-specific relevance filtering
+├── frontend/               # FastHTML "Archival Elegance" UI
+│   ├── routes/             # Modular route handlers (home, people, orgs, locations, events)
+│   ├── components.py       # Reusable UI building blocks (badges, version selectors, tags)
+│   ├── data_access.py      # Centralised Parquet data loading
+│   └── static/styles.css   # CSS variables, fonts, layout
+├── utils/
+│   ├── embeddings/         # EmbeddingManager, cloud/local providers, similarity helpers
+│   ├── cache_utils.py      # Thread-safe LRU cache and stable hashing
+│   ├── extraction_cache.py # Persistent sidecar cache for extraction results
+│   ├── name_variants.py    # Deterministic name normalisation, acronym detection, canonical scoring
+│   ├── processing_status.py # Sidecar JSON tracker (replaces in-Parquet status)
 │   ├── outcomes.py         # PhaseOutcome structured result objects
-│   └── quality_controls.py # Extraction QC and profile QC validators
+│   └── quality_controls.py # Extraction QC, profile QC, and profile grounding verification
 ├── config_loader.py        # Domain config loader (incl. per-type thresholds, lexical blocking)
 ├── dynamic_models.py       # Domain-driven Pydantic model factories
-├── constants.py            # Model defaults, embedding settings, thresholds
+├── constants.py            # Model defaults, embedding settings, thresholds, privacy controls
+├── logging_config.py       # Rich-based structured logging with colour-coded decision lines
 └── exceptions.py           # Custom exception types used across the pipeline
 
 tests/
-├── embeddings/                     # Embedding manager and similarity unit tests
-├── test_domain_paths.py            # Validates domain-specific path resolution
+├── embeddings/                         # Embedding manager, cloud provider, config integration
+├── test_canonical_name.py              # 5-layer canonical name scoring and rekey-on-merge
+├── test_cli_privacy_mode.py            # --local flag enforces local embeddings
+├── test_domain_paths.py                # Domain-specific path resolution and batch writes
 ├── test_entity_merger_merge_smoke.py   # Embedding-based merge smoke tests
-├── test_entity_merger_similarity.py    # Similarity scoring behaviour
+├── test_entity_merger_similarity.py    # Similarity scoring, lexical blocking, fingerprints
+├── test_extraction_cache.py            # Sidecar cache key determinism and roundtrip
+├── test_extraction_retry.py            # QC-triggered retry logic and repair hints
+├── test_llm_multiple_tool_calls.py     # Instructor multi-tool-call recovery
+├── test_merge_dispute_agent_routing.py # Gray-band routing and dispute decisions
+├── test_name_variants.py               # Name normalisation, acronyms, equivalence groups
+├── test_profile_grounding.py           # Citation extraction and grounding verification
 ├── test_profile_versioning.py          # Versioned profile regression tests
 └── test_frontend_versioning.py         # UI behaviour for profile history
 
@@ -272,25 +304,33 @@ Historical sources should be in Parquet format with columns:
 1. **Configuration Loading**: Read domain-specific settings
 2. **Source Loading**: Process historical documents in Parquet format
 3. **Relevance Filtering**: Domain-specific content filtering for research focus
-4. **Entity Extraction**: Extract people, organizations, locations, events from historical sources
-5. **Quality Controls**: Deterministic validation of extraction output and profile quality
-6. **Smart Deduplication**: Lexical blocking pre-filter + embedding similarity with per-type thresholds
-7. **Profile Generation**: Create comprehensive entity profiles with automatic versioning
-7. **Version Management**: Track profile evolution as new sources are processed
+4. **Parallel Extraction**: Concurrent article + entity-type extraction with LLM rate limiting (`ThreadPoolExecutor` workers, bounded semaphore for API calls)
+5. **Extraction Caching**: Persistent sidecar cache keyed on content hash, model, prompt, and schema — skips redundant LLM calls on re-runs
+6. **Quality Controls**: Deterministic QC validates extraction output (required fields, name normalisation, within-article dedup) with automatic retry on severe flags
+7. **Smart Deduplication**: Lexical blocking pre-filter → batched embedding similarity → evidence-first merge cost structure (cheap checks before expensive LLM calls)
+8. **Merge Dispute Resolution**: Gray-band matches (similarity near threshold with low confidence) get a second-stage LLM arbitration via `MergeDisputeAgent`
+9. **Canonical Name Selection**: 5-layer scoring picks the best display name when entities merge, penalizing acronyms and generic phrases
+10. **Profile Generation**: Create comprehensive entity profiles with citation-backed claims and automatic versioning
+11. **Profile Grounding**: Post-processing verification that profile claims are supported by cited source articles
+12. **Persistence**: Batched Parquet writes per entity type (avoiding write amplification), sidecar JSON for processing status
 
 ### Engine Modules
-- `ArticleProcessor` orchestrates relevance checks, extraction dispatch, and per-article metadata aggregation (`src/engine/article_processor.py`)
+- `ArticleProcessor` orchestrates relevance checks, extraction dispatch (with QC retry), and per-article metadata aggregation (`src/engine/article_processor.py`)
 - `EntityExtractor` unifies cloud and local model calls using domain-specific Pydantic schemas (`src/engine/extractors.py`)
-- `EntityMerger` pre-filters with RapidFuzz lexical blocking, compares embeddings, calls match-checkers, and updates persisted Parquet rows (`src/engine/mergers.py`)
+- `EntityMerger` pre-filters with RapidFuzz lexical blocking, compares batched embeddings, calls match-checkers, routes gray-band cases to the dispute agent, and updates persisted Parquet rows (`src/engine/mergers.py`)
+- `MergeDisputeAgent` provides second-stage structured LLM analysis for ambiguous merge/skip decisions (`src/engine/merge_dispute_agent.py`)
 - `VersionedProfile` and helper functions maintain profile history for each entity (`src/engine/profiles.py`)
 
 ### Key Features
 - **Domain-Agnostic**: Easy to configure for any topic
 - **Multiple AI Models**: Cloud (Gemini) and local (Ollama) support
-- **Smart Processing**: Automatic relevance filtering and deduplication
+- **Privacy Mode**: `--local` flag forces local embeddings and disables all LLM telemetry
+- **Smart Processing**: Automatic relevance filtering, caching, and multi-layer deduplication
 - **Profile Versioning**: Track entity profile changes over time with full version history
-- **Modern Interface**: FastHTML-based web UI with version navigation
-- **Robust Pipeline**: Structured `PhaseOutcome` error handling, quality controls, and progress tracking
+- **Profile Grounding**: Citation-backed claim verification for generated profiles
+- **Modern Interface**: FastHTML "Archival Elegance" theme with confidence badges, aliases, tag pills, and version navigation
+- **Robust Pipeline**: Structured `PhaseOutcome` error handling, quality controls, extraction retry, and progress tracking
+- **Structured Logging**: Colour-coded decision lines (`NEW`, `MERGE`, `SKIP`, `DISPUTE`, `DEFER`) for pipeline transparency
 
 ## Development
 
@@ -304,7 +344,7 @@ just test -k test_profile_versioning
 just test tests/test_entity_merger_similarity.py
 ```
 
-CI runs lint and tests automatically on every PR (`.github/workflows/test.yml`). The test suite covers embedding similarity, lexical blocking, per-type threshold resolution, entity merger behavior, profile versioning, and frontend components — all without requiring API keys or GPU.
+CI runs lint and tests automatically on every PR (`.github/workflows/test.yml`). The test suite covers embedding similarity, lexical blocking, per-type threshold resolution, entity merger behavior, merge dispute agent routing, extraction caching, extraction retry logic, canonical name selection, name variant detection, profile grounding, profile versioning, privacy mode enforcement, and frontend components — all without requiring API keys or GPU.
 
 ### Code Quality
 ```bash
@@ -345,4 +385,4 @@ For questions about:
 
 **Built for**: Historians, researchers, and academics working with large document collections
 
-**Built with**: Python, Pydantic, FastHTML, LiteLLM, RapidFuzz, Jina Embeddings
+**Built with**: Python, Pydantic, FastHTML, LiteLLM, Instructor, RapidFuzz, Jina Embeddings, Rich
