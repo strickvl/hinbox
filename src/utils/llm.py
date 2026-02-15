@@ -6,7 +6,17 @@ import threading
 import time
 from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Dict, Iterator, List, Optional, Type
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Type,
+    get_args,
+    get_origin,
+)
 
 import instructor
 import litellm
@@ -118,9 +128,89 @@ class ReflectionResult(BaseModel):
     issues: Optional[List[str]] = None
 
 
-def get_litellm_client():
+def get_litellm_client(
+    mode: instructor.Mode = instructor.Mode.TOOLS,
+):
     """Get a configured litellm client with instructor."""
-    return instructor.from_litellm(litellm.completion)
+    return instructor.from_litellm(litellm.completion, mode=mode)
+
+
+def _list_item_model(response_model: Any) -> Optional[type[BaseModel]]:
+    """Return the item model for a ``List[Model]`` response type."""
+    origin = get_origin(response_model)
+    if origin is list:
+        args = get_args(response_model)
+        if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+            return args[0]
+    return None
+
+
+def _recover_multiple_tool_calls(
+    *,
+    error: Exception,
+    response_model: Any,
+) -> Optional[Any]:
+    """Recover from Instructor's "multiple tool calls" assertion when possible.
+
+    Instructor fails fast when a provider emits more than one tool call. For
+    ``List[Model]`` response shapes, each tool call is often one item. We can
+    parse those arguments directly from ``last_completion`` and validate them.
+    """
+    completion = getattr(error, "last_completion", None)
+    if completion is None:
+        return None
+
+    choices = getattr(completion, "choices", None)
+    if not choices:
+        return None
+
+    message = getattr(choices[0], "message", None)
+    if message is None:
+        return None
+
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if len(tool_calls) <= 1:
+        return None
+
+    item_model = _list_item_model(response_model)
+    if item_model is None:
+        return None
+
+    recovered: List[BaseModel] = []
+    for call in tool_calls:
+        fn = getattr(call, "function", None)
+        args_payload = getattr(fn, "arguments", None)
+        if args_payload is None:
+            return None
+
+        if isinstance(args_payload, str):
+            payload = json.loads(args_payload)
+        elif isinstance(args_payload, dict):
+            payload = args_payload
+        else:
+            return None
+
+        recovered.append(item_model.model_validate(payload, strict=False))
+
+    logger.warning(
+        "Recovered %d items from multiple tool calls without retry", len(recovered)
+    )
+    return recovered
+
+
+def _parallel_tools_response_model(response_model: Any) -> Optional[Any]:
+    """Return an Iterable[Model] response type for Instructor parallel-tools mode."""
+    item_model = _list_item_model(response_model)
+    if item_model is None:
+        return None
+    return Iterable[item_model]
+
+
+def _normalize_generation_response(response: Any, *, parallel_tools: bool) -> Any:
+    """Normalize Instructor return shape to match current callers' expectations."""
+    if parallel_tools:
+        return list(response)
+    return response
 
 
 def cloud_generation(
@@ -149,10 +239,31 @@ def cloud_generation(
     """
     logger.debug(f"Generating response with cloud model: {model}")
 
-    client = get_litellm_client()
+    parallel_response_model = _parallel_tools_response_model(response_model)
+    use_parallel_tools = parallel_response_model is not None
+    client = get_litellm_client(
+        mode=(
+            instructor.Mode.PARALLEL_TOOLS
+            if use_parallel_tools
+            else instructor.Mode.TOOLS
+        )
+    )
+    request_response_model = parallel_response_model or response_model
+    logger.debug(
+        "cloud_generation setup: model=%s mode=%s max_tokens=%s temperature=%s",
+        model,
+        "parallel_tools" if use_parallel_tools else "tools",
+        max_tokens,
+        temperature,
+    )
 
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
+
+    request_kwargs = dict(kwargs)
+    # Some providers can emit parallel tool calls by default, which Instructor
+    # treats as an error in single-call parsing paths.
+    request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
 
     merged_metadata = dict(DEFAULT_METADATA)
     if metadata:
@@ -172,14 +283,51 @@ def cloud_generation(
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    response_model=response_model,
+                    response_model=request_response_model,
                     metadata=metadata,
-                    **kwargs,
+                    **request_kwargs,
                 )
             logger.debug(f"Successfully generated response with {model}")
-            return response
+            return _normalize_generation_response(
+                response, parallel_tools=use_parallel_tools
+            )
         except Exception as e:
             error_str = str(e)
+            tools_mode_due_to_parallel_failure = False
+
+            # PARALLEL_TOOLS can fail when a provider returns no tool calls.
+            # Fall back to regular TOOLS parsing for List[...] models.
+            if (
+                use_parallel_tools
+                and "nonetype" in error_str.lower()
+                and "not iterable" in error_str.lower()
+            ):
+                logger.warning(
+                    "Parallel-tools response had no tool calls; retrying with TOOLS mode"
+                )
+                try:
+                    fallback_client = get_litellm_client(mode=instructor.Mode.TOOLS)
+                    fallback_kwargs = dict(request_kwargs)
+                    fallback_kwargs["parallel_tool_calls"] = False
+                    fallback_kwargs["max_retries"] = 0
+                    with cloud_llm_slot():
+                        response = fallback_client.chat.completions.create(
+                            model=model,
+                            messages=messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            response_model=response_model,
+                            metadata=metadata,
+                            **fallback_kwargs,
+                        )
+                    logger.debug(
+                        "Recovered from parallel-tools empty response with TOOLS mode"
+                    )
+                    return response
+                except Exception as fallback_e:
+                    e = fallback_e
+                    error_str = str(fallback_e)
+                    tools_mode_due_to_parallel_failure = True
 
             # Handle Instructor multiple tool calls error
             if "multiple tool calls" in error_str.lower():
@@ -187,46 +335,80 @@ def cloud_generation(
                     f"Multiple tool calls detected for {model}, attempting recovery strategies"
                 )
 
-                # Strategy 1: Try with lower temperature and max_retries=0 to force single response
+                # Strategy 0: recover directly from exception's last_completion.
+                try:
+                    recovered = _recover_multiple_tool_calls(
+                        error=e,
+                        response_model=response_model,
+                    )
+                    if recovered is not None:
+                        return recovered
+                except Exception as recovery_e0:
+                    logger.warning(f"Direct recovery failed: {recovery_e0}")
+
+                # Strategy 1: force non-parallel tool calling with deterministic settings.
                 try:
                     logger.debug("Trying with temperature=0 and max_retries=0")
+                    retry_client = client
+                    retry_response_model = request_response_model
+                    retry_parallel_tools = bool(use_parallel_tools)
+                    if tools_mode_due_to_parallel_failure:
+                        retry_client = get_litellm_client(mode=instructor.Mode.TOOLS)
+                        retry_response_model = response_model
+                        retry_parallel_tools = False
+                        logger.warning(
+                            "Strategy 1 switching to TOOLS mode after parallel-tools fallback failure"
+                        )
+                    retry_kwargs = dict(request_kwargs)
+                    retry_kwargs["max_retries"] = 0
+                    retry_kwargs["parallel_tool_calls"] = retry_parallel_tools
                     with cloud_llm_slot():
-                        response = client.chat.completions.create(
+                        response = retry_client.chat.completions.create(
                             model=model,
                             messages=messages,
                             max_tokens=max_tokens,
                             temperature=0,
-                            response_model=response_model,
+                            response_model=retry_response_model,
                             metadata=metadata,
-                            max_retries=0,
-                            **kwargs,
+                            **retry_kwargs,
                         )
                     logger.debug(
                         "Recovered from multiple tool calls error with strategy 1"
                     )
-                    return response
+                    return _normalize_generation_response(
+                        response, parallel_tools=retry_parallel_tools
+                    )
                 except Exception as recovery_e1:
-                    logger.warning(f"Strategy 1 failed: {recovery_e1}")
+                    logger.warning(
+                        "Strategy 1 failed (%s): %s",
+                        type(recovery_e1).__name__,
+                        recovery_e1,
+                    )
 
-                # Strategy 2: Try modifying the messages to be more explicit
+                # Strategy 2: fall back to markdown-JSON mode (no tool calls).
                 try:
-                    logger.debug("Trying with modified system message")
+                    logger.debug("Trying markdown JSON mode fallback")
+                    json_client = get_litellm_client(mode=instructor.Mode.MD_JSON)
                     modified_messages = messages.copy()
                     if modified_messages and modified_messages[0]["role"] == "system":
+                        modified_messages[0] = dict(modified_messages[0])
                         modified_messages[0]["content"] += (
-                            "\n\nIMPORTANT: Provide exactly ONE response. Do not make multiple tool calls."
+                            "\n\nIMPORTANT: Return exactly one JSON response."
                         )
 
+                    retry_kwargs = dict(request_kwargs)
+                    retry_kwargs["max_retries"] = 0
+                    retry_kwargs["parallel_tool_calls"] = False
+                    fallback_max_tokens = max(max_tokens, 16384)
                     with cloud_llm_slot():
-                        response = client.chat.completions.create(
+                        response = json_client.chat.completions.create(
                             model=model,
                             messages=modified_messages,
-                            max_tokens=max_tokens,
+                            max_tokens=fallback_max_tokens,
                             temperature=0,
                             response_model=response_model,
                             metadata=metadata,
-                            max_retries=0,
-                            **kwargs,
+                            **retry_kwargs,
                         )
                     logger.debug(
                         "Recovered from multiple tool calls error with strategy 2"
@@ -286,10 +468,29 @@ def local_generation(
     """
     logger.debug(f"Generating response with local model: {model}")
 
-    client = get_litellm_client()
+    parallel_response_model = _parallel_tools_response_model(response_model)
+    use_parallel_tools = parallel_response_model is not None
+    client = get_litellm_client(
+        mode=(
+            instructor.Mode.PARALLEL_TOOLS
+            if use_parallel_tools
+            else instructor.Mode.TOOLS
+        )
+    )
+    request_response_model = parallel_response_model or response_model
+    logger.debug(
+        "local_generation setup: model=%s mode=%s max_tokens=%s temperature=%s",
+        model,
+        "parallel_tools" if use_parallel_tools else "tools",
+        max_tokens,
+        temperature,
+    )
 
     max_retries = MAX_RETRIES
     base_delay = BASE_DELAY
+
+    request_kwargs = dict(kwargs)
+    request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
 
     merged_metadata = dict(DEFAULT_METADATA)
     if metadata:
@@ -308,16 +509,55 @@ def local_generation(
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    response_model=response_model,
+                    response_model=request_response_model,
                     metadata=metadata,
                     api_base=OLLAMA_API_URL,
                     custom_llm_provider="ollama",
-                    **kwargs,
+                    **request_kwargs,
                 )
             logger.debug(f"Successfully generated response with {model}")
-            return response
+            return _normalize_generation_response(
+                response, parallel_tools=use_parallel_tools
+            )
         except Exception as e:
             error_str = str(e)
+            tools_mode_due_to_parallel_failure = False
+
+            # PARALLEL_TOOLS can fail when a provider returns no tool calls.
+            # Fall back to regular TOOLS parsing for List[...] models.
+            if (
+                use_parallel_tools
+                and "nonetype" in error_str.lower()
+                and "not iterable" in error_str.lower()
+            ):
+                logger.warning(
+                    "Parallel-tools local response had no tool calls; retrying with TOOLS mode"
+                )
+                try:
+                    fallback_client = get_litellm_client(mode=instructor.Mode.TOOLS)
+                    fallback_kwargs = dict(request_kwargs)
+                    fallback_kwargs["parallel_tool_calls"] = False
+                    fallback_kwargs["max_retries"] = 0
+                    with local_llm_slot():
+                        response = fallback_client.chat.completions.create(
+                            model=get_ollama_model_name(model),
+                            messages=messages,
+                            max_tokens=max_tokens,
+                            temperature=temperature,
+                            response_model=response_model,
+                            metadata=metadata,
+                            api_base=OLLAMA_API_URL,
+                            custom_llm_provider="ollama",
+                            **fallback_kwargs,
+                        )
+                    logger.debug(
+                        "Recovered local parallel-tools empty response with TOOLS mode"
+                    )
+                    return response
+                except Exception as fallback_e:
+                    e = fallback_e
+                    error_str = str(fallback_e)
+                    tools_mode_due_to_parallel_failure = True
 
             # Handle Instructor multiple tool calls error
             if "multiple tool calls" in error_str.lower():
@@ -325,48 +565,82 @@ def local_generation(
                     f"Multiple tool calls detected for local model {model}, attempting recovery strategies"
                 )
 
-                # Strategy 1: Try with lower temperature and max_retries=0
+                # Strategy 0: recover directly from exception's last_completion.
+                try:
+                    recovered = _recover_multiple_tool_calls(
+                        error=e,
+                        response_model=response_model,
+                    )
+                    if recovered is not None:
+                        return recovered
+                except Exception as recovery_e0:
+                    logger.warning(f"Local direct recovery failed: {recovery_e0}")
+
+                # Strategy 1: force non-parallel tool calling with deterministic settings.
                 try:
                     logger.debug("Trying local with temperature=0 and max_retries=0")
+                    retry_client = client
+                    retry_response_model = request_response_model
+                    retry_parallel_tools = bool(use_parallel_tools)
+                    if tools_mode_due_to_parallel_failure:
+                        retry_client = get_litellm_client(mode=instructor.Mode.TOOLS)
+                        retry_response_model = response_model
+                        retry_parallel_tools = False
+                        logger.warning(
+                            "Local strategy 1 switching to TOOLS mode after parallel-tools fallback failure"
+                        )
+                    retry_kwargs = dict(request_kwargs)
+                    retry_kwargs["max_retries"] = 0
+                    retry_kwargs["parallel_tool_calls"] = retry_parallel_tools
                     with local_llm_slot():
-                        response = client.chat.completions.create(
+                        response = retry_client.chat.completions.create(
                             model=get_ollama_model_name(model),
                             messages=messages,
                             max_tokens=max_tokens,
                             temperature=0,
-                            response_model=response_model,
+                            response_model=retry_response_model,
                             metadata=metadata,
                             api_base=OLLAMA_API_URL,
                             custom_llm_provider="ollama",
-                            max_retries=0,
-                            **kwargs,
+                            **retry_kwargs,
                         )
                     logger.debug("Recovered locally with strategy 1")
-                    return response
+                    return _normalize_generation_response(
+                        response, parallel_tools=retry_parallel_tools
+                    )
                 except Exception as recovery_e1:
-                    logger.warning(f"Local strategy 1 failed: {recovery_e1}")
+                    logger.warning(
+                        "Local strategy 1 failed (%s): %s",
+                        type(recovery_e1).__name__,
+                        recovery_e1,
+                    )
 
-                # Strategy 2: Modify system message
+                # Strategy 2: fall back to markdown-JSON mode (no tool calls).
                 try:
-                    logger.debug("Trying local with modified system message")
+                    logger.debug("Trying local markdown JSON mode fallback")
+                    json_client = get_litellm_client(mode=instructor.Mode.MD_JSON)
                     modified_messages = messages.copy()
                     if modified_messages and modified_messages[0]["role"] == "system":
+                        modified_messages[0] = dict(modified_messages[0])
                         modified_messages[0]["content"] += (
-                            "\n\nIMPORTANT: Provide exactly ONE response. Do not make multiple tool calls."
+                            "\n\nIMPORTANT: Return exactly one JSON response."
                         )
 
+                    retry_kwargs = dict(request_kwargs)
+                    retry_kwargs["max_retries"] = 0
+                    retry_kwargs["parallel_tool_calls"] = False
+                    fallback_max_tokens = max(max_tokens, 16384)
                     with local_llm_slot():
-                        response = client.chat.completions.create(
+                        response = json_client.chat.completions.create(
                             model=get_ollama_model_name(model),
                             messages=modified_messages,
-                            max_tokens=max_tokens,
+                            max_tokens=fallback_max_tokens,
                             temperature=0,
                             response_model=response_model,
                             metadata=metadata,
                             api_base=OLLAMA_API_URL,
                             custom_llm_provider="ollama",
-                            max_retries=0,
-                            **kwargs,
+                            **retry_kwargs,
                         )
                     logger.debug("Recovered locally with strategy 2")
                     return response
