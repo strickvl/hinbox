@@ -172,6 +172,7 @@ def nav_bar(current_domain: str = "guantanamo") -> Nav:
         A("Events", href=f"/events?domain={current_domain}"),
         A("Locations", href=f"/locations?domain={current_domain}"),
         A("Organizations", href=f"/organizations?domain={current_domain}"),
+        A("Eval", href=f"/eval?domain={current_domain}"),
         Button(
             "About",
             cls="secondary",

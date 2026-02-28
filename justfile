@@ -71,6 +71,16 @@ domains:
 traces *args:
     uv run python scripts/traces.py {{args}}
 
+# ─── Eval Harness ────────────────────────────────────
+
+# Generate seed merge candidates for annotation
+seed-candidates domain="guantanamo" *args:
+    uv run python scripts/seed_merge_candidates.py --domain {{domain}} {{args}}
+
+# Score merge decisions against gold labels
+eval-merges domain="guantanamo" *args:
+    uv run python scripts/eval_merges.py --domain {{domain}} {{args}}
+
 # ─── Code Quality ─────────────────────────────────────
 
 # Format code (ruff fix + format)

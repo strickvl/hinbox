@@ -13,7 +13,7 @@ from ..constants import DEFAULT_FRONTEND_PORT
 from .app_config import app
 
 # Import the routes so they get registered
-from .routes import events, home, locations, organizations, people  # noqa: F401
+from .routes import eval, events, home, locations, organizations, people  # noqa: F401
 
 # We only need to define the run logic if this file is run directly under -m syntax:
 if __name__ == "__main__":
