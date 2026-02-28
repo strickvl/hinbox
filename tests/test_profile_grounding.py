@@ -8,6 +8,7 @@ These tests verify:
 - Batch post-processing integration (hash-based skip, entity mutation)
 """
 
+import json
 from typing import Dict, List
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from src.utils.quality_controls import (
     _extract_cited_claims,
     verify_profile_grounding,
 )
+from src.utils.trace_writer import TraceWriter
 
 # ── Citation extraction tests (deterministic) ──
 
@@ -283,7 +285,7 @@ class TestVerifyProfileGrounding:
 
 
 class TestGroundingPostprocess:
-    def test_adds_grounding_to_entity(self):
+    def test_adds_grounding_to_entity(self, tmp_path):
         """Post-processing should add profile_grounding to entities with citations."""
         from src.engine.article_processor import ArticleProcessor
         from src.process_and_extract import run_profile_grounding_postprocess
@@ -310,6 +312,8 @@ class TestGroundingPostprocess:
             grounding_score=1.0,
         )
 
+        writer = TraceWriter(output_dir=str(tmp_path))
+
         with (
             patch.object(ArticleProcessor, "__init__", lambda self, **kw: None),
             patch.object(
@@ -334,10 +338,16 @@ class TestGroundingPostprocess:
                 rows=rows,
                 processor=processor,
                 model_type="gemini",
+                trace_writer=writer,
             )
+
+        writer.close()
+        with open(writer.filepath, "r", encoding="utf-8") as f:
+            events = [json.loads(line) for line in f if line.strip()]
 
         assert counts["verified"] == 1
         assert "profile_grounding" in entities["people"]["Alice Smith"]
+        assert events[0]["stage"] == "grounding"
         mock_verify.assert_called_once()
 
     def test_skips_unchanged_profile(self):

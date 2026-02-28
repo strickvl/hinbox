@@ -26,7 +26,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
-from src.constants import disable_llm_callbacks
+from src.constants import CLOUD_MODEL, OLLAMA_MODEL, disable_llm_callbacks
 from src.engine import ArticleProcessor, EntityMerger, configure_match_check_memo
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
@@ -39,7 +39,13 @@ from src.utils.extraction import configure_extraction_sidecar_cache
 from src.utils.file_ops import write_entities_table
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
-from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
+from src.utils.quality_controls import (
+    CITATION_RE,
+    grounding_prompt_fingerprint,
+    verify_profile_grounding,
+)
+from src.utils.trace_schema import TraceEvent, TraceStage
+from src.utils.trace_writer import TraceWriter
 
 # Get module-specific logger
 logger = get_logger("process_and_extract")
@@ -301,7 +307,7 @@ def merge_all_entities(
     for entity_type, entity_dicts in merge_inputs:
         try:
             merge_start = datetime.now()
-            merger = EntityMerger(entity_type)
+            merger = EntityMerger(entity_type, trace_writer=processor.trace_writer)
             merge_stats = merger.merge_entities(
                 entity_dicts,
                 entities,
@@ -413,6 +419,7 @@ def run_profile_grounding_postprocess(
     rows: List[Dict],
     processor: ArticleProcessor,
     model_type: str,
+    trace_writer: Optional[TraceWriter] = None,
 ) -> Dict[str, int]:
     """Run grounding verification on entity profiles as a batch post-processing step.
 
@@ -433,6 +440,46 @@ def run_profile_grounding_postprocess(
             article_texts[info["id"]] = info["content"]
 
     counts = {"verified": 0, "skipped_unchanged": 0, "skipped_no_citations": 0}
+
+    prompt_hash = grounding_prompt_fingerprint()
+    model_info = {
+        "backend": "local" if model_type == "ollama" else "cloud",
+        "name": OLLAMA_MODEL if model_type == "ollama" else CLOUD_MODEL,
+        "temperature": 0,
+    }
+
+    def _emit_grounding_trace(
+        *,
+        article_id: Optional[str],
+        entity_type: str,
+        entity_name: str,
+        report: Any,
+    ) -> None:
+        if trace_writer is None:
+            return
+        try:
+            trace_writer.emit(
+                TraceEvent(
+                    stage=TraceStage.GROUNDING,
+                    article_id=article_id,
+                    entity_type=entity_type,
+                    entity_name=entity_name,
+                    inputs={"profile_text_hash": report.profile_text_hash},
+                    model=model_info,
+                    prompt_fingerprint=prompt_hash,
+                    decision="pass" if report.passed else "fail",
+                    confidence=report.grounding_score,
+                    qc_flags=list(report.flags),
+                    counts={
+                        "total_citations": report.total_citations,
+                        "verified": report.verified,
+                        "unverified": report.unverified,
+                        "missing_source": report.missing_source,
+                    },
+                )
+            )
+        except Exception as exc:  # pragma: no cover - tracing must not break run
+            logger.debug(f"Failed to emit grounding trace event: {exc}")
 
     for entity_type, entity_dict in entities.items():
         for entity_key, entity_data in entity_dict.items():
@@ -466,6 +513,17 @@ def run_profile_grounding_postprocess(
 
             entity_data["profile_grounding"] = report.model_dump(exclude_none=True)
             counts["verified"] += 1
+
+            entity_name = (
+                entity_key[0] if isinstance(entity_key, tuple) else str(entity_key)
+            )
+            cited_article_id = citations[0] if citations else None
+            _emit_grounding_trace(
+                article_id=cited_article_id,
+                entity_type=entity_type,
+                entity_name=entity_name,
+                report=report,
+            )
 
             if report.grounding_score is not None:
                 log(
@@ -778,98 +836,121 @@ def main():
     base_dir = config.get_output_dir()
     entities = load_existing_entities(base_dir)
 
-    # Initialize processor
-    model_type = "ollama" if args.local else "gemini"
+    trace_cfg = config.get_tracing_config()
+    trace_writer: Optional[TraceWriter] = None
+    if trace_cfg.get("enabled", True):
+        trace_writer = TraceWriter(
+            output_dir=base_dir,
+            enabled=True,
+            traces_subdir=trace_cfg.get("subdir", "traces"),
+            runs_subdir=trace_cfg.get("runs_subdir", "runs"),
+        )
+        log(f"Tracing enabled: run_id={trace_writer.run_id}", level="info")
+    else:
+        log("Tracing disabled by domain config", level="info")
 
-    # Enforce privacy: when --local is active, force local embeddings and
-    # disable telemetry so no data leaves the machine.
-    if args.local:
-        disable_llm_callbacks()
-        os.environ["EMBEDDING_MODE"] = "local"
-        reset_embedding_manager_cache()
-        ensure_local_embeddings_available()
+    try:
+        # Initialize processor
+        model_type = "ollama" if args.local else "gemini"
+
+        # Enforce privacy: when --local is active, force local embeddings and
+        # disable telemetry so no data leaves the machine.
+        if args.local:
+            disable_llm_callbacks()
+            os.environ["EMBEDDING_MODE"] = "local"
+            reset_embedding_manager_cache()
+            ensure_local_embeddings_available()
+            log(
+                "Privacy mode: embeddings + callbacks forced LOCAL (--local flag)",
+                level="info",
+            )
+
+        processor = ArticleProcessor(
+            domain=args.domain,
+            model_type=model_type,
+            trace_writer=trace_writer,
+        )
+
+        # Configure LLM concurrency limiter
+        cc = config.get_concurrency_config()
+        configure_llm_concurrency(
+            cloud_in_flight=cc["llm_in_flight"] if model_type == "gemini" else None,
+            local_in_flight=cc["ollama_in_flight"] if model_type == "ollama" else None,
+        )
         log(
-            "Privacy mode: embeddings + callbacks forced LOCAL (--local flag)",
+            f"Concurrency: {cc['extract_workers']} workers, "
+            f"{cc['extract_per_article']} types/article, "
+            f"{cc['llm_in_flight']} LLM in-flight",
             level="info",
         )
 
-    processor = ArticleProcessor(domain=args.domain, model_type=model_type)
-
-    # Configure LLM concurrency limiter
-    cc = config.get_concurrency_config()
-    configure_llm_concurrency(
-        cloud_in_flight=cc["llm_in_flight"] if model_type == "gemini" else None,
-        local_in_flight=cc["ollama_in_flight"] if model_type == "ollama" else None,
-    )
-    log(
-        f"Concurrency: {cc['extract_workers']} workers, "
-        f"{cc['extract_per_article']} types/article, "
-        f"{cc['llm_in_flight']} LLM in-flight",
-        level="info",
-    )
-
-    # Configure match-check memoization (per-run LRU for temperature=0 calls)
-    cache_cfg = config.get_cache_config()
-    match_cfg = cache_cfg.get("match_check", {})
-    configure_match_check_memo(
-        enabled=cache_cfg.get("enabled", True) and match_cfg.get("enabled", True),
-        max_items=match_cfg.get("max_items", 8192),
-    )
-
-    # Configure persistent extraction sidecar cache
-    configure_extraction_sidecar_cache(base_dir=base_dir, cache_cfg=cache_cfg)
-
-    # Initialize sidecar processing status tracker
-    status_tracker = ProcessingStatus(base_dir)
-    log(
-        f"Processing status: {status_tracker.total_processed} previously processed",
-        level="info",
-    )
-
-    # Load articles
-    rows = load_and_validate_articles(args.articles_path)
-    if not rows:
-        return
-
-    # Process articles
-    article_count = len(rows)
-    processed_rows, counters = process_articles_batch(
-        rows,
-        processor,
-        entities,
-        args,
-        domain_config=config,
-        status_tracker=status_tracker,
-    )
-
-    # Post-processing: verify profile grounding
-    if counters["processed_count"] > 0:
-        log("\nRunning profile grounding verification...", level="processing")
-        grounding_counts = run_profile_grounding_postprocess(
-            entities=entities,
-            rows=processed_rows,
-            processor=processor,
-            model_type=model_type,
+        # Configure match-check memoization (per-run LRU for temperature=0 calls)
+        cache_cfg = config.get_cache_config()
+        match_cfg = cache_cfg.get("match_check", {})
+        configure_match_check_memo(
+            enabled=cache_cfg.get("enabled", True) and match_cfg.get("enabled", True),
+            max_items=match_cfg.get("max_items", 8192),
         )
+
+        # Configure persistent extraction sidecar cache
+        configure_extraction_sidecar_cache(base_dir=base_dir, cache_cfg=cache_cfg)
+
+        # Initialize sidecar processing status tracker
+        status_tracker = ProcessingStatus(base_dir)
         log(
-            f"Grounding complete: {grounding_counts['verified']} verified, "
-            f"{grounding_counts['skipped_unchanged']} unchanged, "
-            f"{grounding_counts['skipped_no_citations']} no citations",
-            level="success",
+            f"Processing status: {status_tracker.total_processed} previously processed",
+            level="info",
         )
 
-    # Write results and statistics
-    write_results_and_statistics(
-        processed_rows,
-        entities,
-        args,
-        counters["processed_count"],
-        counters["skipped_relevance_count"],
-        counters["skipped_already_processed"],
-        article_count,
-        base_dir,
-        status_tracker=status_tracker,
-    )
+        # Load articles
+        rows = load_and_validate_articles(args.articles_path)
+        if not rows:
+            return
+
+        # Process articles
+        article_count = len(rows)
+        processed_rows, counters = process_articles_batch(
+            rows,
+            processor,
+            entities,
+            args,
+            domain_config=config,
+            status_tracker=status_tracker,
+        )
+
+        # Post-processing: verify profile grounding
+        if counters["processed_count"] > 0:
+            log("\nRunning profile grounding verification...", level="processing")
+            grounding_counts = run_profile_grounding_postprocess(
+                entities=entities,
+                rows=processed_rows,
+                processor=processor,
+                model_type=model_type,
+                trace_writer=trace_writer,
+            )
+            log(
+                f"Grounding complete: {grounding_counts['verified']} verified, "
+                f"{grounding_counts['skipped_unchanged']} unchanged, "
+                f"{grounding_counts['skipped_no_citations']} no citations",
+                level="success",
+            )
+
+        # Write results and statistics
+        write_results_and_statistics(
+            processed_rows,
+            entities,
+            args,
+            counters["processed_count"],
+            counters["skipped_relevance_count"],
+            counters["skipped_already_processed"],
+            article_count,
+            base_dir,
+            status_tracker=status_tracker,
+        )
+    finally:
+        if trace_writer is not None:
+            log(f"Trace events written: {trace_writer.event_count}", level="info")
+            trace_writer.close()
 
 
 if __name__ == "__main__":

@@ -8,10 +8,12 @@ These tests:
   (merge_entities no longer writes to disk — persistence is handled by end-of-run flush)
 """
 
+import json
 from typing import Any, Dict, List
 from unittest.mock import patch
 
 from src.engine import EntityMerger, MatchCheckResult, VersionedProfile
+from src.utils.trace_writer import TraceWriter
 
 
 class StubEmbeddingResult:
@@ -189,7 +191,7 @@ class TestEntityMergerMergeSmoke:
         assert person["name"] == "Alice Smith"
         assert person["extraction_timestamp"] == "2025-01-02T00:00:00Z"
 
-    def test_update_path_people_with_alternative_name_and_versioning(self):
+    def test_update_path_people_with_alternative_name_and_versioning(self, tmp_path):
         """Merging a similar person should update profile, add article, and record alternative name."""
         entities = make_empty_entities()
 
@@ -226,7 +228,8 @@ class TestEntityMergerMergeSmoke:
             {"name": "Alice B. Smith"}  # different key to trigger alternative_names
         ]
 
-        merger = EntityMerger("people")
+        writer = TraceWriter(output_dir=str(tmp_path))
+        merger = EntityMerger("people", trace_writer=writer)
 
         # Use a stub manager that returns the SAME embedding as existing to guarantee similarity=1.0
         stub_manager = StubEmbeddingManager(vec=[0.42, 0.58, 0.0])
@@ -295,6 +298,14 @@ class TestEntityMergerMergeSmoke:
 
         # Alternative names added since the incoming key was different
         assert "Alice B. Smith" in person.get("alternative_names", [])
+
+        writer.close()
+        with open(writer.filepath, "r", encoding="utf-8") as f:
+            events = [json.loads(line) for line in f if line.strip()]
+        stages = [event["stage"] for event in events]
+        assert "merge.match_check" in stages
+        assert "merge.decision" in stages
+        assert "profile.update" in stages
 
 
 class TestMatchCheckResultSchema:

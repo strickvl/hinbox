@@ -1,5 +1,6 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
+from src.config_loader import get_system_prompt
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 
 # Use the consolidated extractor rather than per-entity wrappers
@@ -7,12 +8,15 @@ from src.engine.extractors import EntityExtractor
 from src.engine.relevance import gemini_check_relevance, ollama_check_relevance
 from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
+from src.utils.cache_utils import sha256_text
 from src.utils.error_handler import handle_article_processing_error
 from src.utils.outcomes import PhaseOutcome
 from src.utils.quality_controls import (
     filter_entities_by_article_relevance,
     run_extraction_qc,
 )
+from src.utils.trace_schema import TraceEvent, TraceStage
+from src.utils.trace_writer import TraceWriter
 
 logger = get_logger("article_processor")
 
@@ -59,13 +63,76 @@ class ArticleProcessor:
     observability metadata (success/failure, QC flags, error details).
     """
 
-    def __init__(self, domain: str, model_type: str = "gemini"):
+    def __init__(
+        self,
+        domain: str,
+        model_type: str = "gemini",
+        trace_writer: Optional[TraceWriter] = None,
+    ):
         self.domain = domain
         self.model_type = model_type or "gemini"
         self.specific_model = (
             OLLAMA_MODEL if self.model_type == "ollama" else CLOUD_MODEL
         )
         self.logger = logger
+        self.trace_writer = trace_writer
+
+    def _emit_trace(self, event: TraceEvent) -> None:
+        """Safely emit a trace event when tracing is enabled."""
+        if self.trace_writer is None:
+            return
+        try:
+            self.trace_writer.emit(event)
+        except Exception as exc:  # pragma: no cover - tracing must not break pipeline
+            self.logger.debug(f"Failed to emit trace event: {exc}")
+
+    def _model_trace_info(self) -> Dict[str, Any]:
+        """Return a consistent model descriptor for trace events."""
+        return {
+            "backend": "local" if self.model_type == "ollama" else "cloud",
+            "name": self.specific_model,
+            "temperature": 0,
+        }
+
+    def _prompt_fingerprint(self, prompt_key: str) -> Optional[str]:
+        """Return a stable prompt fingerprint for a domain prompt key."""
+        try:
+            prompt = get_system_prompt(prompt_key, self.domain)
+            return sha256_text(prompt)
+        except Exception:
+            return None
+
+    def _prompt_fingerprint_with_flags(
+        self, prompt_key: str
+    ) -> Tuple[Optional[str], List[str]]:
+        """Return prompt fingerprint plus any attribution flags."""
+        prompt_hash = self._prompt_fingerprint(prompt_key)
+        flags: List[str] = []
+        if not prompt_hash:
+            flags.append("prompt_fingerprint_missing")
+        return prompt_hash, flags
+
+    def _extraction_prompt_fingerprint(
+        self,
+        entity_type: str,
+        repair_hint: Optional[str] = None,
+    ) -> Optional[str]:
+        """Fingerprint the exact extraction prompt used for an attempt."""
+        try:
+            base_prompt = get_system_prompt(entity_type, self.domain)
+            full_prompt = (
+                f"{base_prompt}\n\n{repair_hint}" if repair_hint else base_prompt
+            )
+            return sha256_text(full_prompt)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _entity_display_name(entity_type: str, entity: Dict[str, Any]) -> str:
+        """Extract a user-friendly entity name from extraction output."""
+        if entity_type == "events":
+            return str(entity.get("title") or "")
+        return str(entity.get("name") or "")
 
     def check_relevance(
         self,
@@ -106,12 +173,39 @@ class ArticleProcessor:
                 is_relevant = True
                 reason = "uncertain_result_shape"
 
-            return PhaseOutcome.ok(
+            prompt_hash, prompt_flags = self._prompt_fingerprint_with_flags("relevance")
+            outcome = PhaseOutcome.ok(
                 "relevance",
                 value=is_relevant,
                 meta={"reason": reason},
             )
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.RELEVANCE,
+                    article_id=article_id,
+                    decision="relevant" if is_relevant else "irrelevant",
+                    reason=reason or None,
+                    inputs={"content_hash": sha256_text(article_content)},
+                    model=self._model_trace_info(),
+                    prompt_fingerprint=prompt_hash,
+                    qc_flags=prompt_flags,
+                )
+            )
+            return outcome
         except RelevanceCheckError as e:
+            prompt_hash, prompt_flags = self._prompt_fingerprint_with_flags("relevance")
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.RELEVANCE,
+                    article_id=article_id,
+                    decision="error",
+                    reason=str(e),
+                    inputs={"content_hash": sha256_text(article_content)},
+                    model=self._model_trace_info(),
+                    prompt_fingerprint=prompt_hash,
+                    qc_flags=["relevance_exception", *prompt_flags],
+                )
+            )
             return PhaseOutcome.fail(
                 "relevance",
                 error=e,
@@ -120,6 +214,19 @@ class ArticleProcessor:
             )
         except Exception as e:
             handle_article_processing_error(article_id, "relevance_check", e)
+            prompt_hash, prompt_flags = self._prompt_fingerprint_with_flags("relevance")
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.RELEVANCE,
+                    article_id=article_id,
+                    decision="error",
+                    reason=str(e),
+                    inputs={"content_hash": sha256_text(article_content)},
+                    model=self._model_trace_info(),
+                    prompt_fingerprint=prompt_hash,
+                    qc_flags=["relevance_exception", *prompt_flags],
+                )
+            )
             return PhaseOutcome.fail(
                 "relevance",
                 error=e,
@@ -170,6 +277,8 @@ class ArticleProcessor:
 
         try:
             extractor = EntityExtractor(entity_type, self.domain)
+            base_prompt_hash = self._extraction_prompt_fingerprint(entity_type)
+            retry_prompt_hash: Optional[str] = None
 
             # --- Attempt 1 ---
             raw_dicts = self._run_extraction(extractor, article_content)
@@ -193,6 +302,10 @@ class ArticleProcessor:
                 )
 
                 hint = _build_repair_hint(entity_type, qc_report.flags)
+                retry_prompt_hash = self._extraction_prompt_fingerprint(
+                    entity_type,
+                    repair_hint=hint,
+                )
                 raw_dicts_v2 = self._run_extraction(
                     extractor, article_content, repair_hint=hint
                 )
@@ -220,22 +333,130 @@ class ArticleProcessor:
                 else:
                     retry_meta["retry_used"] = False
 
-            return PhaseOutcome.ok(
+            counts = {
+                "raw_count": qc_report.input_count,
+                "dropped_missing_required": qc_report.dropped_missing_required,
+                "deduped": qc_report.deduped,
+                "final_count": qc_report.output_count,
+            }
+            outcome = PhaseOutcome.ok(
                 phase,
                 value=cleaned,
-                counts={
-                    "raw_count": qc_report.input_count,
-                    "dropped_missing_required": qc_report.dropped_missing_required,
-                    "deduped": qc_report.deduped,
-                    "final_count": qc_report.output_count,
-                },
+                counts=counts,
                 flags=qc_report.flags,
                 meta={"qc_fixes": qc_report.fixes, **retry_meta},
             )
+
+            final_prompt_hash = (
+                retry_prompt_hash
+                if retry_meta.get("retry_attempted") and retry_meta.get("retry_used")
+                else base_prompt_hash
+            )
+            prompt_flags: List[str] = []
+            if not final_prompt_hash:
+                prompt_flags.append("prompt_fingerprint_missing")
+
+            inputs = {
+                "content_hash": sha256_text(article_content),
+                "prompt_hash": final_prompt_hash or "",
+            }
+            extraction_flags = list(qc_report.flags) + prompt_flags
+
+            for entity in cleaned:
+                self._emit_trace(
+                    TraceEvent(
+                        stage=TraceStage.EXTRACTION,
+                        article_id=article_id or None,
+                        entity_type=entity_type,
+                        entity_name=self._entity_display_name(entity_type, entity)
+                        or None,
+                        inputs=inputs,
+                        model=self._model_trace_info(),
+                        prompt_fingerprint=final_prompt_hash,
+                        decision="extracted",
+                        qc_flags=extraction_flags,
+                    )
+                )
+
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.EXTRACTION_QC,
+                    article_id=article_id or None,
+                    entity_type=entity_type,
+                    inputs=inputs,
+                    model=self._model_trace_info(),
+                    prompt_fingerprint=final_prompt_hash,
+                    decision="pass" if not qc_report.flags else "fail",
+                    qc_flags=extraction_flags,
+                    counts=counts,
+                    meta={"qc_fixes": qc_report.fixes},
+                )
+            )
+
+            if retry_meta.get("retry_attempted"):
+                retry_counts: Dict[str, int] = {
+                    "final_count": qc_report.output_count,
+                    "retry_output_count": int(
+                        retry_meta.get("retry_output_count", qc_report.output_count)
+                    ),
+                }
+                retry_event_prompt = retry_prompt_hash or final_prompt_hash
+                retry_flags = list(retry_meta.get("retry_trigger_flags", []))
+                if not retry_event_prompt:
+                    retry_flags.append("prompt_fingerprint_missing")
+
+                self._emit_trace(
+                    TraceEvent(
+                        stage=TraceStage.EXTRACTION_RETRY,
+                        article_id=article_id or None,
+                        entity_type=entity_type,
+                        inputs={
+                            "content_hash": sha256_text(article_content),
+                            "prompt_hash": retry_event_prompt or "",
+                        },
+                        model=self._model_trace_info(),
+                        prompt_fingerprint=retry_event_prompt,
+                        decision=(
+                            "used_v2" if retry_meta.get("retry_used") else "kept_v1"
+                        ),
+                        qc_flags=retry_flags,
+                        counts=retry_counts,
+                        meta={
+                            "retry_attempted": True,
+                            "retry_used": bool(retry_meta.get("retry_used", False)),
+                            "retry_trigger_flags": list(
+                                retry_meta.get("retry_trigger_flags", [])
+                            ),
+                            "prompt_hash_v1": base_prompt_hash,
+                            "prompt_hash_v2": retry_prompt_hash,
+                            "final_prompt_hash": final_prompt_hash,
+                        },
+                    )
+                )
+
+            return outcome
         except Exception as e:
             self.logger.exception(
                 f"Extraction failed for entity_type={entity_type}, "
                 f"domain={self.domain}, model_type={self.model_type}: {e}"
+            )
+            prompt_hash = self._extraction_prompt_fingerprint(entity_type)
+            prompt_flags = ["prompt_fingerprint_missing"] if not prompt_hash else []
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.EXTRACTION_QC,
+                    article_id=article_id or None,
+                    entity_type=entity_type,
+                    decision="error",
+                    reason=str(e),
+                    inputs={
+                        "content_hash": sha256_text(article_content),
+                        "prompt_hash": prompt_hash or "",
+                    },
+                    model=self._model_trace_info(),
+                    prompt_fingerprint=prompt_hash,
+                    qc_flags=["extraction_exception", *prompt_flags],
+                )
             )
             return PhaseOutcome.fail(
                 phase,

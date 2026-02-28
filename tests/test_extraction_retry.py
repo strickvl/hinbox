@@ -1,5 +1,6 @@
 """Tests for conditional extraction retry on QC failure (Item 13)."""
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,7 @@ from src.engine.article_processor import (
     _should_retry_extraction,
 )
 from src.utils.quality_controls import run_extraction_qc
+from src.utils.trace_writer import TraceWriter
 
 
 class TestShouldRetryExtraction:
@@ -220,6 +222,38 @@ class TestExtractSingleEntityTypeRetry:
         assert outcome.meta["retry_attempted"] is True
         assert outcome.meta["retry_used"] is True
         assert outcome.counts["final_count"] == 2
+
+    def test_retry_emits_trace_events(self, tmp_path):
+        """Retry path should emit extraction, extraction.qc, and extraction.retry traces."""
+        writer = TraceWriter(output_dir=str(tmp_path))
+        processor = ArticleProcessor(
+            domain="guantanamo",
+            model_type="gemini",
+            trace_writer=writer,
+        )
+
+        def mock_run_extraction(extractor, content, repair_hint=None):
+            if repair_hint is None:
+                return []  # trigger retry via zero_entities
+            return [_PERSON_ALICE.copy()]
+
+        with patch.object(
+            processor, "_run_extraction", side_effect=mock_run_extraction
+        ):
+            outcome = processor.extract_single_entity_type(
+                "people", "Some article text", "art-trace"
+            )
+
+        writer.close()
+
+        with open(writer.filepath, "r", encoding="utf-8") as f:
+            events = [json.loads(line) for line in f if line.strip()]
+
+        stages = [event["stage"] for event in events]
+        assert outcome.meta["retry_attempted"] is True
+        assert stages.count("extraction") == outcome.counts["final_count"]
+        assert stages.count("extraction.qc") == 1
+        assert stages.count("extraction.retry") == 1
 
 
 class TestLowQualityNameQCFlag:

@@ -9,6 +9,7 @@ These tests verify:
 - MergeDisputeDecision schema basics
 """
 
+import json
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +26,7 @@ from src.engine.merge_dispute_agent import (
     append_merge_dispute_review_queue,
     run_merge_dispute_agent,
 )
+from src.utils.trace_writer import TraceWriter
 
 # ── Test helpers (mirrors test_entity_merger_merge_smoke.py) ──
 
@@ -295,6 +297,68 @@ class TestDisputeAgentRouting:
             similarity_threshold=0.75,
         )
         dispute_mock.assert_called_once()
+
+    def test_dispute_emits_trace_event(self, tmp_path):
+        """Gray-band routed cases should include a merge.dispute trace event."""
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+
+        writer = TraceWriter(output_dir=str(tmp_path))
+        merger = EntityMerger("people", trace_writer=writer)
+        stub_manager = StubEmbeddingManager(vec=[0.5, 0.5, 0.0])
+
+        match_result = MatchCheckResult(
+            is_match=True,
+            confidence=0.55,
+            reason="uncertain",
+        )
+        dispute_decision = MergeDisputeDecision(
+            action=MergeDisputeAction.MERGE,
+            confidence=0.85,
+            reason="same person after review",
+        )
+
+        with (
+            patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
+            patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
+            patch(
+                "src.engine.mergers.get_embedding_manager", return_value=stub_manager
+            ),
+            patch(
+                "src.engine.mergers.cloud_model_check_match",
+                return_value=match_result,
+            ),
+            patch(
+                "src.engine.mergers.run_merge_dispute_agent",
+                return_value=dispute_decision,
+            ),
+            patch.object(
+                merger,
+                "find_similar_entity",
+                return_value=("Alice Smith", 0.77),
+            ),
+        ):
+            merger.merge_entities(
+                [{"name": "Alice B. Smith"}],
+                entities,
+                article_id="art-002",
+                article_title="Test Article",
+                article_url="http://example.com/2",
+                article_published_date="2025-02-01",
+                article_content="Article about Alice B. Smith",
+                extraction_timestamp="2025-02-02T00:00:00Z",
+                model_type="gemini",
+                similarity_threshold=0.75,
+                domain="guantanamo",
+            )
+
+        writer.close()
+        with open(writer.filepath, "r", encoding="utf-8") as f:
+            events = [json.loads(line) for line in f if line.strip()]
+        stages = [event["stage"] for event in events]
+        assert "merge.match_check" in stages
+        assert "merge.dispute" in stages
+        assert "merge.decision" in stages
 
     def test_dispute_overrides_no_match_to_merge(self):
         """Match checker says no, dispute agent says merge → entity should be updated."""

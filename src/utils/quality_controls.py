@@ -22,6 +22,7 @@ from src.constants import (
     QC_MIN_NAME_LENGTH,
 )
 from src.logging_config import get_logger
+from src.utils.cache_utils import sha256_text
 from src.utils.name_variants import (
     is_low_quality_name,
     names_likely_same,
@@ -597,6 +598,11 @@ _GROUNDING_USER_TEMPLATE = """Verify whether the following claims are supported 
 {claims_text}
 
 For each claim, provide: article_id, citation, claim, support_level, and brief reasoning."""
+
+
+def grounding_prompt_fingerprint() -> str:
+    """Return a stable fingerprint for grounding verification prompts."""
+    return sha256_text(f"{_GROUNDING_SYSTEM_PROMPT}\n---\n{_GROUNDING_USER_TEMPLATE}")
 
 
 def verify_profile_grounding(

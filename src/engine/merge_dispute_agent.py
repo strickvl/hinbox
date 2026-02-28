@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.logging_config import log
+from src.utils.cache_utils import sha256_text
 from src.utils.llm import cloud_generation, local_generation
 
 
@@ -78,6 +79,11 @@ Name: {existing_name}
 Profile: {existing_profile_text}
 
 Based on ALL available evidence, should these entities be merged, kept separate, or deferred for human review?"""
+
+
+def merge_dispute_prompt_fingerprint() -> str:
+    """Return a stable fingerprint for the dispute agent prompt template."""
+    return sha256_text(f"{_SYSTEM_PROMPT}\n---\n{_USER_TEMPLATE}")
 
 
 def run_merge_dispute_agent(

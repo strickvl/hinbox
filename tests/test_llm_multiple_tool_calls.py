@@ -125,7 +125,9 @@ def test_cloud_generation_falls_back_when_parallel_tools_has_no_tool_calls():
     modes_seen = []
     parallel_client = SimpleNamespace(
         chat=SimpleNamespace(
-            completions=SimpleNamespace(create=MagicMock(return_value=_BadParallelResult()))
+            completions=SimpleNamespace(
+                create=MagicMock(return_value=_BadParallelResult())
+            )
         )
     )
     tools_client = SimpleNamespace(
@@ -166,7 +168,9 @@ def test_strategy1_uses_tools_mode_after_parallel_none_type_failure():
     modes_seen = []
     parallel_client = SimpleNamespace(
         chat=SimpleNamespace(
-            completions=SimpleNamespace(create=MagicMock(return_value=_BadParallelResult()))
+            completions=SimpleNamespace(
+                create=MagicMock(return_value=_BadParallelResult())
+            )
         )
     )
     tools_create = MagicMock(

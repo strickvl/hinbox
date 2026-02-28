@@ -76,6 +76,12 @@ cache:
   articles:
     skip_if_unchanged: true      # skip articles whose content hash hasn't changed
 
+# Tracing configuration (run-scoped JSONL traces)
+tracing:
+  enabled: true
+  subdir: "traces"
+  runs_subdir: "runs"
+
 # Merge evidence configuration (for evidence-first similarity search)
 merge_evidence:
   max_chars: 1500         # truncate evidence text to this length

@@ -198,6 +198,24 @@ def _build_prompts(
     return system_content, user_content
 
 
+def match_check_prompt_fingerprint(entity_type: str) -> str:
+    """Return a stable fingerprint for the match-check prompt template."""
+    entity_label = entity_type.rstrip("s")
+    type_rules = _TYPE_SPECIFIC_RULES.get(entity_type, "")
+    system_content = _BASE_SYSTEM_PROMPT.format(
+        entity_label=entity_label,
+        type_rules=type_rules,
+    )
+    user_template = _USER_PROMPT.format(
+        entity_label=entity_label,
+        new_name="{new_name}",
+        new_profile_text="{new_profile_text}",
+        existing_name="{existing_name}",
+        existing_profile_text="{existing_profile_text}",
+    )
+    return sha256_text(f"{system_content}\n---\n{user_template}")
+
+
 def local_model_check_match(
     new_name: str,
     existing_name: str,

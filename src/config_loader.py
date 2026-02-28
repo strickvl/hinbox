@@ -232,6 +232,24 @@ class DomainConfig:
 
         return result
 
+    def get_tracing_config(self) -> Dict[str, Any]:
+        """Get trace persistence configuration with sensible defaults."""
+        config = self.load_config()
+        section = config.get("tracing", {})
+
+        defaults: Dict[str, Any] = {
+            "enabled": True,
+            "subdir": "traces",
+            "runs_subdir": "runs",
+        }
+
+        result: Dict[str, Any] = dict(defaults)
+        result.update(section)
+        result["enabled"] = bool(result.get("enabled", True))
+        result["subdir"] = str(result.get("subdir") or "traces")
+        result["runs_subdir"] = str(result.get("runs_subdir") or "runs")
+        return result
+
     def get_merge_evidence_config(self) -> Dict[str, Any]:
         """Get merge evidence configuration for evidence-first similarity search.
 

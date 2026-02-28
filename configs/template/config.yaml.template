@@ -61,6 +61,12 @@ dedup:
 #   articles:
 #     skip_if_unchanged: true
 
+# Tracing configuration (uncomment to customize trace storage)
+# tracing:
+#   enabled: true
+#   subdir: "traces"
+#   runs_subdir: "runs"
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction

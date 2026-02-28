@@ -9,13 +9,23 @@ from rapidfuzz import process as rfprocess
 
 from src.config_loader import DomainConfig
 from src.constants import (
+    CLOUD_MODEL,
     ENABLE_PROFILE_VERSIONING,
     MERGE_GRAY_BAND_DELTA,
     MERGE_UNCERTAIN_CONFIDENCE_CUTOFF,
+    OLLAMA_MODEL,
     SIMILARITY_THRESHOLD,
 )
-from src.engine.match_checker import cloud_model_check_match, local_model_check_match
-from src.engine.merge_dispute_agent import MergeDisputeAction, run_merge_dispute_agent
+from src.engine.match_checker import (
+    cloud_model_check_match,
+    local_model_check_match,
+    match_check_prompt_fingerprint,
+)
+from src.engine.merge_dispute_agent import (
+    MergeDisputeAction,
+    merge_dispute_prompt_fingerprint,
+    run_merge_dispute_agent,
+)
 from src.engine.profiles import VersionedProfile, create_profile, update_profile
 from src.logging_config import (
     DecisionKind,
@@ -24,6 +34,7 @@ from src.logging_config import (
     log,
     log_decision,
 )
+from src.utils.cache_utils import sha256_text
 from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
 from src.utils.name_variants import (
@@ -35,6 +46,8 @@ from src.utils.name_variants import (
     score_canonical_name,
 )
 from src.utils.profiles import extract_profile_text
+from src.utils.trace_schema import TraceEvent, TraceStage
+from src.utils.trace_writer import TraceWriter
 
 # Module-specific logger
 logger = get_logger("mergers")
@@ -138,7 +151,11 @@ class EntityMerger:
         },
     }
 
-    def __init__(self, entity_type: str):
+    def __init__(
+        self,
+        entity_type: str,
+        trace_writer: Optional[TraceWriter] = None,
+    ):
         """Initialize merger for a specific entity type."""
         if entity_type not in self.ENTITY_CONFIGS:
             raise ValueError(f"Unsupported entity type: {entity_type}")
@@ -149,6 +166,70 @@ class EntityMerger:
         self.key_type = self.config["key_type"]
         self.alternative_field = self.config["alternative_field"]
         self.log_color = self.config["log_color"]
+        self.trace_writer = trace_writer
+
+    def _emit_trace(self, event: TraceEvent) -> None:
+        """Safely emit a trace event when tracing is enabled."""
+        if self.trace_writer is None:
+            return
+        try:
+            self.trace_writer.emit(event)
+        except Exception as exc:  # pragma: no cover - tracing must not break merge
+            logger.debug(f"Failed to emit merge trace event: {exc}")
+
+    @staticmethod
+    def _decision_to_trace_value(kind: DecisionKind) -> str:
+        """Map DecisionKind enums to stable lowercase trace values."""
+        mapping = {
+            DecisionKind.NEW: "new",
+            DecisionKind.MERGE: "merge",
+            DecisionKind.SKIP: "skip",
+            DecisionKind.DISPUTE: "dispute",
+            DecisionKind.DEFER: "defer",
+            DecisionKind.ERROR: "error",
+        }
+        return mapping.get(kind, kind.value.lower())
+
+    @staticmethod
+    def _llm_model_info(model_type: str) -> Dict[str, Any]:
+        """Return model metadata used in trace events."""
+        is_local = model_type == "ollama"
+        return {
+            "backend": "local" if is_local else "cloud",
+            "name": OLLAMA_MODEL if is_local else CLOUD_MODEL,
+            "temperature": 0,
+        }
+
+    def _emit_merge_decision(
+        self,
+        *,
+        article_id: str,
+        entity_name: str,
+        decision_kind: DecisionKind,
+        detail: str = "",
+        candidate_name: Optional[str] = None,
+        confidence: Optional[float] = None,
+        similarity_score: Optional[float] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Emit a normalized merge.decision event."""
+        payload: Dict[str, Any] = dict(meta or {})
+        if similarity_score is not None:
+            payload.setdefault("similarity_score", similarity_score)
+
+        self._emit_trace(
+            TraceEvent(
+                stage=TraceStage.MERGE_DECISION,
+                article_id=article_id,
+                entity_type=self.entity_type,
+                entity_name=entity_name,
+                candidate_name=candidate_name,
+                decision=self._decision_to_trace_value(decision_kind),
+                confidence=confidence,
+                reason=detail or None,
+                meta=payload,
+            )
+        )
 
     def _extract_key(self, entity_dict: Dict[str, Any]) -> Union[str, Tuple[str, str]]:
         """Extract the entity key from an entity dictionary."""
@@ -426,6 +507,7 @@ class EntityMerger:
         lexical_blocking_config: Optional[Dict[str, Any]] = None,
         query_entity: Optional[Dict[str, Any]] = None,
         equivalence_groups: Optional[List[List[str]]] = None,
+        article_id: Optional[str] = None,
     ) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
         """Find the most similar entity in the entities database using embedding similarity.
 
@@ -442,6 +524,21 @@ class EntityMerger:
         names, derived acronyms, and configured equivalence groups.
         """
         if not entity_embedding or not entities[self.entity_type]:
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.MERGE_EMBEDDING,
+                    article_id=article_id,
+                    entity_type=self.entity_type,
+                    entity_name=self._format_key_for_display(entity_key),
+                    decision="no_candidates",
+                    model={
+                        "backend": "embedding",
+                        "name": embedding_model,
+                        "dimension": embedding_dim,
+                    },
+                    meta={"similarity_threshold": similarity_threshold},
+                )
+            )
             return None, None
 
         new_dim = embedding_dim or len(entity_embedding)
@@ -462,6 +559,26 @@ class EntityMerger:
                         level="info",
                     )
                     if similarity >= similarity_threshold:
+                        self._emit_trace(
+                            TraceEvent(
+                                stage=TraceStage.MERGE_EMBEDDING,
+                                article_id=article_id,
+                                entity_type=self.entity_type,
+                                entity_name=self._format_key_for_display(entity_key),
+                                candidate_name=self._format_key_for_display(entity_key),
+                                decision="above_threshold",
+                                confidence=similarity,
+                                model={
+                                    "backend": "embedding",
+                                    "name": embedding_model,
+                                    "dimension": embedding_dim or new_dim,
+                                },
+                                meta={
+                                    "similarity_threshold": similarity_threshold,
+                                    "exact_key_match": True,
+                                },
+                            )
+                        )
                         return entity_key, similarity
                 else:
                     # Exact key but incompatible embeddings — let match-check decide
@@ -469,6 +586,27 @@ class EntityMerger:
                         f"Exact key match for '{self._format_key_for_display(entity_key)}' "
                         f"but embedding model/dim mismatch — deferring to match-check",
                         level="warning",
+                    )
+                    self._emit_trace(
+                        TraceEvent(
+                            stage=TraceStage.MERGE_EMBEDDING,
+                            article_id=article_id,
+                            entity_type=self.entity_type,
+                            entity_name=self._format_key_for_display(entity_key),
+                            candidate_name=self._format_key_for_display(entity_key),
+                            decision="above_threshold",
+                            confidence=1.0,
+                            model={
+                                "backend": "embedding",
+                                "name": embedding_model,
+                                "dimension": embedding_dim or new_dim,
+                            },
+                            meta={
+                                "similarity_threshold": similarity_threshold,
+                                "exact_key_match": True,
+                                "embedding_mismatch": True,
+                            },
+                        )
                     )
                     return entity_key, 1.0
 
@@ -497,6 +635,23 @@ class EntityMerger:
                 f"for '{self._format_key_for_display(entity_key)}'",
                 level="info",
             )
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.MERGE_LEXICAL,
+                    article_id=article_id,
+                    entity_type=self.entity_type,
+                    entity_name=self._format_key_for_display(entity_key),
+                    decision="blocked",
+                    counts={
+                        "candidates_in": pre_count,
+                        "candidates_out": len(all_candidates),
+                    },
+                    meta={
+                        "threshold": int(lb.get("threshold", 60)),
+                        "max_candidates": int(lb.get("max_candidates", 50)),
+                    },
+                )
+            )
 
         # Run cosine similarity on (shortlisted) candidates
         for existing_key in all_candidates:
@@ -516,7 +671,44 @@ class EntityMerger:
                 f"Found similar {self.entity_type[:-1]}: '{self._format_key_for_display(best_match)}' for '{self._format_key_for_display(entity_key)}' with similarity: {best_score:.4f}",
                 level="warning",
             )
+            self._emit_trace(
+                TraceEvent(
+                    stage=TraceStage.MERGE_EMBEDDING,
+                    article_id=article_id,
+                    entity_type=self.entity_type,
+                    entity_name=self._format_key_for_display(entity_key),
+                    candidate_name=self._format_key_for_display(best_match),
+                    decision="above_threshold",
+                    confidence=best_score,
+                    model={
+                        "backend": "embedding",
+                        "name": embedding_model,
+                        "dimension": embedding_dim or new_dim,
+                    },
+                    meta={"similarity_threshold": similarity_threshold},
+                )
+            )
             return best_match, best_score
+
+        self._emit_trace(
+            TraceEvent(
+                stage=TraceStage.MERGE_EMBEDDING,
+                article_id=article_id,
+                entity_type=self.entity_type,
+                entity_name=self._format_key_for_display(entity_key),
+                candidate_name=(
+                    self._format_key_for_display(best_match) if best_match else None
+                ),
+                decision="below_threshold" if best_match else "no_candidates",
+                confidence=best_score if best_match else None,
+                model={
+                    "backend": "embedding",
+                    "name": embedding_model,
+                    "dimension": embedding_dim or new_dim,
+                },
+                meta={"similarity_threshold": similarity_threshold},
+            )
+        )
 
         return None, None
 
@@ -772,6 +964,12 @@ class EntityMerger:
                 log_decision(
                     DecisionKind.ERROR, self.entity_type, "(empty key)", "empty key"
                 )
+                self._emit_merge_decision(
+                    article_id=article_id,
+                    entity_name="(empty key)",
+                    decision_kind=DecisionKind.ERROR,
+                    detail="empty key",
+                )
                 stats.errors += 1
                 continue
             evidence_text = self._build_evidence_text(
@@ -828,6 +1026,7 @@ class EntityMerger:
                 lexical_blocking_config=lexical_blocking_cfg,
                 query_entity=entity_dict,
                 equivalence_groups=equivalence_groups,
+                article_id=article_id,
             )
 
             if similar_key:
@@ -843,6 +1042,18 @@ class EntityMerger:
                         self.entity_type,
                         self._format_key_for_display(entity_key),
                         f"candidate '{similar_display}' has low-quality name, forcing creation",
+                    )
+                    self._emit_merge_decision(
+                        article_id=article_id,
+                        entity_name=self._format_key_for_display(entity_key),
+                        candidate_name=similar_display,
+                        decision_kind=DecisionKind.SKIP,
+                        detail=(
+                            f"candidate '{similar_display}' has low-quality name, "
+                            "forcing creation"
+                        ),
+                        similarity_score=similarity_score,
+                        meta={"forcing_creation": True},
                     )
                     similar_key = None  # fall through to creation path
 
@@ -872,6 +1083,18 @@ class EntityMerger:
                             self._format_key_for_display(entity_key),
                             f"no profile text on candidate '{self._format_key_for_display(similar_key)}'"
                             " and could not synthesise stand-in",
+                        )
+                        self._emit_merge_decision(
+                            article_id=article_id,
+                            entity_name=self._format_key_for_display(entity_key),
+                            candidate_name=self._format_key_for_display(similar_key),
+                            decision_kind=DecisionKind.ERROR,
+                            detail=(
+                                "no profile text on candidate "
+                                f"'{self._format_key_for_display(similar_key)}' "
+                                "and could not synthesise stand-in"
+                            ),
+                            similarity_score=similarity_score,
                         )
                         stats.errors += 1
                         continue
@@ -915,6 +1138,35 @@ class EntityMerger:
                 )
                 is_uncertain = result.confidence < MERGE_UNCERTAIN_CONFIDENCE_CUTOFF
 
+                self._emit_trace(
+                    TraceEvent(
+                        stage=TraceStage.MERGE_MATCH_CHECK,
+                        article_id=article_id,
+                        entity_type=self.entity_type,
+                        entity_name=self._format_key_for_display(entity_key),
+                        candidate_name=self._format_key_for_display(similar_key),
+                        inputs={
+                            "evidence_hash": sha256_text(evidence_text),
+                            "candidate_profile_hash": sha256_text(
+                                existing_profile_text
+                            ),
+                        },
+                        model=self._llm_model_info(model_type),
+                        prompt_fingerprint=match_check_prompt_fingerprint(
+                            self.entity_type
+                        ),
+                        decision="match" if result.is_match else "no_match",
+                        confidence=result.confidence,
+                        reason=result.reason,
+                        meta={
+                            "similarity_score": similarity_score,
+                            "threshold": resolved_threshold,
+                            "gray_band": is_gray_band,
+                            "uncertain": is_uncertain,
+                        },
+                    )
+                )
+
                 if is_gray_band and is_uncertain:
                     log(
                         f"Gray-band detected for '{self._format_key_for_display(entity_key)}' vs "
@@ -939,23 +1191,75 @@ class EntityMerger:
                         domain=domain,
                         article_id=article_id,
                     )
+                    self._emit_trace(
+                        TraceEvent(
+                            stage=TraceStage.MERGE_DISPUTE,
+                            article_id=article_id,
+                            entity_type=self.entity_type,
+                            entity_name=self._format_key_for_display(entity_key),
+                            candidate_name=self._format_key_for_display(similar_key),
+                            inputs={
+                                "evidence_hash": sha256_text(evidence_text),
+                                "candidate_profile_hash": sha256_text(
+                                    existing_profile_text
+                                ),
+                            },
+                            model=self._llm_model_info(model_type),
+                            prompt_fingerprint=merge_dispute_prompt_fingerprint(),
+                            decision=dispute_decision.action.value,
+                            confidence=dispute_decision.confidence,
+                            reason=dispute_decision.reason,
+                            meta={
+                                "match_is_match": result.is_match,
+                                "match_confidence": result.confidence,
+                                "similarity_score": similarity_score,
+                                "threshold": resolved_threshold,
+                            },
+                        )
+                    )
                     should_merge = dispute_decision.action == MergeDisputeAction.MERGE
 
                 if not should_merge:
+                    skip_detail = (
+                        f"vs '{self._format_key_for_display(similar_key)}' "
+                        f"sim={similarity_score:.4f}"
+                    )
                     log_decision(
                         DecisionKind.SKIP,
                         self.entity_type,
                         self._format_key_for_display(entity_key),
-                        f"vs '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}",
+                        skip_detail,
+                    )
+                    self._emit_merge_decision(
+                        article_id=article_id,
+                        entity_name=self._format_key_for_display(entity_key),
+                        candidate_name=self._format_key_for_display(similar_key),
+                        decision_kind=DecisionKind.SKIP,
+                        detail=skip_detail,
+                        confidence=result.confidence,
+                        similarity_score=similarity_score,
                     )
                     stats.skipped += 1
                     continue
 
+                merge_detail = (
+                    f"→ '{self._format_key_for_display(similar_key)}' "
+                    f"sim={similarity_score:.4f}"
+                )
                 log_decision(
                     DecisionKind.MERGE,
                     self.entity_type,
                     self._format_key_for_display(entity_key),
-                    f"→ '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}",
+                    merge_detail,
+                )
+                self._emit_merge_decision(
+                    article_id=article_id,
+                    entity_name=self._format_key_for_display(entity_key),
+                    candidate_name=self._format_key_for_display(similar_key),
+                    decision_kind=DecisionKind.MERGE,
+                    detail=merge_detail,
+                    confidence=result.confidence,
+                    similarity_score=similarity_score,
                 )
                 stats.merged += 1
 
@@ -1065,6 +1369,31 @@ class EntityMerger:
                     existing_entity.setdefault("reflection_history", [])
                     existing_entity["reflection_history"].extend(reflection_history)
 
+                    update_prompt_hash: Optional[str] = None
+                    try:
+                        update_prompt_hash = sha256_text(
+                            domain_cfg.load_profile_prompt("update")
+                        )
+                    except Exception:
+                        update_prompt_hash = None
+
+                    self._emit_trace(
+                        TraceEvent(
+                            stage=TraceStage.PROFILE_UPDATE,
+                            article_id=article_id,
+                            entity_type=self.entity_type,
+                            entity_name=self._format_key_for_display(similar_key),
+                            inputs={
+                                "article_hash": sha256_text(article_content),
+                                "evidence_hash": sha256_text(evidence_text),
+                            },
+                            model=self._llm_model_info(model_type),
+                            prompt_fingerprint=update_prompt_hash,
+                            decision="updated",
+                            counts={"reflection_attempts": len(reflection_history)},
+                        )
+                    )
+
                     display_markdown(
                         updated_profile["text"],
                         title=f"Updated Profile: {self._format_key_for_display(similar_key)}",
@@ -1106,6 +1435,15 @@ class EntityMerger:
                             self._format_key_for_display(similar_key),
                             "profile repair failed",
                         )
+                        self._emit_merge_decision(
+                            article_id=article_id,
+                            entity_name=self._format_key_for_display(entity_key),
+                            candidate_name=self._format_key_for_display(similar_key),
+                            decision_kind=DecisionKind.ERROR,
+                            detail="profile repair failed",
+                            similarity_score=similarity_score,
+                            meta={"profile_repair_failed": True},
+                        )
                         stats.errors += 1
                         # Still allow article link and alias absorption below
                     else:
@@ -1125,6 +1463,31 @@ class EntityMerger:
 
                         existing_entity.setdefault("reflection_history", [])
                         existing_entity["reflection_history"].extend(reflection_history)
+
+                        create_prompt_hash: Optional[str] = None
+                        try:
+                            create_prompt_hash = sha256_text(
+                                domain_cfg.load_profile_prompt("generation")
+                            )
+                        except Exception:
+                            create_prompt_hash = None
+
+                        self._emit_trace(
+                            TraceEvent(
+                                stage=TraceStage.PROFILE_CREATE,
+                                article_id=article_id,
+                                entity_type=self.entity_type,
+                                entity_name=self._format_key_for_display(similar_key),
+                                inputs={
+                                    "article_hash": sha256_text(article_content),
+                                    "evidence_hash": sha256_text(evidence_text),
+                                },
+                                model=self._llm_model_info(model_type),
+                                prompt_fingerprint=create_prompt_hash,
+                                decision="repaired",
+                                counts={"reflection_attempts": len(reflection_history)},
+                            )
+                        )
 
                         # Update search_embedding with latest evidence
                         existing_entity["search_embedding"] = evidence_embedding
@@ -1188,6 +1551,13 @@ class EntityMerger:
                         self._format_key_for_display(entity_key),
                         "profile generation failed",
                     )
+                    self._emit_merge_decision(
+                        article_id=article_id,
+                        entity_name=self._format_key_for_display(entity_key),
+                        decision_kind=DecisionKind.ERROR,
+                        detail="profile generation failed",
+                        meta={"profile_generation_failed": True},
+                    )
                     stats.errors += 1
                     continue
 
@@ -1217,6 +1587,34 @@ class EntityMerger:
                     DecisionKind.NEW,
                     self.entity_type,
                     self._format_key_for_display(entity_key),
+                )
+                self._emit_merge_decision(
+                    article_id=article_id,
+                    entity_name=self._format_key_for_display(entity_key),
+                    decision_kind=DecisionKind.NEW,
+                )
+                create_prompt_hash: Optional[str] = None
+                try:
+                    create_prompt_hash = sha256_text(
+                        domain_cfg.load_profile_prompt("generation")
+                    )
+                except Exception:
+                    create_prompt_hash = None
+                self._emit_trace(
+                    TraceEvent(
+                        stage=TraceStage.PROFILE_CREATE,
+                        article_id=article_id,
+                        entity_type=self.entity_type,
+                        entity_name=self._format_key_for_display(entity_key),
+                        inputs={
+                            "article_hash": sha256_text(article_content),
+                            "evidence_hash": sha256_text(evidence_text),
+                        },
+                        model=self._llm_model_info(model_type),
+                        prompt_fingerprint=create_prompt_hash,
+                        decision="created",
+                        counts={"reflection_attempts": len(reflection_history)},
+                    )
                 )
                 stats.new += 1
                 display_markdown(
