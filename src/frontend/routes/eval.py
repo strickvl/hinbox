@@ -4,6 +4,8 @@ Provides a keyboard-driven interface for labelling merge candidate pairs
 as same-entity (yes), different (no), or unsure.
 """
 
+from typing import List
+
 from fasthtml.common import (
     H2,
     H3,
@@ -28,6 +30,9 @@ from src.eval.gold_labels import (
 )
 
 from ..app_config import get_current_domain, nav_bar, rt, titled_with_domain_picker
+
+# Shared HTMX target — progress bar + pair card live inside this wrapper
+_SWAP_TARGET = "#eval-swap-area"
 
 
 def _progress_bar(labelled: int, total: int) -> Div:
@@ -82,15 +87,16 @@ def _pipeline_info(candidate: MergeCandidate) -> Div:
     )
 
 
-def _pair_content(
+def _swap_content(
     candidate: MergeCandidate,
     idx: int,
     total: int,
+    labelled_count: int,
     domain: str,
     existing_label: str = "",
     existing_notes: str = "",
 ) -> Div:
-    """Render the full pair card with labelling controls."""
+    """Render progress bar + pair card together (the full HTMX swap area)."""
     label_badge = ""
     if existing_label:
         color_map = {
@@ -104,9 +110,9 @@ def _pair_content(
             style=f"display:inline-block; padding:3px 10px; border-radius:20px; font-size:0.78rem; font-weight:600; background:{color}; color:white; margin-left:12px;",
         )
 
-    dq = f"domain={domain}"  # domain query param fragment
+    dq = f"domain={domain}"
 
-    return Div(
+    pair_card = Div(
         # Pair counter
         Div(
             Strong(f"Pair {idx + 1} of {total}"),
@@ -154,7 +160,7 @@ def _pair_content(
                 "Same entity ",
                 Span("Y", cls="eval-kbd"),
                 hx_post=f"/eval/label?{dq}&idx={idx}&label=yes",
-                hx_target="#eval-pair-container",
+                hx_target=_SWAP_TARGET,
                 hx_swap="innerHTML",
                 hx_include="#eval-notes",
                 cls="eval-btn eval-btn-yes",
@@ -164,7 +170,7 @@ def _pair_content(
                 "Different ",
                 Span("N", cls="eval-kbd"),
                 hx_post=f"/eval/label?{dq}&idx={idx}&label=no",
-                hx_target="#eval-pair-container",
+                hx_target=_SWAP_TARGET,
                 hx_swap="innerHTML",
                 hx_include="#eval-notes",
                 cls="eval-btn eval-btn-no",
@@ -174,7 +180,7 @@ def _pair_content(
                 "Unsure ",
                 Span("U", cls="eval-kbd"),
                 hx_post=f"/eval/label?{dq}&idx={idx}&label=unsure",
-                hx_target="#eval-pair-container",
+                hx_target=_SWAP_TARGET,
                 hx_swap="innerHTML",
                 hx_include="#eval-notes",
                 cls="eval-btn eval-btn-unsure",
@@ -184,7 +190,7 @@ def _pair_content(
                 "Skip ",
                 Span("S", cls="eval-kbd"),
                 hx_get=f"/eval/pair/{min(idx + 1, total - 1)}?{dq}",
-                hx_target="#eval-pair-container",
+                hx_target=_SWAP_TARGET,
                 hx_swap="innerHTML",
                 cls="eval-btn eval-btn-skip",
                 id="btn-skip",
@@ -196,7 +202,7 @@ def _pair_content(
             Button(
                 "Prev",
                 hx_get=f"/eval/pair/{max(idx - 1, 0)}?{dq}",
-                hx_target="#eval-pair-container",
+                hx_target=_SWAP_TARGET,
                 hx_swap="innerHTML",
                 style="font-size:0.85rem;",
             )
@@ -209,7 +215,7 @@ def _pair_content(
             Button(
                 "Next",
                 hx_get=f"/eval/pair/{min(idx + 1, total - 1)}?{dq}",
-                hx_target="#eval-pair-container",
+                hx_target=_SWAP_TARGET,
                 hx_swap="innerHTML",
                 style="font-size:0.85rem;",
             )
@@ -218,7 +224,11 @@ def _pair_content(
             style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:16px; border-top:1px solid var(--border);",
         ),
         cls="eval-pair-card",
-        id="eval-pair-content",
+    )
+
+    return Div(
+        _progress_bar(labelled_count, total),
+        pair_card,
     )
 
 
@@ -228,6 +238,7 @@ document.addEventListener('keydown', function(e) {
     // Cmd+Enter or Ctrl+Enter in textarea: submit the unsure label with notes
     if (e.target.tagName === 'TEXTAREA' && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
+        e.target.blur();
         document.getElementById('btn-unsure')?.click();
         return;
     }
@@ -253,6 +264,14 @@ document.addEventListener('keydown', function(e) {
     }
 });
 """
+
+
+def _count_labelled(
+    candidates: List[MergeCandidate],
+    gold: dict,
+) -> int:
+    """Count how many candidates have gold labels."""
+    return sum(1 for c in candidates if candidate_key(c) in gold)
 
 
 @rt("/eval")
@@ -289,10 +308,9 @@ def get_eval(request: Request):
             start_idx = i
             break
 
-    labelled_count = sum(1 for c in candidates if candidate_key(c) in gold)
+    labelled_count = _count_labelled(candidates, gold)
     total = len(candidates)
 
-    # Get initial pair data
     initial_candidate = candidates[start_idx]
     initial_key = candidate_key(initial_candidate)
     existing = gold.get(initial_key)
@@ -321,18 +339,18 @@ def get_eval(request: Request):
                 ),
                 style="margin-bottom:16px; padding:10px 14px; background:var(--sidebar); border-radius:var(--radius); border:1px solid var(--border);",
             ),
-            _progress_bar(labelled_count, total),
-            # Pair container (HTMX target)
+            # Swap area: progress bar + pair card (HTMX replaces this)
             Div(
-                _pair_content(
+                _swap_content(
                     initial_candidate,
                     start_idx,
                     total,
+                    labelled_count=labelled_count,
                     domain=current_domain,
                     existing_label=existing.label if existing else "",
                     existing_notes=existing.notes if existing else "",
                 ),
-                id="eval-pair-container",
+                id="eval-swap-area",
             ),
             Script(_KEYBOARD_JS),
         ],
@@ -341,7 +359,7 @@ def get_eval(request: Request):
 
 @rt("/eval/pair/{idx}")
 def get_eval_pair(idx: int, request: Request):
-    """Load a specific pair (HTMX partial)."""
+    """Load a specific pair (HTMX partial) — returns progress + pair."""
     current_domain = get_current_domain(request)
     candidates = load_candidates(current_domain)
     gold = load_gold_labels(current_domain)
@@ -354,10 +372,11 @@ def get_eval_pair(idx: int, request: Request):
     key = candidate_key(candidate)
     existing = gold.get(key)
 
-    return _pair_content(
+    return _swap_content(
         candidate,
         idx,
         len(candidates),
+        labelled_count=_count_labelled(candidates, gold),
         domain=current_domain,
         existing_label=existing.label if existing else "",
         existing_notes=existing.notes if existing else "",
@@ -366,7 +385,7 @@ def get_eval_pair(idx: int, request: Request):
 
 @rt("/eval/label")
 async def post_eval_label(request: Request):
-    """Submit a label and return the next pair partial."""
+    """Submit a label and return updated progress + next pair."""
     current_domain = get_current_domain(request)
     form = await request.form()
     idx = int(request.query_params.get("idx", "0"))
@@ -395,24 +414,23 @@ async def post_eval_label(request: Request):
     # Advance to next unlabelled pair
     gold = load_gold_labels(current_domain)
     next_idx = idx + 1
-    # Find next unlabelled
     for i in range(next_idx, len(candidates)):
         key = candidate_key(candidates[i])
         if key not in gold:
             next_idx = i
             break
     else:
-        # All remaining are labelled — just go to next
         next_idx = min(idx + 1, len(candidates) - 1)
 
     next_candidate = candidates[next_idx]
     next_key = candidate_key(next_candidate)
     next_existing = gold.get(next_key)
 
-    return _pair_content(
+    return _swap_content(
         next_candidate,
         next_idx,
         len(candidates),
+        labelled_count=_count_labelled(candidates, gold),
         domain=current_domain,
         existing_label=next_existing.label if next_existing else "",
         existing_notes=next_existing.notes if next_existing else "",
