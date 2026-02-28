@@ -198,7 +198,6 @@ def _pair_content(
                 hx_get=f"/eval/pair/{max(idx - 1, 0)}?{dq}",
                 hx_target="#eval-pair-container",
                 hx_swap="innerHTML",
-                disabled=idx == 0,
                 style="font-size:0.85rem;",
             )
             if idx > 0
@@ -212,7 +211,6 @@ def _pair_content(
                 hx_get=f"/eval/pair/{min(idx + 1, total - 1)}?{dq}",
                 hx_target="#eval-pair-container",
                 hx_swap="innerHTML",
-                disabled=idx >= total - 1,
                 style="font-size:0.85rem;",
             )
             if idx < total - 1
@@ -227,7 +225,14 @@ def _pair_content(
 # Keyboard shortcut script
 _KEYBOARD_JS = """
 document.addEventListener('keydown', function(e) {
-    // Ignore when typing in textarea or input
+    // Cmd+Enter or Ctrl+Enter in textarea: submit the unsure label with notes
+    if (e.target.tagName === 'TEXTAREA' && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        document.getElementById('btn-unsure')?.click();
+        return;
+    }
+
+    // Ignore other keys when typing in textarea or input
     if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
 
     const key = e.key.toLowerCase();
@@ -306,6 +311,8 @@ def get_eval(request: Request):
                     " = different | ",
                     Strong("U"),
                     " = unsure (focus notes) | ",
+                    Strong("Cmd+Enter"),
+                    " = submit unsure | ",
                     Strong("S"),
                     " = skip | ",
                     Strong("Arrow keys"),

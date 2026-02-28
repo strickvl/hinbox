@@ -19,6 +19,7 @@ from fasthtml.common import (
     Meta,
     Nav,
     Option,
+    Script,
     Select,
     Title,
     fast_app,
@@ -261,6 +262,19 @@ def titled_with_domain_picker(
         Head(
             Meta(charset="utf-8"),
             Meta(name="viewport", content="width=device-width, initial-scale=1"),
+            # FastHTML does not inject default scripts into custom Html elements,
+            # so we include HTMX and fonts explicitly here.
+            Script(src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"),
+            Link(rel="preconnect", href="https://fonts.googleapis.com"),
+            Link(
+                rel="preconnect",
+                href="https://fonts.gstatic.com",
+                crossorigin="anonymous",
+            ),
+            Link(
+                rel="stylesheet",
+                href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600&display=swap",
+            ),
             Title(page_title),
             Link(rel="stylesheet", href="/styles.css", type="text/css"),
         ),
