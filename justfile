@@ -67,6 +67,10 @@ init domain:
 domains:
     uv run python scripts/list_domains.py
 
+# Inspect trace events (defaults to latest run in guantanamo domain)
+traces *args:
+    uv run python scripts/traces.py {{args}}
+
 # ─── Code Quality ─────────────────────────────────────
 
 # Format code (ruff fix + format)

@@ -202,6 +202,18 @@ class EmbeddingManager:
             self._provider_fingerprint[self._provider_kind()] = fp
         return fp
 
+    def _update_fingerprint_from_single(
+        self,
+        provider: EmbeddingProvider,
+        vector: List[float],
+    ) -> Optional[str]:
+        """Compute and cache provider fingerprint from a single embedding vector."""
+        model_name = provider.config.model_name
+        fp = self.make_fingerprint(model=model_name, dim=len(vector))
+        if fp:
+            self._provider_fingerprint[self._provider_kind()] = fp
+        return fp
+
     async def embed_text(self, text: str, use_cache: bool = True) -> List[float]:
         """Embed a single text with mode-appropriate provider."""
         if use_cache:
@@ -211,9 +223,8 @@ class EmbeddingManager:
 
         provider = self._get_provider()
         try:
-            result = await provider.embed_batch([text])
-            fp = self._update_fingerprint_from_result(result)
-            vec = result.embeddings[0] if result.embeddings else []
+            vec = await provider.embed_single(text)
+            fp = self._update_fingerprint_from_single(provider, vec)
             if fp and use_cache:
                 self._cache_store(text, vec, fp)
             return vec

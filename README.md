@@ -201,6 +201,11 @@ just reset
 
 # View available domains
 just domains
+
+# Inspect trace runs/events (latest run by default)
+just traces
+just traces --domain guantanamo --list-runs
+just traces --domain guantanamo --run-id <run_id> --stage merge.decision --tail 50
 ```
 
 ## 📂 Project Structure
