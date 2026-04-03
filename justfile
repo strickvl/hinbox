@@ -77,6 +77,10 @@ traces *args:
 seed-candidates domain="guantanamo" *args:
     uv run python scripts/seed_merge_candidates.py --domain {{domain}} {{args}}
 
+# Sample articles for relevance annotation
+seed-relevance domain="guantanamo" *args:
+    uv run python scripts/seed_relevance_candidates.py --domain {{domain}} {{args}}
+
 # Score merge decisions against gold labels
 eval-merges domain="guantanamo" *args:
     uv run python scripts/eval_merges.py --domain {{domain}} {{args}}

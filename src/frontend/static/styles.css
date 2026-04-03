@@ -666,6 +666,14 @@ nav button:hover {
 .eval-btn-skip { border-color: var(--border-strong); color: var(--text-muted); }
 .eval-btn-skip:hover { background: var(--surface-2); }
 
+.eval-article-card {
+    padding: 18px 20px;
+    background: var(--sidebar);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+}
+
 .eval-kbd {
     display: inline-block;
     font-size: 0.7rem;
