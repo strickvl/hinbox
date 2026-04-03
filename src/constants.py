@@ -13,14 +13,6 @@ LOCAL_EMBEDDING_MODEL = "huggingface/jinaai/jina-embeddings-v3"
 
 # API endpoints
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/v1").strip()
-OLLAMA_API_KEY = "ollama"
-
-
-# Helper function to get bare model name for Ollama API
-def get_ollama_model_name(model: str) -> str:
-    """Strip 'ollama/' prefix if present for Ollama API calls."""
-    return model.replace("ollama/", "") if model.startswith("ollama/") else model
-
 
 # Threshold for similarity matching
 SIMILARITY_THRESHOLD = 0.75
@@ -51,39 +43,6 @@ HASH_TRUNCATE_LENGTH = 6
 
 # Default embedding model
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-
-# Braintrust project id (optional)
-BRAINTRUST_PROJECT_ID = os.getenv("BRAINTRUST_PROJECT_ID", "").strip() or None
-
-# Whether LLM telemetry callbacks are enabled (disabled in --local mode for privacy)
-_CALLBACKS_ENABLED = True
-
-
-def disable_llm_callbacks() -> None:
-    """Disable all LiteLLM telemetry callbacks (for --local / privacy mode).
-
-    Call this early in main() before any LLM work begins. It clears the
-    callbacks list that modules set at import time.
-    """
-    global _CALLBACKS_ENABLED
-    _CALLBACKS_ENABLED = False
-    try:
-        import litellm
-
-        litellm.callbacks = []
-    except ImportError:
-        pass
-
-
-def get_llm_callbacks() -> list:
-    """Return the callbacks list that LLM modules should use.
-
-    Returns ["braintrust"] when telemetry is enabled, [] when disabled.
-    """
-    if _CALLBACKS_ENABLED and BRAINTRUST_PROJECT_ID:
-        return ["braintrust"]
-    return []
-
 
 # Profile versioning feature flag
 ENABLE_PROFILE_VERSIONING = (

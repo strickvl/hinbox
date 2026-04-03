@@ -19,27 +19,24 @@ from typing import (
 )
 
 import instructor
-import litellm
+from openai import OpenAI
 from pydantic import BaseModel
 
 from src.constants import (
     BASE_DELAY,
-    BRAINTRUST_PROJECT_ID,
     CLOUD_MODEL,
     DEFAULT_MAX_TOKENS,
     DEFAULT_TEMPERATURE,
     MAX_ITERATIONS,
     MAX_RETRIES,
-    OLLAMA_API_URL,
     OLLAMA_MODEL,
-    get_llm_callbacks,
-    get_ollama_model_name,
 )
 from src.logging_config import get_logger
 from src.utils.logging import (
     log_iterative_complete,
     log_iterative_start,
 )
+from src.utils.provider_routing import ProviderTarget, resolve_chat_target
 
 # Get logger for this module
 logger = get_logger("utils.llm")
@@ -100,19 +97,6 @@ def local_llm_slot() -> Iterator[None]:
         yield
 
 
-# Configure litellm once for the entire module
-litellm.enable_json_schema_validation = True
-litellm.suppress_debug_info = True
-litellm.callbacks = get_llm_callbacks()
-
-# Common metadata for all LLM calls
-DEFAULT_METADATA: Dict[str, Any] = {
-    "tags": ["dev"],
-}
-if BRAINTRUST_PROJECT_ID:
-    DEFAULT_METADATA["project_id"] = BRAINTRUST_PROJECT_ID
-
-
 class GenerationMode(str, Enum):
     """Mode for generation function."""
 
@@ -128,11 +112,77 @@ class ReflectionResult(BaseModel):
     issues: Optional[List[str]] = None
 
 
-def get_litellm_client(
-    mode: instructor.Mode = instructor.Mode.TOOLS,
-):
-    """Get a configured litellm client with instructor."""
-    return instructor.from_litellm(litellm.completion, mode=mode)
+# ---------------------------------------------------------------------------
+# Provider-aware Instructor client helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_instructor_mode(
+    target: ProviderTarget,
+    *,
+    parallel: bool,
+    json_fallback: bool = False,
+) -> instructor.Mode:
+    """Pick the right Instructor mode for the given provider target."""
+    if target.sdk == "anthropic":
+        if json_fallback:
+            return instructor.Mode.ANTHROPIC_JSON
+        return (
+            instructor.Mode.ANTHROPIC_PARALLEL_TOOLS
+            if parallel
+            else instructor.Mode.ANTHROPIC_TOOLS
+        )
+    # OpenAI-compatible providers
+    if json_fallback:
+        return instructor.Mode.MD_JSON
+    return instructor.Mode.PARALLEL_TOOLS if parallel else instructor.Mode.TOOLS
+
+
+def _create_instructor_client(
+    target: ProviderTarget,
+    mode: instructor.Mode,
+) -> Any:
+    """Create an Instructor-wrapped SDK client for the resolved provider."""
+    if target.sdk == "anthropic":
+        try:
+            from anthropic import Anthropic
+        except ImportError:
+            raise ImportError(
+                "The anthropic package is required for anthropic/* models. "
+                "Install it with: uv pip install 'hinbox[anthropic]'"
+            ) from None
+        raw = Anthropic(api_key=target.api_key)
+        return instructor.from_anthropic(raw, mode=mode)
+
+    # OpenAI-compatible (OpenAI, Gemini, Ollama, OpenRouter, etc.)
+    raw = OpenAI(
+        base_url=target.base_url,
+        api_key=target.api_key or "not-set",
+    )
+    return instructor.from_openai(raw, mode=mode)
+
+
+def _prepare_messages_for_target(
+    messages: List[Dict[str, Any]],
+    target: ProviderTarget,
+) -> Dict[str, Any]:
+    """Prepare messages and extra create-kwargs for the target provider.
+
+    The Anthropic API requires ``system`` as a separate parameter rather than
+    a role in the messages list.  This helper extracts it when needed so that
+    callers can keep passing a standard OpenAI-style messages list.
+    """
+    if target.sdk == "anthropic" and messages and messages[0].get("role") == "system":
+        return {
+            "system": messages[0]["content"],
+            "messages": messages[1:],
+        }
+    return {"messages": messages}
+
+
+# ---------------------------------------------------------------------------
+# Structured-output helpers
+# ---------------------------------------------------------------------------
 
 
 def _list_item_model(response_model: Any) -> Optional[type[BaseModel]]:
@@ -213,46 +263,41 @@ def _normalize_generation_response(response: Any, *, parallel_tools: bool) -> An
     return response
 
 
-def cloud_generation(
+# ---------------------------------------------------------------------------
+# Unified structured generation (shared by cloud and local)
+# ---------------------------------------------------------------------------
+
+
+def _structured_generation(
     messages: List[Dict[str, Any]],
     response_model: Any,
-    model: str = CLOUD_MODEL,
-    max_tokens: int = DEFAULT_MAX_TOKENS,
-    temperature: float = DEFAULT_TEMPERATURE,
-    metadata: Optional[Dict[str, Any]] = None,
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    slot: Any,
+    label: str,
     **kwargs: Any,
 ) -> Any:
-    """
-    Generate a response using a cloud model via litellm.
+    """Core structured generation with retry and multi-strategy recovery.
 
-    Args:
-        messages: List of message dictionaries
-        response_model: Pydantic model for structured output
-        model: Model name to use
-        max_tokens: Maximum tokens in response
-        temperature: Temperature for generation
-        metadata: Optional metadata to merge with defaults (e.g. extra tags)
-        **kwargs: Additional arguments passed to the API
-
-    Returns:
-        Parsed response according to response_model
+    Both ``cloud_generation`` and ``local_generation`` delegate here.
+    The ``slot`` parameter is a context-manager factory for concurrency
+    control (``cloud_llm_slot`` or ``local_llm_slot``).
     """
-    logger.debug(f"Generating response with cloud model: {model}")
+    logger.debug(f"Generating response with {label} model: {model}")
+
+    target = resolve_chat_target(model)
 
     parallel_response_model = _parallel_tools_response_model(response_model)
     use_parallel_tools = parallel_response_model is not None
-    client = get_litellm_client(
-        mode=(
-            instructor.Mode.PARALLEL_TOOLS
-            if use_parallel_tools
-            else instructor.Mode.TOOLS
-        )
-    )
+    mode = _resolve_instructor_mode(target, parallel=use_parallel_tools)
+    client = _create_instructor_client(target, mode)
     request_response_model = parallel_response_model or response_model
     logger.debug(
-        "cloud_generation setup: model=%s mode=%s max_tokens=%s temperature=%s",
+        "%s_generation setup: model=%s mode=%s max_tokens=%s temperature=%s",
+        label,
         model,
-        "parallel_tools" if use_parallel_tools else "tools",
+        mode.value,
         max_tokens,
         temperature,
     )
@@ -261,30 +306,20 @@ def cloud_generation(
     base_delay = BASE_DELAY
 
     request_kwargs = dict(kwargs)
-    # Some providers can emit parallel tool calls by default, which Instructor
-    # treats as an error in single-call parsing paths.
-    request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
+    if target.sdk != "anthropic":
+        request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
 
-    merged_metadata = dict(DEFAULT_METADATA)
-    if metadata:
-        # Merge tags additively, overwrite other keys
-        extra_tags = metadata.pop("tags", [])
-        merged_metadata.update(metadata)
-        if extra_tags:
-            existing_tags = merged_metadata.get("tags", [])
-            merged_metadata["tags"] = list(set(existing_tags + extra_tags))
-    metadata = merged_metadata
+    msg_kwargs = _prepare_messages_for_target(messages, target)
 
     for attempt in range(max_retries + 1):
         try:
-            with cloud_llm_slot():
+            with slot():
                 response = client.chat.completions.create(
-                    model=model,
-                    messages=messages,
+                    model=target.api_model,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     response_model=request_response_model,
-                    metadata=metadata,
+                    **msg_kwargs,
                     **request_kwargs,
                 )
             logger.debug(f"Successfully generated response with {model}")
@@ -296,32 +331,35 @@ def cloud_generation(
             tools_mode_due_to_parallel_failure = False
 
             # PARALLEL_TOOLS can fail when a provider returns no tool calls.
-            # Fall back to regular TOOLS parsing for List[...] models.
             if (
                 use_parallel_tools
                 and "nonetype" in error_str.lower()
                 and "not iterable" in error_str.lower()
             ):
                 logger.warning(
-                    "Parallel-tools response had no tool calls; retrying with TOOLS mode"
+                    "Parallel-tools %s response had no tool calls; "
+                    "retrying with TOOLS mode",
+                    label,
                 )
                 try:
-                    fallback_client = get_litellm_client(mode=instructor.Mode.TOOLS)
+                    fallback_mode = _resolve_instructor_mode(target, parallel=False)
+                    fallback_client = _create_instructor_client(target, fallback_mode)
                     fallback_kwargs = dict(request_kwargs)
-                    fallback_kwargs["parallel_tool_calls"] = False
+                    if target.sdk != "anthropic":
+                        fallback_kwargs["parallel_tool_calls"] = False
                     fallback_kwargs["max_retries"] = 0
-                    with cloud_llm_slot():
+                    with slot():
                         response = fallback_client.chat.completions.create(
-                            model=model,
-                            messages=messages,
+                            model=target.api_model,
                             max_tokens=max_tokens,
                             temperature=temperature,
                             response_model=response_model,
-                            metadata=metadata,
+                            **msg_kwargs,
                             **fallback_kwargs,
                         )
                     logger.debug(
-                        "Recovered from parallel-tools empty response with TOOLS mode"
+                        "Recovered %s parallel-tools empty response with TOOLS mode",
+                        label,
                     )
                     return response
                 except Exception as fallback_e:
@@ -332,7 +370,10 @@ def cloud_generation(
             # Handle Instructor multiple tool calls error
             if "multiple tool calls" in error_str.lower():
                 logger.warning(
-                    f"Multiple tool calls detected for {model}, attempting recovery strategies"
+                    "Multiple tool calls detected for %s model %s, "
+                    "attempting recovery strategies",
+                    label,
+                    model,
                 )
 
                 # Strategy 0: recover directly from exception's last_completion.
@@ -344,51 +385,60 @@ def cloud_generation(
                     if recovered is not None:
                         return recovered
                 except Exception as recovery_e0:
-                    logger.warning(f"Direct recovery failed: {recovery_e0}")
+                    logger.warning(
+                        "%s direct recovery failed: %s", label.title(), recovery_e0
+                    )
 
-                # Strategy 1: force non-parallel tool calling with deterministic settings.
+                # Strategy 1: force non-parallel with deterministic settings.
                 try:
-                    logger.debug("Trying with temperature=0 and max_retries=0")
+                    logger.debug(
+                        "Trying %s with temperature=0 and max_retries=0", label
+                    )
                     retry_client = client
                     retry_response_model = request_response_model
                     retry_parallel_tools = bool(use_parallel_tools)
                     if tools_mode_due_to_parallel_failure:
-                        retry_client = get_litellm_client(mode=instructor.Mode.TOOLS)
+                        retry_mode = _resolve_instructor_mode(target, parallel=False)
+                        retry_client = _create_instructor_client(target, retry_mode)
                         retry_response_model = response_model
                         retry_parallel_tools = False
                         logger.warning(
-                            "Strategy 1 switching to TOOLS mode after parallel-tools fallback failure"
+                            "%s strategy 1 switching to TOOLS mode after "
+                            "parallel-tools fallback failure",
+                            label.title(),
                         )
                     retry_kwargs = dict(request_kwargs)
                     retry_kwargs["max_retries"] = 0
-                    retry_kwargs["parallel_tool_calls"] = retry_parallel_tools
-                    with cloud_llm_slot():
+                    if target.sdk != "anthropic":
+                        retry_kwargs["parallel_tool_calls"] = retry_parallel_tools
+                    with slot():
                         response = retry_client.chat.completions.create(
-                            model=model,
-                            messages=messages,
+                            model=target.api_model,
                             max_tokens=max_tokens,
                             temperature=0,
                             response_model=retry_response_model,
-                            metadata=metadata,
+                            **msg_kwargs,
                             **retry_kwargs,
                         )
-                    logger.debug(
-                        "Recovered from multiple tool calls error with strategy 1"
-                    )
+                    logger.debug("Recovered %s with strategy 1", label)
                     return _normalize_generation_response(
                         response, parallel_tools=retry_parallel_tools
                     )
                 except Exception as recovery_e1:
                     logger.warning(
-                        "Strategy 1 failed (%s): %s",
+                        "%s strategy 1 failed (%s): %s",
+                        label.title(),
                         type(recovery_e1).__name__,
                         recovery_e1,
                     )
 
-                # Strategy 2: fall back to markdown-JSON mode (no tool calls).
+                # Strategy 2: fall back to JSON mode (no tool calls).
                 try:
-                    logger.debug("Trying markdown JSON mode fallback")
-                    json_client = get_litellm_client(mode=instructor.Mode.MD_JSON)
+                    logger.debug("Trying %s JSON mode fallback", label)
+                    json_mode = _resolve_instructor_mode(
+                        target, parallel=False, json_fallback=True
+                    )
+                    json_client = _create_instructor_client(target, json_mode)
                     modified_messages = messages.copy()
                     if modified_messages and modified_messages[0]["role"] == "system":
                         modified_messages[0] = dict(modified_messages[0])
@@ -396,28 +446,32 @@ def cloud_generation(
                             "\n\nIMPORTANT: Return exactly one JSON response."
                         )
 
+                    json_msg_kwargs = _prepare_messages_for_target(
+                        modified_messages, target
+                    )
                     retry_kwargs = dict(request_kwargs)
                     retry_kwargs["max_retries"] = 0
-                    retry_kwargs["parallel_tool_calls"] = False
+                    if target.sdk != "anthropic":
+                        retry_kwargs["parallel_tool_calls"] = False
                     fallback_max_tokens = max(max_tokens, 16384)
-                    with cloud_llm_slot():
+                    with slot():
                         response = json_client.chat.completions.create(
-                            model=model,
-                            messages=modified_messages,
+                            model=target.api_model,
                             max_tokens=fallback_max_tokens,
                             temperature=0,
                             response_model=response_model,
-                            metadata=metadata,
+                            **json_msg_kwargs,
                             **retry_kwargs,
                         )
-                    logger.debug(
-                        "Recovered from multiple tool calls error with strategy 2"
-                    )
+                    logger.debug("Recovered %s with strategy 2", label)
                     return response
                 except Exception as recovery_e2:
-                    logger.warning(f"Strategy 2 failed: {recovery_e2}")
+                    logger.warning(
+                        "%s strategy 2 failed: %s", label.title(), recovery_e2
+                    )
                     logger.error(
-                        "All recovery strategies failed, will raise original error"
+                        "All %s recovery strategies failed, will raise original error",
+                        label,
                     )
 
             # Check for retryable errors (503, 529, rate limiting)
@@ -432,14 +486,49 @@ def cloud_generation(
             if is_retryable and attempt < max_retries:
                 delay = base_delay * (2**attempt) + random.uniform(0, 1)
                 logger.warning(
-                    f"Retryable error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
+                    "Retryable %s error on attempt %d/%d: %s",
+                    label,
+                    attempt + 1,
+                    max_retries + 1,
+                    error_str,
                 )
-                logger.debug(f"Retrying in {delay:.2f} seconds...")
+                logger.debug(f"Retrying {label} in {delay:.2f} seconds...")
                 time.sleep(delay)
                 continue
 
-            logger.error(f"Cloud generation failed: {error_str}")
+            logger.error(f"{label.title()} generation failed: {error_str}")
             raise
+
+
+# ---------------------------------------------------------------------------
+# Public generation API
+# ---------------------------------------------------------------------------
+
+
+def cloud_generation(
+    messages: List[Dict[str, Any]],
+    response_model: Any,
+    model: str = CLOUD_MODEL,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    temperature: float = DEFAULT_TEMPERATURE,
+    metadata: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> Any:
+    """Generate a structured response using a cloud model.
+
+    Routes to the correct SDK (OpenAI-compatible or Anthropic) based on the
+    model prefix.  Supports Gemini, OpenAI, Anthropic, OpenRouter, etc.
+    """
+    return _structured_generation(
+        messages,
+        response_model,
+        model,
+        max_tokens,
+        temperature,
+        slot=cloud_llm_slot,
+        label="cloud",
+        **kwargs,
+    )
 
 
 def local_generation(
@@ -451,225 +540,25 @@ def local_generation(
     metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> Any:
+    """Generate a structured response using a local Ollama model.
+
+    Uses the OpenAI SDK pointed at the Ollama-compatible endpoint.
     """
-    Generate a response using a local Ollama model via LiteLLM + instructor.
-
-    Args:
-        messages: List of message dictionaries
-        response_model: Pydantic model for structured output
-        model: Model name to use
-        max_tokens: Maximum tokens in response
-        temperature: Temperature for generation
-        metadata: Optional metadata to merge with defaults (e.g. extra tags)
-        **kwargs: Additional arguments passed to the API
-
-    Returns:
-        Parsed response according to response_model
-    """
-    logger.debug(f"Generating response with local model: {model}")
-
-    parallel_response_model = _parallel_tools_response_model(response_model)
-    use_parallel_tools = parallel_response_model is not None
-    client = get_litellm_client(
-        mode=(
-            instructor.Mode.PARALLEL_TOOLS
-            if use_parallel_tools
-            else instructor.Mode.TOOLS
-        )
-    )
-    request_response_model = parallel_response_model or response_model
-    logger.debug(
-        "local_generation setup: model=%s mode=%s max_tokens=%s temperature=%s",
+    return _structured_generation(
+        messages,
+        response_model,
         model,
-        "parallel_tools" if use_parallel_tools else "tools",
         max_tokens,
         temperature,
+        slot=local_llm_slot,
+        label="local",
+        **kwargs,
     )
 
-    max_retries = MAX_RETRIES
-    base_delay = BASE_DELAY
 
-    request_kwargs = dict(kwargs)
-    request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
-
-    merged_metadata = dict(DEFAULT_METADATA)
-    if metadata:
-        extra_tags = metadata.pop("tags", [])
-        merged_metadata.update(metadata)
-        if extra_tags:
-            existing_tags = merged_metadata.get("tags", [])
-            merged_metadata["tags"] = list(set(existing_tags + extra_tags))
-    metadata = merged_metadata
-
-    for attempt in range(max_retries + 1):
-        try:
-            with local_llm_slot():
-                response = client.chat.completions.create(
-                    model=get_ollama_model_name(model),
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    response_model=request_response_model,
-                    metadata=metadata,
-                    api_base=OLLAMA_API_URL,
-                    custom_llm_provider="ollama",
-                    **request_kwargs,
-                )
-            logger.debug(f"Successfully generated response with {model}")
-            return _normalize_generation_response(
-                response, parallel_tools=use_parallel_tools
-            )
-        except Exception as e:
-            error_str = str(e)
-            tools_mode_due_to_parallel_failure = False
-
-            # PARALLEL_TOOLS can fail when a provider returns no tool calls.
-            # Fall back to regular TOOLS parsing for List[...] models.
-            if (
-                use_parallel_tools
-                and "nonetype" in error_str.lower()
-                and "not iterable" in error_str.lower()
-            ):
-                logger.warning(
-                    "Parallel-tools local response had no tool calls; retrying with TOOLS mode"
-                )
-                try:
-                    fallback_client = get_litellm_client(mode=instructor.Mode.TOOLS)
-                    fallback_kwargs = dict(request_kwargs)
-                    fallback_kwargs["parallel_tool_calls"] = False
-                    fallback_kwargs["max_retries"] = 0
-                    with local_llm_slot():
-                        response = fallback_client.chat.completions.create(
-                            model=get_ollama_model_name(model),
-                            messages=messages,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
-                            response_model=response_model,
-                            metadata=metadata,
-                            api_base=OLLAMA_API_URL,
-                            custom_llm_provider="ollama",
-                            **fallback_kwargs,
-                        )
-                    logger.debug(
-                        "Recovered local parallel-tools empty response with TOOLS mode"
-                    )
-                    return response
-                except Exception as fallback_e:
-                    e = fallback_e
-                    error_str = str(fallback_e)
-                    tools_mode_due_to_parallel_failure = True
-
-            # Handle Instructor multiple tool calls error
-            if "multiple tool calls" in error_str.lower():
-                logger.warning(
-                    f"Multiple tool calls detected for local model {model}, attempting recovery strategies"
-                )
-
-                # Strategy 0: recover directly from exception's last_completion.
-                try:
-                    recovered = _recover_multiple_tool_calls(
-                        error=e,
-                        response_model=response_model,
-                    )
-                    if recovered is not None:
-                        return recovered
-                except Exception as recovery_e0:
-                    logger.warning(f"Local direct recovery failed: {recovery_e0}")
-
-                # Strategy 1: force non-parallel tool calling with deterministic settings.
-                try:
-                    logger.debug("Trying local with temperature=0 and max_retries=0")
-                    retry_client = client
-                    retry_response_model = request_response_model
-                    retry_parallel_tools = bool(use_parallel_tools)
-                    if tools_mode_due_to_parallel_failure:
-                        retry_client = get_litellm_client(mode=instructor.Mode.TOOLS)
-                        retry_response_model = response_model
-                        retry_parallel_tools = False
-                        logger.warning(
-                            "Local strategy 1 switching to TOOLS mode after parallel-tools fallback failure"
-                        )
-                    retry_kwargs = dict(request_kwargs)
-                    retry_kwargs["max_retries"] = 0
-                    retry_kwargs["parallel_tool_calls"] = retry_parallel_tools
-                    with local_llm_slot():
-                        response = retry_client.chat.completions.create(
-                            model=get_ollama_model_name(model),
-                            messages=messages,
-                            max_tokens=max_tokens,
-                            temperature=0,
-                            response_model=retry_response_model,
-                            metadata=metadata,
-                            api_base=OLLAMA_API_URL,
-                            custom_llm_provider="ollama",
-                            **retry_kwargs,
-                        )
-                    logger.debug("Recovered locally with strategy 1")
-                    return _normalize_generation_response(
-                        response, parallel_tools=retry_parallel_tools
-                    )
-                except Exception as recovery_e1:
-                    logger.warning(
-                        "Local strategy 1 failed (%s): %s",
-                        type(recovery_e1).__name__,
-                        recovery_e1,
-                    )
-
-                # Strategy 2: fall back to markdown-JSON mode (no tool calls).
-                try:
-                    logger.debug("Trying local markdown JSON mode fallback")
-                    json_client = get_litellm_client(mode=instructor.Mode.MD_JSON)
-                    modified_messages = messages.copy()
-                    if modified_messages and modified_messages[0]["role"] == "system":
-                        modified_messages[0] = dict(modified_messages[0])
-                        modified_messages[0]["content"] += (
-                            "\n\nIMPORTANT: Return exactly one JSON response."
-                        )
-
-                    retry_kwargs = dict(request_kwargs)
-                    retry_kwargs["max_retries"] = 0
-                    retry_kwargs["parallel_tool_calls"] = False
-                    fallback_max_tokens = max(max_tokens, 16384)
-                    with local_llm_slot():
-                        response = json_client.chat.completions.create(
-                            model=get_ollama_model_name(model),
-                            messages=modified_messages,
-                            max_tokens=fallback_max_tokens,
-                            temperature=0,
-                            response_model=response_model,
-                            metadata=metadata,
-                            api_base=OLLAMA_API_URL,
-                            custom_llm_provider="ollama",
-                            **retry_kwargs,
-                        )
-                    logger.debug("Recovered locally with strategy 2")
-                    return response
-                except Exception as recovery_e2:
-                    logger.warning(f"Local strategy 2 failed: {recovery_e2}")
-                    logger.error(
-                        "All local recovery strategies failed, will raise original error"
-                    )
-
-            # Check for retryable errors (503, 529, rate limiting)
-            is_retryable = (
-                "503" in error_str
-                or "529" in error_str
-                or "overloaded" in error_str.lower()
-                or "rate limit" in error_str.lower()
-                or "try again" in error_str.lower()
-            )
-
-            if is_retryable and attempt < max_retries:
-                delay = base_delay * (2**attempt) + random.uniform(0, 1)
-                logger.warning(
-                    f"Retryable local error on attempt {attempt + 1}/{max_retries + 1}: {error_str}"
-                )
-                logger.debug(f"Retrying local in {delay:.2f} seconds...")
-                time.sleep(delay)
-                continue
-
-            logger.error(f"Local generation failed: {error_str}")
-            raise
+# ---------------------------------------------------------------------------
+# Reflection & iterative improvement
+# ---------------------------------------------------------------------------
 
 
 def reflect_and_check(
@@ -876,7 +765,7 @@ def create_messages(
     Args:
         system_content: System message content
         user_content: User message content
-        metadata: Optional metadata to merge with defaults
+        metadata: Optional metadata (kept for caller compatibility, not sent to SDK)
 
     Returns:
         List of message dictionaries
@@ -885,10 +774,5 @@ def create_messages(
         {"role": "system", "content": system_content},
         {"role": "user", "content": user_content},
     ]
-
-    # Merge custom metadata with defaults if provided
-    if metadata:
-        merged_metadata = {**DEFAULT_METADATA, **metadata}
-        messages[0]["metadata"] = merged_metadata
 
     return messages

@@ -93,7 +93,7 @@ def filter_events(events_index, q="", selected_types=None, start_date="", end_da
 
 def sort_events_by_date(filtered_events):
     """Sort events chronologically."""
-    return sorted(filtered_events, key=lambda x: (x[1].timestamp() if x[1] else 0))
+    return sorted(filtered_events, key=lambda x: x[1].timestamp() if x[1] else 0)
 
 
 def render_events_list(filtered_events):

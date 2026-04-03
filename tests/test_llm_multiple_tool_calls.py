@@ -1,6 +1,7 @@
 """Tests for recovery from Instructor multiple-tool-call responses."""
 
 import json
+import os
 from types import SimpleNamespace
 from typing import List
 from unittest.mock import MagicMock, patch
@@ -38,6 +39,10 @@ def _make_multiple_tool_calls_error(payloads: List[dict]) -> Exception:
     return err
 
 
+# Env patch needed because resolve_chat_target reads GEMINI_API_KEY for gemini/* models
+_GEMINI_ENV = {"GEMINI_API_KEY": "test-key"}
+
+
 def test_recover_multiple_tool_calls_for_list_model():
     err = _make_multiple_tool_calls_error(
         [
@@ -58,6 +63,7 @@ def test_recover_multiple_tool_calls_for_list_model():
     assert recovered[1].name == "Bob"
 
 
+@patch.dict(os.environ, _GEMINI_ENV)
 def test_cloud_generation_uses_direct_recovery_before_retrying():
     err = _make_multiple_tool_calls_error(
         [
@@ -71,7 +77,7 @@ def test_cloud_generation_uses_direct_recovery_before_retrying():
         chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
     )
 
-    with patch("src.utils.llm.get_litellm_client", return_value=fake_client):
+    with patch("src.utils.llm._create_instructor_client", return_value=fake_client):
         result = cloud_generation(
             messages=[
                 {"role": "system", "content": "Extract entities"},
@@ -88,6 +94,7 @@ def test_cloud_generation_uses_direct_recovery_before_retrying():
     assert create_mock.call_count == 1
 
 
+@patch.dict(os.environ, _GEMINI_ENV)
 def test_cloud_generation_uses_parallel_tools_mode_for_list_models():
     mode_seen = {}
     fake_client = SimpleNamespace(
@@ -100,11 +107,13 @@ def test_cloud_generation_uses_parallel_tools_mode_for_list_models():
         )
     )
 
-    def _fake_get_client(mode=instructor.Mode.TOOLS):
+    def _fake_create_client(target, mode):
         mode_seen["mode"] = mode
         return fake_client
 
-    with patch("src.utils.llm.get_litellm_client", side_effect=_fake_get_client):
+    with patch(
+        "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
+    ):
         result = cloud_generation(
             messages=[
                 {"role": "system", "content": "Extract entities"},
@@ -121,11 +130,14 @@ def test_cloud_generation_uses_parallel_tools_mode_for_list_models():
     assert isinstance(result[0], FakeEntity)
 
 
+@patch.dict(os.environ, _GEMINI_ENV)
 def test_cloud_generation_falls_back_when_parallel_tools_has_no_tool_calls():
     modes_seen = []
     parallel_client = SimpleNamespace(
         chat=SimpleNamespace(
-            completions=SimpleNamespace(create=MagicMock(return_value=_BadParallelResult()))
+            completions=SimpleNamespace(
+                create=MagicMock(return_value=_BadParallelResult())
+            )
         )
     )
     tools_client = SimpleNamespace(
@@ -138,13 +150,15 @@ def test_cloud_generation_falls_back_when_parallel_tools_has_no_tool_calls():
         )
     )
 
-    def _fake_get_client(mode=instructor.Mode.TOOLS):
+    def _fake_create_client(target, mode):
         modes_seen.append(mode)
         if mode == instructor.Mode.PARALLEL_TOOLS:
             return parallel_client
         return tools_client
 
-    with patch("src.utils.llm.get_litellm_client", side_effect=_fake_get_client):
+    with patch(
+        "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
+    ):
         result = cloud_generation(
             messages=[
                 {"role": "system", "content": "Extract entities"},
@@ -162,11 +176,14 @@ def test_cloud_generation_falls_back_when_parallel_tools_has_no_tool_calls():
     assert isinstance(result[0], FakeEntity)
 
 
+@patch.dict(os.environ, _GEMINI_ENV)
 def test_strategy1_uses_tools_mode_after_parallel_none_type_failure():
     modes_seen = []
     parallel_client = SimpleNamespace(
         chat=SimpleNamespace(
-            completions=SimpleNamespace(create=MagicMock(return_value=_BadParallelResult()))
+            completions=SimpleNamespace(
+                create=MagicMock(return_value=_BadParallelResult())
+            )
         )
     )
     tools_create = MagicMock(
@@ -181,13 +198,15 @@ def test_strategy1_uses_tools_mode_after_parallel_none_type_failure():
         chat=SimpleNamespace(completions=SimpleNamespace(create=tools_create))
     )
 
-    def _fake_get_client(mode=instructor.Mode.TOOLS):
+    def _fake_create_client(target, mode):
         modes_seen.append(mode)
         if mode == instructor.Mode.PARALLEL_TOOLS:
             return parallel_client
         return tools_client
 
-    with patch("src.utils.llm.get_litellm_client", side_effect=_fake_get_client):
+    with patch(
+        "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
+    ):
         result = cloud_generation(
             messages=[
                 {"role": "system", "content": "Extract entities"},

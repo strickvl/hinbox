@@ -69,7 +69,7 @@ cache:
   extraction:
     enabled: true
     subdir: "cache/extractions"  # persistent sidecar under output dir
-    version: 1                   # bump to invalidate all cached extractions
+    version: 2                   # bumped: LiteLLM → OpenAI/Anthropic SDK transport
   match_check:
     enabled: true
     max_items: 8192              # per-run LRU for match-checker results

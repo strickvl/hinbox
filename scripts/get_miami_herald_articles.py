@@ -199,9 +199,12 @@ async def get_article_text(url: str) -> Optional[Tuple[str, str]]:
                 page = await context.new_page()
                 await page.route(
                     "**/*",
-                    lambda route: route.abort()
-                    if route.request.resource_type in ["image", "stylesheet", "font"]
-                    else route.continue_(),
+                    lambda route: (
+                        route.abort()
+                        if route.request.resource_type
+                        in ["image", "stylesheet", "font"]
+                        else route.continue_()
+                    ),
                 )
 
                 # Navigate to URL

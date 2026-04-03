@@ -215,7 +215,7 @@ class DomainConfig:
             "extraction": {
                 "enabled": True,
                 "subdir": "cache/extractions",
-                "version": 1,
+                "version": 2,
             },
             "match_check": {"enabled": True, "max_items": 8192},
             "articles": {"skip_if_unchanged": True},

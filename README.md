@@ -12,9 +12,8 @@ through a simple configuration system.
 - **Research-Focused**: Designed for historians, academics, and researchers
 - **Flexible Sources**: Process historical documents, academic papers, news articles, book chapters
 - **Domain-Agnostic**: Configure for any historical period, region, or research topic
-- **Multiple AI Models**: Support for both cloud (Gemini default, but supports
-  anything that `litellm` supports) and local (Ollama default, but works with
-  `litellm`) models  
+- **Multiple AI Models**: Support for cloud models (Gemini, OpenAI, Anthropic,
+  OpenRouter) and local models (Ollama) via direct SDK integration  
 - **Entity Extraction**: Automatically extract people, organizations, locations, and events
 - **Smart Deduplication**: RapidFuzz lexical blocking + embedding similarity with per-entity-type thresholds
 - **Merge Dispute Agent**: Second-stage LLM arbitration for ambiguous gray-band entity matches
@@ -385,4 +384,4 @@ For questions about:
 
 **Built for**: Historians, researchers, and academics working with large document collections
 
-**Built with**: Python, Pydantic, FastHTML, LiteLLM, Instructor, RapidFuzz, Jina Embeddings, Rich
+**Built with**: Python, Pydantic, FastHTML, Instructor, OpenAI SDK, RapidFuzz, Jina Embeddings, Rich
