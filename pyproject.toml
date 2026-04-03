@@ -37,7 +37,7 @@ local-embeddings = [
 ]
 dev = [
     "pytest",
-    "ruff",   # Linting
+    "ruff>=0.15",   # Linting
 ]
 
 [tool.hatch.build.targets.wheel]
