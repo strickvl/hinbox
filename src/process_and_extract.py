@@ -26,7 +26,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
-from src.constants import CLOUD_MODEL, OLLAMA_MODEL, disable_llm_callbacks
+from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.engine import ArticleProcessor, EntityMerger, configure_match_check_memo
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
@@ -853,15 +853,14 @@ def main():
         # Initialize processor
         model_type = "ollama" if args.local else "gemini"
 
-        # Enforce privacy: when --local is active, force local embeddings and
-        # disable telemetry so no data leaves the machine.
+        # Enforce privacy: when --local is active, force local embeddings
+        # so no data leaves the machine.
         if args.local:
-            disable_llm_callbacks()
             os.environ["EMBEDDING_MODE"] = "local"
             reset_embedding_manager_cache()
             ensure_local_embeddings_available()
             log(
-                "Privacy mode: embeddings + callbacks forced LOCAL (--local flag)",
+                "Privacy mode: embeddings forced LOCAL (--local flag)",
                 level="info",
             )
 

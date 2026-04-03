@@ -4,7 +4,6 @@ import traceback
 from datetime import UTC, datetime
 from typing import Dict, List, Optional, Tuple
 
-import litellm
 from pydantic import BaseModel, Field, field_validator
 
 from src.config_loader import get_domain_config
@@ -14,12 +13,12 @@ from src.constants import (
     ENABLE_PROFILE_VERSIONING,
     MAX_ITERATIONS,
     OLLAMA_MODEL,
-    get_llm_callbacks,
 )
 from src.exceptions import (
     ProfileGenerationError,
     ProfileUpdateError,
 )
+from src.logging_config import get_logger, log
 from src.utils.error_handler import (
     handle_profile_error,
     retry_on_error,
@@ -33,13 +32,6 @@ from src.utils.llm import (
 from src.utils.outcomes import PhaseOutcome
 from src.utils.profiles import extract_profile_text
 from src.utils.quality_controls import run_profile_qc
-
-# Enable JSON schema validation for structured responses
-litellm.enable_json_schema_validation = True
-litellm.suppress_debug_info = True
-litellm.callbacks = get_llm_callbacks()
-
-from src.logging_config import get_logger, log  # noqa: E402
 
 logger = get_logger("profiles")
 

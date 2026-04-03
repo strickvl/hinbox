@@ -23,7 +23,8 @@ This document helps contributors work effectively in this repository.
     - `quality_controls.py` — extraction QC, profile QC, and profile grounding verification
     - `processing_status.py` — sidecar JSON tracker for article processing status
     - `outcomes.py` — `PhaseOutcome` structured result objects
-    - `llm.py` — LiteLLM/Instructor wrappers with multi-tool-call recovery
+    - `llm.py` — SDK/Instructor wrappers with multi-tool-call recovery
+    - `provider_routing.py` — model prefix → SDK target resolution
     - `extraction.py` — extraction dispatch with sidecar cache integration
     - `file_ops.py` — Parquet I/O, batched writes, atomic file operations
     - `error_handler.py`, `logging.py` — error handling and logging utilities

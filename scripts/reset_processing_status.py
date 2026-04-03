@@ -30,9 +30,9 @@ def reset_processing_status() -> None:
 
     # Reset the processing status for all rows
     df["processing_metadata"] = df["processing_metadata"].apply(
-        lambda x: {**x, "processed": False}
-        if isinstance(x, dict)
-        else {"processed": False}
+        lambda x: (
+            {**x, "processed": False} if isinstance(x, dict) else {"processed": False}
+        )
     )
 
     # Save back to Parquet
