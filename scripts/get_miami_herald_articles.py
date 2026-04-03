@@ -1,12 +1,15 @@
 import asyncio
 import json
 import logging
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import requests
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
@@ -24,6 +27,9 @@ ARTICLE_SCRAPE_DELAY = 5.0  # seconds between article scrapes
 SAVE_FREQUENCY = 20  # Save progress every N articles
 TEST_MODE = False  # Set to True to process only a small subset of articles
 TEST_SAMPLE_SIZE = 10  # Number of articles to process in test mode
+
+# Path to the canonical Parquet file
+PARQUET_PATH = Path("data/guantanamo/raw_sources/miami_herald_articles.parquet")
 
 
 @dataclass
@@ -62,6 +68,70 @@ class Article:
         return cls(**data)
 
 
+def load_existing_urls(parquet_path: Path) -> Set[str]:
+    """Load the set of URLs already present in the Parquet file."""
+    if not parquet_path.exists():
+        return set()
+    table = pq.read_table(parquet_path, columns=["url"])
+    return set(table.column("url").to_pylist())
+
+
+def load_existing_table(parquet_path: Path) -> Optional[pa.Table]:
+    """Load the existing Parquet table, or None if it doesn't exist."""
+    if not parquet_path.exists():
+        return None
+    return pq.read_table(parquet_path)
+
+
+def append_to_parquet(parquet_path: Path, new_articles: List[Dict[str, Any]]) -> int:
+    """Append new articles to the Parquet file, preserving all existing data.
+
+    Returns the number of new rows added.
+    """
+    if not new_articles:
+        return 0
+
+    # Build a table from the new articles, matching the existing schema
+    existing_table = load_existing_table(parquet_path)
+
+    # Generate unique IDs for new articles
+    for article in new_articles:
+        if "id" not in article or article["id"] is None:
+            article["id"] = str(uuid.uuid4())
+        if "processing_metadata" not in article:
+            article["processing_metadata"] = None
+
+    new_table = pa.table(
+        {
+            "title": [a["title"] for a in new_articles],
+            "url": [a["url"] for a in new_articles],
+            "published_date": [a["published_date"] for a in new_articles],
+            "scrape_timestamp": [a["scrape_timestamp"] for a in new_articles],
+            "content": [a["content"] for a in new_articles],
+            "content_scrape_timestamp": [
+                a["content_scrape_timestamp"] for a in new_articles
+            ],
+            "id": [a["id"] for a in new_articles],
+            "processing_metadata": [a["processing_metadata"] for a in new_articles],
+        }
+    )
+
+    if existing_table is not None:
+        # Cast new_table columns to match existing schema types
+        new_table = new_table.cast(existing_table.schema)
+        combined = pa.concat_tables([existing_table, new_table])
+    else:
+        combined = new_table
+
+    # Write atomically via temp file
+    parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = parquet_path.with_suffix(".parquet.tmp")
+    pq.write_table(combined, tmp_path)
+    tmp_path.replace(parquet_path)
+
+    return len(new_articles)
+
+
 class MiamiHeraldAPI:
     BASE_URL = "https://publicapi.misitemgr.com/webapi-public/v2/publications/miamiherald/search"
     RATE_LIMIT_DELAY = 2.0  # seconds between requests
@@ -94,18 +164,7 @@ class MiamiHeraldAPI:
         self._last_request_time = datetime.now(UTC).timestamp()
 
     def search_articles(self, config: SearchConfig) -> Dict[str, Any]:
-        """
-        Search for articles using the provided configuration.
-
-        Args:
-            config: SearchConfig object containing search parameters
-
-        Returns:
-            Dict containing the API response
-
-        Raises:
-            requests.exceptions.RequestException: If the API request fails
-        """
+        """Search for articles using the provided configuration."""
         self._wait_for_rate_limit()
 
         payload = {
@@ -125,19 +184,67 @@ class MiamiHeraldAPI:
             print(f"Error fetching articles: {e}")
             raise
 
-    def get_all_articles(self, query: str) -> Iterator[Article]:
-        """
-        Get all articles for a given query using pagination.
+    def get_new_articles(self, query: str, known_urls: Set[str]) -> List[Article]:
+        """Fetch articles from the API, stopping when we hit a known URL.
 
-        Args:
-            query: Search query string
+        Since the API returns newest-first, we paginate until we encounter
+        an article URL that's already in our dataset. We also stop if we
+        see OVERLAP_THRESHOLD consecutive known URLs in a single batch
+        (handles edge cases where articles might have been missed).
 
-        Yields:
-            Article objects for each article found
+        Returns a list of new Article objects (newest first).
         """
+        OVERLAP_THRESHOLD = 5  # stop after this many consecutive known URLs
+
+        start = 0
+        total_available = None
+        new_articles: List[Article] = []
+        stop = False
+
+        while not stop:
+            config = SearchConfig(query=query, start=start)
+            results = self.search_articles(config)
+
+            if total_available is None:
+                total_available = results.get("total", 0)
+                logger.info(
+                    f"API reports {total_available} total articles for query '{query}'"
+                )
+
+            if not results.get("results"):
+                break
+
+            consecutive_known = 0
+            for article_data in results["results"]:
+                url = article_data.get("url", "")
+                if url in known_urls:
+                    consecutive_known += 1
+                    if consecutive_known >= OVERLAP_THRESHOLD:
+                        logger.info(
+                            f"Hit {OVERLAP_THRESHOLD} consecutive known URLs — stopping fetch"
+                        )
+                        stop = True
+                        break
+                else:
+                    consecutive_known = 0
+                    new_articles.append(Article.from_api_response(article_data))
+
+            if not stop:
+                start += config.rows
+                # Safety: don't paginate past what the API says exists
+                if start >= total_available:
+                    break
+
+        logger.info(f"Found {len(new_articles)} new articles from API")
+        return new_articles
+
+    def get_all_articles(self, query: str) -> List[Article]:
+        """Get all articles for a query (full fetch, no dedup). Used for
+        initial population when no Parquet exists yet."""
         start = 0
         total_fetched = 0
         total_available = None
+        all_articles: List[Article] = []
 
         while True:
             config = SearchConfig(query=query, start=start)
@@ -146,7 +253,8 @@ class MiamiHeraldAPI:
             if total_available is None:
                 total_available = results.get("total", 0)
                 print(
-                    f"\nFetching {total_available} articles (with {config.rows} per batch)..."
+                    f"\nFetching {total_available} articles "
+                    f"(with {config.rows} per batch)..."
                 )
                 progress_bar = tqdm(total=total_available, desc="Articles fetched")
 
@@ -155,7 +263,7 @@ class MiamiHeraldAPI:
 
             batch_count = 0
             for article_data in results["results"]:
-                yield Article.from_api_response(article_data)
+                all_articles.append(Article.from_api_response(article_data))
                 total_fetched += 1
                 batch_count += 1
 
@@ -167,12 +275,11 @@ class MiamiHeraldAPI:
 
             start += config.rows
 
+        return all_articles
+
 
 async def get_article_text(url: str) -> Optional[Tuple[str, str]]:
     """Get article title and content from URL.
-
-    Args:
-        url: The URL of the article to scrape
 
     Returns:
         Optional tuple of (title, content) if successful, None if failed
@@ -199,9 +306,12 @@ async def get_article_text(url: str) -> Optional[Tuple[str, str]]:
                 page = await context.new_page()
                 await page.route(
                     "**/*",
-                    lambda route: route.abort()
-                    if route.request.resource_type in ["image", "stylesheet", "font"]
-                    else route.continue_(),
+                    lambda route: (
+                        route.abort()
+                        if route.request.resource_type
+                        in ["image", "stylesheet", "font"]
+                        else route.continue_()
+                    ),
                 )
 
                 # Navigate to URL
@@ -266,42 +376,35 @@ class ProcessingStats:
     failure_count: int = 0
     processing_times: List[float] = None
     start_time: float = 0.0
-    last_save_count: int = 0  # Track when we last saved
+    last_save_count: int = 0
 
     def __post_init__(self):
         self.processing_times = []
         self.start_time = datetime.now(UTC).timestamp()
 
     def should_save_progress(self) -> bool:
-        """Check if we should save progress based on processed count."""
         return (self.processed_count - self.last_save_count) >= SAVE_FREQUENCY
 
     def update_last_save(self) -> None:
-        """Update the last save count."""
         self.last_save_count = self.processed_count
 
     def add_processing_time(self, time_taken: float) -> None:
-        """Add a processing time to the moving average calculation."""
         self.processing_times.append(time_taken)
-        # Keep only the last 10 times for moving average
         if len(self.processing_times) > 10:
             self.processing_times.pop(0)
 
     def get_avg_processing_time(self) -> float:
-        """Get moving average of processing times."""
         if not self.processing_times:
             return 0.0
         return sum(self.processing_times) / len(self.processing_times)
 
     def get_estimated_remaining_time(self) -> float:
-        """Get estimated remaining time in seconds."""
         if not self.processing_times:
             return 0.0
         remaining_articles = self.total_articles - self.processed_count
         return remaining_articles * self.get_avg_processing_time()
 
     def format_time(self, seconds: float) -> str:
-        """Format time in seconds to a human-readable string."""
         minutes, seconds = divmod(int(seconds), 60)
         hours, minutes = divmod(minutes, 60)
         if hours > 0:
@@ -311,7 +414,6 @@ class ProcessingStats:
         return f"{seconds}s"
 
     def get_progress_string(self) -> str:
-        """Get a formatted progress string."""
         elapsed = datetime.now(UTC).timestamp() - self.start_time
         remaining = self.get_estimated_remaining_time()
 
@@ -326,34 +428,26 @@ class ProcessingStats:
 
 
 async def process_article_batch(
-    articles: List[Article], semaphore: asyncio.Semaphore, stats: ProcessingStats
+    articles: List[Article],
+    semaphore: asyncio.Semaphore,
+    stats: ProcessingStats,
 ) -> List[Article]:
-    """Process a batch of articles to fetch their content.
-
-    Args:
-        articles: List of Article objects to process
-        semaphore: Semaphore to control concurrent requests
-        stats: ProcessingStats object for tracking progress
-
-    Returns:
-        List of processed Article objects
-    """
+    """Process a batch of articles to fetch their content."""
 
     async def process_single_article(article: Article) -> Article:
         async with semaphore:
-            if not article.content:  # Only process if content not already fetched
+            if not article.content:
                 start_time = datetime.now(UTC).timestamp()
                 try:
                     result = await get_article_text(article.url)
                     if result:
-                        _, content = result  # We already have the title
+                        _, content = result
                         article.content = content
                         article.content_scrape_timestamp = datetime.now(UTC).isoformat()
                         stats.success_count += 1
                     else:
                         stats.failure_count += 1
 
-                    # Update processing time statistics
                     end_time = datetime.now(UTC).timestamp()
                     stats.add_processing_time(end_time - start_time)
 
@@ -362,7 +456,7 @@ async def process_article_batch(
                     stats.failure_count += 1
 
                 stats.processed_count += 1
-                await asyncio.sleep(ARTICLE_SCRAPE_DELAY)  # Respectful delay
+                await asyncio.sleep(ARTICLE_SCRAPE_DELAY)
         return article
 
     return await asyncio.gather(
@@ -370,149 +464,104 @@ async def process_article_batch(
     )
 
 
-async def save_progress(
-    articles: List[Article], output_path: Path, stats: ProcessingStats
-) -> None:
-    """Save current progress to the JSONL file.
+async def scrape_content_for_articles(
+    articles: List[Article],
+) -> List[Article]:
+    """Scrape full content for a list of articles using Playwright.
 
-    Args:
-        articles: List of processed articles
-        output_path: Path to save the JSONL file
-        stats: Processing stats for logging
+    Returns the articles with content populated where successful.
     """
-    temp_path = output_path.with_suffix(".jsonl.tmp")
+    if not articles:
+        return articles
 
-    try:
-        # Write to temporary file first
-        with temp_path.open("w", encoding="utf-8") as f:
-            for article in articles:
-                f.write(json.dumps(article.to_dict()) + "\n")
+    # Filter to only articles needing content
+    needs_content = [a for a in articles if not a.content]
+    if not needs_content:
+        logger.info("All articles already have content")
+        return articles
 
-        # Rename temporary file to actual file
-        temp_path.replace(output_path)
-        stats.update_last_save()
-        logger.info(
-            f"Progress saved: {stats.processed_count}/{stats.total_articles} articles processed"
-        )
-
-    except Exception as e:
-        logger.error(f"Error saving progress: {e}")
-        if temp_path.exists():
-            temp_path.unlink()
-
-
-async def update_articles_with_content(jsonl_path: Path) -> None:
-    """Update articles in the JSONL file with their content.
-
-    Args:
-        jsonl_path: Path to the JSONL file
-    """
-    # Read existing articles
-    articles = []
-    with jsonl_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            article_data = json.loads(line)
-            articles.append(Article.from_dict(article_data))
-
-    # In test mode, only process a small subset
     if TEST_MODE:
-        original_count = len(articles)
-        articles = articles[:TEST_SAMPLE_SIZE]
-        logger.info(
-            f"TEST MODE: Processing {TEST_SAMPLE_SIZE} articles out of {original_count}"
-        )
+        needs_content = needs_content[:TEST_SAMPLE_SIZE]
+        logger.info(f"TEST MODE: Processing {len(needs_content)} articles")
 
-    logger.info(f"Found {len(articles)} articles to process")
+    logger.info(f"Scraping content for {len(needs_content)} articles")
 
-    # Initialize processing stats
-    stats = ProcessingStats(total_articles=len(articles))
-
-    # Process articles in batches with controlled concurrency
-    semaphore = asyncio.Semaphore(3)  # Limit concurrent requests
+    stats = ProcessingStats(total_articles=len(needs_content))
+    semaphore = asyncio.Semaphore(3)
     batch_size = 5
-    processed_articles = []
+    processed: List[Article] = []
 
     with tqdm(
-        total=len(articles),
-        desc="Processing articles",
+        total=len(needs_content),
+        desc="Scraping articles",
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} ",
     ) as pbar:
-        for i in range(0, len(articles), batch_size):
-            batch = articles[i : i + batch_size]
+        for i in range(0, len(needs_content), batch_size):
+            batch = needs_content[i : i + batch_size]
             processed_batch = await process_article_batch(batch, semaphore, stats)
-            processed_articles.extend(processed_batch)
+            processed.extend(processed_batch)
             pbar.update(len(batch))
-
-            # Update progress description with detailed stats
             pbar.set_description(stats.get_progress_string())
 
-            # Save progress periodically
-            if stats.should_save_progress():
-                if TEST_MODE:
-                    # In test mode, save to a different file to avoid corrupting main data
-                    test_path = jsonl_path.with_suffix(".test.jsonl")
-                    await save_progress(processed_articles, test_path, stats)
-                else:
-                    await save_progress(processed_articles, jsonl_path, stats)
-
-    # Final statistics
-    logger.info("\nProcessing completed:")
+    logger.info("Scraping completed:")
     logger.info(stats.get_progress_string())
-    logger.info(
-        f"Average processing time per article: "
-        f"{stats.format_time(stats.get_avg_processing_time())}"
-    )
 
-    # Save final results
-    if TEST_MODE:
-        test_path = jsonl_path.with_suffix(".test.jsonl")
-        await save_progress(processed_articles, test_path, stats)
-        logger.info(f"Test results saved to: {test_path}")
-    else:
-        await save_progress(processed_articles, jsonl_path, stats)
-        logger.info(f"Updated {len(processed_articles)} articles with content")
-
-
-def save_articles_to_jsonl(articles: Iterator[Article], output_path: Path) -> None:
-    """Save articles to a JSONL file.
-
-    Args:
-        articles: Iterator of Article objects
-        output_path: Path to save the JSONL file
-    """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    article_count = 0
-    with output_path.open("w", encoding="utf-8") as f:
-        for article in articles:
-            f.write(json.dumps(article.to_dict()) + "\n")
-            article_count += 1
-
-    print(f"\nSaved {article_count} articles to {output_path}")
+    return articles
 
 
 async def async_main() -> None:
-    """Async main function to handle article processing."""
-    output_path = Path("data/raw_sources/miami_herald_articles.jsonl")
+    """Main entry point: incremental fetch + scrape + merge into Parquet."""
+    parquet_path = PARQUET_PATH
 
     try:
-        # Check if we need to fetch new articles first
         api = MiamiHeraldAPI()
-        if not output_path.exists():
-            # If file doesn't exist, fetch and save initial articles
-            articles = api.get_all_articles("Carol Rosenberg")
-            save_articles_to_jsonl(articles, output_path)
 
-        # Now update articles with content
-        if output_path.exists():
-            if TEST_MODE:
-                logger.info(
-                    "Running in TEST MODE - processing small subset of articles"
-                )
-            await update_articles_with_content(output_path)
+        if not parquet_path.exists():
+            # First run: full fetch
+            logger.info("No existing Parquet found — doing full initial fetch")
+            all_articles = api.get_all_articles("Carol Rosenberg")
+            logger.info(f"Fetched {len(all_articles)} articles from API")
+
+            # Scrape content
+            all_articles = await scrape_content_for_articles(all_articles)
+
+            # Write to Parquet
+            article_dicts = [a.to_dict() for a in all_articles]
+            count = append_to_parquet(parquet_path, article_dicts)
+            logger.info(f"Wrote {count} articles to {parquet_path}")
+
+        else:
+            # Incremental update: fetch only new articles
+            known_urls = load_existing_urls(parquet_path)
+            logger.info(f"Found {len(known_urls)} existing articles in Parquet")
+
+            new_articles = api.get_new_articles("Carol Rosenberg", known_urls)
+
+            if not new_articles:
+                logger.info("No new articles found — everything is up to date")
+                return
+
+            logger.info(f"Found {len(new_articles)} new articles to process")
+            for a in new_articles[:5]:
+                logger.info(f"  NEW: {a.title[:80]}")
+            if len(new_articles) > 5:
+                logger.info(f"  ... and {len(new_articles) - 5} more")
+
+            # Scrape content for new articles
+            new_articles = await scrape_content_for_articles(new_articles)
+
+            # Append to Parquet
+            article_dicts = [a.to_dict() for a in new_articles]
+            count = append_to_parquet(parquet_path, article_dicts)
+            logger.info(f"Appended {count} new articles to {parquet_path}")
+
+            # Summary
+            table = pq.read_table(parquet_path)
+            logger.info(f"Parquet now contains {table.num_rows} total articles")
 
     except Exception as e:
         logger.error(f"An error occurred: {e}")
+        raise
 
 
 def main() -> None:
