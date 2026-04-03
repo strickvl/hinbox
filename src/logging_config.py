@@ -25,8 +25,6 @@ logging.basicConfig(
 )
 
 # Silence verbose logging from external libraries
-logging.getLogger("litellm").setLevel(logging.WARNING)
-logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("openai").setLevel(logging.WARNING)

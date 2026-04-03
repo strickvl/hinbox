@@ -9,7 +9,6 @@ from datetime import datetime
 from pathlib import Path
 
 from sqlmodel import Session, select
-
 from src.database import get_engine
 from src.models import Article
 

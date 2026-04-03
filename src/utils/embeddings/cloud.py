@@ -1,12 +1,12 @@
-"""Cloud embedding provider using LiteLLM."""
+"""Cloud embedding provider using OpenAI-compatible APIs."""
 
 import asyncio
 from typing import Any, Dict, List
 
-import litellm
+from openai import OpenAI
 
-from src.constants import get_llm_callbacks
 from src.logging_config import get_logger
+from src.utils.provider_routing import resolve_embedding_target
 
 from .base import EmbeddingConfig, EmbeddingProvider, EmbeddingResult
 
@@ -14,16 +14,10 @@ logger = get_logger("utils.embeddings.cloud")
 
 
 class CloudEmbeddingProvider(EmbeddingProvider):
-    """Cloud embedding provider using LiteLLM."""
+    """Cloud embedding provider using OpenAI-compatible endpoints (Jina, OpenAI, etc.)."""
 
     def __init__(self, config: EmbeddingConfig):
         super().__init__(config)
-        self._setup_litellm()
-
-    def _setup_litellm(self):
-        """Configure LiteLLM for embeddings."""
-        litellm.suppress_debug_info = True
-        litellm.callbacks = get_llm_callbacks()
 
     async def embed_single(self, text: str) -> List[float]:
         """Embed a single text using cloud API."""
@@ -50,8 +44,8 @@ class CloudEmbeddingProvider(EmbeddingProvider):
 
             # Extract embeddings
             embeddings_map = {
-                non_empty_indices[i]: data["embedding"]
-                for i, data in enumerate(response.data)
+                non_empty_indices[i]: item.embedding
+                for i, item in enumerate(response.data)
             }
 
             # Reconstruct full results
@@ -80,21 +74,19 @@ class CloudEmbeddingProvider(EmbeddingProvider):
     async def _call_with_retry(self, texts: List[str]):
         """Call cloud API with exponential backoff retry."""
         loop = asyncio.get_running_loop()
+        target = resolve_embedding_target(self.config.model_name)
+        client = OpenAI(
+            base_url=target.base_url,
+            api_key=target.api_key or "not-set",
+        )
 
         for attempt in range(self.config.max_retries):
             try:
-                # Run the synchronous embedding call in an executor
-                # Default arg binds `attempt` at lambda creation time (B023)
                 response = await loop.run_in_executor(
                     None,
-                    lambda _a=attempt: litellm.embedding(
-                        model=self.config.model_name,
+                    lambda: client.embeddings.create(
+                        model=target.api_model,
                         input=texts,
-                        metadata={
-                            **self.config.metadata,
-                            "batch_size": len(texts),
-                            "attempt": _a + 1,
-                        },
                     ),
                 )
                 return response

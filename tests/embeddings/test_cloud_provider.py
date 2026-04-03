@@ -1,11 +1,16 @@
 """Tests for cloud embedding provider."""
 
+import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.utils.embeddings.base import EmbeddingConfig, EmbeddingResult
 from src.utils.embeddings.cloud import CloudEmbeddingProvider
+
+# Env patch needed because resolve_embedding_target reads JINA_API_KEY
+_JINA_ENV = {"JINA_API_KEY": "test-jina-key"}
 
 
 class TestCloudEmbeddingProvider:
@@ -44,7 +49,7 @@ class TestCloudEmbeddingProvider:
     async def test_embed_single_success(self, provider):
         """Test successful single text embedding."""
         mock_response = MagicMock()
-        mock_response.data = [{"embedding": [0.1, 0.2, 0.3, 0.4]}]
+        mock_response.data = [SimpleNamespace(embedding=[0.1, 0.2, 0.3, 0.4])]
         mock_response.model = "jina-embeddings-v3"
         mock_response.usage.prompt_tokens = 5
         mock_response.usage.total_tokens = 5
@@ -70,8 +75,8 @@ class TestCloudEmbeddingProvider:
         """Test batch embedding with mix of empty and non-empty texts."""
         mock_response = MagicMock()
         mock_response.data = [
-            {"embedding": [0.1, 0.2]},
-            {"embedding": [0.3, 0.4]},
+            SimpleNamespace(embedding=[0.1, 0.2]),
+            SimpleNamespace(embedding=[0.3, 0.4]),
         ]
         mock_response.model = "jina-embeddings-v3"
         mock_response.usage.prompt_tokens = 10
@@ -94,9 +99,9 @@ class TestCloudEmbeddingProvider:
         """Test successful batch embedding."""
         mock_response = MagicMock()
         mock_response.data = [
-            {"embedding": [0.1, 0.2, 0.3]},
-            {"embedding": [0.4, 0.5, 0.6]},
-            {"embedding": [0.7, 0.8, 0.9]},
+            SimpleNamespace(embedding=[0.1, 0.2, 0.3]),
+            SimpleNamespace(embedding=[0.4, 0.5, 0.6]),
+            SimpleNamespace(embedding=[0.7, 0.8, 0.9]),
         ]
         mock_response.model = "jina-embeddings-v3"
         mock_response.usage.prompt_tokens = 15
@@ -121,52 +126,57 @@ class TestCloudEmbeddingProvider:
             assert result.usage == {"prompt_tokens": 15, "total_tokens": 15}
 
     @pytest.mark.asyncio
+    @patch.dict(os.environ, _JINA_ENV)
     async def test_call_with_retry_success(self, provider):
         """Test successful API call."""
         mock_response = MagicMock()
+        mock_embeddings_create = MagicMock(return_value=mock_response)
+        mock_client = MagicMock()
+        mock_client.embeddings.create = mock_embeddings_create
 
-        with patch("litellm.embedding") as mock_embedding:
-            mock_embedding.return_value = mock_response
-
+        with patch("src.utils.embeddings.cloud.OpenAI", return_value=mock_client):
             result = await provider._call_with_retry(["test"])
 
             assert result == mock_response
-            mock_embedding.assert_called_once()
-            call_args = mock_embedding.call_args[1]
-            assert call_args["model"] == "jina_ai/jina-embeddings-v3"
+            mock_embeddings_create.assert_called_once()
+            call_args = mock_embeddings_create.call_args[1]
+            assert call_args["model"] == "jina-embeddings-v3"
             assert call_args["input"] == ["test"]
-            assert call_args["metadata"]["batch_size"] == 1
-            assert call_args["metadata"]["attempt"] == 1
 
     @pytest.mark.asyncio
+    @patch.dict(os.environ, _JINA_ENV)
     async def test_call_with_retry_failure_then_success(self, provider):
         """Test retry logic on failure."""
         mock_response = MagicMock()
+        mock_embeddings_create = MagicMock(
+            side_effect=[Exception("API Error"), mock_response]
+        )
+        mock_client = MagicMock()
+        mock_client.embeddings.create = mock_embeddings_create
 
-        with patch("litellm.embedding") as mock_embedding:
-            # First call fails, second succeeds
-            mock_embedding.side_effect = [Exception("API Error"), mock_response]
-
+        with patch("src.utils.embeddings.cloud.OpenAI", return_value=mock_client):
             with patch("asyncio.sleep") as mock_sleep:
                 result = await provider._call_with_retry(["test"])
 
                 assert result == mock_response
-                assert mock_embedding.call_count == 2
+                assert mock_embeddings_create.call_count == 2
                 mock_sleep.assert_called_once_with(1.0)  # 2^0 = 1
 
     @pytest.mark.asyncio
+    @patch.dict(os.environ, _JINA_ENV)
     async def test_call_with_retry_all_failures(self, provider):
         """Test that all retries are exhausted."""
         provider.config.max_retries = 2
+        mock_embeddings_create = MagicMock(side_effect=Exception("API Error"))
+        mock_client = MagicMock()
+        mock_client.embeddings.create = mock_embeddings_create
 
-        with patch("litellm.embedding") as mock_embedding:
-            mock_embedding.side_effect = Exception("API Error")
-
+        with patch("src.utils.embeddings.cloud.OpenAI", return_value=mock_client):
             with patch("asyncio.sleep") as mock_sleep:
                 with pytest.raises(Exception, match="API Error"):
                     await provider._call_with_retry(["test"])
 
-                assert mock_embedding.call_count == 2
+                assert mock_embeddings_create.call_count == 2
                 assert mock_sleep.call_count == 1
 
     def test_get_model_info(self, provider):

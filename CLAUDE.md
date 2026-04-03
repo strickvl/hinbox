@@ -61,11 +61,11 @@ The CLI entry point `src/process_and_extract.py` coordinates the pipeline end to
 - **Storage**: Entities include embeddings (with model/dimension/fingerprint metadata), provenance metadata, processing timestamps, profile version histories, and optional grounding reports.
 
 ### Model Architecture
-- **Cloud Models**: Defaults come from `CLOUD_MODEL` in `src/constants.py` (default: `gemini/gemini-2.0-flash`) and are executed through LiteLLM + Instructor wrappers in `src/utils/llm.py`. Multi-tool-call recovery handles Instructor edge cases.
+- **Cloud Models**: Defaults come from `CLOUD_MODEL` in `src/constants.py` (default: `gemini/gemini-2.0-flash`) and are executed through provider-routed SDK clients (OpenAI SDK for OpenAI-compatible endpoints, Anthropic SDK for Claude models) with Instructor wrappers in `src/utils/llm.py`. Provider routing is handled by `src/utils/provider_routing.py`. Multi-tool-call recovery handles Instructor edge cases.
 - **Local Models**: Ollama is accessed via `OLLAMA_MODEL` (default: `ollama/qwen2.5:32b-instruct-q5_K_M`) for extraction, relevance checks, and match verification. Both models can be overridden via environment variables (`HINBOX_CLOUD_MODEL`, `HINBOX_OLLAMA_MODEL`).
 - **Embeddings**: `EmbeddingManager` (`src/utils/embeddings/manager.py`) chooses cloud/local/hybrid providers and caches vectors for similarity scoring. When `--local` is active, `ensure_local_embeddings_available()` enforces local-only mode.
 - **Structured Output**: Dynamic Pydantic models in `src/dynamic_models.py` and list factories enforce schema consistency for both cloud and local responses.
-- **Privacy Mode**: `--local` CLI flag calls `disable_llm_callbacks()` to clear all LiteLLM telemetry callbacks and forces local embedding mode.
+- **Privacy Mode**: `--local` CLI flag calls `disable_llm_callbacks()` to disable all telemetry and forces local embedding mode.
 
 ### Frontend Architecture
 The web interface (`src/frontend/`) uses FastHTML with an "Archival Elegance" design theme:
@@ -79,7 +79,7 @@ The web interface (`src/frontend/`) uses FastHTML with an "Archival Elegance" de
 
 ### File Structure Patterns
 - **Engine Modules**: `article_processor.py`, `extractors.py`, `mergers.py`, `match_checker.py`, `merge_dispute_agent.py`, and `profiles.py` are surfaced via `src/engine/__init__.py` for a stable import path.
-- **LLM Helpers**: `src/utils/llm.py` and `src/utils/extraction.py` wrap LiteLLM/Ollama interactions and Instructor responses. Multi-tool-call recovery in `llm.py` handles Instructor edge cases.
+- **LLM Helpers**: `src/utils/llm.py` and `src/utils/extraction.py` wrap SDK/Instructor interactions. `src/utils/provider_routing.py` resolves model prefixes to SDK targets. Multi-tool-call recovery in `llm.py` handles Instructor edge cases.
 - **Embeddings**: Providers, manager, and similarity helpers live in `src/utils/embeddings/`.
 - **Caching**: `src/utils/extraction_cache.py` provides the persistent sidecar cache; `src/utils/cache_utils.py` has a thread-safe LRU cache and stable hashing helpers shared across modules.
 - **Name Handling**: `src/utils/name_variants.py` provides deterministic name normalisation, acronym detection/generation, equivalence expansion, and canonical name scoring — used by both QC and the merge pipeline.
@@ -93,7 +93,7 @@ The web interface (`src/frontend/`) uses FastHTML with an "Archival Elegance" de
 - **Dedup**: Per-entity-type similarity thresholds, lexical blocking, and merge gray-band/confidence settings configured in the `dedup` section of `configs/<domain>/config.yaml`
 - **Extraction Cache**: Version-based invalidation via `cache.extraction.version` in domain config; cache files live under `{output_dir}/cache/extractions/v{version}/`
 - **Logging**: Structured Rich-based logging in `src/logging_config.py` with colour-coded decision lines (`DecisionKind`: NEW, MERGE, SKIP, DISPUTE, DEFER, ERROR) and gated profile panels (`--show-profiles`)
-- **Privacy**: `--local` flag calls `disable_llm_callbacks()` and forces local embedding mode. The `_CALLBACKS_ENABLED` flag in `constants.py` controls LiteLLM telemetry.
+- **Privacy**: `--local` flag calls `disable_llm_callbacks()` and forces local embedding mode. The `_CALLBACKS_ENABLED` flag in `constants.py` controls telemetry.
 - **Environment**: Requires `GEMINI_API_KEY` for cloud processing, optional `OLLAMA_API_URL` for local
 
 ## Workflow Notes

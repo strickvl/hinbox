@@ -168,7 +168,7 @@ def extract_entities_cloud(
     *,
     entity_type: Optional[str] = None,
 ) -> Any:
-    """Extract entities from text using cloud-based language models via litellm.
+    """Extract entities from text using cloud-based language models.
 
     Uses the configured cloud model (typically Gemini) to extract structured entities
     from text content. Delegates to ``cloud_generation`` which handles retry logic
