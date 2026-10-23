@@ -15,7 +15,8 @@ guarantee the lockfile venv is used (matching CI).
 ### Development
 - **Format code**: `just format` (ruff fix + format via `uv run`)
 - **Lint code**: `just lint` (ruff check + format verification)
-- **Run CI checks locally**: `just ci` (exactly what GitHub Actions runs)
+- **Run CI checks locally**: `just ci` (lint, file-length check, tests — the same recipes GitHub Actions calls)
+- **File length limit**: `just check-file-length` fails if any tracked `.py` file is over 1000 lines. It runs in `just ci` and in GitHub Actions. Split the file rather than raising the limit.
 - **Install dependencies**: `uv sync`
 
 ### Main Application
@@ -78,7 +79,7 @@ The web interface (`src/frontend/`) uses FastHTML with an "Archival Elegance" de
 - **Static Assets**: CSS and font loading under `static/`
 
 ### File Structure Patterns
-- **Engine Modules**: `article_processor.py`, `extractors.py`, `mergers.py`, `match_checker.py`, `merge_dispute_agent.py`, and `profiles.py` are surfaced via `src/engine/__init__.py` for a stable import path.
+- **Engine Modules**: `article_processor.py`, `extractors.py`, `mergers.py` (with helpers `merge_candidates.py` for lexical blocking + similarity search and `merge_evidence.py` for evidence text + batch embedding), `match_checker.py`, `merge_dispute_agent.py`, and `profiles.py` are surfaced via `src/engine/__init__.py` for a stable import path.
 - **LLM Helpers**: `src/utils/llm.py` and `src/utils/extraction.py` wrap SDK/Instructor interactions. `src/utils/provider_routing.py` resolves model prefixes to SDK targets. Multi-tool-call recovery in `llm.py` handles Instructor edge cases.
 - **Embeddings**: Providers, manager, and similarity helpers live in `src/utils/embeddings/`.
 - **Caching**: `src/utils/extraction_cache.py` provides the persistent sidecar cache; `src/utils/cache_utils.py` has a thread-safe LRU cache and stable hashing helpers shared across modules.

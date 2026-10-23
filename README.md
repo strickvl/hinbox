@@ -216,6 +216,8 @@ src/
 │   ├── article_processor.py   # Relevance → extraction → QC retry orchestration
 │   ├── extractors.py          # Unified cloud/local entity extraction
 │   ├── mergers.py             # Lexical blocking → embedding similarity → match check → dispute
+│   ├── merge_candidates.py    # Lexical blocking + embedding similarity search
+│   ├── merge_evidence.py      # Deterministic evidence text + batch embedding
 │   ├── match_checker.py       # LLM-based match verification
 │   ├── merge_dispute_agent.py # Second-stage arbitration for gray-band matches
 │   ├── profiles.py            # VersionedProfile history management
@@ -355,6 +357,9 @@ just lint
 
 # Both together
 just check-code
+
+# Fail if any tracked .py file is over 1000 lines
+just check-file-length
 
 # Run exactly what CI runs (recommended before pushing)
 just ci

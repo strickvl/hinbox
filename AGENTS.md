@@ -8,6 +8,8 @@ This document helps contributors work effectively in this repository.
     - `article_processor.py` — relevance → extraction → QC retry orchestration
     - `extractors.py` — unified cloud/local entity extraction via Instructor
     - `mergers.py` — lexical blocking → batched embeddings → similarity → match check → dispute agent → canonical name selection
+    - `merge_candidates.py` — lexical blocking and embedding similarity search used by `mergers.py`
+    - `merge_evidence.py` — deterministic evidence text and batch embedding used by `mergers.py`
     - `match_checker.py` — LLM-based match verification
     - `merge_dispute_agent.py` — second-stage arbitration for gray-band entity matches
     - `profiles.py` — `VersionedProfile` history management
@@ -43,7 +45,8 @@ This document helps contributors work effectively in this repository.
 - Run tests: `just test` (pass extra pytest args: `just test -k test_merger`)
 - Lint: `just lint`
 - Format: `just format`
-- CI-equivalent checks: `just ci` (exactly what GitHub Actions runs)
+- CI-equivalent checks: `just ci` (lint, file-length check, tests — the same recipes GitHub Actions calls)
+- **File length limit**: `just check-file-length` fails if any tracked `.py` file is over 1000 lines. It runs in `just ci` and in GitHub Actions. Split the file rather than raising the limit.
 - Process articles: `just process --domain <name> --limit N`
 - Start frontend: `just frontend` (http://localhost:5001)
 - Domain management: `just domains` / `just init <name>`

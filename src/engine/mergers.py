@@ -1,11 +1,7 @@
 """Generic entity merger classes to eliminate code duplication."""
 
-import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
-
-from rapidfuzz import fuzz
-from rapidfuzz import process as rfprocess
 
 from src.config_loader import DomainConfig
 from src.constants import (
@@ -15,7 +11,9 @@ from src.constants import (
     SIMILARITY_THRESHOLD,
 )
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
+from src.engine.merge_candidates import find_similar_entity, lexical_text
 from src.engine.merge_dispute_agent import MergeDisputeAction, run_merge_dispute_agent
+from src.engine.merge_evidence import batch_embed_texts, build_evidence_text
 from src.engine.profiles import VersionedProfile, create_profile, update_profile
 from src.logging_config import (
     DecisionKind,
@@ -25,13 +23,12 @@ from src.logging_config import (
     log_decision,
 )
 from src.utils.embeddings.manager import EmbeddingManager
-from src.utils.embeddings.similarity import compute_similarity, get_embedding_manager
+from src.utils.embeddings.similarity import get_embedding_manager
 from src.utils.name_variants import (
     compute_acronym,
     is_acronym_form,
     is_low_quality_name,
     is_name_contained,
-    names_likely_same,
     score_canonical_name,
 )
 from src.utils.profiles import extract_profile_text
@@ -75,36 +72,6 @@ class _PendingProfileEmbedding:
 
     entity_ref: Dict[str, Any]
     profile_text: str
-
-
-def _batch_embed_texts(
-    embedding_manager: EmbeddingManager,
-    texts: List[str],
-    batch_size: int,
-) -> Tuple[List[List[float]], Optional[str], Optional[int], Optional[str]]:
-    """Batch-embed texts in chunks, returning (vectors, model, dim, fingerprint).
-
-    Vectors are aligned 1:1 with the input texts list.
-    """
-    if not texts:
-        return [], None, None, None
-
-    all_embeddings: List[List[float]] = []
-    model: Optional[str] = None
-    dim: Optional[int] = None
-    fingerprint: Optional[str] = None
-
-    for i in range(0, len(texts), batch_size):
-        chunk = texts[i : i + batch_size]
-        result = embedding_manager.embed_batch_result_sync(chunk)
-        all_embeddings.extend(result.embeddings)
-        model = result.model
-        dim = result.dimension or (
-            len(result.embeddings[0]) if result.embeddings else None
-        )
-        fingerprint = EmbeddingManager.fingerprint_from_result(result)
-
-    return all_embeddings, model, dim, fingerprint
 
 
 class EntityMerger:
@@ -161,66 +128,6 @@ class EntityMerger:
         """Format entity key for display in logs."""
         return key[0] if isinstance(key, tuple) else key
 
-    @staticmethod
-    def _get_search_embedding(entity: Dict[str, Any]) -> List[float]:
-        """Return the best embedding for similarity search.
-
-        Prefers search_embedding (evidence-derived) over profile_embedding
-        (LLM-narrative-derived) for apples-to-apples comparison with incoming
-        evidence queries. Falls back to profile_embedding for backward
-        compatibility with entities created before search_embedding was stored.
-        """
-        return entity.get("search_embedding") or entity.get("profile_embedding", [])
-
-    @staticmethod
-    def _get_search_embedding_meta(
-        entity: Dict[str, Any],
-    ) -> Tuple[Optional[str], Optional[int]]:
-        """Return (model, dim) for the best available search embedding."""
-        if entity.get("search_embedding"):
-            emb = entity["search_embedding"]
-            model = entity.get("search_embedding_model")
-            dim = entity.get("search_embedding_dim") or (len(emb) if emb else None)
-            return model, dim
-        emb = entity.get("profile_embedding", [])
-        model = entity.get("profile_embedding_model")
-        dim = entity.get("profile_embedding_dim") or (len(emb) if emb else None)
-        return model, dim
-
-    @staticmethod
-    def _embeddings_compatible(
-        new_dim: int,
-        existing_entity: Dict[str, Any],
-        new_model: Optional[str] = None,
-    ) -> bool:
-        """Check whether two embeddings can be meaningfully compared.
-
-        Prefers search_embedding metadata when available, falls back to
-        profile_embedding. Incompatible when:
-        - Dimensions differ (cosine similarity would be 0.0 anyway)
-        - Both model names are known and they differ
-        """
-        existing_model, existing_dim = EntityMerger._get_search_embedding_meta(
-            existing_entity
-        )
-        if existing_dim != new_dim:
-            return False
-
-        if new_model and existing_model and new_model != existing_model:
-            return False
-
-        return True
-
-    def _lexical_text(self, key: Union[str, Tuple]) -> str:
-        """Extract plain text from an entity key for lexical comparison.
-
-        For events (title, date) tuples, returns title only — the date is
-        part of the identity key but shouldn't drive fuzzy string matching.
-        """
-        if isinstance(key, tuple):
-            return str(key[0])
-        return str(key)
-
     def _score_canonical_name(self, name: str) -> float:
         """Score how 'canonical' a name is.  Higher = better.
 
@@ -239,8 +146,8 @@ class EntityMerger:
         True when the incoming name is better and the entity should be
         re-keyed.
         """
-        existing_name = self._lexical_text(existing_key)
-        incoming_name = self._lexical_text(incoming_key)
+        existing_name = lexical_text(existing_key)
+        incoming_name = lexical_text(incoming_key)
 
         # Identical (case-insensitive) — no swap needed
         if existing_name.lower() == incoming_name.lower():
@@ -273,252 +180,24 @@ class EntityMerger:
 
         return existing_key, incoming_key, False
 
-    def _collect_entity_variant_texts(
-        self,
-        key: Union[str, Tuple],
-        entity: Dict[str, Any],
-    ) -> List[str]:
-        """Collect all name variant strings for an entity (canonical + aliases + alternatives).
-
-        Used to build a richer lexical index for blocking.
-        """
-        texts = [self._lexical_text(key)]
-
-        # Aliases (uniform string list added by QC consolidation)
-        for alias in entity.get("aliases", []):
-            if isinstance(alias, str) and alias.strip():
-                texts.append(alias.strip())
-
-        # Alternative names/titles (legacy format varies by entity type)
-        alt_field = self.alternative_field
-        for alt in entity.get(alt_field, []):
-            if isinstance(alt, str) and alt.strip():
-                texts.append(alt.strip())
-            elif isinstance(alt, dict):
-                name = alt.get("name", alt.get("title", ""))
-                if name and isinstance(name, str):
-                    texts.append(name.strip())
-
-        # Derived acronym from canonical name
-        canonical = self._lexical_text(key)
-        acronym = compute_acronym(canonical)
-        if acronym:
-            texts.append(acronym)
-
-        # Deduplicate while preserving order
-        seen: set = set()
-        unique: List[str] = []
-        for t in texts:
-            lower = t.lower()
-            if lower not in seen:
-                seen.add(lower)
-                unique.append(t)
-
-        return unique
-
-    def _lexical_block(
-        self,
-        query_key: Union[str, Tuple],
-        candidate_keys: List[Union[str, Tuple]],
-        threshold: int = 60,
-        max_candidates: int = 50,
-        *,
-        entities_data: Optional[Dict[Union[str, Tuple], Dict[str, Any]]] = None,
-        query_entity: Optional[Dict[str, Any]] = None,
-        equivalence_groups: Optional[List[List[str]]] = None,
-    ) -> List[Union[str, Tuple]]:
-        """Pre-filter candidates using RapidFuzz fuzzy string matching + variant-aware bypass.
-
-        When entities_data is provided, the blocking considers aliases,
-        alternative names, and derived acronyms for each candidate entity,
-        plus equivalence group membership from config.
-
-        Returns a shortlist of candidate keys whose lexical similarity to
-        the query (or any of its variants) is >= threshold, capped at max_candidates.
-        """
-        if not candidate_keys:
-            return []
-
-        matched_keys: set = set()
-
-        # Build query variants (canonical + aliases + acronym)
-        query_variants = [self._lexical_text(query_key)]
-        if query_entity:
-            query_variants = self._collect_entity_variant_texts(query_key, query_entity)
-
-        # Build flattened candidate index: (text, key) pairs
-        # Each candidate contributes multiple texts (canonical + variants)
-        choice_texts: List[str] = []
-        choice_to_key: List[Union[str, Tuple]] = []
-
-        for ck in candidate_keys:
-            if entities_data:
-                entity_data = entities_data.get(ck, {})
-                variants = self._collect_entity_variant_texts(ck, entity_data)
-            else:
-                variants = [self._lexical_text(ck)]
-
-            for variant_text in variants:
-                choice_texts.append(variant_text)
-                choice_to_key.append(ck)
-
-        # Run RapidFuzz against flattened index for each query variant
-        for q_text in query_variants:
-            results = rfprocess.extract(
-                q_text,
-                choice_texts,
-                scorer=fuzz.WRatio,
-                score_cutoff=threshold,
-                limit=max_candidates,
-            )
-            for _, _, idx in results:
-                matched_keys.add(choice_to_key[idx])
-
-        # Equivalence group bypass: if query name is in an equivalence group,
-        # add all candidates whose names are in the same group
-        if equivalence_groups:
-            query_text_lower = self._lexical_text(query_key).lower()
-            for group in equivalence_groups:
-                group_lower = {g.lower() for g in group}
-                if query_text_lower in group_lower:
-                    for ck in candidate_keys:
-                        ck_text_lower = self._lexical_text(ck).lower()
-                        if ck_text_lower in group_lower:
-                            matched_keys.add(ck)
-                        # Also check candidate aliases
-                        if entities_data:
-                            entity_data = entities_data.get(ck, {})
-                            for variant in self._collect_entity_variant_texts(
-                                ck, entity_data
-                            ):
-                                if variant.lower() in group_lower:
-                                    matched_keys.add(ck)
-                    break  # Only one group can match
-
-        # names_likely_same bypass: if deterministic heuristics say they match,
-        # include the candidate even if WRatio was too low
-        query_display = self._lexical_text(query_key)
-        for ck in candidate_keys:
-            if ck in matched_keys:
-                continue
-            ck_display = self._lexical_text(ck)
-            if names_likely_same(
-                query_display,
-                ck_display,
-                entity_type=self.entity_type,
-                equivalence_groups=equivalence_groups or [],
-            ):
-                matched_keys.add(ck)
-
-        # Respect max_candidates
-        result = [ck for ck in candidate_keys if ck in matched_keys]
-        return result[:max_candidates]
-
     def find_similar_entity(
         self,
         entity_key: Union[str, Tuple],
         entity_embedding: List[float],
         entities: Dict[str, Dict],
         similarity_threshold: float = SIMILARITY_THRESHOLD,
-        *,
-        embedding_model: Optional[str] = None,
-        embedding_dim: Optional[int] = None,
-        lexical_blocking_config: Optional[Dict[str, Any]] = None,
-        query_entity: Optional[Dict[str, Any]] = None,
-        equivalence_groups: Optional[List[List[str]]] = None,
+        **kwargs: Any,
     ) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
-        """Find the most similar entity in the entities database using embedding similarity.
-
-        When embedding_model and embedding_dim are provided, entities whose stored
-        embeddings are from an incompatible model/dimension are skipped during the
-        scan (their similarity would be meaningless).  For exact-key matches with
-        incompatible embeddings, we return a forced similarity of 1.0 so the
-        downstream LLM match-check can still confirm or deny the merge — this
-        prevents accidental duplicates after a model change.
-
-        When lexical_blocking_config is provided and enabled, a variant-aware
-        RapidFuzz pre-filter reduces the candidate set before running cosine
-        similarity (O(n) → O(k)). The blocking now considers aliases, alternative
-        names, derived acronyms, and configured equivalence groups.
-        """
-        if not entity_embedding or not entities[self.entity_type]:
-            return None, None
-
-        new_dim = embedding_dim or len(entity_embedding)
-        best_match: Optional[Union[str, Tuple]] = None
-        best_score = 0.0
-
-        # Exact key match first
-        if entity_key in entities[self.entity_type]:
-            existing_entity = entities[self.entity_type][entity_key]
-            existing_emb = self._get_search_embedding(existing_entity)
-            if existing_emb:
-                if self._embeddings_compatible(
-                    new_dim, existing_entity, embedding_model
-                ):
-                    similarity = compute_similarity(entity_embedding, existing_emb)
-                    log(
-                        f"Exact match for {self.entity_type[:-1]} '{self._format_key_for_display(entity_key)}' with similarity: {similarity:.4f}",
-                        level="info",
-                    )
-                    if similarity >= similarity_threshold:
-                        return entity_key, similarity
-                else:
-                    # Exact key but incompatible embeddings — let match-check decide
-                    log(
-                        f"Exact key match for '{self._format_key_for_display(entity_key)}' "
-                        f"but embedding model/dim mismatch — deferring to match-check",
-                        level="warning",
-                    )
-                    return entity_key, 1.0
-
-        # Build candidate list (excluding exact key and entities without embeddings)
-        all_candidates = [
-            k
-            for k, e in entities[self.entity_type].items()
-            if k != entity_key and self._get_search_embedding(e)
-        ]
-
-        # Apply lexical blocking if configured
-        lb = lexical_blocking_config or {}
-        if lb.get("enabled", False) and all_candidates:
-            pre_count = len(all_candidates)
-            all_candidates = self._lexical_block(
-                entity_key,
-                all_candidates,
-                threshold=lb.get("threshold", 60),
-                max_candidates=lb.get("max_candidates", 50),
-                entities_data=entities.get(self.entity_type),
-                query_entity=query_entity,
-                equivalence_groups=equivalence_groups,
-            )
-            log(
-                f"Lexical blocking: {pre_count} → {len(all_candidates)} candidates "
-                f"for '{self._format_key_for_display(entity_key)}'",
-                level="info",
-            )
-
-        # Run cosine similarity on (shortlisted) candidates
-        for existing_key in all_candidates:
-            existing_entity = entities[self.entity_type][existing_key]
-            if not self._embeddings_compatible(
-                new_dim, existing_entity, embedding_model
-            ):
-                continue
-            existing_emb = self._get_search_embedding(existing_entity)
-            similarity = compute_similarity(entity_embedding, existing_emb)
-            if similarity > best_score:
-                best_score = similarity
-                best_match = existing_key
-
-        if best_match and best_score >= similarity_threshold:
-            log(
-                f"Found similar {self.entity_type[:-1]}: '{self._format_key_for_display(best_match)}' for '{self._format_key_for_display(entity_key)}' with similarity: {best_score:.4f}",
-                level="warning",
-            )
-            return best_match, best_score
-
-        return None, None
+        """Find the closest existing entity; see ``merge_candidates.find_similar_entity``."""
+        return find_similar_entity(
+            self.entity_type,
+            self.alternative_field,
+            entity_key,
+            entity_embedding,
+            entities,
+            similarity_threshold,
+            **kwargs,
+        )
 
     def _add_alternative_name(
         self,
@@ -573,136 +252,6 @@ class EntityMerger:
                 return True
 
         return False
-
-    def _extract_context_windows(
-        self,
-        article_content: str,
-        needles: List[str],
-        window_chars: int = 240,
-        max_windows: int = 3,
-    ) -> str:
-        """Extract text windows around entity mentions in the article.
-
-        Finds case-insensitive occurrences of each needle in article_content
-        and returns up to max_windows non-overlapping snippets of ~window_chars
-        each. Falls back to the first N characters of the article if no
-        mentions are found.
-        """
-        if not article_content:
-            return ""
-
-        # Normalise needles: strip, dedupe, drop empties
-        seen: set = set()
-        clean_needles: List[str] = []
-        for n in needles:
-            n = n.strip()
-            if n and n.lower() not in seen:
-                seen.add(n.lower())
-                clean_needles.append(n)
-
-        if not clean_needles:
-            return article_content[: window_chars * max_windows]
-
-        # Collect match positions across all needles
-        positions: List[Tuple[int, int]] = []
-        lower_content = article_content.lower()
-        for needle in clean_needles:
-            for m in re.finditer(re.escape(needle.lower()), lower_content):
-                positions.append((m.start(), m.end()))
-
-        positions.sort()
-
-        if not positions:
-            return article_content[: window_chars * max_windows]
-
-        # Build non-overlapping windows
-        half = window_chars // 2
-        windows: List[str] = []
-        last_end = -1
-
-        for start, end in positions:
-            if len(windows) >= max_windows:
-                break
-            win_start = max(0, start - half)
-            win_end = min(len(article_content), end + half)
-            if win_start < last_end:
-                continue  # overlaps previous window
-            windows.append(article_content[win_start:win_end].strip())
-            last_end = win_end
-
-        return "\n\n---\n\n".join(windows)
-
-    def _build_evidence_text(
-        self,
-        entity_key: Union[str, Tuple],
-        entity_dict: Dict[str, Any],
-        article_content: str,
-        max_chars: int = 1500,
-        window_chars: int = 240,
-        max_windows: int = 3,
-    ) -> str:
-        """Build a deterministic pseudo-profile from entity data + article context.
-
-        This is the cheap alternative to create_profile() — no LLM calls,
-        just string concatenation from extractor-provided structured fields
-        plus context windows around entity mentions in the article.
-        """
-        # Assemble search needles from key + any alternative names
-        needles: List[str] = []
-        if isinstance(entity_key, tuple):
-            needles.append(str(entity_key[0]))
-        else:
-            needles.append(str(entity_key))
-
-        # Include extractor-provided alternates when present
-        alt_field = self.alternative_field
-        for alt in entity_dict.get(alt_field, []):
-            if isinstance(alt, dict):
-                needles.append(str(alt.get("name", alt.get("title", ""))))
-            elif isinstance(alt, str):
-                needles.append(alt)
-
-        context = self._extract_context_windows(
-            article_content, needles, window_chars=window_chars, max_windows=max_windows
-        )
-
-        # Build header by entity type
-        parts: List[str] = []
-
-        if self.entity_type == "people":
-            parts.append(f"Name: {entity_key}")
-        elif self.entity_type in ("organizations", "locations"):
-            name = entity_key[0] if isinstance(entity_key, tuple) else str(entity_key)
-            etype = (
-                entity_key[1]
-                if isinstance(entity_key, tuple) and len(entity_key) > 1
-                else ""
-            )
-            parts.append(f"Name: {name}")
-            if etype:
-                parts.append(f"Type: {etype}")
-        elif self.entity_type == "events":
-            title = entity_key[0] if isinstance(entity_key, tuple) else str(entity_key)
-            start_date = (
-                entity_key[1]
-                if isinstance(entity_key, tuple) and len(entity_key) > 1
-                else ""
-            )
-            parts.append(f"Title: {title}")
-            if start_date:
-                parts.append(f"Start date: {start_date}")
-            event_type = entity_dict.get("event_type", "")
-            if event_type:
-                parts.append(f"Event type: {event_type}")
-            description = entity_dict.get("description", "")
-            if description:
-                parts.append(f"Description: {description}")
-
-        if context:
-            parts.append(f"\nCONTEXT:\n{context}")
-
-        text = "\n".join(parts)
-        return text[:max_chars]
 
     def merge_entities(
         self,
@@ -774,7 +323,9 @@ class EntityMerger:
                 )
                 stats.errors += 1
                 continue
-            evidence_text = self._build_evidence_text(
+            evidence_text = build_evidence_text(
+                self.entity_type,
+                self.alternative_field,
                 entity_key,
                 entity_dict,
                 article_content,
@@ -794,7 +345,7 @@ class EntityMerger:
         # ── Phase 2: Batch-embed all evidence texts ──
         if work_items:
             evidence_texts = [wi.evidence_text for wi in work_items]
-            all_evidence_vecs, ev_model, ev_dim, ev_fp = _batch_embed_texts(
+            all_evidence_vecs, ev_model, ev_dim, ev_fp = batch_embed_texts(
                 embedding_manager, evidence_texts, embed_batch_size
             )
             for j, wi in enumerate(work_items):
@@ -857,7 +408,9 @@ class EntityMerger:
                     # Synthesise a deterministic stand-in so match-check /
                     # dispute can still run; the real profile will be created
                     # via the merge-path fallback if the merge is accepted.
-                    existing_profile_text = self._build_evidence_text(
+                    existing_profile_text = build_evidence_text(
+                        self.entity_type,
+                        self.alternative_field,
                         similar_key,
                         candidate_entity,
                         article_content,
@@ -1237,7 +790,7 @@ class EntityMerger:
         # ── Phase 5: Commit profile embedding mutations ──
         if pending_profiles:
             profile_texts = [p.profile_text for p in pending_profiles]
-            prof_vecs, prof_model, prof_dim, prof_fp = _batch_embed_texts(
+            prof_vecs, prof_model, prof_dim, prof_fp = batch_embed_texts(
                 embedding_manager, profile_texts, embed_batch_size
             )
             for j, pending in enumerate(pending_profiles):
