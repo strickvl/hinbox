@@ -80,15 +80,20 @@ lint:
     uv run ruff check .
     uv run ruff format --check .
 
+# Fail if any tracked Python file is over 1000 lines
+check-file-length:
+    uv run python scripts/check_file_length.py
+
 # Run tests
 test *args:
     uv run pytest tests/ -v {{args}}
 
-# Run CI-equivalent checks (what GitHub Actions runs on PRs)
-ci:
-    uv run ruff check .
-    uv run ruff format --check .
+# Run tests the way CI does (async tests excluded)
+test-ci:
     uv run pytest tests/ -v -m "not asyncio" --tb=short
+
+# Run CI-equivalent checks (GitHub Actions calls these same recipes)
+ci: lint check-file-length test-ci
 
 # Format then lint
 check-code: format lint
