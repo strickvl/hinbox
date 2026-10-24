@@ -41,6 +41,16 @@ eval *args:
 eval-mine *args:
     uv run python -m src.evals.mine_merge_pairs {{args}}
 
+# ─── DSPy experiments (own environment in experiments/dspy_opt/, no LiteLLM) ──
+
+# Optimise the merge check with DSPy (e.g. `just dspy-merge --model ollama/qwen3.6:35b-a3b-q4_K_M --optimizer mipro`)
+dspy-merge *args:
+    uv run --project experiments/dspy_opt python -m experiments.dspy_opt.merge {{args}}
+
+# Offline tests for the DSPy experiments
+dspy-test *args:
+    uv run --project experiments/dspy_opt --with pytest pytest experiments/dspy_opt/tests {{args}}
+
 # ─── Data Management ──────────────────────────────────
 
 # Check article database statistics
