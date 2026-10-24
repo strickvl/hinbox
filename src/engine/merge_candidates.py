@@ -13,7 +13,11 @@ from rapidfuzz import process as rfprocess
 from src.constants import SIMILARITY_THRESHOLD
 from src.logging_config import log
 from src.utils.embeddings.similarity import compute_similarity
-from src.utils.name_variants import compute_acronym, names_likely_same
+from src.utils.name_variants import (
+    compute_acronym,
+    names_likely_same,
+    normalize_for_match,
+)
 
 
 def lexical_text(key: Union[str, Tuple]) -> str:
@@ -115,6 +119,18 @@ def collect_entity_variant_texts(
             unique.append(t)
 
     return unique
+
+
+def exact_name_set(
+    key: Union[str, Tuple], entity: Dict[str, Any], alternative_field: str
+) -> set:
+    """Normalised canonical, alias and alternative names (no derived acronyms)."""
+    texts = [lexical_text(key), *entity.get("aliases", [])]
+    for alt in entity.get(alternative_field, []):
+        texts.append(
+            alt.get("name", alt.get("title", "")) if isinstance(alt, dict) else alt
+        )
+    return {normalize_for_match(t) for t in texts if isinstance(t, str) and t.strip()}
 
 
 def lexical_block(
@@ -322,4 +338,56 @@ def find_similar_entity(
         )
         return best_match, best_score
 
-    return None, None
+    # Same-name fallback. Profiles written from different articles about the
+    # same place ("Miami-Dade" in a sports story vs a voting story) can sit far
+    # below the threshold, so an exact name match still goes to the match check,
+    # which decides whether it is really the same entity.
+    return _best_same_name_candidate(
+        entity_type,
+        alternative_field,
+        entity_key,
+        entity_embedding,
+        entities,
+        [entity_key, *all_candidates],
+        new_dim=new_dim,
+        embedding_model=embedding_model,
+        query_entity=query_entity,
+    )
+
+
+def _best_same_name_candidate(
+    entity_type: str,
+    alternative_field: str,
+    entity_key: Union[str, Tuple],
+    entity_embedding: List[float],
+    entities: Dict[str, Dict],
+    candidate_keys: List[Union[str, Tuple]],
+    *,
+    new_dim: int,
+    embedding_model: Optional[str],
+    query_entity: Optional[Dict[str, Any]],
+) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
+    """The candidate sharing a name with the query, highest cosine first."""
+    query_names = exact_name_set(entity_key, query_entity or {}, alternative_field)
+    best_key: Optional[Union[str, Tuple]] = None
+    best_score = -1.0
+    for key in candidate_keys:
+        existing = entities[entity_type].get(key)
+        if existing is None or not get_search_embedding(existing):
+            continue
+        if not embeddings_compatible(new_dim, existing, embedding_model):
+            continue
+        if not query_names & exact_name_set(key, existing, alternative_field):
+            continue
+        score = compute_similarity(entity_embedding, get_search_embedding(existing))
+        if score > best_score:
+            best_key, best_score = key, score
+    if best_key is None:
+        return None, None
+    log(
+        f"Same-name {entity_type[:-1]} '{lexical_text(best_key)}' for "
+        f"'{lexical_text(entity_key)}' below threshold (similarity {best_score:.4f}); "
+        "sending to match check",
+        level="info",
+    )
+    return best_key, best_score

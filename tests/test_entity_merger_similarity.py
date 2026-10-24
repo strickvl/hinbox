@@ -375,3 +375,70 @@ class TestEntityMergerFindSimilarEntity:
 
         assert match_key == "Alice Smith"
         assert score == pytest.approx(1.0, rel=1e-6)
+
+
+class TestSameNameFallback:
+    """Same-name entities below the threshold still reach the match check."""
+
+    def test_same_name_different_type_below_threshold_is_returned(self):
+        merger = EntityMerger("locations")
+        entities = make_empty_entities()
+        entities["locations"] = {
+            ("Miami-Dade", "region"): {"profile_embedding": [0.6, 0.8, 0.0]},
+            ("Miami Beach", "city"): {"profile_embedding": [0.0, 1.0, 0.0]},
+        }
+        match_key, score = merger.find_similar_entity(
+            entity_key=("Miami-Dade", "county"),
+            entity_embedding=[1.0, 0.0, 0.0],
+            entities=entities,
+            similarity_threshold=0.8,
+        )
+        assert match_key == ("Miami-Dade", "region")
+        assert score == pytest.approx(0.6, rel=1e-6)
+
+    def test_exact_key_below_threshold_is_returned(self):
+        merger = EntityMerger("locations")
+        entities = make_empty_entities()
+        entities["locations"] = {
+            ("Florida", "state"): {"profile_embedding": [0.5, 0.0, 0.866]}
+        }
+        match_key, score = merger.find_similar_entity(
+            entity_key=("Florida", "state"),
+            entity_embedding=[1.0, 0.0, 0.0],
+            entities=entities,
+            similarity_threshold=0.8,
+        )
+        assert match_key == ("Florida", "state")
+        assert score == pytest.approx(0.5, rel=1e-3)
+
+    def test_alternative_name_counts_as_same_name(self):
+        merger = EntityMerger("locations")
+        entities = make_empty_entities()
+        entities["locations"] = {
+            ("Gitmo", "base"): {
+                "profile_embedding": [0.3, 0.954, 0.0],
+                "alternative_names": [{"name": "Guantanamo Bay", "type": "bay"}],
+            }
+        }
+        match_key, _ = merger.find_similar_entity(
+            entity_key=("guantanamo bay", "bay"),
+            entity_embedding=[1.0, 0.0, 0.0],
+            entities=entities,
+            similarity_threshold=0.8,
+        )
+        assert match_key == ("Gitmo", "base")
+
+    def test_containment_alone_is_not_a_same_name_match(self):
+        """'Miami' vs 'Miami Beach' are different places; no fallback."""
+        merger = EntityMerger("locations")
+        entities = make_empty_entities()
+        entities["locations"] = {
+            ("Miami Beach", "city"): {"profile_embedding": [0.6, 0.8, 0.0]}
+        }
+        match_key, score = merger.find_similar_entity(
+            entity_key=("Miami", "city"),
+            entity_embedding=[1.0, 0.0, 0.0],
+            entities=entities,
+            similarity_threshold=0.8,
+        )
+        assert (match_key, score) == (None, None)
