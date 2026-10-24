@@ -241,3 +241,16 @@ def test_dispute_claims_ignores_ordinary_uses_of_differ_and_conflict():
         "This account conflicts with the earlier commission record.^[a9]",
     ):
         assert pu.score_update(_case(), OLD + " " + claim)["dispute_claims"] == 1
+
+
+def test_dispute_claims_counts_a_new_sentence_that_repeats_the_old_claim():
+    new = OLD.replace(
+        "with others.^[a2]",
+        "with others.^[a2] He was transferred to Guantanamo Bay detention camp"
+        " in 2007 with others; the sources disagree.^[a9]",
+    )
+    assert pu.score_update(_case(), new)["dispute_claims"] == 1
+    # A disagreement sentence already in the old profile isn't new
+    case = _case()
+    case["profile"]["text"] = new
+    assert pu.score_update(case, new)["dispute_claims"] == 0

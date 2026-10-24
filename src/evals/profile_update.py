@@ -18,7 +18,7 @@ produces an updated profile, and these checks score it without a model:
 - ``invented_citations``: cited ids that are neither old sources nor the
   case's article. On the replay these were all garbled copies of real
   36-character ids (cut short, a digit changed), which still break the link.
-- ``dispute_claims``: added sentences saying the sources disagree or differ.
+- ``dispute_claims``: new or changed sentences saying the sources disagree or differ.
   Reported only; on cases with no planted dispute most are invented.
 - For ``disputed`` cases, ``keeps_both``: the original year is still stated
   with one of its original sources, and the changed year is stated with the
@@ -49,7 +49,7 @@ DISPUTED_OVERLAP = 0.15
 # Wording that tells the reader two sources conflict. Whole phrases, so
 # "a different lawyer" and "the armed conflict" don't count
 _DISPUTE_WORDS = re.compile(
-    r"\b(disagree\w*|differs?\b(?! *ent)|contradict\w*|discrepanc\w*"
+    r"\b(disagree\w*|differs?\b|contradict\w*|discrepanc\w*"
     r"|inconsistent with|conflicts? with|conflicting (?:accounts|reports|dates"
     r"|figures|sources))",
     re.I,
@@ -115,11 +115,15 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     kept = sum(1 for w in cited_old if _best_overlap(w, cited_new) >= KEPT_OVERLAP)
     new_set = {" ".join(s.split()) for s in new_facts}
     unchanged = sum(1 for s in old_facts if " ".join(s.split()) in new_set)
-    added_facts = [
-        s
-        for s, w in zip(new_facts, new_words)
-        if _best_overlap(w, old_words) < KEPT_OVERLAP
-    ]
+    added = sum(1 for w in new_words if _best_overlap(w, old_words) < KEPT_OVERLAP)
+    # Any new or changed sentence counts here, even one that repeats an old
+    # claim with a different value ("...in 2007 with others; sources disagree")
+    old_set = {" ".join(s.split()) for s in old_facts}
+    disputes = sum(
+        1
+        for s in new_facts
+        if _DISPUTE_WORDS.search(s) and " ".join(s.split()) not in old_set
+    )
 
     ratio = len(new_text) / max(len(old_text), 1)
     retention = kept / len(cited_old) if cited_old else 1.0
@@ -137,11 +141,11 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
         "low_retention": retention < MIN_RETENTION,
         "facts_lost": len(cited_old) - kept,
         "unchanged_share": round(unchanged / len(old_facts), 3) if old_facts else 1.0,
-        "added_sentences": len(added_facts),
+        "added_sentences": added,
         # Added sentences saying sources disagree. Outside disputed cases most
         # are invented: Luna called "approved Sept. 28" vs "charges sworn in
         # April" a conflict. Reported, not failed, since some are real.
-        "dispute_claims": sum(bool(_DISPUTE_WORDS.search(s)) for s in added_facts),
+        "dispute_claims": disputes,
         "cites_article": article_id in new_ids,
         "invented_citations": sorted(new_ids - known - {article_id}),
     }
