@@ -2,6 +2,7 @@
 
 import json
 import random
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -30,6 +31,7 @@ from src.constants import (
     MAX_ITERATIONS,
     MAX_RETRIES,
     OLLAMA_MODEL,
+    OLLAMA_REASONING_EFFORT,
 )
 from src.logging_config import get_logger
 from src.utils.logging import (
@@ -154,12 +156,42 @@ def _create_instructor_client(
         raw = Anthropic(api_key=target.api_key)
         return instructor.from_anthropic(raw, mode=mode)
 
-    # OpenAI-compatible (OpenAI, Gemini, Ollama, OpenRouter, etc.)
+    # OpenAI-compatible (OpenAI, Gemini, Ollama, OpenRouter, etc.).
+    # For OpenAI itself, api_key=None lets the SDK read OPENAI_API_KEY.
     raw = OpenAI(
         base_url=target.base_url,
-        api_key=target.api_key or "not-set",
+        api_key=target.api_key
+        if target.provider_label == "openai"
+        else (target.api_key or "not-set"),
     )
     return instructor.from_openai(raw, mode=mode)
+
+
+# OpenAI reasoning models reject ``max_tokens`` and a non-default temperature
+_OPENAI_REASONING_MODEL = re.compile(r"^(gpt-5|gpt-6|o\d)")
+# Of those, these accept reasoning_effort="none", which tool calling in Chat
+# Completions needs (gpt-5 itself and the o-series only go down to "minimal"/"low")
+_OPENAI_NO_REASONING_OK = re.compile(r"^(gpt-5\.\d|gpt-6)")
+# Claude 5-family models reject ``temperature``
+_ANTHROPIC_NO_TEMPERATURE = re.compile(r"^claude-[a-z]+-5")
+
+
+def _sampling_kwargs(
+    target: ProviderTarget, max_tokens: int, temperature: float
+) -> Dict[str, Any]:
+    """Length/temperature/reasoning parameters the target model accepts."""
+    model = target.api_model
+    if target.provider_label == "openai" and _OPENAI_REASONING_MODEL.match(model):
+        kwargs: Dict[str, Any] = {"max_completion_tokens": max_tokens}
+        if _OPENAI_NO_REASONING_OK.match(model):
+            kwargs["reasoning_effort"] = "none"
+        return kwargs
+    if target.sdk == "anthropic" and _ANTHROPIC_NO_TEMPERATURE.match(model):
+        return {"max_tokens": max_tokens}
+    kwargs = {"max_tokens": max_tokens, "temperature": temperature}
+    if target.provider_label == "ollama" and OLLAMA_REASONING_EFFORT:
+        kwargs["reasoning_effort"] = OLLAMA_REASONING_EFFORT
+    return kwargs
 
 
 def _prepare_messages_for_target(
@@ -193,6 +225,15 @@ def _list_item_model(response_model: Any) -> Optional[type[BaseModel]]:
         if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
             return args[0]
     return None
+
+
+def _count_tool_calls(error: Exception) -> str:
+    """Tool calls in the completion behind an Instructor error, if known."""
+    try:
+        message = error.last_completion.choices[0].message  # type: ignore[attr-defined]
+    except (AttributeError, IndexError, TypeError):
+        return "an unknown number of"
+    return str(len(getattr(message, "tool_calls", None) or []))
 
 
 def _recover_multiple_tool_calls(
@@ -316,8 +357,7 @@ def _structured_generation(
             with slot():
                 response = client.chat.completions.create(
                     model=target.api_model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+                    **_sampling_kwargs(target, max_tokens, temperature),
                     response_model=request_response_model,
                     **msg_kwargs,
                     **request_kwargs,
@@ -351,8 +391,7 @@ def _structured_generation(
                     with slot():
                         response = fallback_client.chat.completions.create(
                             model=target.api_model,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
+                            **_sampling_kwargs(target, max_tokens, temperature),
                             response_model=response_model,
                             **msg_kwargs,
                             **fallback_kwargs,
@@ -369,11 +408,14 @@ def _structured_generation(
 
             # Handle Instructor multiple tool calls error
             if "multiple tool calls" in error_str.lower():
+                # Instructor raises this whenever there isn't exactly one tool
+                # call, including zero (the model answered in plain text).
                 logger.warning(
-                    "Multiple tool calls detected for %s model %s, "
+                    "%s model %s returned %s tool calls instead of one, "
                     "attempting recovery strategies",
-                    label,
+                    label.title(),
                     model,
+                    _count_tool_calls(e),
                 )
 
                 # Strategy 0: recover directly from exception's last_completion.
@@ -414,8 +456,7 @@ def _structured_generation(
                     with slot():
                         response = retry_client.chat.completions.create(
                             model=target.api_model,
-                            max_tokens=max_tokens,
-                            temperature=0,
+                            **_sampling_kwargs(target, max_tokens, 0),
                             response_model=retry_response_model,
                             **msg_kwargs,
                             **retry_kwargs,
@@ -457,8 +498,7 @@ def _structured_generation(
                     with slot():
                         response = json_client.chat.completions.create(
                             model=target.api_model,
-                            max_tokens=fallback_max_tokens,
-                            temperature=0,
+                            **_sampling_kwargs(target, fallback_max_tokens, 0),
                             response_model=response_model,
                             **json_msg_kwargs,
                             **retry_kwargs,

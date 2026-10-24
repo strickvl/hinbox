@@ -130,6 +130,14 @@ just frontend
 
    # Override the cloud model (default: gemini/gemini-2.0-flash):
    echo 'HINBOX_CLOUD_MODEL=gemini/gemini-2.5-flash' >> .env
+
+   # Other providers: openai/... needs OPENAI_API_KEY; anthropic/... needs
+   # ANTHROPIC_API_KEY and `uv sync --extra anthropic`
+   echo 'HINBOX_CLOUD_MODEL=openai/gpt-6-luna' >> .env
+
+   # Ollama models get reasoning_effort="none" (thinking off) by default;
+   # set this to "" to keep a model's own default, or e.g. "high":
+   echo 'HINBOX_OLLAMA_REASONING_EFFORT=' >> .env
    ```
 
 5. **Verify installation:**
