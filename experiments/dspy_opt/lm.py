@@ -16,6 +16,9 @@ from src.constants import OLLAMA_API_URL, OLLAMA_REASONING_EFFORT
 def make_lm(model: str, **kwargs: Any) -> dspy.LM:
     if model.startswith("ollama/"):
         kwargs.setdefault("api_base", OLLAMA_API_URL)
+        # Same as the pipeline's match check. Without it Ollama samples at its
+        # default temperature, and repeated runs give different scores.
+        kwargs.setdefault("temperature", 0)
         if OLLAMA_REASONING_EFFORT:
             # Same default as the pipeline: thinking off unless configured
             kwargs.setdefault("reasoning_effort", OLLAMA_REASONING_EFFORT)

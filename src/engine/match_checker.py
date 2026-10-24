@@ -1,13 +1,14 @@
 """Entity match checking functionality."""
 
-from typing import Dict, Optional
+import re
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.logging_config import get_logger, log
 from src.utils.cache_utils import LRUCache, sha256_text
-from src.utils.llm import cloud_generation, local_generation
+from src.utils.llm import cloud_generation, local_generation, text_generation
 
 logger = get_logger("engine.match_checker")
 
@@ -74,7 +75,7 @@ _TYPE_SPECIFIC_RULES: Dict[str, str] = {
 """,
 }
 
-_BASE_SYSTEM_PROMPT = """You are an expert analyst specializing in entity resolution \
+_INSTRUCTIONS = """You are an expert analyst specializing in entity resolution \
 for news articles about Guantánamo Bay.
 
 Your task is to determine if two profiles refer to the same real-world {entity_label}.
@@ -83,7 +84,11 @@ Consider the following when making your determination:
 1. Name variations: Different spellings, nicknames, titles, abbreviations, or partial names
 2. Contextual information: Role, affiliations, actions, and biographical details
 3. Temporal consistency: Whether the information in both profiles could apply to the same entity at different times
-4. Generic vs. specific: If one name is a vague generic phrase (not a proper noun), it is almost certainly NOT the same entity as a specific named {entity_label}
+4. Generic vs. specific: If one name is a vague generic phrase (not a proper noun), it is almost certainly NOT the same entity as a specific named {entity_label}"""
+
+_BASE_SYSTEM_PROMPT = (
+    _INSTRUCTIONS
+    + """
 
 You MUST provide:
 - is_match: true or false
@@ -92,6 +97,7 @@ You MUST provide:
 - reason: a detailed explanation citing specific evidence
 
 {type_rules}"""
+)
 
 _USER_PROMPT = """I need to determine if these two {entity_label}s refer to the \
 same real-world entity:
@@ -198,6 +204,181 @@ def _build_prompts(
     return system_content, user_content
 
 
+# ---------------------------------------------------------------------------
+# Sectioned prompt: labelled input fields, written reasoning, marked answer
+# ---------------------------------------------------------------------------
+# On the hard merge eval set (Qwen3.6, 58 pairs, temperature 0) this layout cut
+# false merges of related events from 4 to 1. Labelled fields alone or written
+# reasoning alone (reason-first schema, thinking mode, plain-text reasoning
+# after the old prompt) didn't help; it takes both together.
+
+_SECTIONED_FORMAT = """Your input fields are:
+1. `entity_type`: people, organizations, locations or events
+2. `rules`: entity-type rules that must be followed
+3. `new_name`
+4. `new_profile_text`: evidence from the new article
+5. `existing_name`
+6. `existing_profile_text`: profile already in the database
+Your output fields are:
+1. `reasoning`: step-by-step comparison of the two profiles, citing evidence
+2. `is_match`: True if both describe the same {entity_label}, otherwise False
+3. `confidence`: a number from 0.0 to 1.0 (0.9+ = very confident, \
+0.5-0.7 = uncertain, below 0.5 = guessing)
+
+Every input and output field appears under its own `[[ ## field ## ]]` header, \
+and the output ends with `[[ ## completed ## ]]`.
+
+In adhering to this structure, your objective is:
+{instructions}"""
+
+_SECTIONED_INPUTS = (
+    "entity_type",
+    "rules",
+    "new_name",
+    "new_profile_text",
+    "existing_name",
+    "existing_profile_text",
+)
+
+_SECTIONED_ASK = (
+    "Respond with the corresponding output fields, starting with the field "
+    "`[[ ## reasoning ## ]]`, then `[[ ## is_match ## ]]` (True or False), then "
+    "`[[ ## confidence ## ]]`, and then ending with the marker for "
+    "`[[ ## completed ## ]]`."
+)
+
+
+def _build_sectioned_messages(
+    new_name: str,
+    existing_name: str,
+    new_profile_text: str,
+    existing_profile_text: str,
+    entity_type: str,
+) -> List[Dict[str, str]]:
+    entity_label = entity_type.rstrip("s")
+    system = _SECTIONED_FORMAT.format(
+        entity_label=entity_label,
+        instructions=_INSTRUCTIONS.format(entity_label=entity_label),
+    )
+    values = {
+        "entity_type": entity_type,
+        "rules": _TYPE_SPECIFIC_RULES.get(entity_type, "").strip(),
+        "new_name": new_name,
+        "new_profile_text": new_profile_text,
+        "existing_name": existing_name,
+        "existing_profile_text": existing_profile_text,
+    }
+    user = "\n\n".join(f"[[ ## {k} ## ]]\n{values[k]}" for k in _SECTIONED_INPUTS)
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"{user}\n\n{_SECTIONED_ASK}"},
+    ]
+
+
+# Models sometimes drop the closing "##" ("[[ ## confidence ]]"), so it's optional
+_HEADER = r"\[\[ ## (\w+)(?: ##)? \]\]"
+_SECTION = re.compile(
+    _HEADER + r"\s*(.*?)(?=" + _HEADER.replace("(\\w+)", "\\w+") + r"|$)", re.S
+)
+
+
+def parse_sectioned_reply(text: str) -> MatchCheckResult:
+    """Read the reasoning, is_match and confidence sections of a reply.
+
+    Raises ValueError when ``is_match`` is missing or isn't a yes/no answer.
+    """
+    fields = {k: v.strip() for k, v in _SECTION.findall(text)}
+    verdict = (fields.get("is_match", "").split() or [""])[0].strip("`*\"' .").lower()
+    if verdict not in ("true", "false", "yes", "no"):
+        raise ValueError(f"no is_match answer in reply: {text[-200:]!r}")
+    try:
+        confidence = min(max(float(fields.get("confidence", "0.5")), 0.0), 1.0)
+    except ValueError:
+        confidence = 0.5
+    return MatchCheckResult(
+        is_match=verdict in ("true", "yes"),
+        confidence=confidence,
+        reason=fields.get("reasoning", ""),
+    )
+
+
+def _check_match(
+    backend: str,
+    new_name: str,
+    existing_name: str,
+    new_profile_text: str,
+    existing_profile_text: str,
+    entity_type: str,
+    model: str,
+) -> MatchCheckResult:
+    """Ask the sectioned prompt; fall back to the structured prompt if unparseable."""
+    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
+        memo_key = _match_memo_key(
+            backend=backend,
+            model=model,
+            entity_type=entity_type,
+            new_name=new_name,
+            existing_name=existing_name,
+            new_profile_text=new_profile_text,
+            existing_profile_text=existing_profile_text,
+        )
+        cached = _MATCH_MEMO.get(memo_key)
+        if cached is not None:
+            logger.debug(f"Match-check memo hit for {new_name} vs {existing_name}")
+            return cached
+
+    local = backend == "local"
+    try:
+        reply = text_generation(
+            _build_sectioned_messages(
+                new_name,
+                existing_name,
+                new_profile_text,
+                existing_profile_text,
+                entity_type,
+            ),
+            model=model,
+            local=local,
+            temperature=0,
+        )
+        result = parse_sectioned_reply(reply)
+    except Exception as e:
+        logger.warning(
+            "Sectioned match check failed for %s vs %s (%s); "
+            "using the structured prompt",
+            new_name,
+            existing_name,
+            e,
+        )
+        system_content, user_content = _build_prompts(
+            new_name,
+            existing_name,
+            new_profile_text,
+            existing_profile_text,
+            entity_type,
+        )
+        generate = local_generation if local else cloud_generation
+        try:
+            result = generate(
+                messages=[
+                    {"role": "system", "content": system_content},
+                    {"role": "user", "content": user_content},
+                ],
+                response_model=MatchCheckResult,
+                model=model,
+                temperature=0,
+            )
+        except Exception as e2:
+            log(f"Error with {backend} match check API", level="error", exception=e2)
+            result = MatchCheckResult(
+                is_match=False, confidence=0.0, reason=f"API error: {str(e2)}"
+            )
+
+    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
+        _MATCH_MEMO.set(memo_key, result)
+    return result
+
+
 def local_model_check_match(
     new_name: str,
     existing_name: str,
@@ -217,47 +398,15 @@ def local_model_check_match(
         entity_type: The entity type being compared (people, organizations, locations, events)
         model: The LLM model to use for comparison
     """
-    # Memo lookup
-    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
-        memo_key = _match_memo_key(
-            backend="local",
-            model=model,
-            entity_type=entity_type,
-            new_name=new_name,
-            existing_name=existing_name,
-            new_profile_text=new_profile_text,
-            existing_profile_text=existing_profile_text,
-        )
-        cached = _MATCH_MEMO.get(memo_key)
-        if cached is not None:
-            logger.debug(f"Match-check memo hit for {new_name} vs {existing_name}")
-            return cached
-
-    system_content, user_content = _build_prompts(
-        new_name, existing_name, new_profile_text, existing_profile_text, entity_type
+    return _check_match(
+        "local",
+        new_name,
+        existing_name,
+        new_profile_text,
+        existing_profile_text,
+        entity_type,
+        model,
     )
-
-    try:
-        result = local_generation(
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": user_content},
-            ],
-            response_model=MatchCheckResult,
-            model=model,
-            temperature=0,
-        )
-    except Exception as e:
-        log("Error with Ollama API", level="error", exception=e)
-        result = MatchCheckResult(
-            is_match=False, confidence=0.0, reason=f"API error: {str(e)}"
-        )
-
-    # Memo store
-    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
-        _MATCH_MEMO.set(memo_key, result)
-
-    return result
 
 
 def cloud_model_check_match(
@@ -279,44 +428,12 @@ def cloud_model_check_match(
         entity_type: The entity type being compared (people, organizations, locations, events)
         model: The LLM model to use for comparison
     """
-    # Memo lookup
-    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
-        memo_key = _match_memo_key(
-            backend="cloud",
-            model=model,
-            entity_type=entity_type,
-            new_name=new_name,
-            existing_name=existing_name,
-            new_profile_text=new_profile_text,
-            existing_profile_text=existing_profile_text,
-        )
-        cached = _MATCH_MEMO.get(memo_key)
-        if cached is not None:
-            logger.debug(f"Match-check memo hit for {new_name} vs {existing_name}")
-            return cached
-
-    system_content, user_content = _build_prompts(
-        new_name, existing_name, new_profile_text, existing_profile_text, entity_type
+    return _check_match(
+        "cloud",
+        new_name,
+        existing_name,
+        new_profile_text,
+        existing_profile_text,
+        entity_type,
+        model,
     )
-
-    try:
-        result = cloud_generation(
-            messages=[
-                {"role": "system", "content": system_content},
-                {"role": "user", "content": user_content},
-            ],
-            response_model=MatchCheckResult,
-            model=model,
-            temperature=0,
-        )
-    except Exception as e:
-        log("Error with Gemini API", level="error", exception=e)
-        result = MatchCheckResult(
-            is_match=False, confidence=0.0, reason=f"API error: {str(e)}"
-        )
-
-    # Memo store
-    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
-        _MATCH_MEMO.set(memo_key, result)
-
-    return result

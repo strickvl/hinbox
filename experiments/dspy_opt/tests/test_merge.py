@@ -81,4 +81,5 @@ def test_make_lm_points_ollama_at_the_configured_server(monkeypatch):
     lm = lm_module.make_lm("ollama/qwen3.6:35b")
     assert lm.kwargs["api_base"] == "http://box:11434/v1"
     assert lm.kwargs["reasoning_effort"] == "none"
+    assert lm.kwargs["temperature"] == 0
     assert "api_base" not in lm_module.make_lm("openai/gpt-6-luna").kwargs
