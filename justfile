@@ -41,6 +41,10 @@ eval *args:
 eval-replay *args:
     uv run python -m src.evals.profile_replay {{args}}
 
+# Build profile-update test cases from replay snapshots (e.g. `just eval-cases --model openai/gpt-6-luna`)
+eval-cases *args:
+    uv run python -m src.evals.profile_cases {{args}}
+
 # Mine hard merge pairs from existing entities for labelling
 eval-mine *args:
     uv run python -m src.evals.mine_merge_pairs {{args}}
