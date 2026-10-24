@@ -227,3 +227,17 @@ def test_dispute_claims_counts_added_sentences_saying_sources_differ():
     scores = pu.score_update(_case(), new)
     assert scores["dispute_claims"] == 1 and scores["passed"]
     assert pu.score_update(_case(), OLD)["dispute_claims"] == 0
+
+
+def test_dispute_claims_ignores_ordinary_uses_of_differ_and_conflict():
+    new = (
+        OLD + " He later received a different military lawyer.^[a9]"
+        " He was detained during the armed conflict in Afghanistan.^[a9]"
+    )
+    assert pu.score_update(_case(), new)["dispute_claims"] == 0
+    for claim in (
+        "The article's date differs from earlier reports.^[a9]",
+        "Reports disagree on the exact trial date.^[a9]",
+        "This account conflicts with the earlier commission record.^[a9]",
+    ):
+        assert pu.score_update(_case(), OLD + " " + claim)["dispute_claims"] == 1

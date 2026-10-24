@@ -46,9 +46,13 @@ MIN_RETENTION = 0.9
 # instead says the camps opened in 2003") held 2 of 22 words and failed.
 DISPUTED_MIN_SHARED = 2
 DISPUTED_OVERLAP = 0.15
-# Wording that tells the reader two sources conflict
+# Wording that tells the reader two sources conflict. Whole phrases, so
+# "a different lawyer" and "the armed conflict" don't count
 _DISPUTE_WORDS = re.compile(
-    r"\b(disagree|differ|conflict|contradict|discrepan|inconsisten)\w*", re.I
+    r"\b(disagree\w*|differs?\b(?! *ent)|contradict\w*|discrepanc\w*"
+    r"|inconsistent with|conflicts? with|conflicting (?:accounts|reports|dates"
+    r"|figures|sources))",
+    re.I,
 )
 MIN_CONTENT_WORDS = 3  # shorter lines (headers, "Tags:") aren't facts
 
