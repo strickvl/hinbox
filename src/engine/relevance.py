@@ -24,8 +24,20 @@ logger = get_logger("engine.relevance")
 RELEVANCE_PROMPT_LAYOUT = "sectioned-v1"
 
 # The domain prompt's own "## Output Format" section asks for JSON; the
-# sectioned layout replaces it.
-_OUTPUT_FORMAT_SECTION = re.compile(r"\n#+\s*Output Format\b.*", re.S | re.I)
+# sectioned layout replaces it. Only that section goes: sections after it
+# (e.g. "## Examples") are kept.
+_OUTPUT_FORMAT_HEADING = re.compile(r"^(#+)\s*Output Format\b.*$", re.M | re.I)
+
+
+def _drop_output_format(prompt: str) -> str:
+    match = _OUTPUT_FORMAT_HEADING.search(prompt)
+    if not match:
+        return prompt
+    level = len(match.group(1))
+    next_heading = re.compile(rf"^#{{1,{level}}}\s", re.M).search(prompt, match.end())
+    end = next_heading.start() if next_heading else len(prompt)
+    return prompt[: match.start()] + prompt[end:]
+
 
 _INPUTS = [("article", "the article text")]
 _OUTPUTS = [
@@ -35,9 +47,7 @@ _OUTPUTS = [
 
 
 def _sectioned_messages(text: str, domain: str):
-    instructions = _OUTPUT_FORMAT_SECTION.sub(
-        "", get_system_prompt("relevance", domain)
-    ).strip()
+    instructions = _drop_output_format(get_system_prompt("relevance", domain)).strip()
     return build_sectioned_messages(
         instructions,
         _INPUTS,

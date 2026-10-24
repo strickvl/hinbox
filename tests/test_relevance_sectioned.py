@@ -22,6 +22,13 @@ def test_messages_drop_the_json_output_format_and_hold_the_article():
     assert "`[[ ## is_relevant ## ]]` (True or False)" in user["content"]
 
 
+def test_only_the_output_format_section_is_dropped():
+    prompt = "# P\n\n## Criteria\nA\n\n## Output Format\n```json\n{}\n```\n### Note\nx\n\n## Examples\nB\n"
+    kept = relevance._drop_output_format(prompt)
+    assert "Output Format" not in kept and "Note" not in kept
+    assert "## Criteria\nA" in kept and "## Examples\nB" in kept
+
+
 def test_check_reads_the_text_reply():
     with patch.object(relevance, "text_generation", return_value=REPLY) as gen:
         result = relevance.ollama_check_relevance("text")
