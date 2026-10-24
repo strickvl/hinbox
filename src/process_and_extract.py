@@ -369,6 +369,7 @@ def log_processing_summary(
     skipped_already_processed: int,
     entities: Dict[str, Dict],
     processed_rows: List[Dict],
+    skipped_relevance_error: int = 0,
 ) -> None:
     """Log comprehensive processing summary and statistics."""
     log("\n[bold]Processing complete[/bold]", level="info")
@@ -377,6 +378,12 @@ def log_processing_summary(
     log(f"Articles read: {article_count}", level="info")
     log(f"Articles processed: {processed_count}", level="info")
     log(f"Articles skipped (relevance): {skipped_relevance_count}", level="info")
+    if skipped_relevance_error:
+        log(
+            f"Articles skipped (relevance check failed, will retry next run): "
+            f"{skipped_relevance_error}",
+            level="warning",
+        )
     log(
         f"Articles skipped (already processed): {skipped_already_processed}",
         level="info",
@@ -487,6 +494,7 @@ def write_results_and_statistics(
     article_count: int,
     base_dir: str,
     status_tracker: ProcessingStatus = None,
+    skipped_relevance_error: int = 0,
 ) -> None:
     """Write results to files and log comprehensive statistics."""
     # Flush processing status sidecar (replaces full articles rewrite)
@@ -506,6 +514,7 @@ def write_results_and_statistics(
         skipped_already_processed,
         entities,
         processed_rows,
+        skipped_relevance_error=skipped_relevance_error,
     )
 
 
@@ -576,6 +585,22 @@ def extract_single_article_only(
         processing_metadata["phase_outcomes"]["relevance"] = (
             rel_outcome.to_metadata_dict()
         )
+        if not rel_outcome.success:
+            # The check itself failed (API error, bad response), so we don't
+            # know whether the article is relevant. Skip it without
+            # extracting, but record it separately from a real "not relevant"
+            # verdict. Skipped articles stay unprocessed, so it is retried on
+            # the next run.
+            error_msg = rel_outcome.error.message if rel_outcome.error else "unknown"
+            log(
+                f"Relevance check failed for article {article_id}: {error_msg}",
+                level="warning",
+            )
+            processing_metadata["processed"] = False
+            processing_metadata["reason"] = f"Relevance check failed: {error_msg}"
+            return ArticleExtractionResult(
+                **{**empty.__dict__, "skip_reason": "relevance_error"}
+            )
         if not rel_outcome.value:
             processing_metadata["processed"] = False
             processing_metadata["reason"] = "Not relevant"
@@ -625,6 +650,10 @@ def merge_and_finalize(
             counters["skipped_relevance_count"] += 1
             if status_tracker:
                 status_tracker.mark_skipped(article_id, "not_relevant")
+        elif reason == "relevance_error":
+            counters["skipped_relevance_error"] += 1
+            if status_tracker:
+                status_tracker.mark_skipped(article_id, "relevance_error")
         elif reason == "already_processed":
             counters["skipped_already_processed"] += 1
         elif reason == "no_content":
@@ -691,6 +720,7 @@ def process_articles_batch(
     counters: Dict[str, int] = {
         "processed_count": 0,
         "skipped_relevance_count": 0,
+        "skipped_relevance_error": 0,
         "skipped_already_processed": 0,
         "skipped_no_content": 0,
     }
@@ -867,6 +897,7 @@ def main():
         article_count,
         base_dir,
         status_tracker=status_tracker,
+        skipped_relevance_error=counters["skipped_relevance_error"],
     )
 
 
