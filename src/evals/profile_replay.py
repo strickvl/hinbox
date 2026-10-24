@@ -146,6 +146,33 @@ def load_last_step(entity_dir: str) -> Optional[Dict[str, Any]]:
         return json.load(f)
 
 
+def check_resumable(entity_dir: str, chosen: List[Dict[str, Any]]) -> None:
+    """Refuse to resume when saved steps came from a different article order.
+
+    Changing ``--min-mentions``, the match terms, or the corpus can change which
+    articles are chosen. Resuming by step number would then build on a profile
+    from the old order while the manifest claims the new one. Raising a longer
+    or shorter ``--max-articles`` keeps the order, so it is allowed.
+    """
+    if not os.path.isdir(entity_dir):
+        return
+    for name in sorted(os.listdir(entity_dir)):
+        match = re.match(r"step_(\d+)\.json$", name)
+        if not match:
+            continue
+        step = int(match.group(1))
+        if step > len(chosen):
+            continue
+        with open(os.path.join(entity_dir, name), encoding="utf-8") as f:
+            saved_id = json.load(f)["article"]["id"]
+        if saved_id != chosen[step - 1]["id"]:
+            raise ValueError(
+                f"{entity_dir} holds step {step} for article {saved_id}, but this "
+                f"run would use {chosen[step - 1]['id']}. Use another --eval-dir "
+                "or delete the old snapshots."
+            )
+
+
 def _write_json(path: str, data: Dict[str, Any]) -> None:
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -164,6 +191,7 @@ def replay_entity(
     """Create then update the profile one article at a time. Returns steps done."""
     from src.engine.profiles import VersionedProfile, create_profile, update_profile
 
+    check_resumable(entity_dir, chosen)
     last = load_last_step(entity_dir)
     done = last["step"] if last else 0
     profile = last["profile"] if last else None
@@ -270,6 +298,10 @@ def main() -> None:
     def run(plan: Tuple[ReplayEntity, List[Dict[str, Any]], List[Dict[str, Any]]]):
         entity, chosen, passing = plan
         entity_dir = os.path.join(root, entity_slug(entity.name))
+        try:
+            check_resumable(entity_dir, chosen)  # before the manifest is replaced
+        except ValueError as e:
+            return entity.name, 0, e
         os.makedirs(entity_dir, exist_ok=True)
         _write_json(
             os.path.join(entity_dir, "manifest.json"),

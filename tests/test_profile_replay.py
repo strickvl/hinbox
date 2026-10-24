@@ -101,3 +101,14 @@ def test_resolve_mode_prefers_explicit_model():
     assert profiles._resolve_mode("ollama", "openai/gpt") == GenerationMode.CLOUD
     assert profiles._resolve_mode("gemini", None) == GenerationMode.CLOUD
     assert profiles._resolve_mode("ollama", None) == GenerationMode.LOCAL
+
+
+def test_replay_refuses_to_resume_a_different_article_order(tmp_path, fake_profiles):
+    texts = {"a1": "x", "a2": "y", "b1": "z"}
+    pr.replay_entity(
+        ENTITY, [{"id": "a1"}, {"id": "a2"}], texts, str(tmp_path), "m", "d"
+    )
+    with pytest.raises(ValueError, match="step 1 for article a1"):
+        pr.replay_entity(ENTITY, [{"id": "b1"}], texts, str(tmp_path), "m", "d")
+    # A shorter run over the same order is fine (nothing left to do)
+    assert pr.replay_entity(ENTITY, [{"id": "a1"}], texts, str(tmp_path), "m", "d") == 2
