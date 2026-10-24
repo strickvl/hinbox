@@ -8,14 +8,15 @@ produces an updated profile, and these checks score it without a model:
   profile to 6k with every QC check passing.
 - ``fact_retention``: the share of the old profile's cited sentences that are
   still there. A sentence counts as kept when one new sentence contains at
-  least ``KEPT_OVERLAP`` of its content words, so light rewording still
-  counts. Reworded facts that fall below that need the model judge (later).
+  least ``KEPT_OVERLAP`` of its content words, so rewording still counts.
+  Heavier rewrites that fall below that need the model judge (later).
 - ``unchanged_share``: the share of old sentences kept word for word. Low
   means the update rewrote text it had no reason to touch.
 - ``added_sentences``: new sentences with no close match in the old profile.
 - ``cites_article``: whether the case's article is cited.
 - ``invented_citations``: cited ids that are neither old sources nor the
-  case's article.
+  case's article. On the replay these were all garbled copies of real
+  36-character ids (cut short, a digit changed), which still break the link.
 - For ``disputed`` cases, ``keeps_both``: the original year is still stated
   with one of its original sources, and the changed year is stated with the
   case's article. A profile that silently swaps one year for the other fails.
@@ -32,7 +33,9 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from src.evals.profile_cases import _CITATION, _content_words, _sentences
 
 COLLAPSE_RATIO = 0.8
-KEPT_OVERLAP = 0.7
+# Hand-checked on the Luna replay: reworded facts kept 0.45-0.67 of their
+# content words, facts really dropped mostly under 0.35
+KEPT_OVERLAP = 0.45
 MIN_RETENTION = 0.9
 MIN_CONTENT_WORDS = 3  # shorter lines (headers, "Tags:") aren't facts
 
@@ -77,13 +80,16 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     unchanged = sum(1 for s in old_facts if " ".join(s.split()) in new_set)
     added = sum(1 for w in new_words if _best_overlap(w, old_words) < KEPT_OVERLAP)
 
+    ratio = len(new_text) / max(len(old_text), 1)
     article_id = case["article_id"]
     known = _cited_ids(old_text) | set(case["profile"].get("sources") or [])
     new_ids = _cited_ids(new_text)
     scores: Dict[str, Any] = {
         "old_chars": len(old_text),
         "new_chars": len(new_text),
-        "length_ratio": round(len(new_text) / max(len(old_text), 1), 3),
+        "length_ratio": round(ratio, 3),
+        # Tested before rounding: 0.79990 rounds to 0.8 and would slip through
+        "collapsed": ratio < COLLAPSE_RATIO,
         "fact_retention": round(kept / len(cited_old), 3) if cited_old else 1.0,
         "facts_lost": len(cited_old) - kept,
         "unchanged_share": round(unchanged / len(old_facts), 3) if old_facts else 1.0,
@@ -104,7 +110,7 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
 def case_passed(case: Dict[str, Any], scores: Dict[str, Any]) -> bool:
     expected = case.get("expected", {})
     if (
-        scores["length_ratio"] < COLLAPSE_RATIO
+        scores["collapsed"]
         or scores["fact_retention"] < MIN_RETENTION
         or scores["invented_citations"]
     ):
@@ -171,7 +177,7 @@ def summarize_updates(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "pass_rate": round(
             sum(r["scores"]["passed"] for r in scored) / max(len(records), 1), 3
         ),
-        "collapses": sum(r["scores"]["length_ratio"] < COLLAPSE_RATIO for r in scored),
+        "collapses": sum(r["scores"]["collapsed"] for r in scored),
         "median_retention": _median([r["scores"]["fact_retention"] for r in scored]),
         "median_unchanged": _median([r["scores"]["unchanged_share"] for r in scored]),
         "invented_citations": sum(

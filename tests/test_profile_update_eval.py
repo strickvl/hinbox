@@ -124,3 +124,9 @@ def test_run_updates_counts_errors_as_failures():
     summary = pu.summarize_updates(records)
     assert summary["errors"] == 1 and summary["pass_rate"] == 0.5
     assert summary["pass_new_fact"] == "1/2"
+
+
+def test_collapse_is_tested_before_rounding():
+    case = {**_case(), "profile": {"text": "x" * 10000, "sources": []}}
+    scores = pu.score_update(case, "x" * 7999)
+    assert scores["length_ratio"] == 0.8 and scores["collapsed"]
