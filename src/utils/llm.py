@@ -14,6 +14,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Tuple,
     Type,
     get_args,
     get_origin,
@@ -177,11 +178,21 @@ _OPENAI_NO_REASONING_OK = re.compile(r"^(gpt-5\.\d|gpt-6)")
 _ANTHROPIC_NO_TEMPERATURE = re.compile(r"^claude-[a-z]+-5")
 
 
+# Output-token ceilings for models that reject a larger request. Profile calls
+# ask for up to PROFILE_MAX_TOKENS, which these models can't produce anyway.
+_OUTPUT_TOKEN_CAPS: Tuple[Tuple[re.Pattern, int], ...] = (
+    (re.compile(r"^gemini-(1\.5|2\.0)"), 8192),
+)
+
+
 def _sampling_kwargs(
     target: ProviderTarget, max_tokens: int, temperature: float
 ) -> Dict[str, Any]:
     """Length/temperature/reasoning parameters the target model accepts."""
     model = target.api_model
+    for pattern, cap in _OUTPUT_TOKEN_CAPS:
+        if pattern.match(model):
+            max_tokens = min(max_tokens, cap)
     if target.provider_label == "openai" and _OPENAI_REASONING_MODEL.match(model):
         kwargs: Dict[str, Any] = {"max_completion_tokens": max_tokens}
         if _OPENAI_NO_REASONING_OK.match(model):

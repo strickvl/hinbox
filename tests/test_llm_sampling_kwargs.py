@@ -79,3 +79,10 @@ def test_count_tool_calls_reports_zero_for_plain_text_answers():
     )
     assert _count_tool_calls(err) == "0"
     assert _count_tool_calls(RuntimeError("x")) == "an unknown number of"
+
+
+def test_older_gemini_output_limit_is_capped(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    assert _kwargs("gemini/gemini-2.0-flash", max_tokens=16384)["max_tokens"] == 8192
+    assert _kwargs("gemini/gemini-2.0-flash", max_tokens=2048)["max_tokens"] == 2048
+    assert _kwargs("openai/gpt-4o", max_tokens=16384)["max_tokens"] == 16384
