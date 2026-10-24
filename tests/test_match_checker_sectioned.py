@@ -75,3 +75,17 @@ def test_check_falls_back_to_structured_prompt_on_bad_reply():
     ):
         result = local_model_check_match("a", "b", "x", "y")
     assert result is fallback
+
+
+def test_parse_tolerates_a_header_missing_its_closing_hashes():
+    text = REPLY.replace("True", "False").replace(
+        "[[ ## confidence ## ]]", "[[ ## confidence ]]"
+    )
+    result = parse_sectioned_reply(text)
+    assert result.is_match is False
+    assert result.confidence == pytest.approx(0.92)
+
+
+def test_parse_reads_only_the_first_word_of_the_answer():
+    text = REPLY.replace("True", "False\nThey are different moments.")
+    assert parse_sectioned_reply(text).is_match is False

@@ -275,7 +275,11 @@ def _build_sectioned_messages(
     ]
 
 
-_SECTION = re.compile(r"\[\[ ## (\w+) ## \]\]\s*(.*?)(?=\[\[ ## \w+ ## \]\]|$)", re.S)
+# Models sometimes drop the closing "##" ("[[ ## confidence ]]"), so it's optional
+_HEADER = r"\[\[ ## (\w+)(?: ##)? \]\]"
+_SECTION = re.compile(
+    _HEADER + r"\s*(.*?)(?=" + _HEADER.replace("(\\w+)", "\\w+") + r"|$)", re.S
+)
 
 
 def parse_sectioned_reply(text: str) -> MatchCheckResult:
@@ -284,7 +288,7 @@ def parse_sectioned_reply(text: str) -> MatchCheckResult:
     Raises ValueError when ``is_match`` is missing or isn't a yes/no answer.
     """
     fields = {k: v.strip() for k, v in _SECTION.findall(text)}
-    verdict = fields.get("is_match", "").strip("`*\"' .").lower()
+    verdict = (fields.get("is_match", "").split() or [""])[0].strip("`*\"' .").lower()
     if verdict not in ("true", "false", "yes", "no"):
         raise ValueError(f"no is_match answer in reply: {text[-200:]!r}")
     try:
