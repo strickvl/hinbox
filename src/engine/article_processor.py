@@ -4,7 +4,11 @@ from src.config_loader import get_system_prompt
 
 # Use the consolidated extractor rather than per-entity wrappers
 from src.engine.extractors import EntityExtractor
-from src.engine.relevance import gemini_check_relevance, ollama_check_relevance
+from src.engine.relevance import (
+    RELEVANCE_PROMPT_LAYOUT,
+    gemini_check_relevance,
+    ollama_check_relevance,
+)
 from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
 from src.utils.cache_utils import sha256_text
@@ -79,7 +83,7 @@ class ArticleProcessor:
         if self._relevance_fingerprint is None:
             prompt = get_system_prompt("relevance", self.domain)
             self._relevance_fingerprint = sha256_text(
-                f"{self.relevance_model}\n{prompt}"
+                f"{self.relevance_model}\n{RELEVANCE_PROMPT_LAYOUT}\n{prompt}"
             )
         return self._relevance_fingerprint
 

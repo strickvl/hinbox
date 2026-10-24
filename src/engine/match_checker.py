@@ -1,6 +1,5 @@
 """Entity match checking functionality."""
 
-import re
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -9,6 +8,12 @@ from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.logging_config import get_logger, log
 from src.utils.cache_utils import LRUCache, sha256_text
 from src.utils.llm import cloud_generation, local_generation, text_generation
+from src.utils.sectioned_prompt import (
+    build_sectioned_messages,
+    parse_sections,
+    read_bool,
+    read_unit_float,
+)
 
 logger = get_logger("engine.match_checker")
 
@@ -212,40 +217,14 @@ def _build_prompts(
 # reasoning alone (reason-first schema, thinking mode, plain-text reasoning
 # after the old prompt) didn't help; it takes both together.
 
-_SECTIONED_FORMAT = """Your input fields are:
-1. `entity_type`: people, organizations, locations or events
-2. `rules`: entity-type rules that must be followed
-3. `new_name`
-4. `new_profile_text`: evidence from the new article
-5. `existing_name`
-6. `existing_profile_text`: profile already in the database
-Your output fields are:
-1. `reasoning`: step-by-step comparison of the two profiles, citing evidence
-2. `is_match`: True if both describe the same {entity_label}, otherwise False
-3. `confidence`: a number from 0.0 to 1.0 (0.9+ = very confident, \
-0.5-0.7 = uncertain, below 0.5 = guessing)
-
-Every input and output field appears under its own `[[ ## field ## ]]` header, \
-and the output ends with `[[ ## completed ## ]]`.
-
-In adhering to this structure, your objective is:
-{instructions}"""
-
-_SECTIONED_INPUTS = (
-    "entity_type",
-    "rules",
-    "new_name",
-    "new_profile_text",
-    "existing_name",
-    "existing_profile_text",
-)
-
-_SECTIONED_ASK = (
-    "Respond with the corresponding output fields, starting with the field "
-    "`[[ ## reasoning ## ]]`, then `[[ ## is_match ## ]]` (True or False), then "
-    "`[[ ## confidence ## ]]`, and then ending with the marker for "
-    "`[[ ## completed ## ]]`."
-)
+_SECTIONED_INPUTS = [
+    ("entity_type", "people, organizations, locations or events"),
+    ("rules", "entity-type rules that must be followed"),
+    ("new_name", ""),
+    ("new_profile_text", "evidence from the new article"),
+    ("existing_name", ""),
+    ("existing_profile_text", "profile already in the database"),
+]
 
 
 def _build_sectioned_messages(
@@ -256,10 +235,15 @@ def _build_sectioned_messages(
     entity_type: str,
 ) -> List[Dict[str, str]]:
     entity_label = entity_type.rstrip("s")
-    system = _SECTIONED_FORMAT.format(
-        entity_label=entity_label,
-        instructions=_INSTRUCTIONS.format(entity_label=entity_label),
-    )
+    outputs = [
+        ("reasoning", "step-by-step comparison of the two profiles, citing evidence"),
+        ("is_match", f"True if both describe the same {entity_label}, otherwise False"),
+        (
+            "confidence",
+            "a number from 0.0 to 1.0 (0.9+ = very confident, "
+            "0.5-0.7 = uncertain, below 0.5 = guessing)",
+        ),
+    ]
     values = {
         "entity_type": entity_type,
         "rules": _TYPE_SPECIFIC_RULES.get(entity_type, "").strip(),
@@ -268,18 +252,13 @@ def _build_sectioned_messages(
         "existing_name": existing_name,
         "existing_profile_text": existing_profile_text,
     }
-    user = "\n\n".join(f"[[ ## {k} ## ]]\n{values[k]}" for k in _SECTIONED_INPUTS)
-    return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": f"{user}\n\n{_SECTIONED_ASK}"},
-    ]
-
-
-# Models sometimes drop the closing "##" ("[[ ## confidence ]]"), so it's optional
-_HEADER = r"\[\[ ## (\w+)(?: ##)? \]\]"
-_SECTION = re.compile(
-    _HEADER + r"\s*(.*?)(?=" + _HEADER.replace("(\\w+)", "\\w+") + r"|$)", re.S
-)
+    return build_sectioned_messages(
+        _INSTRUCTIONS.format(entity_label=entity_label),
+        _SECTIONED_INPUTS,
+        values,
+        outputs,
+        hints={"is_match": "True or False"},
+    )
 
 
 def parse_sectioned_reply(text: str) -> MatchCheckResult:
@@ -287,17 +266,14 @@ def parse_sectioned_reply(text: str) -> MatchCheckResult:
 
     Raises ValueError when ``is_match`` is missing or isn't a yes/no answer.
     """
-    fields = {k: v.strip() for k, v in _SECTION.findall(text)}
-    verdict = (fields.get("is_match", "").split() or [""])[0].strip("`*\"' .").lower()
-    if verdict not in ("true", "false", "yes", "no"):
-        raise ValueError(f"no is_match answer in reply: {text[-200:]!r}")
+    fields = parse_sections(text)
     try:
-        confidence = min(max(float(fields.get("confidence", "0.5")), 0.0), 1.0)
+        is_match = read_bool(fields, "is_match")
     except ValueError:
-        confidence = 0.5
+        raise ValueError(f"no is_match answer in reply: {text[-200:]!r}") from None
     return MatchCheckResult(
-        is_match=verdict in ("true", "yes"),
-        confidence=confidence,
+        is_match=is_match,
+        confidence=read_unit_float(fields, "confidence", 0.5),
         reason=fields.get("reasoning", ""),
     )
 
