@@ -197,6 +197,31 @@ def make_pipeline_updater(model: str, domain: str) -> Updater:
     return update
 
 
+def make_edit_updater(model: str, domain: str) -> Updater:
+    """Ask for a list of edits and apply them (``src/engine/profile_edits.py``)."""
+    from src.engine.profile_edits import edit_profile
+
+    def update(case: Dict[str, Any]) -> str:
+        profile = edit_profile(
+            case["entity_type"],
+            case["entity_name"],
+            case["profile"],
+            case["article_text"],
+            case["article_id"],
+            model=model,
+            domain=domain,
+        )
+        return profile["text"]
+
+    return update
+
+
+UPDATERS: Dict[str, Callable[[str, str], Updater]] = {
+    "pipeline": make_pipeline_updater,
+    "edit": make_edit_updater,
+}
+
+
 def _median(values: List[float]) -> Optional[float]:
     values = sorted(values)
     return values[len(values) // 2] if values else None

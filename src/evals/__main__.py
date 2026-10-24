@@ -25,8 +25,8 @@ from src.evals.datasets import (
     load_relevance_items,
 )
 from src.evals.profile_update import (
+    UPDATERS,
     load_cases,
-    make_pipeline_updater,
     run_updates,
     summarize_updates,
 )
@@ -92,15 +92,17 @@ def _run_profile_update(args, parser, eval_dir: str) -> None:
     configure_llm_concurrency(
         cloud_in_flight=args.workers, local_in_flight=args.workers
     )
-    updater = make_pipeline_updater(args.model, args.domain)
-    console.print(f"Updating {len(cases)} profiles with {args.model} …")
+    updater = UPDATERS[args.approach](args.model, args.domain)
+    console.print(
+        f"Updating {len(cases)} profiles with {args.model} ({args.approach}) …"
+    )
     records = run_updates(cases, updater, workers=args.workers)
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "task": "profile_update",
         "dataset": "profile_update",
         "model": args.model,
-        "approach": "pipeline",
+        "approach": args.approach,
         "split": args.split,
         **summarize_updates(records),
     }
@@ -131,6 +133,13 @@ def main() -> None:
         "--include-unreviewed",
         action="store_true",
         help="profile-update: also score cases whose labels need review",
+    )
+    parser.add_argument(
+        "--approach",
+        choices=("pipeline", "edit"),
+        default="pipeline",
+        help="profile-update: the pipeline's whole-profile rewrite, or "
+        "apply a list of edits",
     )
     args = parser.parse_args()
 
