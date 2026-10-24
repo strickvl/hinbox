@@ -254,3 +254,9 @@ def test_dispute_claims_counts_a_new_sentence_that_repeats_the_old_claim():
     case = _case()
     case["profile"]["text"] = new
     assert pu.score_update(case, new)["dispute_claims"] == 0
+
+
+def test_dispute_claims_counts_short_standalone_sentences():
+    assert (
+        pu.score_update(_case(), OLD + " Sources differ.^[a9]")["dispute_claims"] == 1
+    )

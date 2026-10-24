@@ -118,10 +118,11 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     added = sum(1 for w in new_words if _best_overlap(w, old_words) < KEPT_OVERLAP)
     # Any new or changed sentence counts here, even one that repeats an old
     # claim with a different value ("...in 2007 with others; sources disagree")
-    old_set = {" ".join(s.split()) for s in old_facts}
+    # All sentences, not just facts: "Sources differ." is too short to be one
+    old_set = {" ".join(s.split()) for s in _sentences(old_text)}
     disputes = sum(
         1
-        for s in new_facts
+        for s in _sentences(new_text)
         if _DISPUTE_WORDS.search(s) and " ".join(s.split()) not in old_set
     )
 
