@@ -130,3 +130,25 @@ def test_disputed_year_needs_matching_month_and_day():
 def test_cited_years_splits_grouped_citations():
     years = pc.cited_years("He was moved to Guantanamo in 2006.^[a1, a2]")
     assert years["2006"][0][1] == ["a1", "a2"]
+
+
+def test_irrelevant_draws_do_not_depend_on_disputed_cases(monkeypatch):
+    manifest = {
+        "entity": {"name": "X", "entity_type": "person", "terms": ["X"]},
+        "model": "m",
+        "articles": [{"id": f"a{i}"} for i in range(1, 6)],
+        "passing_mentions": [{"id": f"p{i}"} for i in range(8)],
+    }
+    steps = {k: {"step": k, "profile": {"text": PROFILE}} for k in (1, 2, 3, 4)}
+    texts = {
+        f"a{i}": "Emirati agents captured X in Dubai in 2002." for i in range(1, 6)
+    }
+    texts.update({f"p{i}": "X, briefly." for i in range(8)})
+
+    def irrelevant_ids():
+        cases = pc.build_cases(manifest, steps, texts, at_steps=(1, 2, 3, 4))
+        return [c["article_id"] for c in cases if c["kind"] == "irrelevant"]
+
+    before = irrelevant_ids()
+    monkeypatch.setattr(pc, "make_disputed_article", lambda *a, **kw: None)
+    assert irrelevant_ids() == before

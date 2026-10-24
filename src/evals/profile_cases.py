@@ -236,7 +236,13 @@ def build_cases(
     seed: int = 0,
 ) -> Iterator[Dict[str, Any]]:
     """Yield the cases for one entity's snapshots."""
-    rng = random.Random(f"{seed}:{manifest['entity']['name']}")
+    name = manifest["entity"]["name"]
+
+    def rng(kind: str, step: int) -> random.Random:
+        # One generator per kind and step, so a change to how one kind is
+        # built doesn't reshuffle the articles every other case uses
+        return random.Random(f"{seed}:{name}:{kind}:{step}")
+
     chosen = manifest["articles"]
     passing = [a for a in manifest.get("passing_mentions", []) if a["id"] in texts]
     for k in at_steps:
@@ -256,7 +262,8 @@ def build_cases(
             and a["published_date"] <= latest
         ]
         pool = in_time or passing
-        for article in rng.sample(pool, min(IRRELEVANT_PER_STEP, len(pool))):
+        draw = rng("irrelevant", k).sample(pool, min(IRRELEVANT_PER_STEP, len(pool)))
+        for article in draw:
             yield _case(
                 "irrelevant",
                 manifest,
@@ -280,7 +287,9 @@ def build_cases(
             {"must_cite": next_id},
         )
 
-        disputed = make_disputed_article(texts[next_id], profile_text, rng)
+        disputed = make_disputed_article(
+            texts[next_id], profile_text, rng("disputed", k)
+        )
         if disputed:
             yield _case(
                 "disputed",
