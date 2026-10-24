@@ -31,6 +31,16 @@ frontend:
 alias web := frontend
 alias ui := frontend
 
+# ─── Evaluation ───────────────────────────────────────
+
+# Score a model on hand-labelled gold sets (e.g. `just eval relevance --model ollama/qwen3.6:35b-a3b`)
+eval *args:
+    uv run python -m src.evals {{args}}
+
+# Mine hard merge pairs from existing entities for labelling
+eval-mine *args:
+    uv run python -m src.evals.mine_merge_pairs {{args}}
+
 # ─── Data Management ──────────────────────────────────
 
 # Check article database statistics
