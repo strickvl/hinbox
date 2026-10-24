@@ -41,6 +41,7 @@ def _counters():
         "processed_count": 0,
         "skipped_relevance_count": 0,
         "skipped_relevance_error": 0,
+        "skipped_relevance_cached": 0,
         "skipped_already_processed": 0,
         "skipped_no_content": 0,
     }
@@ -131,4 +132,5 @@ class TestMergeActorSkipAccounting:
 
         assert counters["skipped_relevance_count"] == 1
         assert counters["skipped_relevance_error"] == 0
-        tracker.mark_skipped.assert_called_once_with("art-001", "not_relevant")
+        tracker.mark_skipped.assert_called_once()
+        assert tracker.mark_skipped.call_args.args == ("art-001", "not_relevant")
