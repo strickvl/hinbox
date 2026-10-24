@@ -48,9 +48,22 @@ class ProcessingStatus:
         """Mark an article as processed and store its metadata."""
         self._status[article_id] = metadata
 
-    def mark_skipped(self, article_id: str, reason: str) -> None:
-        """Mark an article as skipped (not relevant, no content, etc.)."""
-        self._status[article_id] = {"processed": False, "reason": reason}
+    def mark_skipped(
+        self,
+        article_id: str,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Mark an article as skipped (not relevant, no content, etc.).
+
+        *metadata* (e.g. ``content_hash``) is stored alongside the reason so a
+        later run can decide whether the skip still applies.
+        """
+        self._status[article_id] = {
+            **(metadata or {}),
+            "processed": False,
+            "reason": reason,
+        }
 
     def flush(self) -> None:
         """Write current status to disk atomically."""

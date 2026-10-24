@@ -1,5 +1,6 @@
 from typing import Any, Dict, List, Optional
 
+from src.config_loader import get_system_prompt
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 
 # Use the consolidated extractor rather than per-entity wrappers
@@ -7,6 +8,7 @@ from src.engine.extractors import EntityExtractor
 from src.engine.relevance import gemini_check_relevance, ollama_check_relevance
 from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
+from src.utils.cache_utils import sha256_text
 from src.utils.error_handler import handle_article_processing_error
 from src.utils.outcomes import PhaseOutcome
 from src.utils.quality_controls import (
@@ -66,6 +68,21 @@ class ArticleProcessor:
             OLLAMA_MODEL if self.model_type == "ollama" else CLOUD_MODEL
         )
         self.logger = logger
+        self._relevance_fingerprint: Optional[str] = None
+
+    def relevance_fingerprint(self) -> str:
+        """Hash of the model and relevance prompt that produce a verdict.
+
+        A stored "not relevant" verdict is only reused while this matches, so
+        changing the model or editing the domain's relevance prompt makes
+        every article get checked again.
+        """
+        if self._relevance_fingerprint is None:
+            prompt = get_system_prompt("relevance", self.domain)
+            self._relevance_fingerprint = sha256_text(
+                f"{self.specific_model}\n{prompt}"
+            )
+        return self._relevance_fingerprint
 
     def check_relevance(
         self,

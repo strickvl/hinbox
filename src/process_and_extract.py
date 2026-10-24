@@ -370,6 +370,7 @@ def log_processing_summary(
     entities: Dict[str, Dict],
     processed_rows: List[Dict],
     skipped_relevance_error: int = 0,
+    skipped_relevance_cached: int = 0,
 ) -> None:
     """Log comprehensive processing summary and statistics."""
     log("\n[bold]Processing complete[/bold]", level="info")
@@ -378,6 +379,12 @@ def log_processing_summary(
     log(f"Articles read: {article_count}", level="info")
     log(f"Articles processed: {processed_count}", level="info")
     log(f"Articles skipped (relevance): {skipped_relevance_count}", level="info")
+    if skipped_relevance_cached:
+        log(
+            f"Articles skipped (not relevant in an earlier run, unchanged, "
+            f"no LLM call): {skipped_relevance_cached}",
+            level="info",
+        )
     if skipped_relevance_error:
         log(
             f"Articles skipped (relevance check failed, will retry next run): "
@@ -495,6 +502,7 @@ def write_results_and_statistics(
     base_dir: str,
     status_tracker: ProcessingStatus = None,
     skipped_relevance_error: int = 0,
+    skipped_relevance_cached: int = 0,
 ) -> None:
     """Write results to files and log comprehensive statistics."""
     # Flush processing status sidecar (replaces full articles rewrite)
@@ -515,6 +523,7 @@ def write_results_and_statistics(
         entities,
         processed_rows,
         skipped_relevance_error=skipped_relevance_error,
+        skipped_relevance_cached=skipped_relevance_cached,
     )
 
 
@@ -580,6 +589,24 @@ def extract_single_article_only(
 
     # Relevance check
     if args.relevance_check:
+        relevance_fp = processor.relevance_fingerprint()
+        processing_metadata["relevance_fingerprint"] = relevance_fp
+        # Reuse an earlier "not relevant" verdict while the article text, model
+        # and relevance prompt are all unchanged, instead of paying for the
+        # same LLM call again on every run.
+        if (
+            skip_if_unchanged
+            and not args.force_reprocess
+            and prior.get("reason") == "not_relevant"
+            and prior.get("content_hash") == content_hash
+            and prior.get("relevance_fingerprint") == relevance_fp
+        ):
+            processing_metadata["processed"] = False
+            processing_metadata["reason"] = "Not relevant"
+            return ArticleExtractionResult(
+                **{**empty.__dict__, "skip_reason": "not_relevant_cached"}
+            )
+
         rel_outcome = processor.check_relevance(article_info["content"], article_id)
         processing_metadata.setdefault("phase_outcomes", {})
         processing_metadata["phase_outcomes"]["relevance"] = (
@@ -649,7 +676,20 @@ def merge_and_finalize(
         if reason == "not_relevant":
             counters["skipped_relevance_count"] += 1
             if status_tracker:
-                status_tracker.mark_skipped(article_id, "not_relevant")
+                # Store what produced the verdict so the next run can reuse it
+                status_tracker.mark_skipped(
+                    article_id,
+                    "not_relevant",
+                    metadata={
+                        "content_hash": result.processing_metadata.get("content_hash"),
+                        "relevance_fingerprint": result.processing_metadata.get(
+                            "relevance_fingerprint"
+                        ),
+                    },
+                )
+        elif reason == "not_relevant_cached":
+            # Sidecar entry from the earlier run is still valid; leave it as is
+            counters["skipped_relevance_cached"] += 1
         elif reason == "relevance_error":
             counters["skipped_relevance_error"] += 1
             if status_tracker:
@@ -721,6 +761,7 @@ def process_articles_batch(
         "processed_count": 0,
         "skipped_relevance_count": 0,
         "skipped_relevance_error": 0,
+        "skipped_relevance_cached": 0,
         "skipped_already_processed": 0,
         "skipped_no_content": 0,
     }
@@ -898,6 +939,7 @@ def main():
         base_dir,
         status_tracker=status_tracker,
         skipped_relevance_error=counters["skipped_relevance_error"],
+        skipped_relevance_cached=counters["skipped_relevance_cached"],
     )
 
 
