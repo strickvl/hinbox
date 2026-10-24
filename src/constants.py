@@ -30,6 +30,10 @@ BASE_DELAY = 2.0
 
 # LLM generation defaults
 DEFAULT_MAX_TOKENS = 2048
+# A profile is rewritten whole on every update, so its output grows with it.
+# At 2048 tokens profiles stop at roughly 6-7k characters: the JSON is cut off
+# mid-way and the update fails.
+PROFILE_MAX_TOKENS = int(os.getenv("HINBOX_PROFILE_MAX_TOKENS", "16384"))
 DEFAULT_TEMPERATURE = 0
 MAX_ITERATIONS = 3
 

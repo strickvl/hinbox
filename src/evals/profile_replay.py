@@ -226,8 +226,9 @@ def replay_entity(
                 "model": model,
                 "article": article,
                 "profile": profile,
-                # update_profile falls back to the old profile when the model
-                # call fails, so an identical text usually means a failed update
+                # update_profile keeps the old profile when the model's answer
+                # can't be parsed, so identical text usually means a failed
+                # update. (A failed API call raises instead and stops the entity.)
                 "unchanged": profile.get("text") == previous_text,
                 "profile_versions": versioned.model_dump(mode="json"),
                 "reflection_history": history,
@@ -331,6 +332,8 @@ def main() -> None:
         status = f"[red]stopped: {error}[/]" if error else "[green]done[/]"
         console.print(f"{name}: {steps} steps saved, {status}")
     console.print(f"Snapshots in {root}")
+    if any(error for _, _, error in results):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

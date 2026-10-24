@@ -704,6 +704,7 @@ def iterative_improve(
     max_iterations: int = MAX_ITERATIONS,
     mode: GenerationMode = GenerationMode.CLOUD,
     model: str = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> Dict[str, Any]:
     """
     Iteratively improve text using generation and reflection.
@@ -716,6 +717,7 @@ def iterative_improve(
         max_iterations: Maximum improvement iterations
         mode: Whether to use cloud or local model
         model: Optional model override
+        max_tokens: Output token limit for each regeneration
 
     Returns:
         Dict containing final text and reflection history
@@ -772,12 +774,14 @@ def iterative_improve(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or CLOUD_MODEL,
+                max_tokens=max_tokens,
             )
         else:
             improved = local_generation(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or OLLAMA_MODEL,
+                max_tokens=max_tokens,
             )
 
         # Serialize the full structured response to preserve all fields

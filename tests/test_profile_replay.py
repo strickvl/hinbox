@@ -112,3 +112,17 @@ def test_replay_refuses_to_resume_a_different_article_order(tmp_path, fake_profi
         pr.replay_entity(ENTITY, [{"id": "b1"}], texts, str(tmp_path), "m", "d")
     # A shorter run over the same order is fine (nothing left to do)
     assert pr.replay_entity(ENTITY, [{"id": "a1"}], texts, str(tmp_path), "m", "d") == 2
+
+
+def test_profile_draft_uses_the_profile_token_limit(monkeypatch):
+    seen = {}
+
+    def fake_cloud(messages, response_model, model, max_tokens, temperature):
+        seen["max_tokens"] = max_tokens
+        return None
+
+    monkeypatch.setattr(profiles, "cloud_generation", fake_cloud)
+    from src.utils.llm import GenerationMode
+
+    profiles._generate_initial_profile_text([], GenerationMode.CLOUD, "openai/x")
+    assert seen["max_tokens"] == profiles.PROFILE_MAX_TOKENS > 2048

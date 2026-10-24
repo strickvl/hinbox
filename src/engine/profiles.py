@@ -13,6 +13,7 @@ from src.constants import (
     ENABLE_PROFILE_VERSIONING,
     MAX_ITERATIONS,
     OLLAMA_MODEL,
+    PROFILE_MAX_TOKENS,
 )
 from src.exceptions import (
     ProfileGenerationError,
@@ -56,6 +57,7 @@ def _generate_initial_profile_text(
             messages=messages,
             response_model=EntityProfile,
             model=model or CLOUD_MODEL,
+            max_tokens=PROFILE_MAX_TOKENS,
             temperature=DEFAULT_TEMPERATURE,
         )
     else:
@@ -63,6 +65,7 @@ def _generate_initial_profile_text(
             messages=messages,
             response_model=EntityProfile,
             model=model or OLLAMA_MODEL,
+            max_tokens=PROFILE_MAX_TOKENS,
             temperature=DEFAULT_TEMPERATURE,
         )
     return response.model_dump_json() if response else "{}"
@@ -207,6 +210,7 @@ def generate_profile_with_reflection(
         max_iterations=max_iterations,
         mode=mode,
         model=model,
+        max_tokens=PROFILE_MAX_TOKENS,
     )
 
     # Extract final result
@@ -361,6 +365,7 @@ New Article (ID: {new_article_id}):
             max_iterations=3,
             mode=generation_mode,
             model=model,
+            max_tokens=PROFILE_MAX_TOKENS,
         )
 
         final_result = None
