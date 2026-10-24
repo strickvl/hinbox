@@ -126,3 +126,12 @@ def test_profile_draft_uses_the_profile_token_limit(monkeypatch):
 
     profiles._generate_initial_profile_text([], GenerationMode.CLOUD, "openai/x")
     assert seen["max_tokens"] == profiles.PROFILE_MAX_TOKENS > 2048
+
+
+def test_select_articles_puts_undated_articles_last():
+    articles = [
+        _article("undated", "Zubaydah Zubaydah", None),
+        _article("dated", "Zubaydah Zubaydah", "2024-01-01"),
+    ]
+    chosen, _ = pr.select_articles(articles, ENTITY, max_articles=10)
+    assert [a["id"] for a in chosen] == ["dated", "undated"]

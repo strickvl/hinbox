@@ -121,8 +121,11 @@ def select_articles(
         elif mentions == 1:
             passing.append(row)
 
-    def by_date(row: Dict[str, Any]) -> Tuple[Any, str]:
-        return row["published_date"] or 0, row["id"]
+    def by_date(row: Dict[str, Any]) -> Tuple[bool, Any, str]:
+        # Undated articles go last; the flag keeps None from being compared
+        # with a date of another type (int timestamp, string, datetime)
+        date = row["published_date"]
+        return date is None, date if date is not None else 0, row["id"]
 
     return sorted(substantive, key=by_date)[:max_articles], sorted(passing, key=by_date)
 
