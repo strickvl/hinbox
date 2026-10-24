@@ -37,6 +37,10 @@ alias ui := frontend
 eval *args:
     uv run python -m src.evals {{args}}
 
+# Grow long profiles by replaying well-covered entities' articles in date order
+eval-replay *args:
+    uv run python -m src.evals.profile_replay {{args}}
+
 # Mine hard merge pairs from existing entities for labelling
 eval-mine *args:
     uv run python -m src.evals.mine_merge_pairs {{args}}

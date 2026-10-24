@@ -13,6 +13,7 @@ from src.constants import (
     ENABLE_PROFILE_VERSIONING,
     MAX_ITERATIONS,
     OLLAMA_MODEL,
+    PROFILE_MAX_TOKENS,
 )
 from src.exceptions import (
     ProfileGenerationError,
@@ -36,20 +37,35 @@ from src.utils.quality_controls import run_profile_qc
 logger = get_logger("profiles")
 
 
-def _generate_initial_profile_text(messages: List[Dict], mode: GenerationMode) -> str:
+def _resolve_mode(model_type: str, model: Optional[str]) -> GenerationMode:
+    """An explicit ``model`` decides cloud vs local by its prefix; else ``model_type``."""
+    if model:
+        return (
+            GenerationMode.LOCAL
+            if model.startswith("ollama/")
+            else GenerationMode.CLOUD
+        )
+    return GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
+
+
+def _generate_initial_profile_text(
+    messages: List[Dict], mode: GenerationMode, model: Optional[str] = None
+) -> str:
     """Generate a first-draft profile and return it as JSON text for reflection."""
     if mode == GenerationMode.CLOUD:
         response = cloud_generation(
             messages=messages,
             response_model=EntityProfile,
-            model=CLOUD_MODEL,
+            model=model or CLOUD_MODEL,
+            max_tokens=PROFILE_MAX_TOKENS,
             temperature=DEFAULT_TEMPERATURE,
         )
     else:
         response = local_generation(
             messages=messages,
             response_model=EntityProfile,
-            model=OLLAMA_MODEL,
+            model=model or OLLAMA_MODEL,
+            max_tokens=PROFILE_MAX_TOKENS,
             temperature=DEFAULT_TEMPERATURE,
         )
     return response.model_dump_json() if response else "{}"
@@ -149,6 +165,7 @@ def generate_profile_with_reflection(
     model_type: str = "gemini",
     max_iterations: int = MAX_ITERATIONS,
     domain: str = "guantanamo",
+    model: Optional[str] = None,
 ) -> (Dict, list):
     """
     Generate a profile with reflection and improvement.
@@ -181,8 +198,8 @@ def generate_profile_with_reflection(
     )
 
     # Generate initial profile text for iterative improvement
-    mode = GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
-    initial_text = _generate_initial_profile_text(generation_messages, mode)
+    mode = _resolve_mode(model_type, model)
+    initial_text = _generate_initial_profile_text(generation_messages, mode, model)
 
     # Use iterative_improve to refine the profile
     result = iterative_improve(
@@ -192,6 +209,8 @@ def generate_profile_with_reflection(
         response_model=EntityProfile,
         max_iterations=max_iterations,
         mode=mode,
+        model=model,
+        max_tokens=PROFILE_MAX_TOKENS,
     )
 
     # Extract final result
@@ -241,6 +260,7 @@ def generate_profile(
     article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    model: Optional[str] = None,
 ) -> (Dict, list):
     """
     Generate a profile for an entity based on article text using structured extraction.
@@ -254,6 +274,7 @@ def generate_profile(
         article_id=article_id,
         model_type=model_type,
         domain=domain,
+        model=model,
     )
     return profile_dict, improvement_history
 
@@ -266,6 +287,7 @@ def _update_profile_internal(
     new_article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    model: Optional[str] = None,
 ) -> Tuple[Dict, list]:
     """
     Internal function to update an existing profile with new information from an article.
@@ -275,7 +297,7 @@ def _update_profile_internal(
     """
     log(
         f"Updating profile for {entity_type} '{entity_name}' "
-        f"(model={model_type}, article={new_article_id}, "
+        f"(model={model or model_type}, article={new_article_id}, "
         f"existing={len(existing_profile.get('text', ''))}ch, new={len(new_article_text)}ch)",
         level="debug",
     )
@@ -311,9 +333,7 @@ New Article (ID: {new_article_id}):
         # For the iterative process, we treat the entire text above as the 'prompt' so the LLM merges them.
         # Import already at module level
 
-        generation_mode = (
-            GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
-        )
+        generation_mode = _resolve_mode(model_type, model)
 
         # Build messages for iterative improvement
         generation_messages = [
@@ -333,7 +353,7 @@ New Article (ID: {new_article_id}):
         # Draft the merged profile first, so the first reflection grades a
         # real profile instead of an empty "{}" (which always fails).
         initial_text = _generate_initial_profile_text(
-            generation_messages, generation_mode
+            generation_messages, generation_mode, model
         )
 
         # We'll use the same EntityProfile structure for the updated profile.
@@ -344,6 +364,8 @@ New Article (ID: {new_article_id}):
             response_model=EntityProfile,
             max_iterations=3,
             mode=generation_mode,
+            model=model,
+            max_tokens=PROFILE_MAX_TOKENS,
         )
 
         final_result = None
@@ -443,6 +465,7 @@ def update_profile(
     new_article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    model: Optional[str] = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Update profile and add version if versioning is enabled.
@@ -458,6 +481,7 @@ def update_profile(
         new_article_id,
         model_type,
         domain,
+        model,
     )
 
     updated_profile = _apply_profile_qc(updated_profile, entity_name)
@@ -478,6 +502,7 @@ def create_profile(
     article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    model: Optional[str] = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Create an initial profile for an entity based on article text using structured extraction.
@@ -485,7 +510,7 @@ def create_profile(
     """
     log(
         f"Creating profile for {entity_type} '{entity_name}' "
-        f"(model={model_type}, article={article_id}, {len(article_text)}ch)",
+        f"(model={model or model_type}, article={article_id}, {len(article_text)}ch)",
         level="debug",
     )
 
@@ -497,6 +522,7 @@ def create_profile(
             article_id,
             model_type,
             domain,
+            model,
         )
 
         # Extract the actual text from nested/parsed fields before logging

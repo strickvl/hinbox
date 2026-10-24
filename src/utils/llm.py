@@ -14,6 +14,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Tuple,
     Type,
     get_args,
     get_origin,
@@ -177,11 +178,21 @@ _OPENAI_NO_REASONING_OK = re.compile(r"^(gpt-5\.\d|gpt-6)")
 _ANTHROPIC_NO_TEMPERATURE = re.compile(r"^claude-[a-z]+-5")
 
 
+# Output-token ceilings for models that reject a larger request. Profile calls
+# ask for up to PROFILE_MAX_TOKENS, which these models can't produce anyway.
+_OUTPUT_TOKEN_CAPS: Tuple[Tuple[re.Pattern, int], ...] = (
+    (re.compile(r"^gemini-(1\.5|2\.0)"), 8192),
+)
+
+
 def _sampling_kwargs(
     target: ProviderTarget, max_tokens: int, temperature: float
 ) -> Dict[str, Any]:
     """Length/temperature/reasoning parameters the target model accepts."""
     model = target.api_model
+    for pattern, cap in _OUTPUT_TOKEN_CAPS:
+        if pattern.match(model):
+            max_tokens = min(max_tokens, cap)
     if target.provider_label == "openai" and _OPENAI_REASONING_MODEL.match(model):
         kwargs: Dict[str, Any] = {"max_completion_tokens": max_tokens}
         if _OPENAI_NO_REASONING_OK.match(model):
@@ -704,6 +715,7 @@ def iterative_improve(
     max_iterations: int = MAX_ITERATIONS,
     mode: GenerationMode = GenerationMode.CLOUD,
     model: str = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> Dict[str, Any]:
     """
     Iteratively improve text using generation and reflection.
@@ -716,6 +728,7 @@ def iterative_improve(
         max_iterations: Maximum improvement iterations
         mode: Whether to use cloud or local model
         model: Optional model override
+        max_tokens: Output token limit for each regeneration
 
     Returns:
         Dict containing final text and reflection history
@@ -772,12 +785,14 @@ def iterative_improve(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or CLOUD_MODEL,
+                max_tokens=max_tokens,
             )
         else:
             improved = local_generation(
                 messages=improvement_messages,
                 response_model=response_model,
                 model=model or OLLAMA_MODEL,
+                max_tokens=max_tokens,
             )
 
         # Serialize the full structured response to preserve all fields
