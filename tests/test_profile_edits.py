@@ -140,3 +140,15 @@ def test_edit_profile_keeps_the_disagreements_it_found(monkeypatch):
     )
     assert out["disagreements"][0]["article_says"] == "moved in 2007"
     assert "2006.^[a2] Another report says 2007.^[a9]" in out["text"]
+
+
+def test_edit_list_accepts_lists_sent_as_json_strings():
+    parsed = ProfileEditList.model_validate(
+        {
+            "disagreements": "[]",
+            "new_facts": '["He was arraigned in 2011."]',
+            "edits": '[{"op": "add", "anchor": "END", "text": "Arraigned.^[a9]"}]',
+        }
+    )
+    assert parsed.new_facts == ["He was arraigned in 2011."]
+    assert parsed.edits[0].text == "Arraigned.^[a9]"
