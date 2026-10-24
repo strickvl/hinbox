@@ -216,6 +216,8 @@ just eval-mine
 ```
 Gold files live in `{output_dir}/eval/`. Each run writes its per-item predictions to `eval/runs/` and adds one row to `eval/scoreboard.jsonl`. Items are split 60/20/20 into train/dev/test by a stable hash, so anything tuned on `train` is never graded on `test`. Results report balanced accuracy next to the "always give the common answer" baseline, because the label sets are lopsided.
 
+**DSPy experiments** live in [`experiments/dspy_opt/`](experiments/dspy_opt/README.md), in their own environment, so DSPy never enters Hinbox's main dependencies, and LiteLLM is never installed. `just dspy-merge --model <model> --optimizer mipro` optimises the merge check for one model and puts the result on the same scoreboard.
+
 ### Data Management
 ```bash
 # Check processing status

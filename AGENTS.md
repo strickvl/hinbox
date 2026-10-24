@@ -51,6 +51,7 @@ This document helps contributors work effectively in this repository.
 - Start frontend: `just frontend` (http://localhost:5001)
 - Domain management: `just domains` / `just init <name>`
 - Evaluate a model on the gold sets: `just eval <relevance|merge> --model <model>`; `just eval show` prints the scoreboard
+- DSPy experiments live in `experiments/dspy_opt/` (separate uv project, no LiteLLM): `just dspy-merge --model <model> --optimizer mipro`, `just dspy-test`
 
 ## Coding Style & Naming Conventions
 - Python 3.12+; 4-space indent; max line length 88.
