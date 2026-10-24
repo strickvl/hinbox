@@ -12,7 +12,9 @@ Usage::
 
 Each output row follows the ``merge_candidates.jsonl`` shape, with the full
 profile text (capped) instead of a 200-character snippet, plus a ``split``
-field. Rows in the ``test`` split are meant to be labelled blind.
+field and a ``pair_id`` that stays unique even when two entities share a name.
+Rows in the ``test`` split are meant to be labelled blind; label files for
+this set must carry the ``pair_id`` of each pair.
 """
 
 import argparse
@@ -29,6 +31,7 @@ from rapidfuzz import fuzz
 from src.config_loader import DomainConfig
 from src.evals.datasets import assign_split
 from src.logging_config import console
+from src.utils.cache_utils import sha256_text
 
 # Share of the total per entity type (people and organisations dominate the data)
 TYPE_SHARES: Dict[str, float] = {
@@ -85,6 +88,10 @@ def load_entities(output_dir: str, entity_type: str) -> List[Dict[str, Any]]:
                 if isinstance(profile, dict)
                 else "",
                 "embedding": np.asarray(embedding, dtype=np.float32),
+                # Vectors from different models or sizes are never compared
+                "fingerprint": row.get("profile_embedding_fingerprint")
+                or f"unknown:{len(embedding)}",
+                "start_date": str(row.get("start_date") or ""),
             }
         )
     return entities
@@ -95,15 +102,36 @@ def _name_similarity(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 
 
 def score_pairs(entities: List[Dict[str, Any]]) -> List[Tuple[int, int, float, float]]:
-    """All within-type pairs as ``(i, j, name_similarity 0-100, cosine)``."""
-    matrix = np.stack([e["embedding"] for e in entities])
-    matrix = matrix / np.clip(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-9, None)
-    cosine = matrix @ matrix.T
-    return [
-        (i, j, _name_similarity(entities[i], entities[j]), float(cosine[i, j]))
-        for i in range(len(entities))
-        for j in range(i + 1, len(entities))
+    """Within-type pairs as ``(i, j, name_similarity 0-100, cosine)``.
+
+    Only entities whose embeddings share a fingerprint (same model and size)
+    are paired, matching ``embeddings_compatible()`` in the merge pipeline.
+    """
+    groups: Dict[str, List[int]] = {}
+    for idx, entity in enumerate(entities):
+        groups.setdefault(entity["fingerprint"], []).append(idx)
+    pairs = []
+    for members in groups.values():
+        matrix = np.stack([entities[i]["embedding"] for i in members])
+        matrix = matrix / np.clip(
+            np.linalg.norm(matrix, axis=1, keepdims=True), 1e-9, None
+        )
+        cosine = matrix @ matrix.T
+        pairs.extend(
+            (i, j, _name_similarity(entities[i], entities[j]), float(cosine[a, b]))
+            for a, i in enumerate(members)
+            for b, j in enumerate(members)
+            if a < b
+        )
+    return pairs
+
+
+def _pair_id(entity_type: str, a: Dict[str, Any], b: Dict[str, Any]) -> str:
+    """Stable id for a pair, distinct even when two entities share a name."""
+    parts = [entity_type] + [
+        f"{e['name']}|{e['start_date']}|{e['text']}" for e in (a, b)
     ]
+    return sha256_text("\x1f".join(parts))[:16]
 
 
 def pick_hard_pairs(
@@ -174,6 +202,7 @@ def mine(output_dir: str, total: int, seed: int = 13) -> List[Dict[str, Any]]:
             item_id = f"merge:{_SINGULAR[entity_type]}:{a['name']}|{b['name']}"
             rows.append(
                 {
+                    "pair_id": _pair_id(entity_type, a, b),
                     "entity_name": a["name"],
                     "candidate_name": b["name"],
                     "entity_type": _SINGULAR[entity_type],

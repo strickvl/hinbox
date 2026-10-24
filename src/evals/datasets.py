@@ -28,6 +28,8 @@ class EvalItem:
     item_id: str
     label: bool
     inputs: Dict[str, Any] = field(default_factory=dict)
+    # Fixed split recorded with the data (mined pairs); else hashed from item_id
+    split: Optional[str] = None
 
 
 def assign_split(item_id: str) -> str:
@@ -43,7 +45,9 @@ def assign_split(item_id: str) -> str:
 def filter_split(items: List[EvalItem], split: str) -> List[EvalItem]:
     if split == "all":
         return items
-    return [item for item in items if assign_split(item.item_id) == split]
+    return [
+        item for item in items if (item.split or assign_split(item.item_id)) == split
+    ]
 
 
 def _read_jsonl(path: str) -> List[Dict[str, Any]]:
@@ -143,7 +147,10 @@ def load_merge_items(eval_dir: str, merge_set: str = "v2") -> List[EvalItem]:
     """
     suffix = "" if merge_set == "v1" else f"_{merge_set}"
 
-    def key(row: Dict[str, Any]) -> Tuple[str, str, str]:
+    def key(row: Dict[str, Any]) -> Any:
+        # Mined pairs carry a pair_id, which stays unique when names repeat
+        if row.get("pair_id"):
+            return row["pair_id"]
         return (
             _clean_name(row["entity_name"]),
             _clean_name(row["candidate_name"]),
@@ -161,13 +168,19 @@ def load_merge_items(eval_dir: str, merge_set: str = "v2") -> List[EvalItem]:
     )
 
     items = []
-    for (entity_name, candidate_name, entity_type), row in gold.items():
+    for gold_key, row in gold.items():
         if row["label"] not in ("yes", "no"):
             continue
-        cand = candidates.get((entity_name, candidate_name, entity_type), {})
+        entity_name = _clean_name(row["entity_name"])
+        candidate_name = _clean_name(row["candidate_name"])
+        entity_type = row["entity_type"]
+        cand = candidates.get(gold_key, {})
+        item_id = f"merge:{entity_type}:{entity_name}|{candidate_name}"
         items.append(
             EvalItem(
-                item_id=f"merge:{entity_type}:{entity_name}|{candidate_name}",
+                item_id=f"{item_id}#{row['pair_id']}"
+                if row.get("pair_id")
+                else item_id,
                 label=row["label"] == "yes",
                 inputs={
                     "new_name": entity_name,
@@ -176,6 +189,7 @@ def load_merge_items(eval_dir: str, merge_set: str = "v2") -> List[EvalItem]:
                     "existing_profile_text": cand.get("candidate_context", ""),
                     "entity_type": _PLURAL_TYPES.get(entity_type, entity_type),
                 },
+                split=cand.get("split"),
             )
         )
     return items

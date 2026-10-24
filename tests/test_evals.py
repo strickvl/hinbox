@@ -149,6 +149,46 @@ class TestGoldLoading:
         [item] = load_merge_items(str(tmp_path), "v2")
         assert item.label is True and item.inputs["entity_type"] == "organizations"
 
+    def test_mined_pairs_with_same_names_stay_separate(self, tmp_path):
+        row = {
+            "entity_name": "Miami Herald",
+            "candidate_name": "Miami Herald",
+            "entity_type": "organization",
+        }
+        _write_jsonl(
+            tmp_path / "merge_candidates_v2.jsonl",
+            [
+                {
+                    **row,
+                    "pair_id": "p1",
+                    "entity_context": "one",
+                    "candidate_context": "x",
+                    "split": "test",
+                },
+                {
+                    **row,
+                    "pair_id": "p2",
+                    "entity_context": "two",
+                    "candidate_context": "y",
+                    "split": "train",
+                },
+            ],
+        )
+        _write_jsonl(
+            tmp_path / "merge_gold_v2.jsonl",
+            [
+                {**row, "pair_id": "p1", "label": "yes", "timestamp": "t"},
+                {**row, "pair_id": "p2", "label": "no", "timestamp": "t"},
+            ],
+        )
+        items = {i.item_id: i for i in load_merge_items(str(tmp_path), "v2")}
+        assert len(items) == 2
+        p1 = items["merge:organization:Miami Herald|Miami Herald#p1"]
+        assert p1.label is True and p1.inputs["new_profile_text"] == "one"
+        assert [i.item_id for i in filter_split(list(items.values()), "test")] == [
+            p1.item_id
+        ]
+
 
 class TestRunner:
     def test_run_records_errors_and_appends_scoreboard(self, tmp_path):
