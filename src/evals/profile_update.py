@@ -182,12 +182,13 @@ def make_pipeline_updater(model: str, domain: str) -> Updater:
             domain=domain,
             model=model,
         )
-        text = profile.get("text", "")
         # update_profile hands back the old profile when the model's answer
-        # can't be parsed; scoring that would reward a failed call
-        if text == case["profile"].get("text", ""):
-            raise RuntimeError("update failed: the old profile came back unchanged")
-        return text
+        # can't be parsed; scoring that would reward a failed call. A real
+        # update always adds the article to ``sources`` (even when the text is
+        # rightly left word for word), and the fallback never does.
+        if case["article_id"] not in (profile.get("sources") or []):
+            raise RuntimeError("update failed: the old profile came back")
+        return profile.get("text", "")
 
     return update
 

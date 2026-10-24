@@ -119,7 +119,21 @@ def test_pipeline_updater_reports_a_fallback_to_the_old_profile(monkeypatch):
     monkeypatch.setattr(profiles, "update_profile", lambda *a, **kw: (a[2], a[3], []))
     update = pu.make_pipeline_updater("openai/x", "guantanamo")
     record = pu.run_updates([_case()], update)[0]
-    assert "unchanged" in record["error"] and "scores" not in record
+    assert "old profile came back" in record["error"] and "scores" not in record
+
+
+def test_pipeline_updater_accepts_a_word_for_word_no_op_update(monkeypatch):
+    import src.engine.profiles as profiles
+
+    def no_op(*a, **kw):
+        old, article_id = a[2], a[5]
+        return {**old, "sources": old["sources"] + [article_id]}, a[3], []
+
+    monkeypatch.setattr(profiles, "update_profile", no_op)
+    update = pu.make_pipeline_updater("openai/x", "guantanamo")
+    case = _case(kind="irrelevant", expected={"max_new_sentences": 2})
+    record = pu.run_updates([case], update)[0]
+    assert record["scores"]["passed"]
 
 
 def test_load_cases_filters_split_and_unreviewed(tmp_path):
