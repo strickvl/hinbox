@@ -5,13 +5,21 @@ do?". Three kinds can be built without a model or a human, because we know the
 right behaviour from how the case was made:
 
 - ``irrelevant``: the profile after step k, plus an article that names the
-  entity only once in passing. A good update changes almost nothing.
+  entity only once in passing. A good update keeps everything and changes
+  little. One mention can still carry a small new fact ("X was released"), so
+  adding a sentence or two is allowed; the case is scored on what was lost and
+  how much was rewritten. Articles from no later than the profile's latest
+  article are preferred, so the case doesn't jump years ahead.
 - ``new_fact``: the profile after step k, plus the real next article. A good
   update adds what is new, cites that article, and keeps everything else.
 - ``disputed``: the profile after step k, plus a copy of the next article with
   one year changed (2002 -> 2003) where the profile already states that year
   with a citation. A good update keeps both years, each with its own source,
-  and says they disagree. It should not silently pick one.
+  and says they disagree. It should not silently pick one. The year must
+  sit in sentences that share words in both texts, but whether they make the
+  same claim still needs review.
+
+Cases marked ``needs_review`` are not scored until their label is confirmed.
 
 ``superseded`` and ``corrected`` cases need judgement about what the article
 says, so they come later with model-drafted, human-checked labels.
@@ -43,6 +51,7 @@ IRRELEVANT_PER_STEP = 1
 _YEAR = re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 DISPUTED_SUFFIX = "-disputed"
+MIN_SHARED_WORDS = 2
 
 
 def load_snapshots(entity_dir: str) -> Tuple[Dict[str, Any], Dict[int, Dict[str, Any]]]:
@@ -58,40 +67,65 @@ def load_snapshots(entity_dir: str) -> Tuple[Dict[str, Any], Dict[int, Dict[str,
     return manifest, steps
 
 
-def cited_years(profile_text: str) -> Dict[str, List[str]]:
-    """Map each year in the profile to the article ids cited in its sentence."""
-    years: Dict[str, List[str]] = {}
-    for sentence in re.split(r"(?<=[.!?\]])\s+(?=[A-Z#])|\n+", profile_text):
+def _sentences(text: str) -> List[str]:
+    # A sentence ends at . ! ? or a citation's "]" followed by a capital or header
+    return [t for t in re.split(r"(?<=[.!?\]])\s+(?=[A-Z#])|\n+", text) if t.strip()]
+
+
+def _content_words(text: str) -> set:
+    """Lower-cased words of 5+ letters: enough to tell what a sentence is about."""
+    return set(re.findall(r"[a-z]{5,}", _CITATION.sub("", text).lower()))
+
+
+def cited_years(profile_text: str) -> Dict[str, List[Tuple[str, List[str]]]]:
+    """Map each year in the profile to the cited sentences that state it."""
+    years: Dict[str, List[Tuple[str, List[str]]]] = {}
+    for sentence in _sentences(profile_text):
         ids = _CITATION.findall(sentence)
-        if not ids:
-            continue
-        for year in _YEAR.findall(_CITATION.sub("", sentence)):
-            years.setdefault(year, [])
-            years[year].extend(i for i in ids if i not in years[year])
+        if ids:
+            for year in set(_YEAR.findall(_CITATION.sub("", sentence))):
+                years.setdefault(year, []).append((sentence, ids))
     return years
 
 
 def make_disputed_article(
-    article_text: str, profile_text: str, rng: random.Random
+    article_text: str,
+    profile_text: str,
+    rng: random.Random,
+    min_shared_words: int = MIN_SHARED_WORDS,
 ) -> Optional[Dict[str, Any]]:
-    """Change a year that the article shares with a cited profile sentence.
+    """Change a year that the article and a cited profile sentence both state.
 
     Only years that appear exactly once in the article are used, so the change
     hits one claim (like a reporting error) instead of shifting every date in
-    the story. Returns None when the article has no such year.
+    the story. The article sentence and the profile sentence must also share
+    ``min_shared_words`` content words, so "captured in 2002" isn't paired with
+    "charged in 2002". That is a heuristic, so these cases are marked for
+    review. Returns None when no year qualifies.
     """
     article_years = _YEAR.findall(article_text)
-    once = {y for y in article_years if article_years.count(y) == 1}
-    shared = sorted(set(cited_years(profile_text)) & once)
-    if not shared:
+    profile_years = cited_years(profile_text)
+    candidates = []
+    for year in sorted(y for y in set(article_years) if article_years.count(y) == 1):
+        article_sentence = next(
+            t for t in _sentences(article_text) if re.search(rf"\b{year}\b", t)
+        )
+        for sentence, ids in profile_years.get(year, []):
+            shared = _content_words(article_sentence) & _content_words(sentence)
+            if len(shared) >= min_shared_words:
+                candidates.append((year, article_sentence, sentence, ids))
+    if not candidates:
         return None
-    year = rng.choice(shared)
+    year, article_sentence, profile_sentence, ids = rng.choice(candidates)
     new_year = str(int(year) + rng.choice((-1, 1)))
     return {
         "text": re.sub(rf"\b{year}\b", new_year, article_text),
         "original_value": year,
         "disputed_value": new_year,
-        "original_sources": cited_years(profile_text)[year],
+        "original_sources": ids,
+        # Shown to the reviewer, who confirms both sentences make the same claim
+        "article_sentence": re.sub(rf"\b{year}\b", new_year, article_sentence),
+        "profile_sentence": profile_sentence,
     }
 
 
@@ -116,6 +150,9 @@ def _case(
         "article_id": article_id,
         "article_text": article_text,
         "expected": expected,
+        # Disputed labels come from a word-overlap heuristic, so they stay out
+        # of scoring until a person (or a checked model) confirms them
+        "needs_review": kind == "disputed",
         # Split by entity, so a tuned prompt never sees test entities at all
         "split": assign_split(entity["name"]),
     }
@@ -138,14 +175,27 @@ def build_cases(
             continue
         profile_text = snapshot["profile"].get("text", "")
 
-        for article in rng.sample(passing, min(IRRELEVANT_PER_STEP, len(passing))):
+        # Prefer passing mentions from no later than the profile's own timeline,
+        # so the case doesn't jump years ahead of what the profile knows
+        latest = chosen[k - 1].get("published_date") if k <= len(chosen) else None
+        in_time = [
+            a
+            for a in passing
+            if latest is not None
+            and a.get("published_date") is not None
+            and a["published_date"] <= latest
+        ]
+        pool = in_time or passing
+        for article in rng.sample(pool, min(IRRELEVANT_PER_STEP, len(pool))):
             yield _case(
                 "irrelevant",
                 manifest,
                 snapshot,
                 article["id"],
                 texts[article["id"]],
-                {"should_change": False},
+                # Scored on loss and churn only: one mention can still carry a
+                # small new fact, and adding it is fine
+                {"keep_all": True, "max_new_sentences": 2},
             )
 
         if k >= len(chosen) or chosen[k]["id"] not in texts:
