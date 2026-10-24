@@ -38,7 +38,24 @@ class ProfileEdit(BaseModel):
     text: str = Field(description="The new sentence(s), each ending in a citation")
 
 
+class Disagreement(BaseModel):
+    profile_sentence: str = Field(description="The profile sentence, copied exactly")
+    article_says: str = Field(description="What the article says instead")
+
+
 class ProfileEditList(BaseModel):
+    # Filled in before the edits, so the model checks for conflicts first
+    # (on the dev set it ignored conflicting years when only asked for edits)
+    disagreements: List[Disagreement] = Field(
+        default_factory=list,
+        description="Every claim where the article gives a different date, "
+        "number, name or outcome than the profile",
+    )
+    new_facts: List[str] = Field(
+        default_factory=list,
+        description="Facts about the entity in the article that the profile "
+        "doesn't have yet, in a few words each",
+    )
     edits: List[ProfileEdit] = Field(default_factory=list)
 
 
@@ -184,5 +201,6 @@ def edit_profile(
         "text": text,
         "sources": sources + ([article_id] if article_id not in sources else []),
         "edits": [e.model_dump() for e in response.edits],
+        "disagreements": [d.model_dump() for d in response.disagreements],
         "edit_report": report,
     }
