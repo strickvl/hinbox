@@ -52,6 +52,21 @@ _YEAR = re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 DISPUTED_SUFFIX = "-disputed"
 MIN_SHARED_WORDS = 2
+# Hashing 10 entity names into splits put 5 in test and left 3 to tune on, so
+# the replay entities get fixed splits: every entity type is in train, and
+# dev/test each hold two different types. Other entities fall back to hashing.
+ENTITY_SPLITS: Dict[str, str] = {
+    "Abd al Rahim al Nashiri": "train",
+    "James Pohl": "train",
+    "Abu Zubaydah": "train",
+    "U.S. Southern Command": "train",
+    "Camp Justice": "train",
+    "Guantánamo hunger strike": "train",
+    "International Committee of the Red Cross": "dev",
+    "USS Cole bombing": "dev",
+    "Vance Spath": "test",
+    "Camp 7": "test",
+}
 
 
 def load_snapshots(entity_dir: str) -> Tuple[Dict[str, Any], Dict[int, Dict[str, Any]]]:
@@ -154,7 +169,7 @@ def _case(
         # of scoring until a person (or a checked model) confirms them
         "needs_review": kind == "disputed",
         # Split by entity, so a tuned prompt never sees test entities at all
-        "split": assign_split(entity["name"]),
+        "split": ENTITY_SPLITS.get(entity["name"]) or assign_split(entity["name"]),
     }
 
 

@@ -89,3 +89,12 @@ def test_irrelevant_cases_prefer_articles_from_the_profiles_timeline():
     for seed in range(5):
         cases = list(pc.build_cases(manifest, steps, texts, at_steps=(1,), seed=seed))
         assert [c["article_id"] for c in cases] == ["old"]
+
+
+def test_replay_entities_have_fixed_splits_covering_every_type_in_train():
+    from src.evals.profile_replay import DEFAULT_ENTITIES
+
+    splits = {e.name: pc.ENTITY_SPLITS[e.name] for e in DEFAULT_ENTITIES}
+    assert sorted(splits.values()).count("train") == 6
+    train_types = {e.entity_type for e in DEFAULT_ENTITIES if splits[e.name] == "train"}
+    assert train_types == {"person", "organization", "location", "event"}

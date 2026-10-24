@@ -4,11 +4,13 @@ Examples::
 
     just eval relevance --model gemini/gemini-2.0-flash
     just eval merge --model ollama/qwen3.6:35b-a3b --split test
+    just eval profile-update --model openai/gpt-6-luna --split dev
     just eval show                       # print the scoreboard
 """
 
 import argparse
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from rich.table import Table
@@ -21,6 +23,12 @@ from src.evals.datasets import (
     filter_split,
     load_merge_items,
     load_relevance_items,
+)
+from src.evals.profile_update import (
+    load_cases,
+    make_pipeline_updater,
+    run_updates,
+    summarize_updates,
 )
 from src.evals.runner import (
     TASKS,
@@ -46,22 +54,66 @@ _COLUMNS = (
     ("f1", "F1"),
     ("median_seconds", "Median s"),
 )
+_UPDATE_COLUMNS = (
+    ("approach", "Approach"),
+    ("model", "Model"),
+    ("split", "Split"),
+    ("n", "N"),
+    ("errors", "Err"),
+    ("pass_rate", "Pass"),
+    ("pass_new_fact", "New fact"),
+    ("pass_irrelevant", "Irrelevant"),
+    ("pass_disputed", "Disputed"),
+    ("collapses", "Collapses"),
+    ("median_retention", "Kept facts"),
+    ("median_unchanged", "Unchanged"),
+    ("invented_citations", "Invented cites"),
+    ("median_seconds", "Median s"),
+)
 
 
-def _print_rows(rows: List[Dict[str, Any]], title: str) -> None:
+def _print_rows(rows: List[Dict[str, Any]], title: str, columns=_COLUMNS) -> None:
     table = Table(title=title)
-    for _, header in _COLUMNS:
+    for _, header in columns:
         table.add_column(header)
     for row in rows:
-        table.add_row(*(str(row.get(key, "")) for key, _ in _COLUMNS))
+        table.add_row(*(str(row.get(key, "")) for key, _ in columns))
     console.print(table)
+
+
+def _run_profile_update(args, parser, eval_dir: str) -> None:
+    try:
+        cases = load_cases(eval_dir, args.split, args.include_unreviewed)
+    except FileNotFoundError as e:
+        parser.error(f"Cases missing (run `just eval-cases`): {e.filename}")
+    cases = cases[: args.limit]
+    if not cases:
+        parser.error(f"No profile-update cases for split {args.split!r}")
+    configure_llm_concurrency(
+        cloud_in_flight=args.workers, local_in_flight=args.workers
+    )
+    updater = make_pipeline_updater(args.model, args.domain)
+    console.print(f"Updating {len(cases)} profiles with {args.model} …")
+    records = run_updates(cases, updater, workers=args.workers)
+    summary = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "task": "profile_update",
+        "dataset": "profile_update",
+        "model": args.model,
+        "approach": "pipeline",
+        "split": args.split,
+        **summarize_updates(records),
+    }
+    path = save_run(eval_dir, summary, records)
+    _print_rows([summary], "This run", _UPDATE_COLUMNS)
+    console.print(f"Updated profiles and scores: {path}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Score models on hand-labelled gold sets"
     )
-    parser.add_argument("task", choices=(*TASKS, "show"))
+    parser.add_argument("task", choices=(*TASKS, "profile-update", "show"))
     parser.add_argument(
         "--model", default=CLOUD_MODEL, help="e.g. ollama/qwen3.6:35b-a3b"
     )
@@ -75,13 +127,27 @@ def main() -> None:
     )
     parser.add_argument("--workers", type=int, default=4, help="parallel model calls")
     parser.add_argument("--eval-dir", default=None, help="default: {output_dir}/eval")
+    parser.add_argument(
+        "--include-unreviewed",
+        action="store_true",
+        help="profile-update: also score cases whose labels need review",
+    )
     args = parser.parse_args()
 
     domain_cfg = DomainConfig(args.domain)
     eval_dir = args.eval_dir or os.path.join(domain_cfg.get_output_dir(), "eval")
 
     if args.task == "show":
-        _print_rows(load_scoreboard(eval_dir), f"Scoreboard ({eval_dir})")
+        rows = load_scoreboard(eval_dir)
+        updates = [r for r in rows if r.get("task") == "profile_update"]
+        others = [r for r in rows if r.get("task") != "profile_update"]
+        _print_rows(others, f"Scoreboard ({eval_dir})")
+        if updates:
+            _print_rows(updates, "Profile updates", _UPDATE_COLUMNS)
+        return
+
+    if args.task == "profile-update":
+        _run_profile_update(args, parser, eval_dir)
         return
 
     if args.task == "relevance":

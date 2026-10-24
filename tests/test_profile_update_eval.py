@@ -1,0 +1,126 @@
+"""Offline tests for the profile-update scoring checks (no model calls)."""
+
+import json
+
+from src.evals import profile_update as pu
+
+OLD = (
+    "## Background\n"
+    "Nashiri was captured in Dubai in 2002 by local security forces.^[a1] "
+    "He was transferred to Guantanamo Bay detention camp in 2006 with others.^[a2] "
+    "His lawyer Nancy Hollander represented him before the commission.^[a3]"
+)
+
+
+def _case(kind="new_fact", article_id="a9", expected=None):
+    return {
+        "case_id": f"{kind}:x",
+        "kind": kind,
+        "split": "dev",
+        "entity_name": "Nashiri",
+        "entity_type": "person",
+        "profile": {"text": OLD, "sources": ["a1", "a2", "a3"]},
+        "article_id": article_id,
+        "article_text": "…",
+        "expected": expected or {"must_cite": article_id},
+    }
+
+
+def test_good_new_fact_update_passes():
+    new = OLD + " A military judge set his trial date for early 2014.^[a9]"
+    scores = pu.score_update(_case(), new)
+    assert scores["fact_retention"] == 1.0
+    assert scores["unchanged_share"] == 1.0
+    assert scores["added_sentences"] == 1
+    assert scores["cites_article"] and scores["passed"]
+
+
+def test_collapse_and_lost_facts_fail_even_when_new_fact_is_cited():
+    new = (
+        "## Background\nNashiri was captured in Dubai in 2002 by local security"
+        " forces.^[a1] A military judge set his trial date for early 2014.^[a9]"
+    )
+    scores = pu.score_update(_case(), new)
+    assert scores["facts_lost"] == 2
+    assert scores["length_ratio"] < pu.COLLAPSE_RATIO
+    assert not scores["passed"]
+
+
+def test_light_rewording_still_counts_as_kept():
+    new = OLD.replace("by local security forces", "by local forces") + (
+        " A military judge set his trial date for early 2014.^[a9]"
+    )
+    scores = pu.score_update(_case(), new)
+    assert scores["fact_retention"] == 1.0
+    assert scores["unchanged_share"] < 1.0
+
+
+def test_invented_citation_fails():
+    new = OLD + " He was moved to Camp 7 later that year.^[zz]"
+    scores = pu.score_update(_case(kind="irrelevant", expected={}), new)
+    assert scores["invented_citations"] == ["zz"]
+    assert not scores["passed"]
+
+
+def test_irrelevant_case_allows_a_small_addition_only():
+    case = _case(kind="irrelevant", expected={"keep_all": True, "max_new_sentences": 2})
+    assert pu.score_update(case, OLD)["passed"]
+    many = OLD + "".join(
+        f" Brand new statement number {w} about hearings.^[a9]"
+        for w in ("alpha", "bravo", "charlie")
+    )
+    assert pu.score_update(case, many)["added_sentences"] == 3
+    assert not pu.score_update(case, many)["passed"]
+
+
+def _disputed():
+    return _case(
+        kind="disputed",
+        article_id="a9-disputed",
+        expected={
+            "keep_both": True,
+            "original_value": "2006",
+            "disputed_value": "2007",
+            "original_sources": ["a2"],
+        },
+    )
+
+
+def test_disputed_passes_only_when_both_years_keep_their_sources():
+    both = OLD.replace(
+        "with others.^[a2]",
+        "with others.^[a2] Another report gives the transfer year as 2007.^[a9-disputed]",
+    )
+    assert pu.score_update(_disputed(), both)["keeps_both"]
+    swapped = OLD.replace(
+        "in 2006 with others.^[a2]", "in 2007 with others.^[a9-disputed]"
+    )
+    scores = pu.score_update(_disputed(), swapped)
+    assert not scores["keeps_both"] and not scores["passed"]
+
+
+def test_load_cases_filters_split_and_unreviewed(tmp_path):
+    rows = [
+        {**_case(), "case_id": "1", "split": "dev"},
+        {**_case(), "case_id": "2", "split": "test"},
+        {**_disputed(), "case_id": "3", "needs_review": True},
+    ]
+    (tmp_path / "profile_update_cases.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows)
+    )
+    assert [c["case_id"] for c in pu.load_cases(str(tmp_path), "dev")] == ["1"]
+    assert len(pu.load_cases(str(tmp_path), "all", include_unreviewed=True)) == 3
+
+
+def test_run_updates_counts_errors_as_failures():
+    def updater(case):
+        if case["case_id"] == "boom":
+            raise RuntimeError("API down")
+        return OLD + " A military judge set his trial date for early 2014.^[a9]"
+
+    cases = [_case(), {**_case(), "case_id": "boom"}]
+    records = pu.run_updates(cases, updater, workers=2)
+    assert records[1]["error"] == "RuntimeError: API down"
+    summary = pu.summarize_updates(records)
+    assert summary["errors"] == 1 and summary["pass_rate"] == 0.5
+    assert summary["pass_new_fact"] == "1/2"
