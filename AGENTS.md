@@ -73,7 +73,7 @@ This document helps contributors work effectively in this repository.
 - Before pushing: run `just ci` to match what GitHub Actions checks.
 
 ## Security & Configuration Tips
-- Model/API settings live in `src/constants.py`; override via env vars (`HINBOX_CLOUD_MODEL`, `HINBOX_OLLAMA_MODEL`). Avoid committing secrets.
+- Model/API settings live in `src/constants.py`; override via env vars (`HINBOX_CLOUD_MODEL`, `HINBOX_OLLAMA_MODEL`, `HINBOX_OLLAMA_REASONING_EFFORT`). Avoid committing secrets.
 - `--local` flag enforces local-only embeddings and disables all LLM telemetry callbacks.
 - Dynamic schemas come from `configs/<domain>/`; prefer `dynamic_models.py` over static models.
 - Extraction cache version (`cache.extraction.version` in domain config) controls cache invalidation.

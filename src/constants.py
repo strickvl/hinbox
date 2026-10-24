@@ -6,6 +6,9 @@ import os
 
 CLOUD_MODEL = os.getenv("HINBOX_CLOUD_MODEL", "gemini/gemini-2.0-flash")
 OLLAMA_MODEL = os.getenv("HINBOX_OLLAMA_MODEL", "ollama/qwen2.5:32b-instruct-q5_K_M")
+# Sent to Ollama as ``reasoning_effort``. "none" turns thinking off for models
+# that think by default (e.g. Qwen3.6); set to "" to leave the model's default.
+OLLAMA_REASONING_EFFORT = os.getenv("HINBOX_OLLAMA_REASONING_EFFORT", "none").strip()
 
 # Embedding model names
 CLOUD_EMBEDDING_MODEL = "jina_ai/jina-embeddings-v3"
