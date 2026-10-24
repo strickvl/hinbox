@@ -20,6 +20,9 @@ from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.logging_config import log
 from src.utils.llm import cloud_generation, local_generation
 
+# Deferred disputes are appended here, under the domain's output directory
+REVIEW_QUEUE_FILENAME = "merge_review_queue.jsonl"
+
 
 class MergeDisputeAction(str, Enum):
     MERGE = "merge"
