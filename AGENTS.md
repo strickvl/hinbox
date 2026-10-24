@@ -50,6 +50,7 @@ This document helps contributors work effectively in this repository.
 - Process articles: `just process --domain <name> --limit N`
 - Start frontend: `just frontend` (http://localhost:5001)
 - Domain management: `just domains` / `just init <name>`
+- Evaluate a model on the gold sets: `just eval <relevance|merge> --model <model>`; `just eval show` prints the scoreboard
 
 ## Coding Style & Naming Conventions
 - Python 3.12+; 4-space indent; max line length 88.
