@@ -36,6 +36,44 @@ from src.utils.quality_controls import run_profile_qc
 logger = get_logger("profiles")
 
 
+def _generate_initial_profile_text(messages: List[Dict], mode: GenerationMode) -> str:
+    """Generate a first-draft profile and return it as JSON text for reflection."""
+    if mode == GenerationMode.CLOUD:
+        response = cloud_generation(
+            messages=messages,
+            response_model=EntityProfile,
+            model=CLOUD_MODEL,
+            temperature=DEFAULT_TEMPERATURE,
+        )
+    else:
+        response = local_generation(
+            messages=messages,
+            response_model=EntityProfile,
+            model=OLLAMA_MODEL,
+            temperature=DEFAULT_TEMPERATURE,
+        )
+    return response.model_dump_json() if response else "{}"
+
+
+def _apply_profile_qc(profile: Optional[Dict], entity_name: str) -> Optional[Dict]:
+    """Run deterministic profile QC and record the result on the profile.
+
+    Applies QC's safe fixes (default tags, clamped confidence) and stores
+    ``{"passed", "flags"}`` under ``profile["qc"]``. A failing profile is kept
+    as-is; QC only flags it, it never triggers regeneration.
+    """
+    if not isinstance(profile, dict):
+        return profile
+    profile, report = run_profile_qc(profile=profile)
+    profile["qc"] = {"passed": report.passed, "flags": list(report.flags)}
+    if not report.passed:
+        log(
+            f"Profile QC failed for '{entity_name}': {', '.join(report.flags)}",
+            level="warning",
+        )
+    return profile
+
+
 class ProfileVersion(BaseModel):
     """A single version of an entity profile."""
 
@@ -144,23 +182,7 @@ def generate_profile_with_reflection(
 
     # Generate initial profile text for iterative improvement
     mode = GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
-    if mode == GenerationMode.CLOUD:
-        initial_response = cloud_generation(
-            messages=generation_messages,
-            response_model=EntityProfile,
-            model=CLOUD_MODEL,
-            temperature=DEFAULT_TEMPERATURE,
-        )
-    else:
-        initial_response = local_generation(
-            messages=generation_messages,
-            response_model=EntityProfile,
-            model=OLLAMA_MODEL,
-            temperature=DEFAULT_TEMPERATURE,
-        )
-
-    # Convert to text for iterative improvement
-    initial_text = initial_response.model_dump_json() if initial_response else "{}"
+    initial_text = _generate_initial_profile_text(generation_messages, mode)
 
     # Use iterative_improve to refine the profile
     result = iterative_improve(
@@ -308,9 +330,15 @@ New Article (ID: {new_article_id}):
             entity_type=entity_type, entity_name=entity_name, article_id=new_article_id
         )
 
+        # Draft the merged profile first, so the first reflection grades a
+        # real profile instead of an empty "{}" (which always fails).
+        initial_text = _generate_initial_profile_text(
+            generation_messages, generation_mode
+        )
+
         # We'll use the same EntityProfile structure for the updated profile.
         result = iterative_improve(
-            initial_text="{}",  # Start with empty JSON
+            initial_text=initial_text,
             generation_messages=generation_messages,
             reflection_prompt=reflection_prompt,
             response_model=EntityProfile,
@@ -432,6 +460,8 @@ def update_profile(
         domain,
     )
 
+    updated_profile = _apply_profile_qc(updated_profile, entity_name)
+
     # Add new version if versioning enabled
     if ENABLE_PROFILE_VERSIONING:
         versioned_profile.add_version(
@@ -471,6 +501,7 @@ def create_profile(
 
         # Extract the actual text from nested/parsed fields before logging
         profile_dict = extract_profile_text(profile_dict)
+        profile_dict = _apply_profile_qc(profile_dict, entity_name)
 
         log(
             f"Created profile for {entity_name}: "

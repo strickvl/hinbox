@@ -289,6 +289,12 @@ def write_entities_table(
     # Sanitize all entities for Parquet compatibility
     sanitized = [sanitize_for_parquet(e) for e in entities]
 
+    # Arrow takes its columns from the first row only, so give every row every
+    # key; otherwise a field missing from row 0 (e.g. profile_grounding) is
+    # silently dropped for all rows.
+    all_keys = list(dict.fromkeys(k for e in sanitized for k in e))
+    sanitized = [{k: e.get(k) for k in all_keys} for e in sanitized]
+
     try:
         # Write to a temp file in the same directory (same filesystem) so
         # os.replace is an atomic rename, not a cross-device copy.
