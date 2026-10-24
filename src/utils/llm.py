@@ -141,11 +141,8 @@ def _resolve_instructor_mode(
     return instructor.Mode.PARALLEL_TOOLS if parallel else instructor.Mode.TOOLS
 
 
-def _create_instructor_client(
-    target: ProviderTarget,
-    mode: instructor.Mode,
-) -> Any:
-    """Create an Instructor-wrapped SDK client for the resolved provider."""
+def _create_raw_client(target: ProviderTarget) -> Any:
+    """Create the plain SDK client (Anthropic or OpenAI-compatible) for a target."""
     if target.sdk == "anthropic":
         try:
             from anthropic import Anthropic
@@ -154,18 +151,39 @@ def _create_instructor_client(
                 "The anthropic package is required for anthropic/* models. "
                 "Install it with: uv pip install 'hinbox[anthropic]'"
             ) from None
-        raw = Anthropic(api_key=target.api_key)
-        return instructor.from_anthropic(raw, mode=mode)
+        return Anthropic(api_key=target.api_key)
 
     # OpenAI-compatible (OpenAI, Gemini, Ollama, OpenRouter, etc.).
     # For OpenAI itself, api_key=None lets the SDK read OPENAI_API_KEY.
-    raw = OpenAI(
+    return OpenAI(
         base_url=target.base_url,
         api_key=target.api_key
         if target.provider_label == "openai"
         else (target.api_key or "not-set"),
     )
+
+
+def _create_instructor_client(
+    target: ProviderTarget,
+    mode: instructor.Mode,
+) -> Any:
+    """Create an Instructor-wrapped SDK client for the resolved provider."""
+    raw = _create_raw_client(target)
+    if target.sdk == "anthropic":
+        return instructor.from_anthropic(raw, mode=mode)
     return instructor.from_openai(raw, mode=mode)
+
+
+def _is_retryable(error_str: str) -> bool:
+    """Overload and rate-limit errors (503, 529, ...) that are worth retrying."""
+    lowered = error_str.lower()
+    return (
+        "503" in error_str
+        or "529" in error_str
+        or "overloaded" in lowered
+        or "rate limit" in lowered
+        or "try again" in lowered
+    )
 
 
 # OpenAI reasoning models reject ``max_tokens`` and a non-default temperature
@@ -519,16 +537,7 @@ def _structured_generation(
                         label,
                     )
 
-            # Check for retryable errors (503, 529, rate limiting)
-            is_retryable = (
-                "503" in error_str
-                or "529" in error_str
-                or "overloaded" in error_str.lower()
-                or "rate limit" in error_str.lower()
-                or "try again" in error_str.lower()
-            )
-
-            if is_retryable and attempt < max_retries:
+            if _is_retryable(error_str) and attempt < max_retries:
                 delay = base_delay * (2**attempt) + random.uniform(0, 1)
                 logger.warning(
                     "Retryable %s error on attempt %d/%d: %s",
@@ -599,6 +608,55 @@ def local_generation(
         label="local",
         **kwargs,
     )
+
+
+def text_generation(
+    messages: List[Dict[str, Any]],
+    *,
+    model: str,
+    local: bool,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    temperature: float = DEFAULT_TEMPERATURE,
+) -> str:
+    """Generate a plain-text reply (no tool call or JSON schema).
+
+    For prompts that want the model to write free text, such as reasoning,
+    before a marked answer that the caller parses itself.
+    """
+    target = resolve_chat_target(model)
+    client = _create_raw_client(target)
+    slot = local_llm_slot if local else cloud_llm_slot
+    msg_kwargs = _prepare_messages_for_target(messages, target)
+    sampling = _sampling_kwargs(target, max_tokens, temperature)
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            with slot():
+                if target.sdk == "anthropic":
+                    response = client.messages.create(
+                        model=target.api_model, **sampling, **msg_kwargs
+                    )
+                    return "".join(
+                        block.text
+                        for block in response.content
+                        if getattr(block, "type", "") == "text"
+                    )
+                response = client.chat.completions.create(
+                    model=target.api_model, **sampling, **msg_kwargs
+                )
+                return response.choices[0].message.content or ""
+        except Exception as e:
+            if _is_retryable(str(e)) and attempt < MAX_RETRIES:
+                delay = BASE_DELAY * (2**attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "Retryable text generation error on attempt %d/%d: %s",
+                    attempt + 1,
+                    MAX_RETRIES + 1,
+                    e,
+                )
+                time.sleep(delay)
+                continue
+            raise
+    raise RuntimeError("unreachable")
 
 
 # ---------------------------------------------------------------------------
