@@ -51,6 +51,10 @@ eval-mine *args:
 
 # ─── DSPy experiments (own environment in experiments/dspy_opt/, no LiteLLM) ──
 
+# Optimise the edit-list profile updater with DSPy GEPA (e.g. `just dspy-profile --model ollama/local-qwen36-16k:latest --reflection-model openai/gpt-6-luna`)
+dspy-profile *args:
+    uv run --project experiments/dspy_opt python -m experiments.dspy_opt.profile_update {{args}}
+
 # Optimise the merge check with DSPy (e.g. `just dspy-merge --model ollama/qwen3.6:35b-a3b-q4_K_M --optimizer mipro`)
 dspy-merge *args:
     uv run --project experiments/dspy_opt python -m experiments.dspy_opt.merge {{args}}
