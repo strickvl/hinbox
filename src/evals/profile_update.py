@@ -94,6 +94,7 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     added = sum(1 for w in new_words if _best_overlap(w, old_words) < KEPT_OVERLAP)
 
     ratio = len(new_text) / max(len(old_text), 1)
+    retention = kept / len(cited_old) if cited_old else 1.0
     article_id = case["article_id"]
     known = _cited_ids(old_text) | set(case["profile"].get("sources") or [])
     new_ids = _cited_ids(new_text)
@@ -103,7 +104,9 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
         "length_ratio": round(ratio, 3),
         # Tested before rounding: 0.79990 rounds to 0.8 and would slip through
         "collapsed": ratio < COLLAPSE_RATIO,
-        "fact_retention": round(kept / len(cited_old), 3) if cited_old else 1.0,
+        "fact_retention": round(retention, 3),
+        # Also tested before rounding: 188/209 = 0.8995 would round to 0.9
+        "low_retention": retention < MIN_RETENTION,
         "facts_lost": len(cited_old) - kept,
         "unchanged_share": round(unchanged / len(old_facts), 3) if old_facts else 1.0,
         "added_sentences": added,
@@ -137,11 +140,7 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
 
 def case_passed(case: Dict[str, Any], scores: Dict[str, Any]) -> bool:
     expected = case.get("expected", {})
-    if (
-        scores["collapsed"]
-        or scores["fact_retention"] < MIN_RETENTION
-        or scores["invented_citations"]
-    ):
+    if scores["collapsed"] or scores["low_retention"] or scores["invented_citations"]:
         return False
     if case["kind"] == "irrelevant":
         return scores["added_sentences"] <= expected.get("max_new_sentences", 2)

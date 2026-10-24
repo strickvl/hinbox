@@ -167,3 +167,17 @@ def test_collapse_is_tested_before_rounding():
     case = {**_case(), "profile": {"text": "x" * 10000, "sources": []}}
     scores = pu.score_update(case, "x" * 7999)
     assert scores["length_ratio"] == 0.8 and scores["collapsed"]
+
+
+def test_retention_is_tested_before_rounding():
+    kept = [
+        f"Distinct claim number {i} about hearings happened.^[a1]" for i in range(188)
+    ]
+    lost = [
+        f"Separate statement {i} regarding detainees occurred.^[a2]" for i in range(21)
+    ]
+    case = _case(kind="irrelevant", expected={"max_new_sentences": 2})
+    case["profile"] = {"text": "\n".join(kept + lost), "sources": ["a1", "a2"]}
+    scores = pu.score_update(case, "\n".join(kept) + "\n" + "x" * 3000)
+    assert scores["fact_retention"] == 0.9 and scores["low_retention"]
+    assert not scores["passed"]
