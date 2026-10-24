@@ -18,6 +18,7 @@ Concurrency model (Phase 2 speed audit):
 
 import argparse
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -39,6 +40,7 @@ from src.utils.file_ops import write_entities_table
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
 from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
+from src.utils.task_models import check_task_models
 
 # Get module-specific logger
 logger = get_logger("process_and_extract")
@@ -862,13 +864,27 @@ def main():
             level="info",
         )
 
+    # Per-task models (HINBOX_<TASK>_MODEL); refuses cloud models under --local
+    try:
+        task_models = check_task_models(model_type)
+    except ValueError as e:
+        log(str(e), level="error")
+        sys.exit(1)
+    if len(set(task_models.values())) > 1:
+        log(
+            "Models per task: "
+            + ", ".join(f"{task}={model}" for task, model in task_models.items()),
+            level="info",
+        )
+
     processor = ArticleProcessor(domain=args.domain, model_type=model_type)
 
-    # Configure LLM concurrency limiter
+    # Configure LLM concurrency limiters. Both are set because a task can have
+    # its own model on the other side (e.g. a local merge check in a cloud run).
     cc = config.get_concurrency_config()
     configure_llm_concurrency(
-        cloud_in_flight=cc["llm_in_flight"] if model_type == "gemini" else None,
-        local_in_flight=cc["ollama_in_flight"] if model_type == "ollama" else None,
+        cloud_in_flight=cc["llm_in_flight"],
+        local_in_flight=cc["ollama_in_flight"],
     )
     log(
         f"Concurrency: {cc['extract_workers']} workers, "

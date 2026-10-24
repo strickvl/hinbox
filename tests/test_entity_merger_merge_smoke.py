@@ -77,6 +77,7 @@ def create_profile_stub(
     article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    model=None,
 ):
     """Deterministic create_profile stub returning a profile dict, a VersionedProfile with one version, and empty history."""
     profile_dict = {
@@ -100,6 +101,7 @@ def update_profile_stub(
     new_article_id: str,
     model_type: str = "gemini",
     domain: str = "guantanamo",
+    model=None,
 ):
     """Deterministic update_profile stub that appends a new version to the provided versioned_profile."""
     updated_profile = {

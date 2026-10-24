@@ -1,7 +1,6 @@
 from typing import Any, Dict, List, Optional
 
 from src.config_loader import get_system_prompt
-from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 
 # Use the consolidated extractor rather than per-entity wrappers
 from src.engine.extractors import EntityExtractor
@@ -15,6 +14,7 @@ from src.utils.quality_controls import (
     filter_entities_by_article_relevance,
     run_extraction_qc,
 )
+from src.utils.task_models import is_local_model, task_model
 
 logger = get_logger("article_processor")
 
@@ -64,9 +64,8 @@ class ArticleProcessor:
     def __init__(self, domain: str, model_type: str = "gemini"):
         self.domain = domain
         self.model_type = model_type or "gemini"
-        self.specific_model = (
-            OLLAMA_MODEL if self.model_type == "ollama" else CLOUD_MODEL
-        )
+        self.relevance_model = task_model("relevance", self.model_type)
+        self.extraction_model = task_model("extraction", self.model_type)
         self.logger = logger
         self._relevance_fingerprint: Optional[str] = None
 
@@ -80,7 +79,7 @@ class ArticleProcessor:
         if self._relevance_fingerprint is None:
             prompt = get_system_prompt("relevance", self.domain)
             self._relevance_fingerprint = sha256_text(
-                f"{self.specific_model}\n{prompt}"
+                f"{self.relevance_model}\n{prompt}"
             )
         return self._relevance_fingerprint
 
@@ -95,16 +94,16 @@ class ArticleProcessor:
         if the check itself failed.
         """
         try:
-            if self.model_type == "ollama":
+            if is_local_model(self.relevance_model):
                 result = ollama_check_relevance(
                     text=article_content,
-                    model=self.specific_model,
+                    model=self.relevance_model,
                     domain=self.domain,
                 )
             else:
                 result = gemini_check_relevance(
                     text=article_content,
-                    model=self.specific_model,
+                    model=self.relevance_model,
                     domain=self.domain,
                 )
 
@@ -151,17 +150,17 @@ class ArticleProcessor:
         repair_hint: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Run a single extraction attempt (cloud or local) and return raw dicts."""
-        if self.model_type == "ollama":
+        if is_local_model(self.extraction_model):
             raw = extractor.extract_local(
                 text=article_content,
-                model=self.specific_model,
+                model=self.extraction_model,
                 temperature=0,
                 repair_hint=repair_hint,
             )
         else:
             raw = extractor.extract_cloud(
                 text=article_content,
-                model=self.specific_model,
+                model=self.extraction_model,
                 temperature=0,
                 repair_hint=repair_hint,
             )

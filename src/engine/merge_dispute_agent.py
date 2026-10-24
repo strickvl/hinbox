@@ -16,9 +16,9 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
-from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.logging_config import log
 from src.utils.llm import cloud_generation, local_generation
+from src.utils.task_models import is_local_model, task_model
 
 # Deferred disputes are appended here, under the domain's output directory
 REVIEW_QUEUE_FILENAME = "merge_review_queue.jsonl"
@@ -127,20 +127,14 @@ def run_merge_dispute_agent(
     ]
 
     try:
-        if model_type == "ollama":
-            decision = local_generation(
-                messages=messages,
-                response_model=MergeDisputeDecision,
-                model=OLLAMA_MODEL,
-                temperature=0,
-            )
-        else:
-            decision = cloud_generation(
-                messages=messages,
-                response_model=MergeDisputeDecision,
-                model=CLOUD_MODEL,
-                temperature=0,
-            )
+        model = task_model("dispute", model_type)
+        generate = local_generation if is_local_model(model) else cloud_generation
+        decision = generate(
+            messages=messages,
+            response_model=MergeDisputeDecision,
+            model=model,
+            temperature=0,
+        )
     except Exception as e:
         log(f"Dispute agent error: {e}", level="error")
         decision = MergeDisputeDecision(

@@ -83,6 +83,7 @@ def create_profile_stub(
     article_id,
     model_type="gemini",
     domain="guantanamo",
+    model=None,
 ):
     profile_dict = {
         "text": f"Generated profile for {entity_name} from {article_id}",
@@ -104,6 +105,7 @@ def update_profile_stub(
     new_article_id,
     model_type="gemini",
     domain="guantanamo",
+    model=None,
 ):
     updated_profile = {
         "text": f"Updated profile for {entity_name} from {new_article_id}",

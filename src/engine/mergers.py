@@ -37,6 +37,7 @@ from src.utils.name_variants import (
     score_canonical_name,
 )
 from src.utils.profiles import extract_profile_text
+from src.utils.task_models import is_local_model, task_model
 
 # Module-specific logger
 logger = get_logger("mergers")
@@ -445,22 +446,20 @@ class EntityMerger:
                     )
 
                 # Match check: pass evidence_text as new_profile_text
-                if model_type == "ollama":
-                    result = local_model_check_match(
-                        self._format_key_for_display(entity_key),
-                        self._format_key_for_display(similar_key),
-                        evidence_text,
-                        existing_profile_text,
-                        entity_type=self.entity_type,
-                    )
-                else:
-                    result = cloud_model_check_match(
-                        self._format_key_for_display(entity_key),
-                        self._format_key_for_display(similar_key),
-                        evidence_text,
-                        existing_profile_text,
-                        entity_type=self.entity_type,
-                    )
+                match_model = task_model("match", model_type)
+                check_match = (
+                    local_model_check_match
+                    if is_local_model(match_model)
+                    else cloud_model_check_match
+                )
+                result = check_match(
+                    self._format_key_for_display(entity_key),
+                    self._format_key_for_display(similar_key),
+                    evidence_text,
+                    existing_profile_text,
+                    entity_type=self.entity_type,
+                    model=match_model,
+                )
 
                 log(
                     f"Match check result: {result.is_match} (confidence={result.confidence:.2f}) - {result.reason}",
@@ -613,6 +612,7 @@ class EntityMerger:
                             article_id,
                             model_type,
                             domain,
+                            model=task_model("profile", model_type),
                         )
                     )
                     existing_entity["profile"] = updated_profile
@@ -664,6 +664,7 @@ class EntityMerger:
                             article_id,
                             model_type,
                             domain,
+                            model=task_model("profile", model_type),
                         )
                     )
                     new_profile = extract_profile_text(new_profile)
@@ -757,6 +758,7 @@ class EntityMerger:
                         article_id,
                         model_type,
                         domain,
+                        model=task_model("profile", model_type),
                     )
                 )
 
