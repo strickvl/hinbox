@@ -69,6 +69,7 @@ _UPDATE_COLUMNS = (
     ("median_unchanged", "Unchanged"),
     ("invented_citations", "Invented cites"),
     ("dispute_claims", '"Sources differ"'),
+    ("unsupported_numbers", "Unsupported nums"),
     ("median_seconds", "Median s"),
 )
 
