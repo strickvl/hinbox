@@ -138,6 +138,9 @@ just frontend
    # Ollama models get reasoning_effort="none" (thinking off) by default;
    # set this to "" to keep a model's own default, or e.g. "high":
    echo 'HINBOX_OLLAMA_REASONING_EFFORT=' >> .env
+   # With thinking on, Ollama calls get at least this many output tokens
+   # (default 8192) so the model can finish thinking and still answer:
+   echo 'HINBOX_OLLAMA_THINKING_MAX_TOKENS=8192' >> .env
    ```
 
 5. **Verify installation:**

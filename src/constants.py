@@ -9,6 +9,10 @@ OLLAMA_MODEL = os.getenv("HINBOX_OLLAMA_MODEL", "ollama/qwen2.5:32b-instruct-q5_
 # Sent to Ollama as ``reasoning_effort``. "none" turns thinking off for models
 # that think by default (e.g. Qwen3.6); set to "" to leave the model's default.
 OLLAMA_REASONING_EFFORT = os.getenv("HINBOX_OLLAMA_REASONING_EFFORT", "none").strip()
+# Thinking spends output tokens before the answer; with the default 2048 limit
+# Nemotron 3.5 Bolt ran out on 8 of 161 merge checks. Used as the minimum token
+# limit for Ollama calls whenever thinking isn't switched off.
+OLLAMA_THINKING_MAX_TOKENS = int(os.getenv("HINBOX_OLLAMA_THINKING_MAX_TOKENS", "8192"))
 
 # Embedding model names
 CLOUD_EMBEDDING_MODEL = "jina_ai/jina-embeddings-v3"

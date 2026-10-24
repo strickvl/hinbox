@@ -32,6 +32,7 @@ from src.constants import (
     MAX_RETRIES,
     OLLAMA_MODEL,
     OLLAMA_REASONING_EFFORT,
+    OLLAMA_THINKING_MAX_TOKENS,
 )
 from src.logging_config import get_logger
 from src.utils.logging import (
@@ -189,8 +190,12 @@ def _sampling_kwargs(
     if target.sdk == "anthropic" and _ANTHROPIC_NO_TEMPERATURE.match(model):
         return {"max_tokens": max_tokens}
     kwargs = {"max_tokens": max_tokens, "temperature": temperature}
-    if target.provider_label == "ollama" and OLLAMA_REASONING_EFFORT:
-        kwargs["reasoning_effort"] = OLLAMA_REASONING_EFFORT
+    if target.provider_label == "ollama":
+        if OLLAMA_REASONING_EFFORT:
+            kwargs["reasoning_effort"] = OLLAMA_REASONING_EFFORT
+        if OLLAMA_REASONING_EFFORT != "none":
+            # Thinking may be on, so leave room for it before the answer
+            kwargs["max_tokens"] = max(max_tokens, OLLAMA_THINKING_MAX_TOKENS)
     return kwargs
 
 
