@@ -5,7 +5,7 @@ description = "DSPy prompt-optimisation experiments for Hinbox (kept out of the 
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "hinbox",
-    "dspy==3.4.1",
+    "dspy[optuna]==3.4.1",
 ]
 
 [project.optional-dependencies]
