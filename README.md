@@ -213,8 +213,14 @@ just eval show
 
 # Pick hard look-alike entity pairs to label (writes merge_candidates_v2.jsonl)
 just eval-mine
+
+# Grow long profiles by replaying well-covered entities' articles in date order
+just eval-replay --list                          # article counts only, no model calls
+just eval-replay --model openai/gpt-6-luna --max-articles 40
 ```
 Gold files live in `{output_dir}/eval/`. Each run writes its per-item predictions to `eval/runs/` and adds one row to `eval/scoreboard.jsonl`. Items are split 60/20/20 into train/dev/test by a stable hash, so anything tuned on `train` is never graded on `test`. Results report balanced accuracy next to the "always give the common answer" baseline, because the label sets are lopsided.
+
+`just eval-replay` prepares data for a profile-update eval. The entity database has no profile built from more than three articles, so it takes ten entities the corpus covers heavily (Nashiri, Judge Pohl, Camp Justice, the USS Cole bombing, ...), creates a profile from the first article mostly about each one, then runs the pipeline's own `update_profile` on each later article. It saves the profile after every step to `eval/profile_replay/<model>/<entity>/step_NNN.json`, and resumes where it stopped.
 
 **DSPy experiments** live in [`experiments/dspy_opt/`](experiments/dspy_opt/README.md), in their own environment, so DSPy never enters Hinbox's main dependencies, and LiteLLM is never installed. `just dspy-merge --model <model> --optimizer mipro` optimises the merge check for one model and puts the result on the same scoreboard.
 
