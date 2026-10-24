@@ -125,3 +125,8 @@ def test_disputed_year_needs_matching_month_and_day():
     byline = "The report on prison detainees was published April 29, 2013."
     profile_report = "A prison detainees report was published April 13, 2013.^[s1]"
     assert pc.make_disputed_article(byline, profile_report, random.Random(0)) is None
+
+
+def test_cited_years_splits_grouped_citations():
+    years = pc.cited_years("He was moved to Guantanamo in 2006.^[a1, a2]")
+    assert years["2006"][0][1] == ["a1", "a2"]

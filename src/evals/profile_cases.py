@@ -149,7 +149,7 @@ def cited_years(profile_text: str) -> Dict[str, List[Tuple[str, List[str]]]]:
     """Map each year in the profile to the cited sentences that state it."""
     years: Dict[str, List[Tuple[str, List[str]]]] = {}
     for sentence in _sentences(profile_text):
-        ids = _CITATION.findall(sentence)
+        ids = [i.strip() for g in _CITATION.findall(sentence) for i in g.split(",")]
         if ids:
             for year in set(_YEAR.findall(_CITATION.sub("", sentence))):
                 years.setdefault(year, []).append((sentence, ids))

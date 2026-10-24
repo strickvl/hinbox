@@ -124,7 +124,8 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
         scores["keeps_both"] = _states(
             sentences,
             expected["original_value"],
-            set(expected["original_sources"]),
+            # Older case files stored a grouped citation as one "a1, a2" id
+            {i.strip() for g in expected["original_sources"] for i in g.split(",")},
             claim,
             KEPT_OVERLAP,
         ) and _states(

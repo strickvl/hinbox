@@ -181,3 +181,14 @@ def test_retention_is_tested_before_rounding():
     scores = pu.score_update(case, "\n".join(kept) + "\n" + "x" * 3000)
     assert scores["fact_retention"] == 0.9 and scores["low_retention"]
     assert not scores["passed"]
+
+
+def test_disputed_accepts_a_grouped_original_citation():
+    case = _disputed()
+    case["expected"]["original_sources"] = ["a2, a3"]  # as older case files stored it
+    both = OLD.replace(
+        "with others.^[a2]",
+        "with others.^[a2, a3] Another report says he was transferred to"
+        " Guantanamo in 2007.^[a9-disputed]",
+    )
+    assert pu.score_update(case, both)["keeps_both"]
