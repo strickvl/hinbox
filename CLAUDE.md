@@ -25,6 +25,7 @@ guarantee the lockfile venv is used (matching CI).
 - **Start web interface**: `just frontend` (FastHTML web UI on localhost:5001)
 - **Reset processing**: `just reset` (reset article processing status)
 - **Domain management**: `just domains` / `just init <name>`
+- **Evaluate a model**: `just eval <relevance|merge> --model <model>` scores it against the hand-labelled gold sets in `{output_dir}/eval/`; `just eval show` prints the scoreboard; `just eval-mine` picks hard merge pairs to label
 
 ### Testing
 - Run `just test` to execute the suite under `tests/`.
@@ -87,6 +88,7 @@ The web interface (`src/frontend/`) uses FastHTML with an "Archival Elegance" de
 - **Quality Controls**: `src/utils/quality_controls.py` (extraction QC, profile QC, profile grounding verification) and `src/utils/outcomes.py` (`PhaseOutcome` structured results) provide deterministic validation.
 - **Processing Status**: `src/utils/processing_status.py` manages a sidecar JSON file tracking which articles have been processed, replacing the old in-Parquet status approach.
 - **Tests**: `tests/` covers embedding accuracy, merger behaviour (lexical blocking, per-type thresholds, fingerprints), merge dispute agent routing, extraction caching and retry, canonical name selection, name variant detection, profile grounding, profile versioning, privacy mode enforcement, domain path resolution, and frontend history rendering.
+- **Evaluation**: `src/evals/` holds the scoreboard: `datasets.py` loads gold sets into `EvalItem`s and assigns stable train/dev/test splits, `metrics.py` computes balanced accuracy and friends, `runner.py` runs a predictor (default: the pipeline's own relevance/match-check functions) and appends to `eval/scoreboard.jsonl`, and `mine_merge_pairs.py` mines hard look-alike entity pairs for labelling.
 - **Scripts**: Utility scripts in `scripts/` support domain management (`init_domain.py`, `list_domains.py`), data fetching, resets, and diagnostics.
 
 ### Configuration

@@ -190,6 +190,21 @@ just frontend
 ```
 Explore extracted entities at http://localhost:5001
 
+### Evaluating Models
+The scoreboard grades any model on your hand-labelled answer keys, so you can compare cloud, frontier and local models (or later, optimized prompts) on equal terms.
+```bash
+# Score a model on the relevance labels or the merge labels
+just eval relevance --model gemini/gemini-2.0-flash
+just eval merge --model ollama/qwen3.6:35b-a3b --split test
+
+# Show every run so far
+just eval show
+
+# Pick hard look-alike entity pairs to label (writes merge_candidates_v2.jsonl)
+just eval-mine
+```
+Gold files live in `{output_dir}/eval/`. Each run writes its per-item predictions to `eval/runs/` and adds one row to `eval/scoreboard.jsonl`. Items are split 60/20/20 into train/dev/test by a stable hash, so anything tuned on `train` is never graded on `test`. Results report balanced accuracy next to the "always give the common answer" baseline, because the label sets are lopsided.
+
 ### Data Management
 ```bash
 # Check processing status
