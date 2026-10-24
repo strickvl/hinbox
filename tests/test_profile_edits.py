@@ -114,3 +114,29 @@ def test_adds_after_the_same_sentence_keep_their_order():
         "2006.^[a2] Hearings were suspended in 2012.^[a9] They resumed in 2013.^[a9]\n"
         in new
     )
+
+
+def test_edit_profile_keeps_the_disagreements_it_found(monkeypatch):
+    def fake_generate(messages, response_model, model, max_tokens):
+        return ProfileEditList(
+            disagreements=[
+                pe.Disagreement(
+                    profile_sentence="He was moved to Guantanamo in 2006.^[a2]",
+                    article_says="moved in 2007",
+                )
+            ],
+            edits=[
+                _edit(
+                    "add",
+                    "He was moved to Guantanamo in 2006.^[a2]",
+                    "Another report says 2007.^[a9]",
+                )
+            ],
+        )
+
+    monkeypatch.setattr(pe, "cloud_generation", fake_generate)
+    out = pe.edit_profile(
+        "person", "N", {"text": TEXT, "sources": []}, "x", "a9", model="openai/x"
+    )
+    assert out["disagreements"][0]["article_says"] == "moved in 2007"
+    assert "2006.^[a2] Another report says 2007.^[a9]" in out["text"]

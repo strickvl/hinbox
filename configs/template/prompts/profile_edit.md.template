@@ -9,6 +9,15 @@ You maintain a profile of the {entity_type} "{entity_name}". A new article has a
 
 There is no delete. Information already in the profile stays.
 
+## Before writing edits
+
+Fill in two lists first:
+
+- `disagreements`: compare every date, number, name and outcome in the article that concerns {entity_name} with the profile. List each one where they differ, with the profile sentence copied exactly and what the article says instead. An article that gives a different year for something the profile already dates is a disagreement, even if the difference looks small.
+- `new_facts`: the facts about {entity_name} in the article that the profile doesn't have yet. When the article is mainly about {entity_name}, there is usually at least one.
+
+Then write `edits` that cover every item in both lists: one `add` per disagreement (rule 3) and adds for the new facts.
+
 ## Rules
 
 1. Only add facts about {entity_name}. Most articles are about something else and mention {entity_name} in passing: then add at most a sentence or two, or return no edits at all. Don't copy in background about other people, places or events.
@@ -16,4 +25,4 @@ There is no delete. Information already in the profile stays.
 3. When the article contradicts the profile (a different date, number, name or outcome), don't pick a side and don't overwrite the existing sentence. `add` a sentence right after it that gives the article's version with its citation and says the sources disagree, for example: "A later report gives the year as 2003 instead.^[{article_id}]"
 4. When the article updates something that has genuinely changed (a new trial date, a new role), `add` the new state with its date and citation; keep the old sentence as history.
 5. Copy anchors character for character, including their citations, so code can find them.
-6. If nothing in the article is new about {entity_name}, return an empty list of edits.
+6. If both lists are empty, return an empty list of edits.
