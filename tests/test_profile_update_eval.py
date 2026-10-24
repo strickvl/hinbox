@@ -82,6 +82,9 @@ def _disputed():
             "original_value": "2006",
             "disputed_value": "2007",
             "original_sources": ["a2"],
+            "profile_sentence": "He was transferred to Guantanamo Bay detention"
+            " camp in 2006 with others.^[a2]",
+            "article_sentence": "Nashiri was transferred to Guantanamo in 2007.",
         },
     )
 
@@ -89,7 +92,8 @@ def _disputed():
 def test_disputed_passes_only_when_both_years_keep_their_sources():
     both = OLD.replace(
         "with others.^[a2]",
-        "with others.^[a2] Another report gives the transfer year as 2007.^[a9-disputed]",
+        "with others.^[a2] Another report says he was transferred to Guantanamo"
+        " in 2007.^[a9-disputed]",
     )
     assert pu.score_update(_disputed(), both)["keeps_both"]
     swapped = OLD.replace(
@@ -97,6 +101,25 @@ def test_disputed_passes_only_when_both_years_keep_their_sources():
     )
     scores = pu.score_update(_disputed(), swapped)
     assert not scores["keeps_both"] and not scores["passed"]
+
+
+def test_disputed_ignores_an_unrelated_sentence_with_the_same_year_and_source():
+    # The transfer year was silently swapped; a different 2006 claim citing
+    # the same source must not count as keeping the original
+    swapped = (
+        OLD.replace("in 2006 with others.^[a2]", "in 2007 with others.^[a9-disputed]")
+        + " His lawyer Nancy Hollander joined the defence team in 2006.^[a2]"
+    )
+    assert not pu.score_update(_disputed(), swapped)["keeps_both"]
+
+
+def test_pipeline_updater_reports_a_fallback_to_the_old_profile(monkeypatch):
+    import src.engine.profiles as profiles
+
+    monkeypatch.setattr(profiles, "update_profile", lambda *a, **kw: (a[2], a[3], []))
+    update = pu.make_pipeline_updater("openai/x", "guantanamo")
+    record = pu.run_updates([_case()], update)[0]
+    assert "unchanged" in record["error"] and "scores" not in record
 
 
 def test_load_cases_filters_split_and_unreviewed(tmp_path):

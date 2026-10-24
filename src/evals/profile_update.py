@@ -37,6 +37,8 @@ COLLAPSE_RATIO = 0.8
 # content words, facts really dropped mostly under 0.35
 KEPT_OVERLAP = 0.45
 MIN_RETENTION = 0.9
+# Share of the claim's words the sentence stating the new year must hold
+DISPUTED_OVERLAP = 0.15
 MIN_CONTENT_WORDS = 3  # shorter lines (headers, "Tags:") aren't facts
 
 Updater = Callable[[Dict[str, Any]], str]
@@ -57,11 +59,22 @@ def _best_overlap(words: Set[str], candidates: List[Set[str]]) -> float:
     return max((len(words & c) / len(words) for c in candidates), default=0.0)
 
 
-def _states(sentences: List[str], value: str, sources: Set[str]) -> bool:
-    """Whether a sentence states ``value`` and cites one of ``sources``."""
+def _states(
+    sentences: List[str],
+    value: str,
+    sources: Set[str],
+    about: Set[str],
+    min_overlap: float,
+) -> bool:
+    """Whether a sentence states ``value``, cites one of ``sources``, and is
+    about the same claim: it holds at least ``min_overlap`` of the ``about``
+    content words. Without that last test, an unrelated sentence that happens
+    to share the year and source ("his lawyer joined in 2006") would count."""
     pattern = re.compile(rf"\b{re.escape(value)}\b")
     return any(
-        pattern.search(_CITATION.sub("", s)) and _cited_ids(s) & sources
+        pattern.search(_CITATION.sub("", s))
+        and _cited_ids(s) & sources
+        and _best_overlap(about, [_content_words(s)]) >= min_overlap
         for s in sentences
     )
 
@@ -100,9 +113,24 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     expected = case.get("expected", {})
     if case["kind"] == "disputed":
         sentences = _sentences(new_text)
+        claim = _content_words(expected.get("profile_sentence", ""))
+        # The old year must stay in a sentence that still makes the original
+        # claim. The new year may be worded freshly ("another report says
+        # 2007"), so it only has to share a little with either version.
+        either = claim | _content_words(expected.get("article_sentence", ""))
         scores["keeps_both"] = _states(
-            sentences, expected["original_value"], set(expected["original_sources"])
-        ) and _states(sentences, expected["disputed_value"], {article_id})
+            sentences,
+            expected["original_value"],
+            set(expected["original_sources"]),
+            claim,
+            KEPT_OVERLAP,
+        ) and _states(
+            sentences,
+            expected["disputed_value"],
+            {article_id},
+            either,
+            DISPUTED_OVERLAP,
+        )
     scores["passed"] = case_passed(case, scores)
     return scores
 
@@ -154,7 +182,12 @@ def make_pipeline_updater(model: str, domain: str) -> Updater:
             domain=domain,
             model=model,
         )
-        return profile.get("text", "")
+        text = profile.get("text", "")
+        # update_profile hands back the old profile when the model's answer
+        # can't be parsed; scoring that would reward a failed call
+        if text == case["profile"].get("text", ""):
+            raise RuntimeError("update failed: the old profile came back unchanged")
+        return text
 
     return update
 
