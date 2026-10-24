@@ -75,6 +75,9 @@ def _section_end(text: str, heading: str) -> Optional[int]:
 def apply_edits(text: str, edits: List[ProfileEdit]) -> Tuple[str, Dict[str, Any]]:
     """Apply ``edits`` to ``text`` in order. Returns (new_text, report)."""
     report: Dict[str, Any] = {"applied": 0, "appended": 0, "skipped": []}
+    # Several adds after one sentence go in list order: each one goes after
+    # the text the previous one inserted there, not straight after the anchor
+    last_added: Dict[str, str] = {}
     for edit in edits:
         addition = edit.text.strip()
         if not addition:
@@ -106,10 +109,11 @@ def apply_edits(text: str, edits: List[ProfileEdit]) -> Tuple[str, Dict[str, Any
                 report["applied"] += 1
                 continue
         elif anchor and anchor != END:
-            span = _find(text, anchor)
+            span = _find(text, last_added.get(anchor, anchor))
             if span is not None:
                 # Same paragraph, right after the anchor sentence
                 text = f"{text[: span[1]]} {addition}{text[span[1] :]}"
+                last_added[anchor] = addition
                 report["applied"] += 1
                 continue
         # END, or an anchor that couldn't be placed: append rather than lose it

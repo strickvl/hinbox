@@ -99,3 +99,18 @@ def test_edit_profile_adds_the_article_to_sources(monkeypatch):
     assert out["sources"] == ["a1", "a2", "a3", "a9"] and out["tags"] == ["x"]
     assert out["text"].rstrip().endswith("New.^[a9]")
     assert seen["model"] == "openai/x" and "^[a9]" in seen["system"]
+
+
+def test_adds_after_the_same_sentence_keep_their_order():
+    anchor = "He was moved to Guantanamo in 2006.^[a2]"
+    new, _ = apply_edits(
+        TEXT,
+        [
+            _edit("add", anchor, "Hearings were suspended in 2012.^[a9]"),
+            _edit("add", anchor, "They resumed in 2013.^[a9]"),
+        ],
+    )
+    assert (
+        "2006.^[a2] Hearings were suspended in 2012.^[a9] They resumed in 2013.^[a9]\n"
+        in new
+    )
