@@ -199,3 +199,64 @@ def test_facts_whose_citations_were_stripped_count_as_lost():
     stripped = pu._CITATION.sub("", OLD)
     scores = pu.score_update(case, stripped)
     assert scores["facts_lost"] == 3 and not scores["passed"]
+
+
+def test_disputed_accepts_a_short_freshly_worded_new_year_sentence():
+    # Only "transferred" and "guantanamo" are shared with the long claim
+    case = _disputed()
+    case["expected"]["article_sentence"] = (
+        "Officials said Nashiri was among several detainees transferred to"
+        " Guantanamo Bay detention camp from secret prisons in 2007."
+    )
+    both = OLD.replace(
+        "with others.^[a2]",
+        "with others.^[a2] The later article instead says he was transferred to"
+        " Guantanamo in 2007, so the sources disagree.^[a9-disputed]",
+    )
+    assert pu.score_update(case, both)["keeps_both"]
+    # One shared word isn't enough to tie a sentence to the claim
+    loose = OLD + " The commission convened again in 2007.^[a9-disputed]"
+    assert not pu.score_update(case, loose)["keeps_both"]
+
+
+def test_dispute_claims_counts_added_sentences_saying_sources_differ():
+    new = (
+        OLD + " The article gives the trial date as 2014; the sources differ.^[a9]"
+        " A military judge set his trial date for early 2014.^[a9]"
+    )
+    scores = pu.score_update(_case(), new)
+    assert scores["dispute_claims"] == 1 and scores["passed"]
+    assert pu.score_update(_case(), OLD)["dispute_claims"] == 0
+
+
+def test_dispute_claims_ignores_ordinary_uses_of_differ_and_conflict():
+    new = (
+        OLD + " He later received a different military lawyer.^[a9]"
+        " He was detained during the armed conflict in Afghanistan.^[a9]"
+    )
+    assert pu.score_update(_case(), new)["dispute_claims"] == 0
+    for claim in (
+        "The article's date differs from earlier reports.^[a9]",
+        "Reports disagree on the exact trial date.^[a9]",
+        "This account conflicts with the earlier commission record.^[a9]",
+    ):
+        assert pu.score_update(_case(), OLD + " " + claim)["dispute_claims"] == 1
+
+
+def test_dispute_claims_counts_a_new_sentence_that_repeats_the_old_claim():
+    new = OLD.replace(
+        "with others.^[a2]",
+        "with others.^[a2] He was transferred to Guantanamo Bay detention camp"
+        " in 2007 with others; the sources disagree.^[a9]",
+    )
+    assert pu.score_update(_case(), new)["dispute_claims"] == 1
+    # A disagreement sentence already in the old profile isn't new
+    case = _case()
+    case["profile"]["text"] = new
+    assert pu.score_update(case, new)["dispute_claims"] == 0
+
+
+def test_dispute_claims_counts_short_standalone_sentences():
+    assert (
+        pu.score_update(_case(), OLD + " Sources differ.^[a9]")["dispute_claims"] == 1
+    )

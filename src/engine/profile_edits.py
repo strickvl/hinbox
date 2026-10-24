@@ -45,11 +45,13 @@ class Disagreement(BaseModel):
 
 class ProfileEditList(BaseModel):
     # Filled in before the edits, so the model checks for conflicts first
-    # (on the dev set it ignored conflicting years when only asked for edits)
+    # (on the dev set it ignored conflicting years when only asked for edits).
+    # Asked too broadly, it called different events or extra detail a conflict
+    # and wrote "the sources disagree" into the profile, so the prompt narrows it
     disagreements: List[Disagreement] = Field(
         default_factory=list,
-        description="Every claim where the article gives a different date, "
-        "number, name or outcome than the profile",
+        description="Claims where the article gives a different value for the "
+        "very same thing as the profile, so both can't be true. Usually empty",
     )
     new_facts: List[str] = Field(
         default_factory=list,
