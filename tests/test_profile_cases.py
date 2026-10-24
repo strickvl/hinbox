@@ -89,3 +89,66 @@ def test_irrelevant_cases_prefer_articles_from_the_profiles_timeline():
     for seed in range(5):
         cases = list(pc.build_cases(manifest, steps, texts, at_steps=(1,), seed=seed))
         assert [c["article_id"] for c in cases] == ["old"]
+
+
+def test_replay_entities_have_fixed_splits_covering_every_type_in_train():
+    from src.evals.profile_replay import DEFAULT_ENTITIES
+
+    splits = {e.name: pc.ENTITY_SPLITS[e.name] for e in DEFAULT_ENTITIES}
+    assert sorted(splits.values()).count("train") == 6
+    train_types = {e.entity_type for e in DEFAULT_ENTITIES if splits[e.name] == "train"}
+    assert train_types == {"person", "organization", "location", "event"}
+
+
+def test_sentences_do_not_split_at_abbreviations():
+    text = (
+        "Rear Adm. Harris said the U.S. Navy agreed.^[a1] George W. Bush spoke"
+        " on Oct. 12, 2000.^[a2]\n## Header"
+    )
+    assert pc._sentences(text) == [
+        "Rear Adm. Harris said the U.S. Navy agreed.^[a1]",
+        "George W. Bush spoke on Oct. 12, 2000.^[a2]",
+        "## Header",
+    ]
+
+
+def test_disputed_year_needs_matching_month_and_day():
+    profile = (
+        "Al Qaeda attacked the destroyer USS The Sullivans in January 2000"
+        " without success.^[s1]"
+    )
+    article = "Al Qaeda attacked the destroyer USS Cole on Oct. 12, 2000 in Aden."
+    assert pc.make_disputed_article(article, profile, random.Random(0)) is None
+    same = "Al Qaeda attacked the destroyer USS Cole in October 2000 in Aden."
+    profile_cole = "Al Qaeda attacked the destroyer USS Cole on Oct. 12, 2000.^[s1]"
+    assert pc.make_disputed_article(same, profile_cole, random.Random(0))
+    byline = "The report on prison detainees was published April 29, 2013."
+    profile_report = "A prison detainees report was published April 13, 2013.^[s1]"
+    assert pc.make_disputed_article(byline, profile_report, random.Random(0)) is None
+
+
+def test_cited_years_splits_grouped_citations():
+    years = pc.cited_years("He was moved to Guantanamo in 2006.^[a1, a2]")
+    assert years["2006"][0][1] == ["a1", "a2"]
+
+
+def test_irrelevant_draws_do_not_depend_on_disputed_cases(monkeypatch):
+    manifest = {
+        "entity": {"name": "X", "entity_type": "person", "terms": ["X"]},
+        "model": "m",
+        "articles": [{"id": f"a{i}"} for i in range(1, 6)],
+        "passing_mentions": [{"id": f"p{i}"} for i in range(8)],
+    }
+    steps = {k: {"step": k, "profile": {"text": PROFILE}} for k in (1, 2, 3, 4)}
+    texts = {
+        f"a{i}": "Emirati agents captured X in Dubai in 2002." for i in range(1, 6)
+    }
+    texts.update({f"p{i}": "X, briefly." for i in range(8)})
+
+    def irrelevant_ids():
+        cases = pc.build_cases(manifest, steps, texts, at_steps=(1, 2, 3, 4))
+        return [c["article_id"] for c in cases if c["kind"] == "irrelevant"]
+
+    before = irrelevant_ids()
+    monkeypatch.setattr(pc, "make_disputed_article", lambda *a, **kw: None)
+    assert irrelevant_ids() == before

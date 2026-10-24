@@ -17,7 +17,8 @@ right behaviour from how the case was made:
   with a citation. A good update keeps both years, each with its own source,
   and says they disagree. It should not silently pick one. The year must
   sit in sentences that share words in both texts, but whether they make the
-  same claim still needs review.
+  same claim still needs review. When both write a month or day next to the
+  year, those must match too ("Oct. 12, 2000" is not "January 2000").
 
 Cases marked ``needs_review`` are not scored until their label is confirmed.
 
@@ -52,6 +53,21 @@ _YEAR = re.compile(r"\b(19[5-9]\d|20[0-4]\d)\b")
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 DISPUTED_SUFFIX = "-disputed"
 MIN_SHARED_WORDS = 2
+# Hashing 10 entity names into splits put 5 in test and left 3 to tune on, so
+# the replay entities get fixed splits: every entity type is in train, and
+# dev/test each hold two different types. Other entities fall back to hashing.
+ENTITY_SPLITS: Dict[str, str] = {
+    "Abd al Rahim al Nashiri": "train",
+    "James Pohl": "train",
+    "Abu Zubaydah": "train",
+    "U.S. Southern Command": "train",
+    "Camp Justice": "train",
+    "Guantánamo hunger strike": "train",
+    "International Committee of the Red Cross": "dev",
+    "USS Cole bombing": "dev",
+    "Vance Spath": "test",
+    "Camp 7": "test",
+}
 
 
 def load_snapshots(entity_dir: str) -> Tuple[Dict[str, Any], Dict[int, Dict[str, Any]]]:
@@ -67,9 +83,61 @@ def load_snapshots(entity_dir: str) -> Tuple[Dict[str, Any], Dict[int, Dict[str,
     return manifest, steps
 
 
+# A period after these isn't a sentence end ("Rear Adm. Harris", "U.S.",
+# "George W. Bush", "Oct. 12"), so pieces ending in one are joined again
+_ABBREVIATION = re.compile(
+    r"(?:\b[A-Z]|\b(?:Adm|Gen|Lt|Col|Capt|Cmdr|Sgt|Maj|Mr|Mrs|Ms|Dr|St|Sen|Rep"
+    r"|Gov|Jr|Sr|No|Inc|Corp|Co|vs|Jan|Feb|Mar|Apr|Aug|Sept|Sep|Oct|Nov|Dec))\.$"
+)
+_MONTHS = (
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "may",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+)
+
+
 def _sentences(text: str) -> List[str]:
-    # A sentence ends at . ! ? or a citation's "]" followed by a capital or header
-    return [t for t in re.split(r"(?<=[.!?\]])\s+(?=[A-Z#])|\n+", text) if t.strip()]
+    """Split on newlines, then where . ! ? or a citation's "]" is followed by a
+    capital or header, without splitting after common abbreviations."""
+    sentences: List[str] = []
+    for line in text.split("\n"):
+        pieces = re.split(r"(?<=[.!?\]])\s+(?=[A-Z#])", line)
+        merged: List[str] = []
+        for piece in pieces:
+            if merged and _ABBREVIATION.search(merged[-1]):
+                merged[-1] += " " + piece
+            else:
+                merged.append(piece)
+        sentences.extend(m for m in merged if m.strip())
+    return sentences
+
+
+def _date_parts(sentence: str, year: str) -> Tuple[Optional[str], Optional[str]]:
+    """Month (3 letters) and day written just before ``year``, if any."""
+    match = re.search(
+        rf"\b([A-Z][a-z]{{2,8}})\.?\s+(?:(\d{{1,2}}),?\s+)?{year}\b", sentence
+    )
+    if not match or match.group(1)[:3].lower() not in _MONTHS:
+        return None, None
+    return match.group(1)[:3].lower(), match.group(2)
+
+
+def _same_date(a: str, b: str, year: str) -> bool:
+    """False when both sentences give a month (or day) for the year and they
+    differ: "Oct. 12, 2000" and "January 2000" are different events."""
+    (month_a, day_a), (month_b, day_b) = _date_parts(a, year), _date_parts(b, year)
+    if month_a and month_b and month_a != month_b:
+        return False
+    return not (day_a and day_b and day_a != day_b)
 
 
 def _content_words(text: str) -> set:
@@ -81,7 +149,7 @@ def cited_years(profile_text: str) -> Dict[str, List[Tuple[str, List[str]]]]:
     """Map each year in the profile to the cited sentences that state it."""
     years: Dict[str, List[Tuple[str, List[str]]]] = {}
     for sentence in _sentences(profile_text):
-        ids = _CITATION.findall(sentence)
+        ids = [i.strip() for g in _CITATION.findall(sentence) for i in g.split(",")]
         if ids:
             for year in set(_YEAR.findall(_CITATION.sub("", sentence))):
                 years.setdefault(year, []).append((sentence, ids))
@@ -112,7 +180,9 @@ def make_disputed_article(
         )
         for sentence, ids in profile_years.get(year, []):
             shared = _content_words(article_sentence) & _content_words(sentence)
-            if len(shared) >= min_shared_words:
+            if len(shared) >= min_shared_words and _same_date(
+                article_sentence, sentence, year
+            ):
                 candidates.append((year, article_sentence, sentence, ids))
     if not candidates:
         return None
@@ -154,7 +224,7 @@ def _case(
         # of scoring until a person (or a checked model) confirms them
         "needs_review": kind == "disputed",
         # Split by entity, so a tuned prompt never sees test entities at all
-        "split": assign_split(entity["name"]),
+        "split": ENTITY_SPLITS.get(entity["name"]) or assign_split(entity["name"]),
     }
 
 
@@ -166,7 +236,13 @@ def build_cases(
     seed: int = 0,
 ) -> Iterator[Dict[str, Any]]:
     """Yield the cases for one entity's snapshots."""
-    rng = random.Random(f"{seed}:{manifest['entity']['name']}")
+    name = manifest["entity"]["name"]
+
+    def rng(kind: str, step: int) -> random.Random:
+        # One generator per kind and step, so a change to how one kind is
+        # built doesn't reshuffle the articles every other case uses
+        return random.Random(f"{seed}:{name}:{kind}:{step}")
+
     chosen = manifest["articles"]
     passing = [a for a in manifest.get("passing_mentions", []) if a["id"] in texts]
     for k in at_steps:
@@ -186,7 +262,8 @@ def build_cases(
             and a["published_date"] <= latest
         ]
         pool = in_time or passing
-        for article in rng.sample(pool, min(IRRELEVANT_PER_STEP, len(pool))):
+        draw = rng("irrelevant", k).sample(pool, min(IRRELEVANT_PER_STEP, len(pool)))
+        for article in draw:
             yield _case(
                 "irrelevant",
                 manifest,
@@ -210,7 +287,9 @@ def build_cases(
             {"must_cite": next_id},
         )
 
-        disputed = make_disputed_article(texts[next_id], profile_text, rng)
+        disputed = make_disputed_article(
+            texts[next_id], profile_text, rng("disputed", k)
+        )
         if disputed:
             yield _case(
                 "disputed",
