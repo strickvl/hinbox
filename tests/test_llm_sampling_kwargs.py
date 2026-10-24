@@ -46,6 +46,14 @@ def test_ollama_reasoning_effort_can_be_left_to_the_model():
         assert "reasoning_effort" not in _kwargs("ollama/qwen3.6:35b")
 
 
+def test_ollama_thinking_gets_a_bigger_token_limit():
+    assert _kwargs("ollama/qwen3.6:35b")["max_tokens"] == 100  # thinking off
+    for effort in ("", "high"):
+        with patch.object(llm, "OLLAMA_REASONING_EFFORT", effort):
+            assert _kwargs("ollama/nemotron")["max_tokens"] == 8192
+            assert _kwargs("ollama/nemotron", max_tokens=16384)["max_tokens"] == 16384
+
+
 def test_gemini_is_unchanged(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     assert _kwargs("gemini/gemini-2.0-flash") == {"max_tokens": 100, "temperature": 0.2}
