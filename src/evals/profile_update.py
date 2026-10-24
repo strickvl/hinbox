@@ -18,6 +18,8 @@ produces an updated profile, and these checks score it without a model:
 - ``invented_citations``: cited ids that are neither old sources nor the
   case's article. On the replay these were all garbled copies of real
   36-character ids (cut short, a digit changed), which still break the link.
+- ``dispute_claims``: added sentences saying the sources disagree or differ.
+  Reported only; on cases with no planted dispute most are invented.
 - For ``disputed`` cases, ``keeps_both``: the original year is still stated
   with one of its original sources, and the changed year is stated with the
   case's article. A profile that silently swaps one year for the other fails.
@@ -38,8 +40,16 @@ COLLAPSE_RATIO = 0.8
 # content words, facts really dropped mostly under 0.35
 KEPT_OVERLAP = 0.45
 MIN_RETENTION = 0.9
-# Share of the claim's words the sentence stating the new year must hold
+# The sentence stating the new year must share at least this many content
+# words with the claim, and this share of the shorter of the two word sets.
+# Measured against the claim alone, a short correct sentence ("the article
+# instead says the camps opened in 2003") held 2 of 22 words and failed.
+DISPUTED_MIN_SHARED = 2
 DISPUTED_OVERLAP = 0.15
+# Wording that tells the reader two sources conflict
+_DISPUTE_WORDS = re.compile(
+    r"\b(disagree|differ|conflict|contradict|discrepan|inconsisten)\w*", re.I
+)
 MIN_CONTENT_WORDS = 3  # shorter lines (headers, "Tags:") aren't facts
 
 Updater = Callable[[Dict[str, Any]], str]
@@ -60,22 +70,28 @@ def _best_overlap(words: Set[str], candidates: List[Set[str]]) -> float:
     return max((len(words & c) / len(words) for c in candidates), default=0.0)
 
 
+def _shares_claim(about: Set[str], words: Set[str]) -> bool:
+    """Loose test that a freshly worded sentence is about the claim."""
+    shared = len(about & words)
+    smaller = min(len(about), len(words)) or 1
+    return shared >= DISPUTED_MIN_SHARED and shared / smaller >= DISPUTED_OVERLAP
+
+
 def _states(
     sentences: List[str],
     value: str,
     sources: Set[str],
-    about: Set[str],
-    min_overlap: float,
+    about: Callable[[Set[str]], bool],
 ) -> bool:
     """Whether a sentence states ``value``, cites one of ``sources``, and is
-    about the same claim: it holds at least ``min_overlap`` of the ``about``
-    content words. Without that last test, an unrelated sentence that happens
-    to share the year and source ("his lawyer joined in 2006") would count."""
+    about the same claim (``about`` is given its content words). Without that
+    last test, an unrelated sentence that happens to share the year and source
+    ("his lawyer joined in 2006") would count."""
     pattern = re.compile(rf"\b{re.escape(value)}\b")
     return any(
         pattern.search(_CITATION.sub("", s))
         and _cited_ids(s) & sources
-        and _best_overlap(about, [_content_words(s)]) >= min_overlap
+        and about(_content_words(s))
         for s in sentences
     )
 
@@ -95,7 +111,11 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     kept = sum(1 for w in cited_old if _best_overlap(w, cited_new) >= KEPT_OVERLAP)
     new_set = {" ".join(s.split()) for s in new_facts}
     unchanged = sum(1 for s in old_facts if " ".join(s.split()) in new_set)
-    added = sum(1 for w in new_words if _best_overlap(w, old_words) < KEPT_OVERLAP)
+    added_facts = [
+        s
+        for s, w in zip(new_facts, new_words)
+        if _best_overlap(w, old_words) < KEPT_OVERLAP
+    ]
 
     ratio = len(new_text) / max(len(old_text), 1)
     retention = kept / len(cited_old) if cited_old else 1.0
@@ -113,7 +133,11 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
         "low_retention": retention < MIN_RETENTION,
         "facts_lost": len(cited_old) - kept,
         "unchanged_share": round(unchanged / len(old_facts), 3) if old_facts else 1.0,
-        "added_sentences": added,
+        "added_sentences": len(added_facts),
+        # Added sentences saying sources disagree. Outside disputed cases most
+        # are invented: Luna called "approved Sept. 28" vs "charges sworn in
+        # April" a conflict. Reported, not failed, since some are real.
+        "dispute_claims": sum(bool(_DISPUTE_WORDS.search(s)) for s in added_facts),
         "cites_article": article_id in new_ids,
         "invented_citations": sorted(new_ids - known - {article_id}),
     }
@@ -130,14 +154,12 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
             expected["original_value"],
             # Older case files stored a grouped citation as one "a1, a2" id
             {i.strip() for g in expected["original_sources"] for i in g.split(",")},
-            claim,
-            KEPT_OVERLAP,
+            lambda words: _best_overlap(claim, [words]) >= KEPT_OVERLAP,
         ) and _states(
             sentences,
             expected["disputed_value"],
             {article_id},
-            either,
-            DISPUTED_OVERLAP,
+            lambda words: _shares_claim(either, words),
         )
     scores["passed"] = case_passed(case, scores)
     return scores
@@ -245,6 +267,12 @@ def summarize_updates(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "median_unchanged": _median([r["scores"]["unchanged_share"] for r in scored]),
         "invented_citations": sum(
             bool(r["scores"]["invented_citations"]) for r in scored
+        ),
+        # Only where no dispute was planted, so these are likely invented
+        "dispute_claims": sum(
+            r["scores"].get("dispute_claims", 0)
+            for r in scored
+            if r["kind"] != "disputed"
         ),
         "median_seconds": _median([r["seconds"] for r in records]),
     }
