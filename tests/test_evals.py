@@ -32,6 +32,11 @@ class TestMetrics:
         assert m["accuracy"] == 0.5
         assert (m["tp"], m["fn"], m["tn"], m["fp"]) == (1, 1, 1, 1)
 
+    def test_one_class_subset_is_not_halved(self):
+        m = binary_metrics([(False, False)] * 10)
+        assert m["accuracy"] == 1.0
+        assert m["balanced_accuracy"] == 1.0
+
     def test_perfect(self):
         m = binary_metrics([(True, True), (False, False)])
         assert m["balanced_accuracy"] == 1.0

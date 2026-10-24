@@ -206,7 +206,7 @@ def main() -> None:
     output_dir = DomainConfig(args.domain).get_output_dir()
     out = args.out or os.path.join(output_dir, "eval", "merge_candidates_v2.jsonl")
     rows = mine(output_dir, args.total, args.seed)
-    os.makedirs(os.path.dirname(out), exist_ok=True)
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

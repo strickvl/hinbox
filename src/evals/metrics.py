@@ -2,8 +2,9 @@
 
 Gold sets are lopsided (e.g. 132 relevant vs 20 irrelevant articles), so plain
 accuracy flatters a model that always gives the common answer. Balanced
-accuracy averages the hit rate on each class, so "always relevant" scores 0.5
-no matter how lopsided the set is. Errors (no prediction) count as wrong.
+accuracy averages the hit rate on each class present, so "always relevant"
+scores 0.5 no matter how lopsided the set is. Errors (no prediction) count as
+wrong.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -26,11 +27,18 @@ def binary_metrics(pairs: List[Tuple[bool, Optional[bool]]]) -> Dict[str, float]
     recall_neg = _safe_div(tn, tn + fp)
     precision_pos = _safe_div(tp, tp + fp)
     positives = tp + fn
+    # Average only over classes present, so a one-class subset (e.g. a small
+    # --split or --limit) isn't halved by a recall of zero on the absent class
+    present = [
+        r
+        for r, count in ((recall_pos, positives), (recall_neg, n - positives))
+        if count
+    ]
     return {
         "n": n,
         "errors": errors,
         "accuracy": _safe_div(tp + tn, n),
-        "balanced_accuracy": (recall_pos + recall_neg) / 2,
+        "balanced_accuracy": _safe_div(sum(present), len(present)),
         "precision": precision_pos,
         "recall": recall_pos,
         "f1": _safe_div(2 * precision_pos * recall_pos, precision_pos + recall_pos),
