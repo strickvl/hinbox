@@ -135,6 +135,12 @@ just frontend
    # ANTHROPIC_API_KEY and `uv sync --extra anthropic`
    echo 'HINBOX_CLOUD_MODEL=openai/gpt-6-luna' >> .env
 
+   # Give one task its own model; the rest keep the default above. Tasks:
+   # RELEVANCE, EXTRACTION, MATCH, DISPUTE, PROFILE. The prefix decides where
+   # it runs (ollama/ = local). A --local run refuses cloud task models.
+   echo 'HINBOX_MATCH_MODEL=ollama/qwen3.6:35b' >> .env
+   echo 'HINBOX_PROFILE_MODEL=openai/gpt-6-luna' >> .env
+
    # Ollama models get reasoning_effort="none" (thinking off) by default;
    # set this to "" to keep a model's own default, or e.g. "high":
    echo 'HINBOX_OLLAMA_REASONING_EFFORT=' >> .env
