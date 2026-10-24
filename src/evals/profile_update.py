@@ -7,8 +7,9 @@ produces an updated profile, and these checks score it without a model:
   as a collapse. The full replay showed single updates cutting a 31k-character
   profile to 6k with every QC check passing.
 - ``fact_retention``: the share of the old profile's cited sentences that are
-  still there. A sentence counts as kept when one new sentence contains at
-  least ``KEPT_OVERLAP`` of its content words, so rewording still counts.
+  still there, still with a citation. A sentence counts as kept when one
+  cited new sentence contains at least ``KEPT_OVERLAP`` of its content words,
+  so rewording still counts.
   Heavier rewrites that fall below that need the model judge (later).
 - ``unchanged_share``: the share of old sentences kept word for word. Low
   means the update rewrote text it had no reason to touch.
@@ -88,7 +89,10 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     new_words = [_content_words(s) for s in new_facts]
 
     cited_old = [w for s, w in zip(old_facts, old_words) if _CITATION.search(s)]
-    kept = sum(1 for w in cited_old if _best_overlap(w, new_words) >= KEPT_OVERLAP)
+    # A cited fact only counts as kept if it is still cited: the same words
+    # with the source link stripped off aren't grounded any more
+    cited_new = [w for s, w in zip(new_facts, new_words) if _CITATION.search(s)]
+    kept = sum(1 for w in cited_old if _best_overlap(w, cited_new) >= KEPT_OVERLAP)
     new_set = {" ".join(s.split()) for s in new_facts}
     unchanged = sum(1 for s in old_facts if " ".join(s.split()) in new_set)
     added = sum(1 for w in new_words if _best_overlap(w, old_words) < KEPT_OVERLAP)

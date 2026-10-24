@@ -192,3 +192,10 @@ def test_disputed_accepts_a_grouped_original_citation():
         " Guantanamo in 2007.^[a9-disputed]",
     )
     assert pu.score_update(case, both)["keeps_both"]
+
+
+def test_facts_whose_citations_were_stripped_count_as_lost():
+    case = _case(kind="irrelevant", expected={"max_new_sentences": 2})
+    stripped = pu._CITATION.sub("", OLD)
+    scores = pu.score_update(case, stripped)
+    assert scores["facts_lost"] == 3 and not scores["passed"]
