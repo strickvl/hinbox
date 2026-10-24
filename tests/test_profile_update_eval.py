@@ -260,3 +260,17 @@ def test_dispute_claims_counts_short_standalone_sentences():
     assert (
         pu.score_update(_case(), OLD + " Sources differ.^[a9]")["dispute_claims"] == 1
     )
+
+
+def test_unsupported_numbers_flags_values_the_article_never_gives():
+    case = _case()
+    case["article_text"] = "The camps opened in 2003, officials said in 2013."
+    made_up = OLD + " A later report gives the year as 2007 instead.^[a9]"
+    assert pu.score_update(case, made_up)["unsupported_numbers"] == 1
+    # One number from the article is enough, even next to the profile's own
+    both = OLD + " The article says the camps opened in 2003, not 2002.^[a9]"
+    assert pu.score_update(case, both)["unsupported_numbers"] == 0
+    # Sentences without numbers, or not citing the article, aren't checked;
+    # citation ids with digits don't count as numbers
+    other = OLD + " He met his lawyer.^[a9] It was 1999.^[a1]"
+    assert pu.score_update(case, other)["unsupported_numbers"] == 0

@@ -20,6 +20,10 @@ produces an updated profile, and these checks score it without a model:
   36-character ids (cut short, a digit changed), which still break the link.
 - ``dispute_claims``: new or changed sentences saying the sources disagree or differ.
   Reported only; on cases with no planted dispute most are invented.
+- ``unsupported_numbers``: new or changed sentences citing the case's article
+  that contain numbers, none of which appear in the article. Qwen wrote "A
+  later report gives the year as 2007 instead" where the article had no 2007.
+  Reported only.
 - For ``disputed`` cases, ``keeps_both``: the original year is still stated
   with one of its original sources, and the changed year is stated with the
   case's article. A profile that silently swaps one year for the other fails.
@@ -48,6 +52,7 @@ DISPUTED_MIN_SHARED = 2
 DISPUTED_OVERLAP = 0.15
 # Wording that tells the reader two sources conflict. Whole phrases, so
 # "a different lawyer" and "the armed conflict" don't count
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _DISPUTE_WORDS = re.compile(
     r"\b(disagree\w*|differs?\b|contradict\w*|discrepanc\w*"
     r"|inconsistent with|conflicts? with|conflicting (?:accounts|reports|dates"
@@ -72,6 +77,10 @@ def _best_overlap(words: Set[str], candidates: List[Set[str]]) -> float:
     if not words:
         return 0.0
     return max((len(words & c) / len(words) for c in candidates), default=0.0)
+
+
+def _numbers(text: str) -> Set[str]:
+    return {n.replace(",", "") for n in _NUMBER.findall(_CITATION.sub("", text))}
 
 
 def _shares_claim(about: Set[str], words: Set[str]) -> bool:
@@ -120,10 +129,18 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     # claim with a different value ("...in 2007 with others; sources disagree")
     # All sentences, not just facts: "Sources differ." is too short to be one
     old_set = {" ".join(s.split()) for s in _sentences(old_text)}
-    disputes = sum(
+    changed = [s for s in _sentences(new_text) if " ".join(s.split()) not in old_set]
+    disputes = sum(1 for s in changed if _DISPUTE_WORDS.search(s))
+    # Any one of the sentence's numbers in the article is enough, since a
+    # sentence that states both sides ("2003, rather than 2002") also repeats
+    # the profile's own number
+    in_article = _numbers(case.get("article_text", ""))
+    unsupported = sum(
         1
-        for s in _sentences(new_text)
-        if _DISPUTE_WORDS.search(s) and " ".join(s.split()) not in old_set
+        for s in changed
+        if case["article_id"] in _cited_ids(s)
+        and _numbers(s)
+        and not _numbers(s) & in_article
     )
 
     ratio = len(new_text) / max(len(old_text), 1)
@@ -147,6 +164,7 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
         # are invented: Luna called "approved Sept. 28" vs "charges sworn in
         # April" a conflict. Reported, not failed, since some are real.
         "dispute_claims": disputes,
+        "unsupported_numbers": unsupported,
         "cites_article": article_id in new_ids,
         "invented_citations": sorted(new_ids - known - {article_id}),
     }
@@ -282,6 +300,9 @@ def summarize_updates(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             r["scores"].get("dispute_claims", 0)
             for r in scored
             if r["kind"] != "disputed"
+        ),
+        "unsupported_numbers": sum(
+            r["scores"].get("unsupported_numbers", 0) for r in scored
         ),
         "median_seconds": _median([r["seconds"] for r in records]),
     }
