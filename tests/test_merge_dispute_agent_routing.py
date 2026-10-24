@@ -4,8 +4,10 @@ These tests verify:
 - Dispute agent is NOT called when similarity is far from threshold or confidence is high
 - Dispute agent CAN override a match-check "no match" to merge
 - Dispute agent CAN override a match-check "match" to skip
-- Dispute agent DEFER action results in a skip
-- Review queue is written for DEFER decisions
+- Dispute agent DEFER action results in a skip (no merge into the candidate)
+- A rejected match creates the incoming entity instead of dropping it
+- A rejected match never overwrites an existing entity with the same key
+- Review queue is written for DEFER decisions, including from the merger
 - MergeDisputeDecision schema basics
 """
 
@@ -347,6 +349,9 @@ class TestDisputeAgentRouting:
         person = entities["people"]["Alice Smith"]
         article_ids = [a["article_id"] for a in person["articles"]]
         assert "art-002" not in article_ids, "Dispute agent skip should prevent merge"
+        assert "Alice B. Smith" in entities["people"], (
+            "Skipped entity should be created as new, not dropped"
+        )
 
     def test_dispute_defer_results_in_skip(self):
         """Defer action should be treated as skip (don't merge when unsure)."""
@@ -370,6 +375,190 @@ class TestDisputeAgentRouting:
         person = entities["people"]["Alice Smith"]
         article_ids = [a["article_id"] for a in person["articles"]]
         assert "art-002" not in article_ids, "Defer should prevent merge"
+        assert "Alice B. Smith" in entities["people"], (
+            "Deferred entity should be created as new, not dropped"
+        )
+
+
+# ── Rejected-match tests ──
+
+
+class TestRejectedMatchCreatesEntity:
+    """A rejected match must create the incoming entity, never drop or overwrite."""
+
+    def _merge(
+        self,
+        entities,
+        *,
+        incoming_name: str = "Alice B. Smith",
+        candidate: tuple = ("Alice Smith", 0.92),
+        match_result: MatchCheckResult = None,
+        dispute_patch=None,
+        domain_config=None,
+    ):
+        """Run merge_entities with one incoming person and a forced candidate."""
+        merger = EntityMerger("people")
+        stub_manager = StubEmbeddingManager(vec=[0.5, 0.5, 0.0])
+        create_mock = MagicMock(side_effect=create_profile_stub)
+        match_result = match_result or MatchCheckResult(
+            is_match=False, confidence=0.95, reason="different person"
+        )
+        patches = [
+            patch("src.engine.mergers.create_profile", create_mock),
+            patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
+            patch(
+                "src.engine.mergers.get_embedding_manager", return_value=stub_manager
+            ),
+            patch(
+                "src.engine.mergers.cloud_model_check_match",
+                return_value=match_result,
+            ),
+            patch.object(merger, "find_similar_entity", return_value=candidate),
+        ]
+        if dispute_patch is not None:
+            patches.append(dispute_patch)
+        for p in patches:
+            p.start()
+        try:
+            stats = merger.merge_entities(
+                [{"name": incoming_name}],
+                entities,
+                article_id="art-002",
+                article_title="Test Article",
+                article_url="http://example.com/2",
+                article_published_date="2025-02-01",
+                article_content=f"Article about {incoming_name}",
+                extraction_timestamp="2025-02-02T00:00:00Z",
+                model_type="gemini",
+                similarity_threshold=0.75,
+                domain="guantanamo",
+                domain_config=domain_config,
+            )
+        finally:
+            for p in reversed(patches):
+                p.stop()
+        return stats, create_mock
+
+    def test_confident_rejection_creates_new_entity(self):
+        """Match check says 'different' with high confidence → create, don't drop."""
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+
+        stats, create_mock = self._merge(entities)
+
+        assert stats.new == 1
+        assert stats.merged == 0
+        create_mock.assert_called_once()
+        created = entities["people"]["Alice B. Smith"]
+        assert [a["article_id"] for a in created["articles"]] == ["art-002"]
+        # The rejected candidate is left untouched
+        existing = entities["people"]["Alice Smith"]
+        assert [a["article_id"] for a in existing["articles"]] == ["art-000"]
+        assert existing["profile"]["text"] == "Original profile for Alice Smith"
+
+    def test_rejection_does_not_overwrite_entity_with_same_key(self):
+        """If the incoming key already exists, the create path must not clobber it."""
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+        entities["people"]["Alicia Smith"] = _make_existing_entity("Alicia Smith")
+
+        stats, create_mock = self._merge(
+            entities, incoming_name="Alice Smith", candidate=("Alicia Smith", 0.92)
+        )
+
+        assert stats.new == 0
+        assert stats.skipped == 1
+        create_mock.assert_not_called()
+        assert (
+            entities["people"]["Alice Smith"]["profile"]["text"]
+            == "Original profile for Alice Smith"
+        )
+        assert len(entities["people"]) == 2
+
+    def test_no_candidate_does_not_overwrite_entity_with_same_key(self):
+        """Exact key below threshold returns no candidate; existing entity must survive."""
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+
+        stats, create_mock = self._merge(
+            entities, incoming_name="Alice Smith", candidate=(None, None)
+        )
+
+        assert stats.skipped == 1
+        create_mock.assert_not_called()
+        existing = entities["people"]["Alice Smith"]
+        assert existing["profile"]["text"] == "Original profile for Alice Smith"
+
+    def test_merger_passes_review_queue_path_to_dispute_agent(self):
+        """The dispute agent receives a queue path under the domain output dir."""
+        from src.config_loader import DomainConfig
+
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+        dispute_mock = MagicMock(
+            return_value=MergeDisputeDecision(
+                action=MergeDisputeAction.DEFER, confidence=0.3, reason="ambiguous"
+            )
+        )
+        domain_cfg = DomainConfig("guantanamo")
+
+        with patch.object(domain_cfg, "get_output_dir", return_value="/out/gtmo"):
+            self._merge(
+                entities,
+                candidate=("Alice Smith", 0.77),
+                match_result=MatchCheckResult(
+                    is_match=True, confidence=0.55, reason="uncertain"
+                ),
+                dispute_patch=patch(
+                    "src.engine.mergers.run_merge_dispute_agent", dispute_mock
+                ),
+                domain_config=domain_cfg,
+            )
+
+        dispute_mock.assert_called_once()
+        assert (
+            dispute_mock.call_args.kwargs["review_queue_path"]
+            == "/out/gtmo/merge_review_queue.jsonl"
+        )
+
+    def test_defer_from_merger_writes_review_queue_file(self, tmp_path):
+        """End to end: a DEFER during a merge lands in the JSONL queue on disk."""
+        import json
+
+        from src.config_loader import DomainConfig
+
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+        domain_cfg = DomainConfig("guantanamo")
+        defer = MergeDisputeDecision(
+            action=MergeDisputeAction.DEFER, confidence=0.3, reason="ambiguous"
+        )
+
+        with patch.object(domain_cfg, "get_output_dir", return_value=str(tmp_path)):
+            stats, _ = self._merge(
+                entities,
+                candidate=("Alice Smith", 0.77),
+                match_result=MatchCheckResult(
+                    is_match=True, confidence=0.55, reason="uncertain"
+                ),
+                dispute_patch=patch(
+                    "src.engine.merge_dispute_agent.cloud_generation",
+                    return_value=defer,
+                ),
+                domain_config=domain_cfg,
+            )
+
+        queue_file = tmp_path / "merge_review_queue.jsonl"
+        assert queue_file.exists(), "DEFER should be written to the review queue"
+        records = [json.loads(line) for line in queue_file.read_text().splitlines()]
+        assert len(records) == 1
+        assert records[0]["new_key"] == "Alice B. Smith"
+        assert records[0]["candidate_key"] == "Alice Smith"
+        assert records[0]["article_id"] == "art-002"
+        assert records[0]["dispute_decision"]["action"] == "defer"
+        # And the deferred entity still exists, as a separate entity
+        assert stats.new == 1
+        assert "Alice B. Smith" in entities["people"]
 
 
 # ── Review queue tests ──

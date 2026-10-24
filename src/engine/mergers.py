@@ -1,5 +1,6 @@
 """Generic entity merger classes to eliminate code duplication."""
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -12,7 +13,11 @@ from src.constants import (
 )
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
 from src.engine.merge_candidates import find_similar_entity, lexical_text
-from src.engine.merge_dispute_agent import MergeDisputeAction, run_merge_dispute_agent
+from src.engine.merge_dispute_agent import (
+    REVIEW_QUEUE_FILENAME,
+    MergeDisputeAction,
+    run_merge_dispute_agent,
+)
 from src.engine.merge_evidence import batch_embed_texts, build_evidence_text
 from src.engine.profiles import VersionedProfile, create_profile, update_profile
 from src.logging_config import (
@@ -290,6 +295,11 @@ class EntityMerger:
         name_variants_cfg = domain_cfg.get_name_variants_config(self.entity_type)
         equivalence_groups = name_variants_cfg.get("equivalence_groups", [])
 
+        # Dispute agent appends DEFER decisions here for human review
+        review_queue_path = os.path.join(
+            domain_cfg.get_output_dir(), REVIEW_QUEUE_FILENAME
+        )
+
         log(
             f"Starting merge_{self.entity_type} with {len(extracted_entities)} {self.entity_type} to process",
             level="processing",
@@ -491,19 +501,24 @@ class EntityMerger:
                         model_type=model_type,
                         domain=domain,
                         article_id=article_id,
+                        review_queue_path=review_queue_path,
                     )
                     should_merge = dispute_decision.action == MergeDisputeAction.MERGE
 
                 if not should_merge:
+                    # The candidate is a different entity, so the incoming one
+                    # is new: fall through to the create path instead of
+                    # dropping it.
                     log_decision(
                         DecisionKind.SKIP,
                         self.entity_type,
                         self._format_key_for_display(entity_key),
-                        f"vs '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}",
+                        f"vs '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}, "
+                        "creating as new",
                     )
-                    stats.skipped += 1
-                    continue
+                    similar_key = None
 
+            if similar_key:
                 log_decision(
                     DecisionKind.MERGE,
                     self.entity_type,
@@ -722,6 +737,18 @@ class EntityMerger:
 
             else:
                 # --- CREATE PATH (expensive profile generation happens here) ---
+                # Never overwrite an existing entity that shares this key (e.g.
+                # an exact-name entity whose similarity was below threshold).
+                if entity_key in entities[self.entity_type]:
+                    log_decision(
+                        DecisionKind.SKIP,
+                        self.entity_type,
+                        self._format_key_for_display(entity_key),
+                        "key already exists, not overwriting",
+                    )
+                    stats.skipped += 1
+                    continue
+
                 proposed_profile, proposed_versioned_profile, reflection_history = (
                     create_profile(
                         self.entity_type[:-1],
