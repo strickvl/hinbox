@@ -14,6 +14,7 @@ DSPy brings many dependencies, so it has its own environment (`pyproject.toml` a
 |---|---|
 | `lm.py` | Turns a Hinbox model string (`openai/…`, `anthropic/…`, `gemini/…`, `ollama/…`) into a DSPy model. It uses the same environment variables as Hinbox (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_API_URL`, `HINBOX_OLLAMA_REASONING_EFFORT`). |
 | `merge.py` | The merge check ("are these two profiles the same entity?") written as a DSPy program, plus the optimisation run. |
+| `profile_update.py` | The edit-list profile updater (`src/engine/profile_edits.py`) as a DSPy program, optimised with GEPA and scored by the profile-update eval's checks. |
 | `tests/` | Offline tests that make no model calls. |
 
 ## Running it
@@ -58,7 +59,30 @@ Two cautions when reading results:
 - **There are only 10 "same" examples to learn from.** Expect noisy results, and run more than one seed before trusting a gain.
 - **13 of the 14 "same" pairs in `test` are places with identical names.** The `test` "same" cases are therefore easy. Watch the "different" side (false merges) as closely as F1.
 
+## Profile updates (`profile_update.py`)
+
+```bash
+# The pipeline's edit prompt as a DSPy program, unoptimised (scored on test)
+just dspy-profile --model ollama/local-qwen36-16k:latest --optimizer none
+
+# GEPA rewrites the instructions; a stronger model does the rewriting
+just dspy-profile --model ollama/local-qwen36-16k:latest --reflection-model openai/gpt-6-luna
+
+# Re-score a saved program on dev
+just dspy-profile --model ollama/local-qwen36-16k:latest --load data/guantanamo/entities/eval/dspy/<file>.json --eval-split dev
+```
+
+- **Starting point:** the instructions are the domain's `profile_edit.md`, with `{entity_name}` written as "the entity" and `{article_id}` as `<article_id>`. The entity and article come in as their own input fields. To use an optimised prompt in the pipeline, copy its instructions back into `profile_edit.md` and put the placeholders back.
+- **Data:** GEPA trains on the `train` entities' cases from `profile_update_cases.jsonl` and validates on `dev`. Scores are reported on `test` (Camp 7, Vance Spath). Disputed cases still marked `needs_review` are left out unless you pass `--include-unreviewed`. Some of them pair two different events, and training on those would teach the model to invent disagreements.
+- **Score:**
+  - A case that passes the eval's checks scores 1.
+  - A failed case scores half of its kept-fact share.
+  - Each invented "the sources disagree" sentence and each sentence with a number the article doesn't contain costs 0.25.
+  - GEPA also reads the failure reasons in words.
+- **Instructions only:** no few-shot examples. One example is a whole profile plus an article, up to ~30k characters.
+- The program answers directly (`Predict`) unless you pass `--cot`.
+
 ## Not done yet
 
 - The pipeline can't use an optimised program yet. A later change could load a saved program in `src/engine/match_checker.py` behind a setting.
-- Only the merge check exists so far. Relevance, extraction and profile writing would follow the same pattern: one file per task in this folder.
+- The merge check and profile updates exist so far. Relevance and extraction would follow the same pattern: one file per task in this folder.

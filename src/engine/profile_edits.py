@@ -18,10 +18,11 @@ There is no delete. An edit whose anchor can't be found is recorded; an
 unplaced ``add`` goes to the end, an unplaced ``replace`` is skipped.
 """
 
+import json
 import re
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL, PROFILE_MAX_TOKENS
 from src.utils.llm import cloud_generation, local_generation
@@ -59,6 +60,18 @@ class ProfileEditList(BaseModel):
         "doesn't have yet, in a few words each",
     )
     edits: List[ProfileEdit] = Field(default_factory=list)
+
+    @field_validator("disagreements", "new_facts", "edits", mode="before")
+    @classmethod
+    def _parse_json_string(cls, value: Any) -> Any:
+        # Bolt sometimes sends a list as a JSON string ('[{"op": "add", ...}]'),
+        # which failed validation on every retry
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
 
 
 def _ids(text: str) -> List[str]:

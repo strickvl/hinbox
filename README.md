@@ -241,7 +241,7 @@ Gold files live in `{output_dir}/eval/`. Each run writes its per-item prediction
 
 `--approach edit` scores an alternative updater instead of the pipeline's. Rather than writing the whole profile again, the model returns a short list of edits: add these sentences after this existing sentence (or under this heading, or at the end), or replace this one sentence with a sharper version. Code applies the edits to the old text, so a sentence the model never mentions stays exactly as it was, and a replaced sentence keeps its citations. The prompt (`profile_edit.md`) also says to keep both versions, each with its source, when the article contradicts the profile, and to add little or nothing from an article that only mentions the entity in passing.
 
-**DSPy experiments** live in [`experiments/dspy_opt/`](experiments/dspy_opt/README.md), in their own environment, so DSPy never enters Hinbox's main dependencies, and LiteLLM is never installed. `just dspy-merge --model <model> --optimizer mipro` optimises the merge check for one model and puts the result on the same scoreboard.
+**DSPy experiments** live in [`experiments/dspy_opt/`](experiments/dspy_opt/README.md), in their own environment, so DSPy never enters Hinbox's main dependencies, and LiteLLM is never installed. `just dspy-merge --model <model> --optimizer mipro` optimises the merge check for one model and puts the result on the same scoreboard. `just dspy-profile --model <model> --reflection-model openai/gpt-6-luna` runs GEPA on the edit-list profile updater.
 
 ### Data Management
 ```bash
