@@ -274,3 +274,27 @@ def test_unsupported_numbers_flags_values_the_article_never_gives():
     # citation ids with digits don't count as numbers
     other = OLD + " He met his lawyer.^[a9] It was 1999.^[a1]"
     assert pu.score_update(case, other)["unsupported_numbers"] == 0
+
+
+def test_dispute_claims_ignores_a_contradiction_reported_inside_the_article():
+    new = (
+        OLD + " Rep. Moran said captives read the novels, a claim contradicted"
+        " by a prison spokeswoman.^[a9]"
+    )
+    assert pu.score_update(_case(), new)["dispute_claims"] == 0
+
+
+def test_disputed_new_year_sentence_matches_word_forms():
+    case = _disputed()
+    case["expected"]["profile_sentence"] = (
+        "The detention camps opened in January 2002.^[a2]"
+    )
+    case["expected"]["original_value"] = "2002"
+    case["expected"]["disputed_value"] = "2003"
+    case["expected"]["article_sentence"] = "The camps opened in 2003."
+    case["profile"]["text"] = "The detention camps opened in January 2002.^[a2]"
+    new = (
+        case["profile"]["text"] + " This article dates the camps' opening to 2003"
+        " rather than 2002; the sources disagree.^[a9-disputed]"
+    )
+    assert pu.score_update(case, new)["keeps_both"]

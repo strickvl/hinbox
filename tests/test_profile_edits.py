@@ -152,3 +152,18 @@ def test_edit_list_accepts_lists_sent_as_json_strings():
     )
     assert parsed.new_facts == ["He was arraigned in 2011."]
     assert parsed.edits[0].text == "Arraigned.^[a9]"
+
+
+def test_local_models_get_the_local_prompt(monkeypatch):
+    seen = {}
+
+    def fake_generate(messages, response_model, model, max_tokens):
+        seen["system"] = messages[0]["content"]
+        return ProfileEditList()
+
+    monkeypatch.setattr(pe, "local_generation", fake_generate)
+    monkeypatch.setattr(pe, "cloud_generation", fake_generate)
+    pe.edit_profile("person", "N", {"text": TEXT}, "x", "a9", model="ollama/q")
+    assert "(local models)" in seen["system"] and "{" not in seen["system"]
+    pe.edit_profile("person", "N", {"text": TEXT}, "x", "a9", model="openai/x")
+    assert "(local models)" not in seen["system"]

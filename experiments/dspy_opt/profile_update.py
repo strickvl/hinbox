@@ -59,7 +59,7 @@ PENALTY = 0.25
 
 
 class UpdateProfile(dspy.Signature):
-    """Replaced by the domain's profile_edit.md (see ``base_instructions``)."""
+    """Replaced by the domain's profile_edit(_local).md (``base_instructions``)."""
 
     entity_type: str = dspy.InputField()
     entity_name: str = dspy.InputField()
@@ -71,13 +71,13 @@ class UpdateProfile(dspy.Signature):
     edits: List[ProfileEdit] = dspy.OutputField()
 
 
-def base_instructions(domain: str) -> str:
+def base_instructions(domain: str, prompt: str = "edit") -> str:
     """The pipeline's edit prompt, with its placeholders made generic.
 
     The entity and article come in as input fields, so GEPA's rewrite can be
     copied back into ``profile_edit.md`` by putting the placeholders back.
     """
-    template = DomainConfig(domain).load_profile_prompt("edit")
+    template = DomainConfig(domain).load_profile_prompt(prompt)
     return (
         template.replace("{entity_name}", "the entity")
         .replace("{entity_type}", "entity")
@@ -193,6 +193,12 @@ def main() -> None:
     )
     parser.add_argument("--auto", choices=("light", "medium", "heavy"), default="light")
     parser.add_argument("--cot", action="store_true", help="add a reasoning step")
+    parser.add_argument(
+        "--base-prompt",
+        choices=("edit", "edit_local"),
+        default=None,
+        help="starting prompt; default: the one the pipeline uses for --model",
+    )
     parser.add_argument("--load", default=None, help="score a saved program")
     parser.add_argument("--eval-split", default="test", choices=("dev", "test", "all"))
     parser.add_argument("--include-unreviewed", action="store_true")
@@ -210,7 +216,12 @@ def main() -> None:
         return load_cases(eval_dir, split, args.include_unreviewed)
 
     dspy.configure(lm=make_lm(args.model, max_tokens=16384))
-    program = ProfileUpdater(base_instructions(args.domain), chain_of_thought=args.cot)
+    base = args.base_prompt or (
+        "edit_local" if args.model.startswith("ollama/") else "edit"
+    )
+    program = ProfileUpdater(
+        base_instructions(args.domain, base), chain_of_thought=args.cot
+    )
     module = "cot" if args.cot else "predict"
     if args.load:
         program.load(args.load)
