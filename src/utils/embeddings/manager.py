@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import threading
 from enum import Enum
 from importlib.util import find_spec
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -338,13 +339,18 @@ class EmbeddingManager:
         return f"{model}:{dim}"
 
     # --- Synchronous wrappers ---
-    # Use a single cached event loop to avoid asyncio.run() overhead per call.
+    # Use a cached event loop to avoid asyncio.run() overhead per call. One per
+    # thread: the per-type merges run in parallel threads, and a loop that is
+    # already running in one thread can't run_until_complete() in another.
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Return a persistent event loop for sync wrappers."""
-        if not hasattr(self, "_loop") or self._loop.is_closed():
-            self._loop = asyncio.new_event_loop()
-        return self._loop
+        """Return this thread's persistent event loop for sync wrappers."""
+        if not hasattr(self, "_loops"):
+            self._loops = threading.local()
+        loop = getattr(self._loops, "loop", None)
+        if loop is None or loop.is_closed():
+            loop = self._loops.loop = asyncio.new_event_loop()
+        return loop
 
     def embed_text_sync(self, text: str) -> List[float]:
         """Synchronous wrapper for embed_text."""
