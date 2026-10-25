@@ -1,5 +1,8 @@
 """Offline tests for applying profile edits (no model calls)."""
 
+import pytest
+from pydantic import ValidationError
+
 import src.engine.profile_edits as pe
 from src.engine.profile_edits import ProfileEdit, ProfileEditList, apply_edits
 
@@ -152,6 +155,36 @@ def test_edit_list_accepts_lists_sent_as_json_strings():
     )
     assert parsed.new_facts == ["He was arraigned in 2011."]
     assert parsed.edits[0].text == "Arraigned.^[a9]"
+
+
+def test_edit_list_joins_one_array_per_line():
+    # Bolt's shape on 3 of 4 crashed test cases: valid arrays, one per line
+    parsed = ProfileEditList.model_validate(
+        {"new_facts": '["Fact one."]\n["Fact two."]\n', "edits": "[]"}
+    )
+    assert parsed.new_facts == ["Fact one.", "Fact two."]
+
+
+def test_edit_list_repairs_swapped_closing_quote_and_brace():
+    # Bolt closed the last edit with `^[a9]}"]` instead of `^[a9]"}]`
+    edits = (
+        '[{"op": "add", "anchor": "END", "text": "One.^[a9]"}, '
+        '{"op": "add", "anchor": "END", "text": "Two.^[a9]}"]'
+    )
+    parsed = ProfileEditList.model_validate({"edits": edits})
+    assert [e.text for e in parsed.edits] == ["One.^[a9]", "Two.^[a9]"]
+
+
+def test_unreadable_new_facts_dont_sink_good_edits():
+    parsed = ProfileEditList.model_validate(
+        {"new_facts": "He was arraigned", "edits": []}
+    )
+    assert parsed.new_facts == ["He was arraigned"]
+
+
+def test_unreadable_edits_still_fail():
+    with pytest.raises(ValidationError):
+        ProfileEditList.model_validate({"edits": '[{"op": "add", "anchor"'})
 
 
 def test_local_models_get_the_local_prompt(monkeypatch):
