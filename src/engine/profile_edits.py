@@ -22,7 +22,7 @@ import json
 import re
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL, PROFILE_MAX_TOKENS
 from src.utils.llm import cloud_generation, local_generation
@@ -63,15 +63,47 @@ class ProfileEditList(BaseModel):
 
     @field_validator("disagreements", "new_facts", "edits", mode="before")
     @classmethod
-    def _parse_json_string(cls, value: Any) -> Any:
-        # Bolt sometimes sends a list as a JSON string ('[{"op": "add", ...}]'),
-        # which failed validation on every retry
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except json.JSONDecodeError:
-                return value
-        return value
+    def _parse_json_string(cls, value: Any, info: ValidationInfo) -> Any:
+        # Bolt sometimes sends a list as a string, the same way on every
+        # retry, so each retry burned another ~25s call and still failed
+        if not isinstance(value, str):
+            return value
+        parsed = _parse_list_string(value)
+        if parsed is not None:
+            return parsed
+        # new_facts only steers the model and is never applied, so an
+        # unreadable one shouldn't sink otherwise good edits
+        return [value] if info.field_name == "new_facts" else value
+
+
+# Bolt writes a citation's closing bracket then swaps the string's closing
+# quote and the object's brace: `...^[id]}"]` instead of `...^[id]"}]`. After
+# `}` closes an object, JSON never has a `"` next, so this only matches the slip
+_SWAPPED_CLOSE = re.compile(r'\]\}"(\s*[,\]])')
+
+
+def _parse_list_string(value: str) -> Optional[List[Any]]:
+    """Read a list the model sent as a string, or None if it can't be read.
+
+    Handles a plain JSON array, several arrays one after another (Bolt sends
+    '["fact 1"]\\n["fact 2"]', one array per item) and the swapped-close slip.
+    """
+    for text in (value, _SWAPPED_CLOSE.sub(r']"}\1', value)):
+        items: List[Any] = []
+        decoder, pos, text = json.JSONDecoder(), 0, text.strip()
+        try:
+            while pos < len(text):
+                part, pos = decoder.raw_decode(text, pos)
+                if not isinstance(part, list):
+                    break
+                items.extend(part)
+                while pos < len(text) and text[pos] in " \t\r\n,":
+                    pos += 1
+            else:
+                return items
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 def _ids(text: str) -> List[str]:
