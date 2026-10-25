@@ -27,6 +27,7 @@ from src.utils.name_variants import (
     names_likely_same,
     score_canonical_name,
 )
+from src.utils.step_timing import timed
 
 logger = get_logger("quality_controls")
 
@@ -599,6 +600,7 @@ _GROUNDING_USER_TEMPLATE = """Verify whether the following claims are supported 
 For each claim, provide: article_id, citation, claim, support_level, and brief reasoning."""
 
 
+@timed("grounding")
 def verify_profile_grounding(
     *,
     profile_text: str,

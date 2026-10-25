@@ -16,6 +16,7 @@ consult these resources:
 ### App setup
 ```python
 from fasthtml.common import *
+
 app, rt = fast_app(
     static_path="src/frontend/static",
     hdrs=(Link(rel="stylesheet", href="/styles.css", type="text/css"),),
@@ -44,6 +45,7 @@ app, rt = fast_app(
 ```python
 @rt("/path")
 def handler(request): ...
+
 
 @rt("/path/{key:path}")
 def detail(key: str, request): ...

@@ -33,6 +33,7 @@ from src.utils.llm import (
 from src.utils.outcomes import PhaseOutcome
 from src.utils.profiles import extract_profile_text
 from src.utils.quality_controls import run_profile_qc
+from src.utils.step_timing import timed
 
 logger = get_logger("profiles")
 
@@ -48,6 +49,7 @@ def _resolve_mode(model_type: str, model: Optional[str]) -> GenerationMode:
     return GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
 
 
+@timed("draft")
 def _generate_initial_profile_text(
     messages: List[Dict], mode: GenerationMode, model: Optional[str] = None
 ) -> str:
@@ -456,6 +458,7 @@ New Article (ID: {new_article_id}):
         raise
 
 
+@timed("profile.update")
 def update_profile(
     entity_type: str,
     entity_name: str,
@@ -495,6 +498,7 @@ def update_profile(
     return updated_profile, versioned_profile, history
 
 
+@timed("profile.create")
 def create_profile(
     entity_type: str,
     entity_name: str,

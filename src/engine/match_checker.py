@@ -14,6 +14,7 @@ from src.utils.sectioned_prompt import (
     read_bool,
     read_unit_float,
 )
+from src.utils.step_timing import timed
 
 logger = get_logger("engine.match_checker")
 
@@ -278,6 +279,7 @@ def parse_sectioned_reply(text: str) -> MatchCheckResult:
     )
 
 
+@timed("match_check")
 def _check_match(
     backend: str,
     new_name: str,

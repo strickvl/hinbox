@@ -19,6 +19,7 @@ Concurrency model (Phase 2 speed audit):
 import argparse
 import os
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -40,6 +41,7 @@ from src.utils.file_ops import write_entities_table
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
 from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
+from src.utils.step_timing import save_timing_report, timed_step
 from src.utils.task_models import check_task_models
 
 # Get module-specific logger
@@ -303,19 +305,20 @@ def merge_all_entities(
         try:
             merge_start = datetime.now()
             merger = EntityMerger(entity_type)
-            merge_stats = merger.merge_entities(
-                entity_dicts,
-                entities,
-                article_info["id"],
-                article_info["title"],
-                article_info["url"],
-                article_info["published_date"],
-                article_info["content"],
-                extraction_timestamp,
-                model_type,
-                domain=processor.domain,
-                domain_config=domain_cfg,
-            )
+            with timed_step(f"merge.{entity_type}"):
+                merge_stats = merger.merge_entities(
+                    entity_dicts,
+                    entities,
+                    article_info["id"],
+                    article_info["title"],
+                    article_info["url"],
+                    article_info["published_date"],
+                    article_info["content"],
+                    extraction_timestamp,
+                    model_type,
+                    domain=processor.domain,
+                    domain_config=domain_cfg,
+                )
             merge_duration = (datetime.now() - merge_start).total_seconds()
             log(
                 f"Merged {len(entity_dicts)} {entity_type} in {merge_duration:.2f}s "
@@ -513,7 +516,8 @@ def write_results_and_statistics(
 
     # Write entity files
     log("Saving updated entity tables...", level="processing")
-    write_entities_to_files(entities, base_dir)
+    with timed_step("write"):
+        write_entities_to_files(entities, base_dir)
     log("Entity tables successfully saved", level="success")
 
     # Log comprehensive summary
@@ -638,13 +642,14 @@ def extract_single_article_only(
             )
 
     # Extract all entity types (potentially parallel within this article)
-    extracted_entities = processor.extract_all_entities(
-        article_info["content"],
-        article_id,
-        processing_metadata,
-        args.verbose,
-        max_workers=extract_per_article,
-    )
+    with timed_step("extraction"):
+        extracted_entities = processor.extract_all_entities(
+            article_info["content"],
+            article_id,
+            processing_metadata,
+            args.verbose,
+            max_workers=extract_per_article,
+        )
 
     return ArticleExtractionResult(
         row_index=row_index,
@@ -843,6 +848,7 @@ def process_articles_batch(
 def main():
     """Main processing function - orchestrates the entire article processing workflow."""
     log("Starting script...")
+    run_start = time.perf_counter()
 
     # Setup and initialization
     args = setup_arguments_and_config()
@@ -930,12 +936,13 @@ def main():
     # Post-processing: verify profile grounding
     if counters["processed_count"] > 0:
         log("\nRunning profile grounding verification...", level="processing")
-        grounding_counts = run_profile_grounding_postprocess(
-            entities=entities,
-            rows=processed_rows,
-            processor=processor,
-            model_type=model_type,
-        )
+        with timed_step("grounding_pass"):
+            grounding_counts = run_profile_grounding_postprocess(
+                entities=entities,
+                rows=processed_rows,
+                processor=processor,
+                model_type=model_type,
+            )
         log(
             f"Grounding complete: {grounding_counts['verified']} verified, "
             f"{grounding_counts['skipped_unchanged']} unchanged, "
@@ -956,6 +963,9 @@ def main():
         status_tracker=status_tracker,
         skipped_relevance_error=counters["skipped_relevance_error"],
         skipped_relevance_cached=counters["skipped_relevance_cached"],
+    )
+    save_timing_report(
+        base_dir, counters["processed_count"], time.perf_counter() - run_start
     )
 
 

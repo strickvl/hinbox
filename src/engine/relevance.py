@@ -16,6 +16,7 @@ from src.utils.sectioned_prompt import (
     parse_sections,
     read_bool,
 )
+from src.utils.step_timing import timed
 
 logger = get_logger("engine.relevance")
 
@@ -57,6 +58,7 @@ def _sectioned_messages(text: str, domain: str):
     )
 
 
+@timed("relevance")
 def _check_relevance(text: str, model: str, domain: str, *, local: bool):
     """Ask in labelled sections with written reasoning; fall back to the
     structured prompt when the reply has no readable yes/no."""

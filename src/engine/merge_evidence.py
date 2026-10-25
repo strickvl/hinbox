@@ -9,16 +9,19 @@ import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.utils.embeddings.manager import EmbeddingManager
+from src.utils.step_timing import timed_step
 
 
 def batch_embed_texts(
     embedding_manager: EmbeddingManager,
     texts: List[str],
     batch_size: int,
+    step: str = "embed",
 ) -> Tuple[List[List[float]], Optional[str], Optional[int], Optional[str]]:
     """Batch-embed texts in chunks, returning (vectors, model, dim, fingerprint).
 
-    Vectors are aligned 1:1 with the input texts list.
+    Vectors are aligned 1:1 with the input texts list. ``step`` names the
+    timing entry (see ``src/utils/step_timing.py``).
     """
     if not texts:
         return [], None, None, None
@@ -30,7 +33,8 @@ def batch_embed_texts(
 
     for i in range(0, len(texts), batch_size):
         chunk = texts[i : i + batch_size]
-        result = embedding_manager.embed_batch_result_sync(chunk)
+        with timed_step(step):
+            result = embedding_manager.embed_batch_result_sync(chunk)
         all_embeddings.extend(result.embeddings)
         model = result.model
         dim = result.dimension or (
