@@ -1,37 +1,32 @@
 # Profile Edit Prompt
 
-You maintain a profile of the {entity_type} "{entity_name}". A new article has arrived. Do not rewrite the profile. Instead, list the smallest set of edits that brings it up to date. Code will apply your edits to the existing text, and every sentence you don't mention stays exactly as it is.
+You maintain a profile of the {entity_type} "{entity_name}". A new article has arrived. Do not rewrite the profile. Return only the smallest set of edits needed to add genuinely new information about {entity_name}. Code applies the edits; every sentence you don't mention stays exactly as it is.
 
-## Edits you can make
+## Assess relevance before extracting facts
 
-- `add`: insert new sentences. Set `anchor` to an existing sentence copied exactly from the profile (the new text goes right after it), or to a section heading such as `## Legal Proceedings` (the new text goes at the end of that section), or to `END` (the new text goes at the end of the profile; start it with a new `## Heading` if it belongs in a new section).
-- `replace`: change one existing sentence. Set `anchor` to that sentence, copied exactly, and `text` to its new version. Use this only to sharpen a sentence the article makes more precise. Keep every citation the old sentence had.
+Identify what the article is mainly about, then separate information about {entity_name} from information about other people, places, organizations, events, and background. A mention near the entity is not automatically a fact about it. A venue, setting, participant, witness, or associated person does not make the surrounding story a fact about the entity. For an event in particular, include facts only when the article explicitly describes that event; do not fold in a different protest, incident, or activity at the same place merely because it occurred nearby or around the same time. Do not infer that distinct events are connected unless the article makes that connection.
 
-There is no delete. Information already in the profile stays.
+If the article gives no new information about {entity_name}, return empty `disagreements`, `new_facts`, and `edits` lists. If the article is mainly about another subject, add at most one or two concise sentences in total, and only for directly relevant, genuinely new facts about {entity_name}. This is a ceiling, not a target: do not add unrelated context to use up the allowance. Prefer no edit over a tenuous connection.
 
 ## Before writing edits
 
-Fill in two lists first:
+Fill in two lists:
 
-- `disagreements`: compare every date, number, name and outcome in the article that concerns {entity_name} with the profile. List one only when both give a different value for the very same thing, so that both can't be true: the same event on a different date, the same count with a different number. Copy the profile sentence exactly and say what the article says instead. A different year for something the profile already dates counts, even if the difference looks small.
+- `disagreements`: compare each date, number, name, and outcome in the article that concerns {entity_name} with the profile. Include an item only if both give incompatible values for the very same fact or event. Copy the conflicting profile sentence exactly and state the article's version. A different year for the same event counts. Do not treat these as disagreements: separate events or stages, a report that something had not happened yet at an earlier time, details absent from the profile, approximate versus exact figures, or descriptions that can both be true. When in doubt, leave it out; most articles have no disagreements. Never include an item just to say there is no conflict.
+- `new_facts`: list only genuinely new facts about {entity_name} itself that the article supports and the profile does not already contain. Do not list facts about other subjects, incidental venue or setting details, facts about a different event, or paraphrases of what the profile already says.
 
-  These are not disagreements, so leave them out (most go in `new_facts`):
-  - two different events or steps, such as charges filed in one month and a trial ordered in another;
-  - an older article saying something hadn't happened yet;
-  - detail the profile doesn't have;
-  - an approximate number against an exact one ("about 400" and "391");
-  - two descriptions that could both be true, such as two roles.
+Then write `edits` covering every item in both lists: one `add` per disagreement, plus minimal `add` operations for the new facts. Avoid redundant sentences and, where possible, combine closely related new facts into one concise sentence. If both lists are empty, `edits` must be empty.
 
-  When in doubt, it is not a disagreement. Most articles have none, so this list is usually empty. Never add an entry just to say there is no conflict.
-- `new_facts`: the facts about {entity_name} in the article that the profile doesn't have yet. When the article is mainly about {entity_name}, there is usually at least one.
+## Edits you can make
 
-Then write `edits` that cover every item in both lists: one `add` per disagreement (rule 3) and adds for the new facts.
+- `add`: insert new sentence(s). Set `anchor` to an existing sentence copied exactly from the profile (the new text goes right after it), a section heading such as `## Legal Proceedings` (the new text goes at the end of that section), or `END` (the new text goes at the end of the profile; start it with a new `## Heading` if needed).
+- `replace`: change one existing sentence, only when the article makes that same sentence more precise. Set `anchor` to the exact existing sentence and `text` to its new version. Keep every citation the old sentence had. Do not use a replace to resolve a disagreement or to overwrite history.
 
 ## Rules
 
-1. Only add facts about {entity_name}. Most articles are about something else and mention {entity_name} in passing: then add at most a sentence or two, or return no edits at all. Don't copy in background about other people, places or events.
-2. Every sentence you add or change ends with the citation `^[{article_id}]`, plus any citations it already had. Never change or remove an existing citation, and never cite an id that isn't in the profile or this article.
-3. For each entry in `disagreements`, and only for those, don't pick a side and don't overwrite the existing sentence. `add` a sentence right after it that gives the article's version with its citation and says the sources disagree, for example: "A later report gives the year as 2003 instead.^[{article_id}]" Never write that sources differ or disagree anywhere else.
-4. When the article updates something that has genuinely changed (a new trial date, a new role), `add` the new state with its date and citation; keep the old sentence as history.
-5. Copy anchors character for character, including their citations, so code can find them.
-6. If both lists are empty, return an empty list of edits.
+1. Add only facts about {entity_name}. Keep edits narrowly relevant and minimal. Do not turn a passing mention into a summary of the article. For an article mainly about a different subject, do not add facts about the article's main subject, other people, or the location just because they are mentioned alongside {entity_name}. If {entity_name} is only the venue, setting, or a participant, add only a genuinely new fact about it; if there is none, make no edit.
+2. Every sentence you add or change ends with the citation `^[{article_id}]`, plus any citations it already had. Never remove or alter an existing citation, and never cite an id that isn't in the profile or this article.
+3. For each item in `disagreements`, and only for those, don't pick a side and don't overwrite the existing sentence. Add a sentence right after the conflicting one that names the fact, gives the article's value, cites the article, and says the sources disagree, for example: "This article dates the camp's opening to 2003 rather than 2002; the sources disagree.^[{article_id}]" The article's value must appear in the article. Never say the sources differ or disagree anywhere else.
+4. When the article reports a genuine change over time (a new role, a transfer, a newly scheduled proceeding), add the new state with its date and citation; keep the old sentence as history. A later development is not a conflict with an earlier status report.
+5. Copy anchors character for character, including their citations, so code can find them. An anchor can be used more than once, but don't produce redundant adds.
+6. Keep `new_facts` and edits concise and factual. Do not infer, embellish, or introduce anything the article does not support. Every listed new fact gets an edit, and every edit corresponds to a listed disagreement or new fact.
