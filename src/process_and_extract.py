@@ -752,7 +752,10 @@ def process_articles_batch(
         task_id = progress.add_task("Articles", total=active_count)
 
         # --- Submit extraction work to thread pool ---
-        with ThreadPoolExecutor(max_workers=extract_workers) as pool:
+        # Not a `with` block: its exit would wait for running extractions
+        # before an interrupt could save the merged entities.
+        pool = ThreadPoolExecutor(max_workers=extract_workers)
+        try:
             futures = [
                 pool.submit(
                     extract_single_article_only,
@@ -768,31 +771,31 @@ def process_articles_batch(
             ]
 
             # --- Consume results in submission (article) order ---
-            try:
-                for future in futures:
-                    result = future.result()
-                    processed_rows.append(result.row)
+            for future in futures:
+                result = future.result()
+                processed_rows.append(result.row)
 
-                    merge_and_finalize(
-                        result,
-                        entities=entities,
-                        processor=processor,
-                        args=args,
-                        domain_config=domain_cfg,
-                        status_tracker=status_tracker,
-                        counters=counters,
-                    )
+                merge_and_finalize(
+                    result,
+                    entities=entities,
+                    processor=processor,
+                    args=args,
+                    domain_config=domain_cfg,
+                    status_tracker=status_tracker,
+                    counters=counters,
+                )
 
-                    progress.update(task_id, advance=1)
-                    write_partial_report(
-                        domain_cfg.get_output_dir(),
-                        counters["processed_count"],
-                        time.perf_counter() - batch_start,
-                    )
-            except KeyboardInterrupt:
-                # Drop queued extractions so the pool doesn't wait for them
-                pool.shutdown(wait=False, cancel_futures=True)
-                raise
+                progress.update(task_id, advance=1)
+                write_partial_report(
+                    domain_cfg.get_output_dir(),
+                    counters["processed_count"],
+                    time.perf_counter() - batch_start,
+                )
+        except KeyboardInterrupt:
+            # Drop queued extractions and don't wait for running ones
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown()
 
     # Append rows beyond the limit unchanged
     processed_rows.extend(remaining_rows)
