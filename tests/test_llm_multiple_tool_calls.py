@@ -63,6 +63,24 @@ def test_recover_multiple_tool_calls_for_list_model():
     assert recovered[1].name == "Bob"
 
 
+def test_recover_fenced_json_array_when_model_skips_tool_calls():
+    # Qwen 3.6 on Ollama sometimes answers in text instead of calling the tool.
+    content = '```json\n[\n  {"name": "Cuba", "type": "country"},\n  {"name": "El Paso", "type": "city"}\n]\n```'
+    completion = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(tool_calls=None, content=content))
+        ]
+    )
+    err = RuntimeError(
+        "Instructor does not support multiple tool calls, use List[Model] instead"
+    )
+    err.last_completion = completion  # type: ignore[attr-defined]
+
+    recovered = _recover_multiple_tool_calls(error=err, response_model=List[FakeEntity])
+
+    assert [e.name for e in recovered] == ["Cuba", "El Paso"]
+
+
 @patch.dict(os.environ, _GEMINI_ENV)
 def test_cloud_generation_uses_direct_recovery_before_retrying():
     err = _make_multiple_tool_calls_error(

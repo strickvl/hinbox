@@ -277,6 +277,34 @@ def _count_tool_calls(error: Exception) -> str:
     return str(len(getattr(message, "tool_calls", None) or []))
 
 
+_CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
+
+
+def _recover_list_from_text(
+    content: Optional[str], item_model: type[BaseModel]
+) -> Optional[List[BaseModel]]:
+    """Parse a list answer the model wrote as text (often a fenced JSON array).
+
+    Instructor's JSON mode can't read a bare array: it keeps only the text
+    from the first ``{`` to the last ``}``, which drops the brackets.
+    """
+    if not content:
+        return None
+    try:
+        payload = json.loads(_CODE_FENCE.sub("", content.strip()))
+    except json.JSONDecodeError:
+        return None
+    if isinstance(payload, dict) and len(payload) == 1:
+        payload = next(iter(payload.values()))
+    if not isinstance(payload, list):
+        return None
+    recovered = [item_model.model_validate(item, strict=False) for item in payload]
+    logger.warning(
+        "Recovered %d items from a text answer without tool calls", len(recovered)
+    )
+    return recovered
+
+
 def _recover_multiple_tool_calls(
     *,
     error: Exception,
@@ -301,11 +329,12 @@ def _recover_multiple_tool_calls(
         return None
 
     tool_calls = getattr(message, "tool_calls", None) or []
-    if len(tool_calls) <= 1:
-        return None
-
     item_model = _list_item_model(response_model)
     if item_model is None:
+        return None
+    if not tool_calls:
+        return _recover_list_from_text(getattr(message, "content", None), item_model)
+    if len(tool_calls) == 1:
         return None
 
     recovered: List[BaseModel] = []
@@ -417,6 +446,17 @@ def _structured_generation(
                 and "nonetype" in error_str.lower()
                 and "not iterable" in error_str.lower()
             ):
+                try:
+                    recovered = _recover_multiple_tool_calls(
+                        error=e, response_model=response_model
+                    )
+                except Exception as recovery_e:
+                    logger.warning(
+                        "%s text recovery failed: %s", label.title(), recovery_e
+                    )
+                    recovered = None
+                if recovered is not None:
+                    return recovered
                 logger.warning(
                     "Parallel-tools %s response had no tool calls; "
                     "retrying with TOOLS mode",

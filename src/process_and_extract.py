@@ -768,26 +768,31 @@ def process_articles_batch(
             ]
 
             # --- Consume results in submission (article) order ---
-            for future in futures:
-                result = future.result()
-                processed_rows.append(result.row)
+            try:
+                for future in futures:
+                    result = future.result()
+                    processed_rows.append(result.row)
 
-                merge_and_finalize(
-                    result,
-                    entities=entities,
-                    processor=processor,
-                    args=args,
-                    domain_config=domain_cfg,
-                    status_tracker=status_tracker,
-                    counters=counters,
-                )
+                    merge_and_finalize(
+                        result,
+                        entities=entities,
+                        processor=processor,
+                        args=args,
+                        domain_config=domain_cfg,
+                        status_tracker=status_tracker,
+                        counters=counters,
+                    )
 
-                progress.update(task_id, advance=1)
-                write_partial_report(
-                    domain_cfg.get_output_dir(),
-                    counters["processed_count"],
-                    time.perf_counter() - batch_start,
-                )
+                    progress.update(task_id, advance=1)
+                    write_partial_report(
+                        domain_cfg.get_output_dir(),
+                        counters["processed_count"],
+                        time.perf_counter() - batch_start,
+                    )
+            except KeyboardInterrupt:
+                # Drop queued extractions so the pool doesn't wait for them
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
 
     # Append rows beyond the limit unchanged
     processed_rows.extend(remaining_rows)
@@ -874,14 +879,21 @@ def main():
 
     # Process articles
     article_count = len(rows)
-    processed_rows, counters = process_articles_batch(
-        rows,
-        processor,
-        entities,
-        args,
-        domain_config=config,
-        status_tracker=status_tracker,
-    )
+    try:
+        processed_rows, counters = process_articles_batch(
+            rows,
+            processor,
+            entities,
+            args,
+            domain_config=config,
+            status_tracker=status_tracker,
+        )
+    except KeyboardInterrupt:
+        # Keep the articles merged so far; grounding is skipped
+        log("Interrupted: saving entities merged so far...", level="warning")
+        status_tracker.flush()
+        write_entities_to_files(entities, base_dir)
+        sys.exit(130)
 
     # Post-processing: verify profile grounding
     if counters["processed_count"] > 0:
