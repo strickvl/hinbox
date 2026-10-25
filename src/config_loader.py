@@ -164,6 +164,8 @@ class DomainConfig:
             "extract_per_article": 1,
             "llm_in_flight": 4,
             "ollama_in_flight": 1,
+            "merge_parallel_types": 1,
+            "grounding_workers": 1,
             "max_buffered_articles": 2,
         }
 

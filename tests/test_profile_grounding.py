@@ -286,7 +286,7 @@ class TestGroundingPostprocess:
     def test_adds_grounding_to_entity(self):
         """Post-processing should add profile_grounding to entities with citations."""
         from src.engine.article_processor import ArticleProcessor
-        from src.process_and_extract import run_profile_grounding_postprocess
+        from src.engine.grounding_pass import run_profile_grounding_postprocess
 
         entities = {
             "people": {
@@ -324,7 +324,7 @@ class TestGroundingPostprocess:
                 },
             ),
             patch(
-                "src.process_and_extract.verify_profile_grounding",
+                "src.engine.grounding_pass.verify_profile_grounding",
                 return_value=mock_report,
             ) as mock_verify,
         ):
@@ -345,7 +345,7 @@ class TestGroundingPostprocess:
         import hashlib
 
         from src.engine.article_processor import ArticleProcessor
-        from src.process_and_extract import run_profile_grounding_postprocess
+        from src.engine.grounding_pass import run_profile_grounding_postprocess
 
         profile_text = "Alice was detained.^[art-1]"
         text_hash = hashlib.sha256(profile_text.encode()).hexdigest()
@@ -381,7 +381,7 @@ class TestGroundingPostprocess:
                 },
             ),
             patch(
-                "src.process_and_extract.verify_profile_grounding",
+                "src.engine.grounding_pass.verify_profile_grounding",
             ) as mock_verify,
         ):
             processor = ArticleProcessor.__new__(ArticleProcessor)
@@ -399,7 +399,7 @@ class TestGroundingPostprocess:
     def test_skips_entities_without_citations(self):
         """Entities whose profile has no citations should be skipped."""
         from src.engine.article_processor import ArticleProcessor
-        from src.process_and_extract import run_profile_grounding_postprocess
+        from src.engine.grounding_pass import run_profile_grounding_postprocess
 
         entities = {
             "people": {
@@ -428,7 +428,7 @@ class TestGroundingPostprocess:
                 },
             ),
             patch(
-                "src.process_and_extract.verify_profile_grounding",
+                "src.engine.grounding_pass.verify_profile_grounding",
             ) as mock_verify,
         ):
             processor = ArticleProcessor.__new__(ArticleProcessor)
@@ -441,3 +441,46 @@ class TestGroundingPostprocess:
 
         assert counts["skipped_no_citations"] == 1
         mock_verify.assert_not_called()
+
+    def test_parallel_workers_ground_every_profile(self):
+        """With several workers, each profile gets its own report."""
+        from src.engine.article_processor import ArticleProcessor
+        from src.engine.grounding_pass import run_profile_grounding_postprocess
+
+        names = ["Alice", "Bob", "Carol", "Dan", "Eve"]
+        entities = {
+            "people": {
+                n: {"name": n, "profile": {"text": f"{n} was detained.^[art-1]"}}
+                for n in names
+            }
+        }
+
+        def fake_verify(*, profile_text, article_texts, model_type):
+            return GroundingReport(
+                profile_text_hash=profile_text, total_citations=1, verified=1
+            )
+
+        with (
+            patch.object(ArticleProcessor, "__init__", lambda self, **kw: None),
+            patch.object(
+                ArticleProcessor,
+                "prepare_article_info",
+                return_value={"id": "art-1", "content": "Source."},
+            ),
+            patch(
+                "src.engine.grounding_pass.verify_profile_grounding",
+                side_effect=fake_verify,
+            ),
+        ):
+            counts = run_profile_grounding_postprocess(
+                entities=entities,
+                rows=[{"id": "art-1"}],
+                processor=ArticleProcessor.__new__(ArticleProcessor),
+                model_type="gemini",
+                workers=4,
+            )
+
+        assert counts["verified"] == 5
+        for n in names:
+            grounding = entities["people"][n]["profile_grounding"]
+            assert grounding["profile_text_hash"] == f"{n} was detained.^[art-1]"

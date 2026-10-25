@@ -253,6 +253,28 @@ class TestEmbeddingManager:
             assert result.dimension == 3
             assert result.embeddings == [[0.1, 0.2, 0.3]]
 
+    def test_sync_wrappers_work_from_parallel_threads(self):
+        """Threads calling sync wrappers at once each get their own event loop."""
+        import asyncio
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        manager = EmbeddingManager(mode=EmbeddingMode.LOCAL)
+        barrier = threading.Barrier(4)
+
+        async def slow_embed(text):
+            await asyncio.sleep(0.05)
+            return [float(len(text))]
+
+        def call(text):
+            barrier.wait()  # all four threads enter run_until_complete together
+            return manager.embed_text_sync(text)
+
+        with patch.object(manager, "embed_text", side_effect=slow_embed):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                results = list(pool.map(call, ["a", "bb", "ccc", "dddd"]))
+        assert results == [[1.0], [2.0], [3.0], [4.0]]
+
     def test_get_active_model_name(self):
         """Test get_active_model_name returns primary provider's model."""
         manager = EmbeddingManager(mode=EmbeddingMode.LOCAL)
