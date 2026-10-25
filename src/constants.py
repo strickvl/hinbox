@@ -41,6 +41,8 @@ PROFILE_MAX_TOKENS = int(os.getenv("HINBOX_PROFILE_MAX_TOKENS", "16384"))
 # 0.29 on Luna and ran ~10x faster (2.2s vs 21s per update).
 PROFILE_UPDATE_APPROACH = os.getenv("HINBOX_PROFILE_UPDATE_APPROACH", "edit").strip()
 DEFAULT_TEMPERATURE = 0
+# Output limit for reflection verdicts (valid, reasoning, issues)
+REFLECTION_MAX_TOKENS = int(os.getenv("HINBOX_REFLECTION_MAX_TOKENS", "1024"))
 MAX_ITERATIONS = 3
 
 # Merge dispute / gray-band thresholds

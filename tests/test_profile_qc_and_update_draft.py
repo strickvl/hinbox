@@ -221,3 +221,44 @@ class TestWriteEntitiesKeepsAllKeys:
         rows = {r["name"]: r for r in read_entities_from_file("people", str(tmp_path))}
         assert rows["Bob"]["profile_grounding"] == {"grounding_score": 0.5}
         assert rows["Alice"]["profile_grounding"] is None
+
+
+class TestReflectionFailureKeepsDraft:
+    """A failed reflection keeps the draft instead of failing the profile."""
+
+    def test_iterative_improve_returns_draft_when_reflection_raises(self):
+        from src.utils.llm import GenerationMode, iterative_improve
+
+        with (
+            patch(
+                "src.utils.llm.reflect_and_check",
+                side_effect=RuntimeError("output is incomplete (max_tokens)"),
+            ),
+            patch("src.utils.llm.local_generation") as mock_generate,
+        ):
+            result = iterative_improve(
+                initial_text='{"text": "draft"}',
+                generation_messages=[{"role": "user", "content": "x"}],
+                reflection_prompt="check it",
+                response_model=EntityProfile,
+                mode=GenerationMode.LOCAL,
+            )
+        assert result["text"] == '{"text": "draft"}'
+        assert result["final_valid"] is False
+        assert "Reflection failed" in result["reflection_history"][0]["reasoning"]
+        mock_generate.assert_not_called()
+
+    def test_reflection_call_is_capped(self):
+        from src.utils.llm import (
+            GenerationMode,
+            ReflectionResult,
+            reflect_and_check,
+        )
+
+        with patch(
+            "src.utils.llm.local_generation",
+            return_value=ReflectionResult(valid=True, reasoning="ok"),
+        ) as mock_generate:
+            reflect_and_check("text", "prompt", mode=GenerationMode.LOCAL)
+        kwargs = mock_generate.call_args.kwargs
+        assert kwargs["max_tokens"] == 1024 and kwargs["max_retries"] == 1
