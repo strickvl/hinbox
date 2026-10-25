@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from src.config_loader import DomainConfig
 from src.constants import (
@@ -41,6 +41,19 @@ from src.utils.task_models import is_local_model, task_model
 
 # Module-specific logger
 logger = get_logger("mergers")
+
+
+def _profile_or_fallback(fallback: Tuple, fn: Callable, *args, **kwargs) -> Tuple:
+    """Run a profile create/update; on error, return ``fallback`` instead.
+
+    One failed profile call must not abort the merge of every other entity
+    of this type from the same article.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception as e:
+        log(f"Profile call failed, keeping fallback: {e}", level="error")
+        return fallback
 
 
 @dataclass
@@ -603,7 +616,9 @@ class EntityMerger:
                     )
 
                     updated_profile, versioned_profile, reflection_history = (
-                        update_profile(
+                        _profile_or_fallback(
+                            (existing_entity["profile"], versioned_profile, []),
+                            update_profile,
                             self.entity_type[:-1],
                             self._format_key_for_display(similar_key),
                             existing_entity["profile"],
@@ -657,7 +672,9 @@ class EntityMerger:
                         level="info",
                     )
                     new_profile, new_versioned_profile, reflection_history = (
-                        create_profile(
+                        _profile_or_fallback(
+                            ({}, VersionedProfile(), []),
+                            create_profile,
                             self.entity_type[:-1],
                             self._format_key_for_display(similar_key),
                             article_content,
@@ -751,7 +768,9 @@ class EntityMerger:
                     continue
 
                 proposed_profile, proposed_versioned_profile, reflection_history = (
-                    create_profile(
+                    _profile_or_fallback(
+                        ({}, VersionedProfile(), []),
+                        create_profile,
                         self.entity_type[:-1],
                         self._format_key_for_display(entity_key),
                         article_content,
