@@ -41,7 +41,11 @@ from src.utils.file_ops import write_entities_table
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
 from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
-from src.utils.step_timing import save_timing_report, timed_step
+from src.utils.step_timing import (
+    save_timing_report,
+    timed_step,
+    write_partial_report,
+)
 from src.utils.task_models import check_task_models
 
 # Get module-specific logger
@@ -791,6 +795,7 @@ def process_articles_batch(
         status_tracker.snapshot() if status_tracker else {}
     )
 
+    batch_start = time.perf_counter()
     active_count = min(len(rows), args.limit)
     active_rows = rows[:active_count]
     remaining_rows = rows[active_count:]
@@ -838,6 +843,11 @@ def process_articles_batch(
                 )
 
                 progress.update(task_id, advance=1)
+                write_partial_report(
+                    domain_cfg.get_output_dir(),
+                    counters["processed_count"],
+                    time.perf_counter() - batch_start,
+                )
 
     # Append rows beyond the limit unchanged
     processed_rows.extend(remaining_rows)

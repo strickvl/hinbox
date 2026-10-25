@@ -125,6 +125,13 @@ def timed(name: str) -> Callable[[F], F]:
     return wrap
 
 
+def write_partial_report(base_dir: str, articles: int, wall_seconds: float) -> None:
+    """Overwrite ``{base_dir}/timings/partial.json``, so a stopped run keeps its numbers."""
+    out_dir = os.path.join(base_dir, "timings")
+    os.makedirs(out_dir, exist_ok=True)
+    write_report(os.path.join(out_dir, "partial.json"), articles, wall_seconds)
+
+
 def save_timing_report(base_dir: str, articles: int, wall_seconds: float) -> str:
     """Write ``{base_dir}/timings/run-<timestamp>.json`` and print a summary table."""
     from rich.table import Table
