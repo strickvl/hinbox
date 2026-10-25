@@ -53,6 +53,8 @@ performance:
     extract_per_article: 4    # parallel entity types within article
     llm_in_flight: 16         # max concurrent cloud LLM calls
     ollama_in_flight: 2       # max concurrent Ollama calls (local mode)
+    merge_parallel_types: 4   # entity types merged at once within an article
+    grounding_workers: 8      # profiles grounding-checked at once
   queue:
     max_buffered_articles: 32  # backpressure limit for extraction -> merge
 

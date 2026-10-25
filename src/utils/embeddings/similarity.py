@@ -5,6 +5,7 @@ across modules without coupling to merge logic.
 """
 
 import os
+import threading
 from importlib.util import find_spec
 from typing import Dict, List, Tuple
 
@@ -15,6 +16,7 @@ from src.utils.embeddings.manager import EmbeddingManager, EmbeddingMode
 # Cache managers per (domain, mode) to avoid re-initialization overhead
 # and ensure mode changes within a long-lived process are respected.
 _MANAGER_CACHE: Dict[Tuple[str, str], EmbeddingManager] = {}
+_MANAGER_LOCK = threading.Lock()
 
 
 def _resolve_mode_for_cache(domain: str) -> str:
@@ -68,13 +70,12 @@ def get_embedding_manager(domain: str = "guantanamo") -> EmbeddingManager:
     resolved_mode = _resolve_mode_for_cache(domain)
     cache_key = (domain, resolved_mode)
 
-    cached = _MANAGER_CACHE.get(cache_key)
-    if cached is not None:
+    # Locked so the parallel per-type merges load the model once, not 4 times
+    with _MANAGER_LOCK:
+        cached = _MANAGER_CACHE.get(cache_key)
+        if cached is None:
+            cached = _MANAGER_CACHE[cache_key] = EmbeddingManager(domain=domain)
         return cached
-
-    manager = EmbeddingManager(domain=domain)
-    _MANAGER_CACHE[cache_key] = manager
-    return manager
 
 
 def compute_similarity(vec1: List[float], vec2: List[float]) -> float:

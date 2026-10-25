@@ -17,9 +17,11 @@ Concurrency model (Phase 2 speed audit):
 """
 
 import argparse
+import contextvars
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,6 +31,7 @@ import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
 from src.engine import ArticleProcessor, EntityMerger, configure_match_check_memo
+from src.engine.grounding_pass import run_profile_grounding_postprocess
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
 from src.utils.cache_utils import sha256_text
@@ -40,7 +43,6 @@ from src.utils.extraction import configure_extraction_sidecar_cache
 from src.utils.file_ops import write_entities_table
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
-from src.utils.quality_controls import CITATION_RE, verify_profile_grounding
 from src.utils.step_timing import (
     save_timing_report,
     timed_step,
@@ -305,7 +307,7 @@ def merge_all_entities(
         ("events", event_dicts),
     ]
 
-    for entity_type, entity_dicts in merge_inputs:
+    def merge_one(entity_type: str, entity_dicts: List[Dict]) -> None:
         try:
             merge_start = datetime.now()
             merger = EntityMerger(entity_type)
@@ -332,6 +334,17 @@ def merge_all_entities(
         except Exception as e:
             log(f"Error merging {entity_type}", level="error", exception=e)
             processing_metadata[f"error_{entity_type}"] = str(e)
+
+    # Each type's merge reads and writes only entities[entity_type], so the
+    # four can run at once; copy_context() keeps their timings nested
+    workers = domain_cfg.get_concurrency_config()["merge_parallel_types"]
+    with ThreadPoolExecutor(max_workers=min(workers, len(merge_inputs))) as pool:
+        futures = [
+            pool.submit(contextvars.copy_context().run, merge_one, et, dicts)
+            for et, dicts in merge_inputs
+        ]
+        for future in futures:
+            future.result()
 
 
 def write_updated_articles(processed_rows: List[Dict], articles_path: str) -> None:
@@ -427,77 +440,6 @@ def log_processing_summary(
                 f"• Average reflection attempts per article: {avg_reflections:.2f}",
                 level="info",
             )
-
-
-def run_profile_grounding_postprocess(
-    *,
-    entities: Dict[str, Dict],
-    rows: List[Dict],
-    processor: ArticleProcessor,
-    model_type: str,
-) -> Dict[str, int]:
-    """Run grounding verification on entity profiles as a batch post-processing step.
-
-    For each entity with citations in its profile, verifies that claims are
-    supported by source article text. Stores the grounding report on each
-    entity as entity["profile_grounding"]. Skips entities whose profile
-    hasn't changed since the last verification (hash-based).
-
-    Returns summary counts of verified/skipped/failed entities.
-    """
-    import hashlib
-
-    # Build article_id -> content map from rows
-    article_texts: Dict[str, str] = {}
-    for i, row in enumerate(rows):
-        info = processor.prepare_article_info(row, i)
-        if info["id"] and info["content"]:
-            article_texts[info["id"]] = info["content"]
-
-    counts = {"verified": 0, "skipped_unchanged": 0, "skipped_no_citations": 0}
-
-    for entity_type, entity_dict in entities.items():
-        for entity_key, entity_data in entity_dict.items():
-            profile_text = (entity_data.get("profile") or {}).get("text", "")
-            if not profile_text:
-                continue
-
-            # Check if profile has citations worth verifying
-            citations = CITATION_RE.findall(profile_text)
-            if not citations:
-                counts["skipped_no_citations"] += 1
-                continue
-
-            # Skip if profile hasn't changed since last grounding check
-            current_hash = hashlib.sha256(profile_text.encode()).hexdigest()
-            existing_grounding = entity_data.get("profile_grounding")
-            if (
-                existing_grounding
-                and isinstance(existing_grounding, dict)
-                and existing_grounding.get("profile_text_hash") == current_hash
-            ):
-                counts["skipped_unchanged"] += 1
-                continue
-
-            # Run grounding verification
-            report = verify_profile_grounding(
-                profile_text=profile_text,
-                article_texts=article_texts,
-                model_type=model_type,
-            )
-
-            entity_data["profile_grounding"] = report.model_dump(exclude_none=True)
-            counts["verified"] += 1
-
-            if report.grounding_score is not None:
-                log(
-                    f"Grounding for {entity_type}/{entity_key}: "
-                    f"score={report.grounding_score:.2f}, "
-                    f"verified={report.verified}/{report.total_citations}",
-                    level="info",
-                )
-
-    return counts
 
 
 def write_results_and_statistics(
@@ -757,8 +699,6 @@ def process_articles_batch(
     thread consumes results **in article order** and is the only writer to
     ``entities`` / ``status_tracker``.
     """
-    from concurrent.futures import ThreadPoolExecutor
-
     from rich.progress import (
         BarColumn,
         Progress,
@@ -952,6 +892,7 @@ def main():
                 rows=processed_rows,
                 processor=processor,
                 model_type=model_type,
+                workers=cc["grounding_workers"],
             )
         log(
             f"Grounding complete: {grounding_counts['verified']} verified, "

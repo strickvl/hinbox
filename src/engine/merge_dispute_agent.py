@@ -10,6 +10,7 @@ to produce a MergeDisputeDecision with action, confidence, and reasoning.
 
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -23,6 +24,7 @@ from src.utils.task_models import is_local_model, task_model
 
 # Deferred disputes are appended here, under the domain's output directory
 REVIEW_QUEUE_FILENAME = "merge_review_queue.jsonl"
+_REVIEW_QUEUE_LOCK = threading.Lock()
 
 
 class MergeDisputeAction(str, Enum):
@@ -211,7 +213,8 @@ def append_merge_dispute_review_queue(path: str, record: Dict[str, Any]) -> None
     """Append a single JSON line to the merge dispute review queue."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
+        # Per-type merges run in parallel threads and may append at once
+        with _REVIEW_QUEUE_LOCK, open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
         log(f"Appended dispute review record to {path}", level="info")
     except Exception as e:
