@@ -231,8 +231,8 @@ def load_cases(
     ]
 
 
-def make_pipeline_updater(model: str, domain: str) -> Updater:
-    """Run the pipeline's own ``update_profile`` on a case."""
+def make_rewrite_updater(model: str, domain: str) -> Updater:
+    """Run ``update_profile``'s whole-profile rewrite (with reflection) on a case."""
     from src.engine.profiles import VersionedProfile, update_profile
 
     def update(case: Dict[str, Any]) -> str:
@@ -245,6 +245,7 @@ def make_pipeline_updater(model: str, domain: str) -> Updater:
             case["article_id"],
             domain=domain,
             model=model,
+            approach="rewrite",
         )
         # update_profile hands back the old profile when the model's answer
         # can't be parsed; scoring that would reward a failed call. A real
@@ -277,7 +278,7 @@ def make_edit_updater(model: str, domain: str) -> Updater:
 
 
 UPDATERS: Dict[str, Callable[[str, str], Updater]] = {
-    "pipeline": make_pipeline_updater,
+    "rewrite": make_rewrite_updater,
     "edit": make_edit_updater,
 }
 

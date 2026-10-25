@@ -264,6 +264,7 @@ class TestProfileFunctionsWithVersioning:
                 new_article_text="New article content",
                 new_article_id="article2",
                 model_type="gemini",
+                approach="rewrite",
             )
 
             assert result_profile == updated_profile
@@ -305,6 +306,7 @@ class TestProfileFunctionsWithVersioning:
                 new_article_text="New article content",
                 new_article_id="article2",
                 model_type="gemini",
+                approach="rewrite",
             )
 
             assert result_profile == updated_profile

@@ -5,7 +5,8 @@ These tests verify:
 - create_profile / update_profile run profile QC and record it on the profile
 - The QC result is part of the saved profile version
 - QC never blocks a profile: failing profiles are kept, only flagged
-- Profile updates draft a real profile before the first reflection,
+- update_profile applies the edit list by default, keeping the profile's keys
+- Profile updates (rewrite approach) draft a real profile before the first reflection,
   instead of reflecting on an empty "{}"
 - write_entities_table keeps a key that is missing from the first row
 """
@@ -89,11 +90,66 @@ class TestProfileQCOnUpdate:
                 versioned,
                 "new article text",
                 "art-002",
+                approach="rewrite",
             )
 
         assert profile["qc"]["passed"] is False
         assert "no_citations" in profile["qc"]["flags"]
         assert versioned.get_latest().profile_data["qc"] == profile["qc"]
+
+
+class TestEditUpdateIsTheDefault:
+    """update_profile applies edits by default and keeps the profile's keys."""
+
+    def _edited(self, old: dict) -> dict:
+        return {
+            **old,
+            "text": old["text"] + " She joined in 2008.^[art-002]",
+            "sources": old["sources"] + ["art-002"],
+            "edits": [{"op": "add", "anchor": "END", "text": "x"}],
+            "disagreements": [],
+            "edit_report": {"applied": 1, "appended": 0, "skipped": []},
+        }
+
+    def test_default_update_applies_edits(self):
+        old = _good_profile()
+        with patch(
+            "src.engine.profile_edits.edit_profile", return_value=self._edited(old)
+        ) as mock_edit:
+            profile, versioned, history = update_profile(
+                "person", "Alice Smith", old, VersionedProfile(), "text", "art-002"
+            )
+        mock_edit.assert_called_once()
+        assert profile["text"].endswith("She joined in 2008.^[art-002]")
+        assert profile["sources"] == ["art-001", "art-002"]
+        assert "edits" not in profile and "edit_report" not in profile
+        assert profile["qc"]["passed"] is True
+        assert history == []
+
+    def test_failed_edit_keeps_the_old_profile(self):
+        old = _good_profile()
+        with patch(
+            "src.engine.profile_edits.edit_profile", side_effect=RuntimeError("x")
+        ):
+            profile, _, _ = update_profile(
+                "person", "Alice Smith", old, VersionedProfile(), "text", "art-002"
+            )
+        assert profile["text"] == old["text"]
+        assert profile["sources"] == ["art-001"]
+
+    def test_unknown_approach_is_rejected(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            update_profile(
+                "person",
+                "A",
+                _good_profile(),
+                VersionedProfile(),
+                "t",
+                "a",
+                approach="patch",
+            )
 
 
 class TestUpdateDraftsBeforeReflecting:

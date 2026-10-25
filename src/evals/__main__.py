@@ -138,10 +138,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--approach",
-        choices=("pipeline", "edit"),
-        default="pipeline",
-        help="profile-update: the pipeline's whole-profile rewrite, or "
-        "apply a list of edits",
+        choices=("edit", "rewrite"),
+        default="edit",
+        help="profile-update: apply a list of edits (the pipeline's default), "
+        "or the old whole-profile rewrite with reflection",
     )
     args = parser.parse_args()
 

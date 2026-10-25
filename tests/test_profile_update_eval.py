@@ -113,16 +113,16 @@ def test_disputed_ignores_an_unrelated_sentence_with_the_same_year_and_source():
     assert not pu.score_update(_disputed(), swapped)["keeps_both"]
 
 
-def test_pipeline_updater_reports_a_fallback_to_the_old_profile(monkeypatch):
+def test_rewrite_updater_reports_a_fallback_to_the_old_profile(monkeypatch):
     import src.engine.profiles as profiles
 
     monkeypatch.setattr(profiles, "update_profile", lambda *a, **kw: (a[2], a[3], []))
-    update = pu.make_pipeline_updater("openai/x", "guantanamo")
+    update = pu.make_rewrite_updater("openai/x", "guantanamo")
     record = pu.run_updates([_case()], update)[0]
     assert "old profile came back" in record["error"] and "scores" not in record
 
 
-def test_pipeline_updater_accepts_a_word_for_word_no_op_update(monkeypatch):
+def test_rewrite_updater_accepts_a_word_for_word_no_op_update(monkeypatch):
     import src.engine.profiles as profiles
 
     def no_op(*a, **kw):
@@ -130,7 +130,7 @@ def test_pipeline_updater_accepts_a_word_for_word_no_op_update(monkeypatch):
         return {**old, "sources": old["sources"] + [article_id]}, a[3], []
 
     monkeypatch.setattr(profiles, "update_profile", no_op)
-    update = pu.make_pipeline_updater("openai/x", "guantanamo")
+    update = pu.make_rewrite_updater("openai/x", "guantanamo")
     case = _case(kind="irrelevant", expected={"max_new_sentences": 2})
     record = pu.run_updates([case], update)[0]
     assert record["scores"]["passed"]
