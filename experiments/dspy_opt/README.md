@@ -72,7 +72,7 @@ just dspy-profile --model ollama/local-qwen36-16k:latest --reflection-model open
 just dspy-profile --model ollama/local-qwen36-16k:latest --load data/guantanamo/entities/eval/dspy/<file>.json --eval-split dev
 ```
 
-- **Starting point:** the instructions are the domain's `profile_edit.md`, with `{entity_name}` written as "the entity" and `{article_id}` as `<article_id>`. The entity and article come in as their own input fields. To use an optimised prompt in the pipeline, copy its instructions back into `profile_edit.md` and put the placeholders back.
+- **Starting point:** the instructions are the domain's `profile_edit.md`, or `profile_edit_local.md` for an `ollama/` model (the pipeline's own choice; override with `--base-prompt`). `profile_edit_local.md` is GEPA's result for Qwen3.6. The prompt is used with `{entity_name}` written as "the entity" and `{article_id}` as `<article_id>`. The entity and article come in as their own input fields. To use an optimised prompt in the pipeline, copy its instructions back into the matching prompt file and put the placeholders back.
 - **Data:** GEPA trains on the `train` entities' cases from `profile_update_cases.jsonl` and validates on `dev`. Scores are reported on `test` (Camp 7, Vance Spath). Disputed cases still marked `needs_review` are left out unless you pass `--include-unreviewed`. Some of them pair two different events, and training on those would teach the model to invent disagreements.
 - **Score:**
   - A case that passes the eval's checks scores 1.

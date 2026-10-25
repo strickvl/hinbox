@@ -89,7 +89,11 @@ def _numbers(text: str) -> Set[str]:
 
 
 def _shares_claim(about: Set[str], words: Set[str]) -> bool:
-    """Loose test that a freshly worded sentence is about the claim."""
+    """Loose test that a freshly worded sentence is about the claim.
+
+    Words are compared by their first 4 letters, so "opened" matches "opening".
+    """
+    about, words = {w[:4] for w in about}, {w[:4] for w in words}
     shared = len(about & words)
     smaller = min(len(about), len(words)) or 1
     return shared >= DISPUTED_MIN_SHARED and shared / smaller >= DISPUTED_OVERLAP
