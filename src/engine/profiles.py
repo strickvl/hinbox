@@ -14,6 +14,7 @@ from src.constants import (
     MAX_ITERATIONS,
     OLLAMA_MODEL,
     PROFILE_MAX_TOKENS,
+    PROFILE_UPDATE_APPROACH,
 )
 from src.exceptions import (
     ProfileGenerationError,
@@ -33,6 +34,7 @@ from src.utils.llm import (
 from src.utils.outcomes import PhaseOutcome
 from src.utils.profiles import extract_profile_text
 from src.utils.quality_controls import run_profile_qc
+from src.utils.step_timing import timed
 
 logger = get_logger("profiles")
 
@@ -48,6 +50,7 @@ def _resolve_mode(model_type: str, model: Optional[str]) -> GenerationMode:
     return GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
 
 
+@timed("draft")
 def _generate_initial_profile_text(
     messages: List[Dict], mode: GenerationMode, model: Optional[str] = None
 ) -> str:
@@ -456,6 +459,56 @@ New Article (ID: {new_article_id}):
         raise
 
 
+def _edit_profile_update(
+    entity_type: str,
+    entity_name: str,
+    existing_profile: Dict,
+    new_article_text: str,
+    new_article_id: str,
+    model_type: str = "gemini",
+    domain: str = "guantanamo",
+    model: Optional[str] = None,
+) -> Tuple[Dict, list]:
+    """Update by applying the model's add/replace edits to the existing text.
+
+    Keeps the profile's keys as they are (the edit list and its report are
+    logged, not stored). Falls back to the existing profile if the call fails.
+    """
+    from src.engine.profile_edits import edit_profile
+
+    local = _resolve_mode(model_type, model) == GenerationMode.LOCAL
+    try:
+        edited = edit_profile(
+            entity_type,
+            entity_name,
+            existing_profile,
+            new_article_text,
+            new_article_id,
+            model=model,
+            domain=domain,
+            local=local,
+        )
+    except Exception as e:
+        log(
+            f"Profile edit failed for {entity_name}, keeping existing profile: {e}",
+            level="warning",
+        )
+        return existing_profile, []
+    report = edited["edit_report"]
+    log(
+        f"Edited profile for {entity_name}: {report['applied']} applied, "
+        f"{report['appended']} appended, {len(report['skipped'])} skipped, "
+        f"{len(edited['disagreements'])} disagreements",
+        level="debug",
+    )
+    return {
+        **existing_profile,
+        "text": edited["text"],
+        "sources": edited["sources"],
+    }, []
+
+
+@timed("profile.update")
 def update_profile(
     entity_type: str,
     entity_name: str,
@@ -466,14 +519,20 @@ def update_profile(
     model_type: str = "gemini",
     domain: str = "guantanamo",
     model: Optional[str] = None,
+    approach: Optional[str] = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Update profile and add version if versioning is enabled.
 
-    Returns (updated_profile, versioned_profile, improvement_history).
+    ``approach`` is "edit" or "rewrite" (default: ``PROFILE_UPDATE_APPROACH``).
+    Returns (updated_profile, versioned_profile, improvement_history); the
+    edit approach has no reflection rounds, so its history is empty.
     """
-    # Call existing update logic
-    updated_profile, history = _update_profile_internal(
+    approach = approach or PROFILE_UPDATE_APPROACH
+    if approach not in ("edit", "rewrite"):
+        raise ValueError(f"Unknown profile update approach: {approach!r}")
+    update = _edit_profile_update if approach == "edit" else _update_profile_internal
+    updated_profile, history = update(
         entity_type,
         entity_name,
         existing_profile,
@@ -495,6 +554,7 @@ def update_profile(
     return updated_profile, versioned_profile, history
 
 
+@timed("profile.create")
 def create_profile(
     entity_type: str,
     entity_name: str,

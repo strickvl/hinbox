@@ -41,6 +41,7 @@ from src.utils.logging import (
     log_iterative_start,
 )
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
+from src.utils.step_timing import record_llm_call, timed, timed_step
 
 # Get logger for this module
 logger = get_logger("utils.llm")
@@ -76,29 +77,34 @@ def configure_llm_concurrency(
 
 
 @contextmanager
-def cloud_llm_slot() -> Iterator[None]:
+def _llm_slot(semaphore: Optional[threading.Semaphore]) -> Iterator[None]:
+    """Hold a slot in ``semaphore`` (if set) and time the call for ``step_timing``."""
+    start = time.perf_counter()
+    if semaphore is not None:
+        semaphore.acquire()
+    acquired = time.perf_counter()
+    ok = False
+    try:
+        yield
+        ok = True
+    finally:
+        if semaphore is not None:
+            semaphore.release()
+        record_llm_call(
+            wait_seconds=acquired - start,
+            call_seconds=time.perf_counter() - acquired,
+            ok=ok,
+        )
+
+
+def cloud_llm_slot() -> Any:
     """Acquire / release a slot in the global cloud semaphore (no-op if unconfigured)."""
-    if _cloud_llm_semaphore is not None:
-        _cloud_llm_semaphore.acquire()
-        try:
-            yield
-        finally:
-            _cloud_llm_semaphore.release()
-    else:
-        yield
+    return _llm_slot(_cloud_llm_semaphore)
 
 
-@contextmanager
-def local_llm_slot() -> Iterator[None]:
+def local_llm_slot() -> Any:
     """Acquire / release a slot in the global local semaphore (no-op if unconfigured)."""
-    if _local_llm_semaphore is not None:
-        _local_llm_semaphore.acquire()
-        try:
-            yield
-        finally:
-            _local_llm_semaphore.release()
-    else:
-        yield
+    return _llm_slot(_local_llm_semaphore)
 
 
 class GenerationMode(str, Enum):
@@ -675,6 +681,7 @@ def text_generation(
 # ---------------------------------------------------------------------------
 
 
+@timed("reflect")
 def reflect_and_check(
     text: str,
     reasoning_prompt: str,
@@ -838,18 +845,15 @@ def iterative_improve(
             }
         ]
 
-        if mode == GenerationMode.CLOUD:
-            improved = cloud_generation(
+        generate = (
+            cloud_generation if mode == GenerationMode.CLOUD else local_generation
+        )
+        default_model = CLOUD_MODEL if mode == GenerationMode.CLOUD else OLLAMA_MODEL
+        with timed_step("regenerate"):
+            improved = generate(
                 messages=improvement_messages,
                 response_model=response_model,
-                model=model or CLOUD_MODEL,
-                max_tokens=max_tokens,
-            )
-        else:
-            improved = local_generation(
-                messages=improvement_messages,
-                response_model=response_model,
-                model=model or OLLAMA_MODEL,
+                model=model or default_model,
                 max_tokens=max_tokens,
             )
 

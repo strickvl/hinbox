@@ -1,3 +1,4 @@
+import contextvars
 from typing import Any, Dict, List, Optional
 
 from src.config_loader import get_system_prompt
@@ -18,6 +19,7 @@ from src.utils.quality_controls import (
     filter_entities_by_article_relevance,
     run_extraction_qc,
 )
+from src.utils.step_timing import timed_step
 from src.utils.task_models import is_local_model, task_model
 
 logger = get_logger("article_processor")
@@ -299,6 +301,14 @@ class ArticleProcessor:
         except Exception:
             return 0
 
+    def _timed_extract(
+        self, entity_type: str, article_content: str, article_id: str
+    ) -> PhaseOutcome:
+        with timed_step(f"extract.{entity_type}"):
+            return self.extract_single_entity_type(
+                entity_type, article_content, article_id
+            )
+
     def extract_all_entities(
         self,
         article_content: str,
@@ -328,9 +338,12 @@ class ArticleProcessor:
                 with ThreadPoolExecutor(
                     max_workers=min(max_workers, len(entity_types))
                 ) as pool:
+                    # copy_context() so each type's timing nests under the
+                    # caller's step (a new thread starts with no step)
                     futures = {
                         et: pool.submit(
-                            self.extract_single_entity_type,
+                            contextvars.copy_context().run,
+                            self._timed_extract,
                             et,
                             article_content,
                             article_id,
@@ -344,9 +357,7 @@ class ArticleProcessor:
                         extraction_outcomes[et] = outcome.to_metadata_dict()
             else:
                 for et in entity_types:
-                    outcome = self.extract_single_entity_type(
-                        et, article_content, article_id
-                    )
+                    outcome = self._timed_extract(et, article_content, article_id)
                     entities[et] = outcome.value or []
                     extraction_outcomes[et] = outcome.to_metadata_dict()
 

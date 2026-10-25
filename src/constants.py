@@ -34,6 +34,12 @@ DEFAULT_MAX_TOKENS = 2048
 # At 2048 tokens profiles stop at roughly 6-7k characters: the JSON is cut off
 # mid-way and the update fails.
 PROFILE_MAX_TOKENS = int(os.getenv("HINBOX_PROFILE_MAX_TOKENS", "16384"))
+# How update_profile() changes an existing profile. "edit": one call returns a
+# list of add/replace edits and code applies them (src/engine/profile_edits.py).
+# "rewrite": the model writes the whole profile again, then up to 3
+# reflect/regenerate rounds. On the profile-update eval, edit scored 0.89 vs
+# 0.29 on Luna and ran ~10x faster (2.2s vs 21s per update).
+PROFILE_UPDATE_APPROACH = os.getenv("HINBOX_PROFILE_UPDATE_APPROACH", "edit").strip()
 DEFAULT_TEMPERATURE = 0
 MAX_ITERATIONS = 3
 

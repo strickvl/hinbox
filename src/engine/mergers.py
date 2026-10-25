@@ -357,7 +357,7 @@ class EntityMerger:
         if work_items:
             evidence_texts = [wi.evidence_text for wi in work_items]
             all_evidence_vecs, ev_model, ev_dim, ev_fp = batch_embed_texts(
-                embedding_manager, evidence_texts, embed_batch_size
+                embedding_manager, evidence_texts, embed_batch_size, "embed.evidence"
             )
             for j, wi in enumerate(work_items):
                 wi.evidence_embedding = all_evidence_vecs[j]
@@ -820,7 +820,7 @@ class EntityMerger:
         if pending_profiles:
             profile_texts = [p.profile_text for p in pending_profiles]
             prof_vecs, prof_model, prof_dim, prof_fp = batch_embed_texts(
-                embedding_manager, profile_texts, embed_batch_size
+                embedding_manager, profile_texts, embed_batch_size, "embed.profile"
             )
             for j, pending in enumerate(pending_profiles):
                 vec = prof_vecs[j]

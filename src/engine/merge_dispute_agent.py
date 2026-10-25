@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from src.logging_config import log
 from src.utils.llm import cloud_generation, local_generation
+from src.utils.step_timing import timed
 from src.utils.task_models import is_local_model, task_model
 
 # Deferred disputes are appended here, under the domain's output directory
@@ -83,6 +84,7 @@ Profile: {existing_profile_text}
 Based on ALL available evidence, should these entities be merged, kept separate, or deferred for human review?"""
 
 
+@timed("dispute")
 def run_merge_dispute_agent(
     *,
     entity_type: str,
