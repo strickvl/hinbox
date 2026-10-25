@@ -34,6 +34,7 @@ from src.constants import (
     OLLAMA_MODEL,
     OLLAMA_REASONING_EFFORT,
     OLLAMA_THINKING_MAX_TOKENS,
+    REFLECTION_MAX_TOKENS,
 )
 from src.logging_config import get_logger
 from src.utils.logging import (
@@ -713,18 +714,25 @@ def reflect_and_check(
         },
     ]
 
+    # A verdict is a few hundred tokens. Qwen via Ollama sometimes runs a
+    # reflection to the token limit with no visible output; at temperature 0
+    # each Instructor retry repeats it, so the default (3 attempts at 2048)
+    # burned 6144 tokens, minutes of GPU time, before failing anyway.
+    limits = {"max_tokens": REFLECTION_MAX_TOKENS, "max_retries": 1}
     try:
         if mode == GenerationMode.CLOUD:
             result = cloud_generation(
                 messages=messages,
                 response_model=ReflectionResult,
                 model=model or CLOUD_MODEL,
+                **limits,
             )
         else:
             result = local_generation(
                 messages=messages,
                 response_model=ReflectionResult,
                 model=model or OLLAMA_MODEL,
+                **limits,
             )
 
         logger.debug(f"Reflection check completed - valid: {result.valid}")
@@ -815,13 +823,27 @@ def iterative_improve(
     for i in range(max_iterations):
         logger.debug(f"Iteration {i + 1}/{max_iterations}")
 
-        # Reflect on current text
-        reflection = reflect_and_check(
-            current_text,
-            reflection_prompt,
-            mode=mode,
-            model=model,
-        )
+        # Reflect on current text. The reflection only grades the draft
+        # (profile QC still runs afterwards), so if it fails, keep the draft
+        # rather than lose the whole profile.
+        try:
+            reflection = reflect_and_check(
+                current_text,
+                reflection_prompt,
+                mode=mode,
+                model=model,
+            )
+        except Exception as e:
+            logger.warning(f"Reflection failed, keeping the current draft: {e}")
+            reflection_history.append(
+                {
+                    "iteration": i + 1,
+                    "valid": False,
+                    "reasoning": f"Reflection failed: {str(e)[:200]}",
+                    "issues": [],
+                }
+            )
+            break
         reflection_result = extract_reflection_result(reflection)
 
         reflection_history.append(
