@@ -274,3 +274,11 @@ def test_unsupported_numbers_flags_values_the_article_never_gives():
     # citation ids with digits don't count as numbers
     other = OLD + " He met his lawyer.^[a9] It was 1999.^[a1]"
     assert pu.score_update(case, other)["unsupported_numbers"] == 0
+
+
+def test_dispute_claims_ignores_a_contradiction_reported_inside_the_article():
+    new = (
+        OLD + " Rep. Moran said captives read the novels, a claim contradicted"
+        " by a prison spokeswoman.^[a9]"
+    )
+    assert pu.score_update(_case(), new)["dispute_claims"] == 0

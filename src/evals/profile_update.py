@@ -59,6 +59,11 @@ _DISPUTE_WORDS = re.compile(
     r"|figures|sources))",
     re.I,
 )
+# ...and that the conflict is between sources, not one reported inside the
+# article ("a claim contradicted by the prison spokeswoman" is just a fact)
+_SOURCE_WORDS = re.compile(
+    r"\b(sources?|reports?|articles?|accounts?|records?)\b", re.I
+)
 MIN_CONTENT_WORDS = 3  # shorter lines (headers, "Tags:") aren't facts
 
 Updater = Callable[[Dict[str, Any]], str]
@@ -130,7 +135,9 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     # All sentences, not just facts: "Sources differ." is too short to be one
     old_set = {" ".join(s.split()) for s in _sentences(old_text)}
     changed = [s for s in _sentences(new_text) if " ".join(s.split()) not in old_set]
-    disputes = sum(1 for s in changed if _DISPUTE_WORDS.search(s))
+    disputes = sum(
+        1 for s in changed if _DISPUTE_WORDS.search(s) and _SOURCE_WORDS.search(s)
+    )
     # Any one of the sentence's numbers in the article is enough, since a
     # sentence that states both sides ("2003, rather than 2002") also repeats
     # the profile's own number
