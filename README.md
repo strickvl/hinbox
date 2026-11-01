@@ -106,7 +106,8 @@ just frontend
 3. **Set up environment variables:**
    ```bash
    # Create a .env file (auto-loaded by just):
-   echo 'GEMINI_API_KEY=your-gemini-api-key' > .env
+   # The default cloud model is openai/gpt-6-luna:
+   echo 'OPENAI_API_KEY=your-openai-api-key' > .env
    # Optional for local processing:
    echo 'OLLAMA_API_URL=http://localhost:11434/v1' >> .env
    ```
@@ -128,12 +129,10 @@ just frontend
    # Override the local model (default: ollama/qwen2.5:32b-instruct-q5_K_M):
    echo 'HINBOX_OLLAMA_MODEL=ollama/gemma3:27b' >> .env
 
-   # Override the cloud model (default: gemini/gemini-2.0-flash):
-   echo 'HINBOX_CLOUD_MODEL=gemini/gemini-2.5-flash' >> .env
-
-   # Other providers: openai/... needs OPENAI_API_KEY; anthropic/... needs
-   # ANTHROPIC_API_KEY and `uv sync --extra anthropic`
-   echo 'HINBOX_CLOUD_MODEL=openai/gpt-6-luna' >> .env
+   # Override the cloud model (default: openai/gpt-6-luna, needs OPENAI_API_KEY).
+   # anthropic/... needs ANTHROPIC_API_KEY and `uv sync --extra anthropic`;
+   # gemini/... needs GEMINI_API_KEY
+   echo 'HINBOX_CLOUD_MODEL=anthropic/claude-haiku-5-5' >> .env
 
    # Give one task its own model; the rest keep the default above. Tasks:
    # RELEVANCE, EXTRACTION, MATCH, DISPUTE, PROFILE. The prefix decides where
@@ -207,15 +206,29 @@ just frontend
 ```
 Explore extracted entities at http://localhost:5001
 
+### Prompts per model
+A prompt that suits one model can hurt another: the profile-edit prompt tuned for Qwen3.6 lifted the local models but made GPT-6 Luna skip real new facts. So every prompt file can have variants named `<prompt>.<variant>.md` next to the default `<prompt>.md`. For each prompt, the pipeline uses the first file that exists:
+
+1. a family listed under `prompt_families` in the domain's `config.yaml` whose name parts appear in the model name (`qwen: [qwen]` makes `ollama/qwen3.6:35b` use `relevance.qwen.md`);
+2. `<prompt>.local.md` for `ollama/` models, `<prompt>.cloud.md` for the rest;
+3. `<prompt>.md`.
+
+This covers relevance, the four extraction prompts and the profile prompts; the merge check builds its prompt in code. Add a variant only when `just eval show --grid` shows it beating the default for that model on the test split.
+
 ### Evaluating Models
 The scoreboard grades any model on your hand-labelled answer keys, so you can compare cloud, frontier and local models (or later, optimized prompts) on equal terms.
 ```bash
 # Score a model on the relevance labels or the merge labels
-just eval relevance --model gemini/gemini-2.0-flash
+just eval relevance --model openai/gpt-6-luna
 just eval merge --model ollama/qwen3.6:35b-a3b --split test
 
-# Show every run so far
+# Show every run so far, or the latest score for each model and prompt file
 just eval show
+just eval show --grid
+
+# Score a prompt variant the pipeline wouldn't pick for this model
+# (relevance.qwen.md, profile_edit.local.md, ...; 'default' = the plain file)
+just eval profile-update --model openai/gpt-6-luna --split test --prompt-variant local
 
 # Pick hard look-alike entity pairs to label (writes merge_candidates_v2.jsonl)
 just eval-mine

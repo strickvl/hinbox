@@ -9,6 +9,15 @@ data_sources:
 output:
   directory: "data/{DOMAIN_NAME}/entities"
 
+# Prompt variants by model. For a model whose name contains one of a
+# family's parts, a prompt file named <prompt>.<family>.md (for example
+# relevance.qwen.md) is used instead of <prompt>.md. Families are tried in
+# order, then "local" (ollama/ models) or "cloud". Add a variant only when the
+# eval shows it beats the default for that model (`just eval show --grid`).
+prompt_families:
+  qwen: [qwen]
+  bolt: [bolt, nemotron]
+
 # Legacy similarity threshold (superseded by dedup section below)
 similarity_threshold: 0.75
 

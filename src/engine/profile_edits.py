@@ -193,15 +193,13 @@ def _messages(
     article_text: str,
     article_id: str,
     domain: str,
-    local: bool = False,
+    model: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     from src.config_loader import DomainConfig
 
-    # Local models get the GEPA-tuned prompt (tuned on Qwen3.6): on the eval
-    # it lifted Qwen and Bolt, but made the cloud model skip real new facts
-    template = DomainConfig(domain).load_profile_prompt(
-        "edit_local" if local else "edit"
-    )
+    # Local models get profile_edit.local.md, GEPA-tuned on Qwen3.6: on the
+    # eval it lifted Qwen and Bolt, but made the cloud model skip real facts
+    template = DomainConfig(domain).load_profile_prompt("edit", model)
     instructions = template.format(
         entity_type=entity_type, entity_name=entity_name, article_id=article_id
     )
@@ -231,6 +229,7 @@ def edit_profile(
     """
     local = (model or "").startswith("ollama/") if local is None else local
     generate = local_generation if local else cloud_generation
+    model = model or (OLLAMA_MODEL if local else CLOUD_MODEL)
     response = generate(
         messages=_messages(
             entity_type,
@@ -239,10 +238,10 @@ def edit_profile(
             article_text,
             article_id,
             domain,
-            local,
+            model,
         ),
         response_model=ProfileEditList,
-        model=model or (OLLAMA_MODEL if local else CLOUD_MODEL),
+        model=model,
         max_tokens=PROFILE_MAX_TOKENS,
     )
     if response is None:

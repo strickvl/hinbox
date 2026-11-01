@@ -83,7 +83,7 @@ class ArticleProcessor:
         every article get checked again.
         """
         if self._relevance_fingerprint is None:
-            prompt = get_system_prompt("relevance", self.domain)
+            prompt = get_system_prompt("relevance", self.domain, self.relevance_model)
             self._relevance_fingerprint = sha256_text(
                 f"{self.relevance_model}\n{RELEVANCE_PROMPT_LAYOUT}\n{prompt}"
             )
