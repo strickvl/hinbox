@@ -16,7 +16,20 @@ Categorize each location using ONE of the following types:
 - **city**: Cities, towns, and municipalities (e.g., Washington D.C., Miami, Kabul)
 - **region**: Geographic regions, states, provinces, and territories (e.g., Middle East, Florida, Helmand Province)
 - **building**: Specific buildings, structures, or facilities (e.g., Pentagon, White House, courthouses)
-- **other**: Any other location type not covered above (e.g., geographic features, borders, zones)
+- **other**: A physical place that fits none of the types above, such as a geographic feature, border or zone (e.g., Everglades, Windward Passage). Never use "other" for an organization, person or group.
+
+## What Is NOT a Location (CRITICAL)
+
+Only extract places you could travel to or stand in. Organizations, people and groups are extracted separately, so leave them out here, even when the article names them next to places:
+
+- **Government agencies and departments**: CIA, Central Intelligence Agency, FBI, Department of Homeland Security, Immigration and Customs Enforcement (ICE), Justice Department, National Security Division, Defense Department
+- **Courts, offices and other institutions**: D.C. Circuit, Leon County Sheriff's Office, American Civil Liberties Union (ACLU), United Nations, Red Cross
+- **People**: Donald Trump, Khalid Shaikh Mohammed
+- **Gangs, militias and other groups**: Tren de Aragua, al-Qaida, ISIS, Taliban
+- **Religions, nationalities and peoples**: Islam, Venezuelans, Cubans
+- **Ordinary words that happen to be capitalized**: colours, team names, product names
+
+When a place name is used to mean the institution inside it ("the Pentagon said", "the White House announced"), do not extract it as a location. Extract it only when the article talks about the place itself ("protesters gathered outside the White House").
 
 ## Output Format
 
@@ -86,9 +99,23 @@ Return a JSON array of objects. Each location MUST have:
   {"name": "Washington", "type": "city"},
   {"name": "White House", "type": "building"},
   {"name": "Europe", "type": "region"},
-  {"name": "Guantanamo Bay", "type": "other"}
+  {"name": "Guantanamo Bay", "type": "military_base"}
 ]
 ```
+
+### Example 5: Organizations and People Are Left Out
+
+**Input excerpt**: "The ACLU and the FBI both commented after President Trump said Venezuelan members of Tren de Aragua would be flown from Miami to Guantanamo Bay. The Justice Department declined to comment."
+
+**Output**:
+```json
+[
+  {"name": "Miami", "type": "city"},
+  {"name": "Guantanamo Bay", "type": "military_base"}
+]
+```
+
+ACLU, FBI and Justice Department are organizations, Trump is a person, Tren de Aragua is a gang, and "Venezuelan" is a nationality, so none of them are locations.
 
 ## Important Guidelines
 
@@ -187,3 +214,4 @@ Return a JSON array of objects. Each location MUST have:
 - Missing building names when they're specifically mentioned
 - Forgetting to include both specific and general geographic references
 - Using incorrect location types for the context
+- Extracting agencies, courts, companies, people or groups as locations (they belong in the other extraction prompts)

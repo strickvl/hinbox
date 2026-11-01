@@ -15,8 +15,11 @@ from src.logging_config import log
 from src.utils.embeddings.similarity import compute_similarity
 from src.utils.name_variants import (
     compute_acronym,
+    is_acronym_form,
+    is_name_contained,
+    names_are_variants,
     names_likely_same,
-    normalize_for_match,
+    score_canonical_name,
 )
 
 
@@ -121,16 +124,26 @@ def collect_entity_variant_texts(
     return unique
 
 
-def exact_name_set(
+def entity_name_texts(
     key: Union[str, Tuple], entity: Dict[str, Any], alternative_field: str
-) -> set:
-    """Normalised canonical, alias and alternative names (no derived acronyms)."""
+) -> List[str]:
+    """Canonical, alias and alternative names as written (no derived acronyms)."""
     texts = [lexical_text(key), *entity.get("aliases", [])]
     for alt in entity.get(alternative_field, []):
         texts.append(
             alt.get("name", alt.get("title", "")) if isinstance(alt, dict) else alt
         )
-    return {normalize_for_match(t) for t in texts if isinstance(t, str) and t.strip()}
+    return [t for t in texts if isinstance(t, str) and t.strip()]
+
+
+def _shares_name_variant(
+    entity_type: str, names_a: List[str], names_b: List[str], groups: List[List[str]]
+) -> bool:
+    return any(
+        names_are_variants(a, b, entity_type=entity_type, equivalence_groups=groups)
+        for a in names_a
+        for b in names_b
+    )
 
 
 def lexical_block(
@@ -340,44 +353,54 @@ def find_similar_entity(
 
     # Same-name fallback. Profiles written from different articles about the
     # same place ("Miami-Dade" in a sports story vs a voting story) can sit far
-    # below the threshold, so an exact name match still goes to the match check,
-    # which decides whether it is really the same entity.
-    return _best_same_name_candidate(
+    # below the threshold, so a candidate whose name is a spelling variant
+    # ("Guantánamo Bay" / "Guantanamo Bay", "Trump" / "Donald Trump") still goes
+    # to the match check, which decides whether it is really the same entity.
+    # Searches every entity, not just the lexical shortlist, which is capped.
+    return name_variant_candidate(
         entity_type,
         alternative_field,
         entity_key,
         entity_embedding,
         entities,
-        [entity_key, *all_candidates],
-        new_dim=new_dim,
         embedding_model=embedding_model,
+        embedding_dim=new_dim,
         query_entity=query_entity,
+        equivalence_groups=equivalence_groups,
     )
 
 
-def _best_same_name_candidate(
+def name_variant_candidate(
     entity_type: str,
     alternative_field: str,
     entity_key: Union[str, Tuple],
     entity_embedding: List[float],
     entities: Dict[str, Dict],
-    candidate_keys: List[Union[str, Tuple]],
     *,
-    new_dim: int,
-    embedding_model: Optional[str],
-    query_entity: Optional[Dict[str, Any]],
+    embedding_model: Optional[str] = None,
+    embedding_dim: Optional[int] = None,
+    query_entity: Optional[Dict[str, Any]] = None,
+    equivalence_groups: Optional[List[List[str]]] = None,
+    exclude: Tuple = (),
 ) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
-    """The candidate sharing a name with the query, highest cosine first."""
-    query_names = exact_name_set(entity_key, query_entity or {}, alternative_field)
+    """The candidate whose name is a spelling variant of the query's, highest cosine first.
+
+    Keys in ``exclude`` (candidates the match check already rejected) are skipped.
+    """
+    if not entity_embedding:
+        return None, None
+    new_dim = embedding_dim or len(entity_embedding)
+    groups = equivalence_groups or []
+    query_names = entity_name_texts(entity_key, query_entity or {}, alternative_field)
     best_key: Optional[Union[str, Tuple]] = None
     best_score = -1.0
-    for key in candidate_keys:
-        existing = entities[entity_type].get(key)
-        if existing is None or not get_search_embedding(existing):
+    for key, existing in entities[entity_type].items():
+        if key in exclude or not get_search_embedding(existing):
             continue
         if not embeddings_compatible(new_dim, existing, embedding_model):
             continue
-        if not query_names & exact_name_set(key, existing, alternative_field):
+        names = entity_name_texts(key, existing, alternative_field)
+        if not _shares_name_variant(entity_type, query_names, names, groups):
             continue
         score = compute_similarity(entity_embedding, get_search_embedding(existing))
         if score > best_score:
@@ -385,9 +408,52 @@ def _best_same_name_candidate(
     if best_key is None:
         return None, None
     log(
-        f"Same-name {entity_type[:-1]} '{lexical_text(best_key)}' for "
-        f"'{lexical_text(entity_key)}' below threshold (similarity {best_score:.4f}); "
+        f"Name-variant {entity_type[:-1]} '{lexical_text(best_key)}' for "
+        f"'{lexical_text(entity_key)}' (similarity {best_score:.4f}); "
         "sending to match check",
         level="info",
     )
     return best_key, best_score
+
+
+def pick_canonical_key(
+    existing_key: Union[str, Tuple], incoming_key: Union[str, Tuple]
+) -> Tuple[Union[str, Tuple], Union[str, Tuple], bool]:
+    """Decide which entity key should be canonical after a merge.
+
+    Returns (canonical_key, demoted_key, swapped) where *swapped* is True when
+    the incoming name is better and the entity should be re-keyed.
+    """
+    existing_name = lexical_text(existing_key)
+    incoming_name = lexical_text(incoming_key)
+
+    # Identical (case-insensitive) — no swap needed
+    if existing_name.lower() == incoming_name.lower():
+        return existing_key, incoming_key, False
+
+    existing_score = score_canonical_name(existing_name)
+    incoming_score = score_canonical_name(incoming_name)
+
+    # Containment bonus: the longer, more complete name gets +1.0
+    if is_name_contained(existing_name, incoming_name):
+        # incoming contains existing → incoming is more complete
+        incoming_score += 1.0
+    elif is_name_contained(incoming_name, existing_name):
+        # existing contains incoming → existing is more complete
+        existing_score += 1.0
+
+    # Acronym derivation bonus: full form gets +2.0 over its acronym
+    if is_acronym_form(existing_name):
+        derived = compute_acronym(incoming_name)
+        if derived and derived.upper() == existing_name.replace(".", "").upper():
+            incoming_score += 2.0
+    if is_acronym_form(incoming_name):
+        derived = compute_acronym(existing_name)
+        if derived and derived.upper() == incoming_name.replace(".", "").upper():
+            existing_score += 2.0
+
+    # Swap only when the incoming name is meaningfully better
+    if incoming_score > existing_score + 0.3:
+        return incoming_key, existing_key, True
+
+    return existing_key, incoming_key, False

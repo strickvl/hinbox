@@ -12,7 +12,11 @@ from src.constants import (
     SIMILARITY_THRESHOLD,
 )
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
-from src.engine.merge_candidates import find_similar_entity, lexical_text
+from src.engine.merge_candidates import (
+    find_similar_entity,
+    name_variant_candidate,
+    pick_canonical_key,
+)
 from src.engine.merge_dispute_agent import (
     REVIEW_QUEUE_FILENAME,
     MergeDisputeAction,
@@ -30,10 +34,7 @@ from src.logging_config import (
 from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import get_embedding_manager
 from src.utils.name_variants import (
-    compute_acronym,
-    is_acronym_form,
     is_low_quality_name,
-    is_name_contained,
     score_canonical_name,
 )
 from src.utils.profiles import extract_profile_text
@@ -165,39 +166,7 @@ class EntityMerger:
         True when the incoming name is better and the entity should be
         re-keyed.
         """
-        existing_name = lexical_text(existing_key)
-        incoming_name = lexical_text(incoming_key)
-
-        # Identical (case-insensitive) — no swap needed
-        if existing_name.lower() == incoming_name.lower():
-            return existing_key, incoming_key, False
-
-        existing_score = self._score_canonical_name(existing_name)
-        incoming_score = self._score_canonical_name(incoming_name)
-
-        # Containment bonus: the longer, more complete name gets +1.0
-        if is_name_contained(existing_name, incoming_name):
-            # incoming contains existing → incoming is more complete
-            incoming_score += 1.0
-        elif is_name_contained(incoming_name, existing_name):
-            # existing contains incoming → existing is more complete
-            existing_score += 1.0
-
-        # Acronym derivation bonus: full form gets +2.0 over its acronym
-        if is_acronym_form(existing_name):
-            derived = compute_acronym(incoming_name)
-            if derived and derived.upper() == existing_name.replace(".", "").upper():
-                incoming_score += 2.0
-        if is_acronym_form(incoming_name):
-            derived = compute_acronym(existing_name)
-            if derived and derived.upper() == incoming_name.replace(".", "").upper():
-                existing_score += 2.0
-
-        # Swap only when the incoming name is meaningfully better
-        if incoming_score > existing_score + 0.3:
-            return incoming_key, existing_key, True
-
-        return existing_key, incoming_key, False
+        return pick_canonical_key(existing_key, incoming_key)
 
     def find_similar_entity(
         self,
@@ -217,6 +186,136 @@ class EntityMerger:
             similarity_threshold,
             **kwargs,
         )
+
+    def _check_candidate(
+        self,
+        entity_key: Union[str, Tuple],
+        similar_key: Union[str, Tuple],
+        similarity_score: Optional[float],
+        entities: Dict[str, Dict],
+        evidence_text: str,
+        article_content: str,
+        article_id: str,
+        evidence_cfg: Dict[str, Any],
+        resolved_threshold: float,
+        model_type: str,
+        domain: str,
+        review_queue_path: str,
+        stats: MergeStats,
+    ) -> str:
+        """Ask the match check (and dispute agent) about one candidate.
+
+        Returns "merge", "skip" (a different entity, or a candidate with a junk
+        name) or "error" (no profile text to compare against).
+        """
+        new_display = self._format_key_for_display(entity_key)
+        similar_display = self._format_key_for_display(similar_key)
+        # A generic/descriptive candidate name ("Defense departments") is never
+        # merged into; the incoming entity gets created fresh instead.
+        if is_low_quality_name(similar_display, entity_type=self.entity_type):
+            log_decision(
+                DecisionKind.SKIP,
+                self.entity_type,
+                new_display,
+                f"candidate '{similar_display}' has low-quality name, forcing creation",
+            )
+            return "skip"
+
+        candidate_entity = entities[self.entity_type][similar_key]
+        existing_profile_text = candidate_entity.get("profile", {}).get("text", "")
+        if not existing_profile_text:
+            # Synthesise a deterministic stand-in so match-check / dispute can
+            # still run; the real profile is created via the merge-path
+            # fallback if the merge is accepted.
+            existing_profile_text = build_evidence_text(
+                self.entity_type,
+                self.alternative_field,
+                similar_key,
+                candidate_entity,
+                article_content,
+                max_chars=evidence_cfg["max_chars"],
+                window_chars=evidence_cfg["window_chars"],
+                max_windows=evidence_cfg["max_windows"],
+            )
+            if not existing_profile_text:
+                log_decision(
+                    DecisionKind.ERROR,
+                    self.entity_type,
+                    new_display,
+                    f"no profile text on candidate '{similar_display}'"
+                    " and could not synthesise stand-in",
+                )
+                return "error"
+            log(
+                f"Candidate '{similar_display}' missing profile; "
+                "using synthesised evidence for match-check",
+                level="debug",
+            )
+
+        # Match check: pass evidence_text as new_profile_text
+        match_model = task_model("match", model_type)
+        check_match = (
+            local_model_check_match
+            if is_local_model(match_model)
+            else cloud_model_check_match
+        )
+        result = check_match(
+            new_display,
+            similar_display,
+            evidence_text,
+            existing_profile_text,
+            entity_type=self.entity_type,
+            model=match_model,
+        )
+        log(
+            f"Match check result: {result.is_match} (confidence={result.confidence:.2f}) - {result.reason}",
+            level="debug",
+        )
+
+        # Gray-band routing: when similarity is near the threshold AND the
+        # match checker is uncertain, ask the dispute agent for a second opinion.
+        should_merge = result.is_match
+        is_gray_band = (
+            similarity_score is not None
+            and abs(similarity_score - resolved_threshold) <= MERGE_GRAY_BAND_DELTA
+        )
+        if is_gray_band and result.confidence < MERGE_UNCERTAIN_CONFIDENCE_CUTOFF:
+            log(
+                f"Gray-band detected for '{new_display}' vs '{similar_display}' "
+                f"(similarity={similarity_score:.4f}, threshold={resolved_threshold:.4f}, "
+                f"confidence={result.confidence:.2f}). Routing to dispute agent.",
+                level="debug",
+            )
+            stats.disputed += 1
+            dispute_decision = run_merge_dispute_agent(
+                entity_type=self.entity_type,
+                new_name=new_display,
+                existing_name=similar_display,
+                new_profile_text=evidence_text,
+                existing_profile_text=existing_profile_text,
+                similarity_score=similarity_score,
+                similarity_threshold=resolved_threshold,
+                match_is_match=result.is_match,
+                match_confidence=result.confidence,
+                match_reason=result.reason,
+                model_type=model_type,
+                domain=domain,
+                article_id=article_id,
+                review_queue_path=review_queue_path,
+            )
+            should_merge = dispute_decision.action == MergeDisputeAction.MERGE
+
+        if not should_merge:
+            # A different entity: the caller may try another candidate, then
+            # falls through to the create path instead of dropping it.
+            log_decision(
+                DecisionKind.SKIP,
+                self.entity_type,
+                new_display,
+                f"vs '{similar_display}' sim={similarity_score:.4f}, creating as new",
+            )
+            return "skip"
+        return "merge"
 
     def _add_alternative_name(
         self,
@@ -405,130 +504,52 @@ class EntityMerger:
                 equivalence_groups=equivalence_groups,
             )
 
-            if similar_key:
-                # ── Guard: reject merge into low-quality candidate ──
-                # If the existing entity has a generic/descriptive name like
-                # "Defense departments" or "military base in Cuba", skip the
-                # merge so the new (presumably better-named) entity gets
-                # created fresh instead.
-                similar_display = self._format_key_for_display(similar_key)
-                if is_low_quality_name(similar_display, entity_type=self.entity_type):
-                    log_decision(
-                        DecisionKind.SKIP,
-                        self.entity_type,
-                        self._format_key_for_display(entity_key),
-                        f"candidate '{similar_display}' has low-quality name, forcing creation",
-                    )
-                    similar_key = None  # fall through to creation path
-
-            if similar_key:
-                # --- MERGE PATH (no create_profile needed) ---
-                candidate_entity = entities[self.entity_type][similar_key]
-                existing_profile_text = candidate_entity.get("profile", {}).get(
-                    "text", ""
-                )
-                existing_profile_missing = not bool(existing_profile_text)
-                if existing_profile_missing:
-                    # Synthesise a deterministic stand-in so match-check /
-                    # dispute can still run; the real profile will be created
-                    # via the merge-path fallback if the merge is accepted.
-                    existing_profile_text = build_evidence_text(
-                        self.entity_type,
-                        self.alternative_field,
-                        similar_key,
-                        candidate_entity,
-                        article_content,
-                        max_chars=evidence_cfg["max_chars"],
-                        window_chars=evidence_cfg["window_chars"],
-                        max_windows=evidence_cfg["max_windows"],
-                    )
-                    if not existing_profile_text:
-                        log_decision(
-                            DecisionKind.ERROR,
-                            self.entity_type,
-                            self._format_key_for_display(entity_key),
-                            f"no profile text on candidate '{self._format_key_for_display(similar_key)}'"
-                            " and could not synthesise stand-in",
-                        )
-                        stats.errors += 1
-                        continue
-                    log(
-                        f"Candidate '{self._format_key_for_display(similar_key)}' "
-                        f"missing profile; using synthesised evidence for match-check",
-                        level="debug",
-                    )
-
-                # Match check: pass evidence_text as new_profile_text
-                match_model = task_model("match", model_type)
-                check_match = (
-                    local_model_check_match
-                    if is_local_model(match_model)
-                    else cloud_model_check_match
-                )
-                result = check_match(
-                    self._format_key_for_display(entity_key),
-                    self._format_key_for_display(similar_key),
+            # Try the closest candidate; if the match check rejects it, try
+            # the best name-variant candidate once ("Guantánamo Bay" may lose
+            # to "Guantanamo Bay Navy Base" on cosine but match on name).
+            rejected: List[Union[str, Tuple]] = []
+            verdict = "skip"
+            while similar_key and len(rejected) < 2:
+                verdict = self._check_candidate(
+                    entity_key,
+                    similar_key,
+                    similarity_score,
+                    entities,
                     evidence_text,
-                    existing_profile_text,
-                    entity_type=self.entity_type,
-                    model=match_model,
+                    article_content,
+                    article_id,
+                    evidence_cfg,
+                    resolved_threshold,
+                    model_type,
+                    domain,
+                    review_queue_path,
+                    stats,
                 )
-
-                log(
-                    f"Match check result: {result.is_match} (confidence={result.confidence:.2f}) - {result.reason}",
-                    level="debug",
+                if verdict != "skip":
+                    break
+                rejected.append(similar_key)
+                similar_key, similarity_score = name_variant_candidate(
+                    self.entity_type,
+                    self.alternative_field,
+                    entity_key,
+                    evidence_embedding,
+                    entities,
+                    embedding_model=emb_model_name,
+                    embedding_dim=emb_dim,
+                    query_entity=entity_dict,
+                    equivalence_groups=equivalence_groups,
+                    exclude=tuple(rejected),
                 )
-
-                # Gray-band routing: when similarity is near the threshold
-                # AND the match checker is uncertain, ask the dispute agent
-                # for a second opinion before making the merge/skip decision.
-                should_merge = result.is_match
-                is_gray_band = (
-                    similarity_score is not None
-                    and abs(similarity_score - resolved_threshold)
-                    <= MERGE_GRAY_BAND_DELTA
+            if verdict == "error":
+                stats.errors += 1
+                continue
+            if verdict != "merge":
+                similar_key = None
+            if similar_key:
+                candidate_entity = entities[self.entity_type][similar_key]
+                existing_profile_missing = not candidate_entity.get("profile", {}).get(
+                    "text"
                 )
-                is_uncertain = result.confidence < MERGE_UNCERTAIN_CONFIDENCE_CUTOFF
-
-                if is_gray_band and is_uncertain:
-                    log(
-                        f"Gray-band detected for '{self._format_key_for_display(entity_key)}' vs "
-                        f"'{self._format_key_for_display(similar_key)}' "
-                        f"(similarity={similarity_score:.4f}, threshold={resolved_threshold:.4f}, "
-                        f"confidence={result.confidence:.2f}). Routing to dispute agent.",
-                        level="debug",
-                    )
-                    stats.disputed += 1
-                    dispute_decision = run_merge_dispute_agent(
-                        entity_type=self.entity_type,
-                        new_name=self._format_key_for_display(entity_key),
-                        existing_name=self._format_key_for_display(similar_key),
-                        new_profile_text=evidence_text,
-                        existing_profile_text=existing_profile_text,
-                        similarity_score=similarity_score,
-                        similarity_threshold=resolved_threshold,
-                        match_is_match=result.is_match,
-                        match_confidence=result.confidence,
-                        match_reason=result.reason,
-                        model_type=model_type,
-                        domain=domain,
-                        article_id=article_id,
-                        review_queue_path=review_queue_path,
-                    )
-                    should_merge = dispute_decision.action == MergeDisputeAction.MERGE
-
-                if not should_merge:
-                    # The candidate is a different entity, so the incoming one
-                    # is new: fall through to the create path instead of
-                    # dropping it.
-                    log_decision(
-                        DecisionKind.SKIP,
-                        self.entity_type,
-                        self._format_key_for_display(entity_key),
-                        f"vs '{self._format_key_for_display(similar_key)}' sim={similarity_score:.4f}, "
-                        "creating as new",
-                    )
-                    similar_key = None
 
             if similar_key:
                 log_decision(
