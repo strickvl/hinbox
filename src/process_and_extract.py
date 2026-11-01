@@ -331,6 +331,10 @@ def merge_all_entities(
                 f"(new={merge_stats.new} merged={merge_stats.merged} skipped={merge_stats.skipped})",
                 level="success",
             )
+            if merge_stats.failed_profiles:
+                processing_metadata[f"failed_profiles_{entity_type}"] = (
+                    merge_stats.failed_profiles
+                )
         except Exception as e:
             log(f"Error merging {entity_type}", level="error", exception=e)
             processing_metadata[f"error_{entity_type}"] = str(e)
@@ -345,6 +349,27 @@ def merge_all_entities(
         ]
         for future in futures:
             future.result()
+
+
+def incomplete_reasons(processing_metadata: Dict) -> List[str]:
+    """What failed while extracting or merging this article, if anything.
+
+    An article with any of these stays unprocessed so the next run tries it
+    again; marking it done would skip it, and lose those entities, for good.
+    """
+    outcomes = processing_metadata.get("phase_outcomes", {})
+    if "extraction" not in outcomes:
+        return ["extraction"]
+    reasons = [
+        f"extract_{et}"
+        for et, outcome in outcomes["extraction"].items()
+        if not outcome.get("success", True)
+    ]
+    return reasons + [
+        key
+        for key in processing_metadata
+        if key.startswith(("error_", "failed_profiles_"))
+    ]
 
 
 def write_updated_articles(processed_rows: List[Dict], articles_path: str) -> None:
@@ -393,6 +418,7 @@ def log_processing_summary(
     processed_rows: List[Dict],
     skipped_relevance_error: int = 0,
     skipped_relevance_cached: int = 0,
+    skipped_incomplete: int = 0,
 ) -> None:
     """Log comprehensive processing summary and statistics."""
     log("\n[bold]Processing complete[/bold]", level="info")
@@ -411,6 +437,12 @@ def log_processing_summary(
         log(
             f"Articles skipped (relevance check failed, will retry next run): "
             f"{skipped_relevance_error}",
+            level="warning",
+        )
+    if skipped_incomplete:
+        log(
+            f"Articles left unprocessed (a model call failed, will retry next "
+            f"run): {skipped_incomplete}",
             level="warning",
         )
     log(
@@ -454,17 +486,10 @@ def write_results_and_statistics(
     status_tracker: ProcessingStatus = None,
     skipped_relevance_error: int = 0,
     skipped_relevance_cached: int = 0,
+    skipped_incomplete: int = 0,
 ) -> None:
     """Write results to files and log comprehensive statistics."""
-    # Flush processing status sidecar (replaces full articles rewrite)
-    if status_tracker:
-        status_tracker.flush()
-
-    # Write entity files
-    log("Saving updated entity tables...", level="processing")
-    with timed_step("write"):
-        write_entities_to_files(entities, base_dir)
-    log("Entity tables successfully saved", level="success")
+    save_entities_then_status(entities, base_dir, status_tracker)
 
     # Log comprehensive summary
     log_processing_summary(
@@ -476,7 +501,24 @@ def write_results_and_statistics(
         processed_rows,
         skipped_relevance_error=skipped_relevance_error,
         skipped_relevance_cached=skipped_relevance_cached,
+        skipped_incomplete=skipped_incomplete,
     )
+
+
+def save_entities_then_status(
+    entities: Dict[str, Dict], base_dir: str, status_tracker: Optional[ProcessingStatus]
+) -> None:
+    """Write the entity tables, then the status file.
+
+    In this order, a failed entity write leaves the articles unprocessed on
+    disk, so the next run redoes them instead of skipping them.
+    """
+    log("Saving updated entity tables...", level="processing")
+    with timed_step("write"):
+        write_entities_to_files(entities, base_dir)
+    log("Entity tables successfully saved", level="success")
+    if status_tracker:
+        status_tracker.flush()
 
 
 def extract_single_article_only(
@@ -678,6 +720,22 @@ def merge_and_finalize(
         result.row_index,
     )
 
+    problems = incomplete_reasons(result.processing_metadata)
+    if problems:
+        # The types that worked come from the extraction cache next time, and
+        # entities already merged from this article are not updated twice
+        log(
+            f"Article {article_id} incomplete ({', '.join(problems)}), "
+            "will retry next run",
+            level="warning",
+        )
+        counters["skipped_incomplete"] += 1
+        if status_tracker:
+            status_tracker.mark_skipped(
+                article_id, "incomplete", metadata={"problems": problems}
+            )
+        return
+
     # Record in sidecar
     if status_tracker:
         status_tracker.mark_processed(article_id, result.processing_metadata)
@@ -715,6 +773,7 @@ def process_articles_batch(
         "skipped_relevance_cached": 0,
         "skipped_already_processed": 0,
         "skipped_no_content": 0,
+        "skipped_incomplete": 0,
     }
 
     # Read concurrency settings
@@ -880,7 +939,8 @@ def main():
     if not rows:
         return
 
-    # Process articles
+    # Process articles, then check grounding. Ctrl+C in either keeps the
+    # articles merged so far (grounding is left for the next run)
     article_count = len(rows)
     try:
         processed_rows, counters = process_articles_batch(
@@ -891,30 +951,26 @@ def main():
             domain_config=config,
             status_tracker=status_tracker,
         )
-    except KeyboardInterrupt:
-        # Keep the articles merged so far; grounding is skipped
-        log("Interrupted: saving entities merged so far...", level="warning")
-        status_tracker.flush()
-        write_entities_to_files(entities, base_dir)
-        sys.exit(130)
-
-    # Post-processing: verify profile grounding
-    if counters["processed_count"] > 0:
-        log("\nRunning profile grounding verification...", level="processing")
-        with timed_step("grounding_pass"):
-            grounding_counts = run_profile_grounding_postprocess(
-                entities=entities,
-                rows=processed_rows,
-                processor=processor,
-                model_type=model_type,
-                workers=cc["grounding_workers"],
+        if counters["processed_count"] > 0:
+            log("\nRunning profile grounding verification...", level="processing")
+            with timed_step("grounding_pass"):
+                grounding_counts = run_profile_grounding_postprocess(
+                    entities=entities,
+                    rows=processed_rows,
+                    processor=processor,
+                    model_type=model_type,
+                    workers=cc["grounding_workers"],
+                )
+            log(
+                f"Grounding complete: {grounding_counts['verified']} verified, "
+                f"{grounding_counts['skipped_unchanged']} unchanged, "
+                f"{grounding_counts['skipped_no_citations']} no citations",
+                level="success",
             )
-        log(
-            f"Grounding complete: {grounding_counts['verified']} verified, "
-            f"{grounding_counts['skipped_unchanged']} unchanged, "
-            f"{grounding_counts['skipped_no_citations']} no citations",
-            level="success",
-        )
+    except KeyboardInterrupt:
+        log("Interrupted: saving entities merged so far...", level="warning")
+        save_entities_then_status(entities, base_dir, status_tracker)
+        sys.exit(130)
 
     # Write results and statistics
     write_results_and_statistics(
@@ -929,6 +985,7 @@ def main():
         status_tracker=status_tracker,
         skipped_relevance_error=counters["skipped_relevance_error"],
         skipped_relevance_cached=counters["skipped_relevance_cached"],
+        skipped_incomplete=counters["skipped_incomplete"],
     )
     save_timing_report(
         base_dir, counters["processed_count"], time.perf_counter() - run_start

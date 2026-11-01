@@ -84,6 +84,7 @@ This document helps contributors work effectively in this repository.
 - **Evidence-first merge**: Cheap checks (lexical blocking, embedding similarity) run before expensive LLM calls (match checker, dispute agent).
 - **Producer/consumer pipeline**: Extraction workers run in parallel; a single merge actor on the main thread consumes results in order (no locking needed).
 - **Sidecar files**: Processing status and extraction cache use sidecar JSON files instead of mutating the source Parquet.
+- **Marking articles done**: An article is marked processed only if no extraction, type merge or profile call failed (`incomplete_reasons()`); otherwise it is recorded as `incomplete` and retried next run. Entity tables are saved before the status sidecar, and Ctrl+C during processing or grounding saves both.
 - **QC retry**: When extraction QC detects severe issues, the extractor retries once with a repair hint describing what went wrong.
 - **Structured logging**: `DecisionKind` enum (`NEW`, `MERGE`, `SKIP`, `DISPUTE`, `DEFER`, `ERROR`) provides colour-coded per-entity decision lines.
 
