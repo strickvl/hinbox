@@ -26,8 +26,11 @@ _ORG_WORDS: FrozenSet[str] = frozenset(
     | {"commission", "committee", "division", "association", "sheriff"}
 )
 _STRUCTURE_WORDS: FrozenSet[str] = frozenset(
-    {"building", "center", "centre", "hall", "house", "tower", "courthouse"}
+    {"building", "center", "centre", "hall", "house", "tower", "courthouse", "room"}
 )
+# Location types where a law word is part of a real place name ("ACT" the
+# Australian Capital Territory, "Treaty Room").
+_PLACE_TYPES: FrozenSet[str] = frozenset({"city", "region", "country"})
 
 
 def _names(items: List[Dict[str, Any]]) -> Set[str]:
@@ -46,11 +49,14 @@ def misfiled_reason(
     name = normalize_for_match(location.get("name", ""))
     if not name:
         return ""
-    non_place = non_place_reason(name)
-    if non_place:
-        return non_place
     loc_type = str(location.get("type") or "").split(".")[-1].lower()
     words = name.split()
+    non_place = non_place_reason(name)
+    law_in_place_name = non_place == "law" and (
+        loc_type in _PLACE_TYPES or words[-1] in _STRUCTURE_WORDS
+    )
+    if non_place and not law_in_place_name:
+        return non_place
     if name in people and (len(words) > 1 or loc_type in _LOOSE_TYPES):
         return "person"
     if (

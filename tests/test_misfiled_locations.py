@@ -135,3 +135,13 @@ def test_organizations_kept_when_no_people_came_back():
     entities = {"organizations": [{"name": "Donald Trump", "type": "other"}]}
     kept, dropped = drop_misfiled_organizations(entities)
     assert len(kept) == 1 and not dropped
+
+
+def test_law_words_inside_real_place_names_are_kept():
+    kept, _ = _drop(
+        [
+            {"name": "Treaty Room", "type": "building"},
+            {"name": "ACT", "type": "region"},
+        ]
+    )
+    assert kept == ["Treaty Room", "ACT"]
