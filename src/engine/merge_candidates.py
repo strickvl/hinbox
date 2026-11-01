@@ -17,6 +17,7 @@ from src.utils.name_variants import (
     compute_acronym,
     is_acronym_form,
     is_name_contained,
+    is_shouting_name,
     names_are_variants,
     names_likely_same,
     score_canonical_name,
@@ -427,8 +428,11 @@ def pick_canonical_key(
     existing_name = lexical_text(existing_key)
     incoming_name = lexical_text(incoming_key)
 
-    # Identical (case-insensitive) — no swap needed
+    # Same name in another case: keep the existing one, unless it is in ALL
+    # CAPS ("GUANTANAMO BAY NAVY BASE") and the incoming one isn't.
     if existing_name.lower() == incoming_name.lower():
+        if is_shouting_name(existing_name) and not is_shouting_name(incoming_name):
+            return incoming_key, existing_key, True
         return existing_key, incoming_key, False
 
     existing_score = score_canonical_name(existing_name)

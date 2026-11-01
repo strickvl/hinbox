@@ -1,6 +1,9 @@
 """Locations that are really people or organizations are dropped."""
 
-from src.utils.misfiled_locations import drop_misfiled_locations
+from src.utils.misfiled_locations import (
+    drop_misfiled_locations,
+    drop_misfiled_organizations,
+)
 
 ORG_GROUPS = [
     ["Central Intelligence Agency", "CIA"],
@@ -75,3 +78,60 @@ def test_institution_words_in_areas_and_structures_are_kept():
         ]
     )
     assert len(kept) == 3
+
+
+def test_nationalities_media_laws_and_dates_are_dropped():
+    names = {
+        "Yemeni": "country",
+        "Algerians": "other",
+        "Miami Herald": "building",
+        "The New York Times": "other",
+        "Voice of America": "other",
+        "Intercept": "other",
+        "NDAA": "other",
+        "2001 Authorization for the Use of Military Force": "other",
+        "March 2008": "other",
+    }
+    kept, dropped = _drop([{"name": n, "type": t} for n, t in names.items()])
+    assert kept == []
+    assert dropped["Yemeni"] == "nationality"
+    assert dropped["Miami Herald"] == "media"
+    assert dropped["NDAA"] == "law"
+    assert dropped["March 2008"] == "date"
+
+
+def test_places_that_look_like_non_places_are_kept():
+    names = [
+        "Indian Ocean",
+        "Dominican Republic",
+        "Times Square",
+        "Afghanistan",
+        "New York Times Building",
+        "Camp 5",
+        "Jordan",
+    ]
+    kept, _ = _drop([{"name": n, "type": "other"} for n in names])
+    assert kept == names
+
+
+def test_organizations_that_are_people_are_dropped():
+    entities = {
+        "people": [{"name": "Donald Trump", "aliases": ["Trump"]}],
+        "organizations": [
+            {"name": "President Donald Trump", "type": "government"},
+            {"name": "Donald J. Trump", "type": "other"},
+            {"name": "Trump", "type": "other"},
+            {"name": "Trump", "type": "government"},  # one word, typed: kept
+            {"name": "Trump administration", "type": "government"},
+            {"name": "ACLU", "type": "legal"},
+        ],
+    }
+    kept, dropped = drop_misfiled_organizations(entities)
+    assert [o["name"] for o in kept] == ["Trump", "Trump administration", "ACLU"]
+    assert [d["reason"] for d in dropped] == ["person"] * 3
+
+
+def test_organizations_kept_when_no_people_came_back():
+    entities = {"organizations": [{"name": "Donald Trump", "type": "other"}]}
+    kept, dropped = drop_misfiled_organizations(entities)
+    assert len(kept) == 1 and not dropped

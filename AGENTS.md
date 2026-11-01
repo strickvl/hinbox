@@ -22,7 +22,9 @@ This document helps contributors work effectively in this repository.
     - `extraction_cache.py` — persistent sidecar cache for extraction results (keyed on content hash, model, prompt, schema, temperature)
     - `cache_utils.py` — thread-safe LRU cache and stable hashing helpers
     - `name_variants.py` — deterministic name normalisation (accents folded), acronym detection, equivalence expansion, spelling-variant checks for the merge fallback (`names_are_variants`), canonical name scoring
-    - `misfiled_locations.py` — drops extracted "locations" that are really people or organizations
+    - `misfiled_locations.py` — drops extracted "locations" that are really people, organizations or non-places, and "organizations" that are people
+    - `non_place_names.py` — nationality words, news outlets, laws and dates that are never locations
+    - `name_case.py` — recases ALL CAPS names copied from datelines
     - `quality_controls.py` — extraction QC, profile QC, and profile grounding verification
     - `processing_status.py` — sidecar JSON tracker for article processing status
     - `outcomes.py` — `PhaseOutcome` structured result objects
