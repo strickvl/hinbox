@@ -2,16 +2,18 @@
 
 Examples::
 
-    just eval relevance --model gemini/gemini-2.0-flash
+    just eval relevance --model openai/gpt-6-luna
     just eval merge --model ollama/qwen3.6:35b-a3b --split test
     just eval profile-update --model openai/gpt-6-luna --split dev
+    just eval profile-update --model openai/gpt-6-luna --prompt-variant local
     just eval show                       # print the scoreboard
+    just eval show --grid                # latest score per model and prompt
 """
 
 import argparse
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from rich.table import Table
 
@@ -45,6 +47,7 @@ _COLUMNS = (
     ("dataset", "Dataset"),
     ("approach", "Approach"),
     ("model", "Model"),
+    ("prompt", "Prompt"),
     ("split", "Split"),
     ("n", "N"),
     ("errors", "Err"),
@@ -57,6 +60,7 @@ _COLUMNS = (
 _UPDATE_COLUMNS = (
     ("approach", "Approach"),
     ("model", "Model"),
+    ("prompt", "Prompt"),
     ("split", "Split"),
     ("n", "N"),
     ("errors", "Err"),
@@ -83,6 +87,43 @@ def _print_rows(rows: List[Dict[str, Any]], title: str, columns=_COLUMNS) -> Non
     console.print(table)
 
 
+# Which prompt file each task reads; the merge check builds its prompt in code
+_PROMPTS = {
+    "relevance": "relevance",
+    "edit": "profile_edit",
+    "rewrite": "profile_update",
+}
+
+
+def _prompt_file(domain_cfg: DomainConfig, key: str, model: str) -> str:
+    if key not in _PROMPTS:
+        return "built-in"
+    return os.path.basename(domain_cfg.prompt_path(_PROMPTS[key], model))
+
+
+def _print_grid(rows: List[Dict[str, Any]]) -> None:
+    """Latest headline score for each model and prompt, one table per set."""
+    latest: Dict[Tuple[str, str, str, str], Dict[str, Any]] = {}
+    for row in rows:  # the scoreboard is in run order, so later rows win
+        key = (row.get("dataset", ""), row.get("approach", ""), row.get("split", ""))
+        latest[(*key, f"{row.get('model')}|{row.get('prompt', '?')}")] = row
+    for table_key in sorted({k[:3] for k in latest}):
+        cells = {k[3]: r for k, r in latest.items() if k[:3] == table_key}
+        prompts = sorted({c.split("|", 1)[1] for c in cells})
+        table = Table(title=" / ".join(table_key))
+        table.add_column("Model")
+        for prompt in prompts:
+            table.add_column(prompt)
+        for model in sorted({c.split("|", 1)[0] for c in cells}):
+            row = []
+            for prompt in prompts:
+                r = cells.get(f"{model}|{prompt}")
+                score = r and r.get("pass_rate", r.get("balanced_accuracy"))
+                row.append("" if not r else f"{score} (n={r.get('n')})")
+            table.add_row(model, *row)
+        console.print(table)
+
+
 def _run_profile_update(args, parser, eval_dir: str) -> None:
     try:
         cases = load_cases(eval_dir, args.split, args.include_unreviewed)
@@ -104,6 +145,7 @@ def _run_profile_update(args, parser, eval_dir: str) -> None:
         "task": "profile_update",
         "dataset": "profile_update",
         "model": args.model,
+        "prompt": _prompt_file(DomainConfig(args.domain), args.approach, args.model),
         "approach": args.approach,
         "split": args.split,
         **summarize_updates(records),
@@ -143,13 +185,27 @@ def main() -> None:
         help="profile-update: apply a list of edits (the pipeline's default), "
         "or the old whole-profile rewrite with reflection",
     )
+    parser.add_argument(
+        "--prompt-variant",
+        default=None,
+        help="score <prompt>.<variant>.md instead of the one the pipeline picks "
+        "for --model ('default' = the plain <prompt>.md)",
+    )
+    parser.add_argument(
+        "--grid", action="store_true", help="show: latest score per model and prompt"
+    )
     args = parser.parse_args()
+    if args.prompt_variant:
+        os.environ["HINBOX_PROMPT_VARIANT"] = args.prompt_variant
 
     domain_cfg = DomainConfig(args.domain)
     eval_dir = args.eval_dir or os.path.join(domain_cfg.get_output_dir(), "eval")
 
     if args.task == "show":
         rows = load_scoreboard(eval_dir)
+        if args.grid:
+            _print_grid(rows)
+            return
         updates = [r for r in rows if r.get("task") == "profile_update"]
         others = [r for r in rows if r.get("task") != "profile_update"]
         _print_rows(others, f"Scoreboard ({eval_dir})")
@@ -188,6 +244,7 @@ def main() -> None:
         approach="pipeline",
         dataset=dataset,
     )
+    summary["prompt"] = _prompt_file(domain_cfg, args.task, args.model)
     path = save_run(eval_dir, summary, records)
     _print_rows([summary], "This run")
     console.print(f"Predictions: {path}")

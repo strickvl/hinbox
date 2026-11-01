@@ -158,7 +158,7 @@ class TestUpdateDraftsBeforeReflecting:
     def _run_update(self, mode_model_type: str):
         draft = EntityProfile(**_good_profile("art-002"))
         config = MagicMock()
-        config.load_profile_prompt.side_effect = lambda kind: (
+        config.load_profile_prompt.side_effect = lambda kind, model=None: (
             "Update {entity_type} {entity_name}"
             if kind == "update"
             else "Reflect on {entity_type} {entity_name} {article_id}"

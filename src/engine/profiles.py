@@ -50,6 +50,13 @@ def _resolve_mode(model_type: str, model: Optional[str]) -> GenerationMode:
     return GenerationMode.CLOUD if model_type == "gemini" else GenerationMode.LOCAL
 
 
+def _prompt_model(model_type: str, model: Optional[str]) -> str:
+    """The model that will answer, which picks the prompt variant to load."""
+    if model:
+        return model
+    return CLOUD_MODEL if model_type == "gemini" else OLLAMA_MODEL
+
+
 @timed("draft")
 def _generate_initial_profile_text(
     messages: List[Dict], mode: GenerationMode, model: Optional[str] = None
@@ -178,7 +185,8 @@ def generate_profile_with_reflection(
 
     # Load prompt template from config
     config = get_domain_config(domain)
-    prompt_template = config.load_profile_prompt("generation")
+    prompt_model = _prompt_model(model_type, model)
+    prompt_template = config.load_profile_prompt("generation", prompt_model)
 
     # Format the prompt with the specific values
     custom_system_prompt = prompt_template.format(
@@ -195,7 +203,7 @@ def generate_profile_with_reflection(
     ]
 
     # Load reflection prompt from config
-    reflection_template = config.load_profile_prompt("reflection")
+    reflection_template = config.load_profile_prompt("reflection", prompt_model)
     reflection_prompt = reflection_template.format(
         entity_type=entity_type, entity_name=entity_name, article_id=article_id
     )
@@ -308,7 +316,8 @@ def _update_profile_internal(
     try:
         # Load update prompt template from config
         config = get_domain_config(domain)
-        update_template = config.load_profile_prompt("update")
+        prompt_model = _prompt_model(model_type, model)
+        update_template = config.load_profile_prompt("update", prompt_model)
 
         # Format the base prompt
         base_prompt = update_template.format(
@@ -348,7 +357,7 @@ New Article (ID: {new_article_id}):
         ]
 
         # Load reflection prompt for updates
-        reflection_template = config.load_profile_prompt("reflection")
+        reflection_template = config.load_profile_prompt("reflection", prompt_model)
         reflection_prompt = reflection_template.format(
             entity_type=entity_type, entity_name=entity_name, article_id=new_article_id
         )

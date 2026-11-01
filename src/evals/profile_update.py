@@ -216,6 +216,25 @@ def case_passed(case: Dict[str, Any], scores: Dict[str, Any]) -> bool:
     return True
 
 
+REVIEWS_FILE = "profile_update_reviews.jsonl"
+
+
+def load_reviews(eval_dir: str) -> Dict[str, Dict[str, Any]]:
+    """Hand checks of case labels, by case id (the last row for an id wins).
+
+    One JSON row per checked case: ``{"case_id", "verdict", "note"}``, where
+    ``keep`` confirms the label (a disputed case then gets scored) and ``drop``
+    leaves the case out for good (two different events, a wrong label). The
+    file sits apart from the cases, so ``just eval-cases`` can rebuild them.
+    """
+    path = os.path.join(eval_dir, REVIEWS_FILE)
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    return {r["case_id"]: r for r in rows}
+
+
 def load_cases(
     eval_dir: str, split: str = "all", include_unreviewed: bool = False
 ) -> List[Dict[str, Any]]:
@@ -223,12 +242,17 @@ def load_cases(
     path = os.path.join(eval_dir, "profile_update_cases.jsonl")
     with open(path, encoding="utf-8") as f:
         cases = [json.loads(line) for line in f if line.strip()]
-    return [
-        c
-        for c in cases
-        if (split == "all" or c["split"] == split)
-        and (include_unreviewed or not c.get("needs_review"))
-    ]
+    reviews = load_reviews(eval_dir)
+    kept = []
+    for c in cases:
+        verdict = reviews.get(c["case_id"], {}).get("verdict")
+        if verdict == "drop" or (split != "all" and c["split"] != split):
+            continue
+        if verdict == "keep":
+            c = {**c, "needs_review": False}
+        if include_unreviewed or not c.get("needs_review"):
+            kept.append(c)
+    return kept
 
 
 def make_rewrite_updater(model: str, domain: str) -> Updater:

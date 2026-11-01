@@ -149,6 +149,26 @@ def test_load_cases_filters_split_and_unreviewed(tmp_path):
     assert len(pu.load_cases(str(tmp_path), "all", include_unreviewed=True)) == 3
 
 
+def test_reviews_confirm_or_drop_cases(tmp_path):
+    rows = [
+        {**_case(), "case_id": "1", "split": "test"},
+        {**_disputed(), "case_id": "2", "split": "test", "needs_review": True},
+        {**_disputed(), "case_id": "3", "split": "test", "needs_review": True},
+    ]
+    (tmp_path / "profile_update_cases.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows)
+    )
+    reviews = [
+        {"case_id": "1", "verdict": "keep"},
+        {"case_id": "1", "verdict": "drop", "note": "label wrong"},  # last wins
+        {"case_id": "2", "verdict": "keep"},
+    ]
+    (tmp_path / pu.REVIEWS_FILE).write_text("\n".join(json.dumps(r) for r in reviews))
+    assert [c["case_id"] for c in pu.load_cases(str(tmp_path), "test")] == ["2"]
+    everything = pu.load_cases(str(tmp_path), "all", include_unreviewed=True)
+    assert [c["case_id"] for c in everything] == ["2", "3"]
+
+
 def test_run_updates_counts_errors_as_failures():
     def updater(case):
         if case["case_id"] == "boom":

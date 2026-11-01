@@ -70,7 +70,7 @@ class EntityExtractor:
             List of extracted entities as dictionaries
         """
         Entity = self._model_getter(self.domain)
-        system_prompt = get_system_prompt(self.entity_type, self.domain)
+        system_prompt = get_system_prompt(self.entity_type, self.domain, model)
         if repair_hint:
             system_prompt = system_prompt + "\n\n" + repair_hint
         return extract_entities_cloud(
@@ -104,7 +104,7 @@ class EntityExtractor:
             List of extracted entities as dictionaries
         """
         Entity = self._model_getter(self.domain)
-        system_prompt = get_system_prompt(self.entity_type, self.domain)
+        system_prompt = get_system_prompt(self.entity_type, self.domain, model)
         if repair_hint:
             system_prompt = system_prompt + "\n\n" + repair_hint
         return extract_entities_local(

@@ -30,7 +30,7 @@ Usage (from the repository root)::
 import argparse
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import dspy
 
@@ -59,7 +59,7 @@ PENALTY = 0.25
 
 
 class UpdateProfile(dspy.Signature):
-    """Replaced by the domain's profile_edit(_local).md (``base_instructions``)."""
+    """Replaced by the domain's profile_edit prompt (``base_instructions``)."""
 
     entity_type: str = dspy.InputField()
     entity_name: str = dspy.InputField()
@@ -71,13 +71,14 @@ class UpdateProfile(dspy.Signature):
     edits: List[ProfileEdit] = dspy.OutputField()
 
 
-def base_instructions(domain: str, prompt: str = "edit") -> str:
-    """The pipeline's edit prompt, with its placeholders made generic.
+def base_instructions(domain: str, model: Optional[str] = None) -> str:
+    """The edit prompt the pipeline would give ``model``, placeholders generic.
 
     The entity and article come in as input fields, so GEPA's rewrite can be
-    copied back into ``profile_edit.md`` by putting the placeholders back.
+    copied back into a ``profile_edit.<variant>.md`` by putting the
+    placeholders back. ``HINBOX_PROMPT_VARIANT`` picks another variant.
     """
-    template = DomainConfig(domain).load_profile_prompt(prompt)
+    template = DomainConfig(domain).load_profile_prompt("edit", model)
     return (
         template.replace("{entity_name}", "the entity")
         .replace("{entity_type}", "entity")
@@ -194,10 +195,10 @@ def main() -> None:
     parser.add_argument("--auto", choices=("light", "medium", "heavy"), default="light")
     parser.add_argument("--cot", action="store_true", help="add a reasoning step")
     parser.add_argument(
-        "--base-prompt",
-        choices=("edit", "edit_local"),
+        "--prompt-variant",
         default=None,
-        help="starting prompt; default: the one the pipeline uses for --model",
+        help="start from profile_edit.<variant>.md ('default' = profile_edit.md); "
+        "default: the one the pipeline picks for --model",
     )
     parser.add_argument("--load", default=None, help="score a saved program")
     parser.add_argument("--eval-split", default="test", choices=("dev", "test", "all"))
@@ -215,12 +216,11 @@ def main() -> None:
     def cases(split: str) -> List[Dict[str, Any]]:
         return load_cases(eval_dir, split, args.include_unreviewed)
 
+    if args.prompt_variant:
+        os.environ["HINBOX_PROMPT_VARIANT"] = args.prompt_variant
     dspy.configure(lm=make_lm(args.model, max_tokens=16384))
-    base = args.base_prompt or (
-        "edit_local" if args.model.startswith("ollama/") else "edit"
-    )
     program = ProfileUpdater(
-        base_instructions(args.domain, base), chain_of_thought=args.cot
+        base_instructions(args.domain, args.model), chain_of_thought=args.cot
     )
     module = "cot" if args.cot else "predict"
     if args.load:

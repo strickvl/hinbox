@@ -47,8 +47,9 @@ _OUTPUTS = [
 ]
 
 
-def _sectioned_messages(text: str, domain: str):
-    instructions = _drop_output_format(get_system_prompt("relevance", domain)).strip()
+def _sectioned_messages(text: str, domain: str, model: str = ""):
+    prompt = get_system_prompt("relevance", domain, model)
+    instructions = _drop_output_format(prompt).strip()
     return build_sectioned_messages(
         instructions,
         _INPUTS,
@@ -65,7 +66,10 @@ def _check_relevance(text: str, model: str, domain: str, *, local: bool):
     ArticleRelevance = get_relevance_model(domain)
     try:
         reply = text_generation(
-            _sectioned_messages(text, domain), model=model, local=local, temperature=0
+            _sectioned_messages(text, domain, model),
+            model=model,
+            local=local,
+            temperature=0,
         )
         fields = parse_sections(reply)
         return ArticleRelevance(
@@ -79,7 +83,7 @@ def _check_relevance(text: str, model: str, domain: str, *, local: bool):
     extract = extract_entities_local if local else extract_entities_cloud
     return extract(
         text=text,
-        system_prompt=get_system_prompt("relevance", domain),
+        system_prompt=get_system_prompt("relevance", domain, model),
         response_model=ArticleRelevance,
         model=model,
         temperature=0,
