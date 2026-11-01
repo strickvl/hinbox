@@ -15,12 +15,16 @@ from src.utils.name_variants import normalize_for_match
 # against types like these: "Fort Lauderdale" is a city and a school team,
 # "Washington" is a city and a surname, "Pentagon" is a building and the DoD.
 _LOOSE_TYPES: FrozenSet[str] = frozenset({"other", ""})
-# Words that make a name an institution unless it is typed as a base or camp.
+# Words that make a name an institution ("Department of Justice") when it is
+# typed "other" or "building". Areas keep them ("Bureau County"), and so do
+# names ending in a structure word ("Administration Building").
 _ORG_WORDS: FrozenSet[str] = frozenset(
     {"department", "agency", "bureau", "enforcement", "administration"}
     | {"commission", "committee", "division", "association", "sheriff"}
 )
-_CAMP_TYPES: FrozenSet[str] = frozenset({"military_base", "detention_facility"})
+_STRUCTURE_WORDS: FrozenSet[str] = frozenset(
+    {"building", "center", "centre", "hall", "house", "tower", "courthouse"}
+)
 
 
 def _names(items: List[Dict[str, Any]]) -> Set[str]:
@@ -43,7 +47,11 @@ def misfiled_reason(
     words = name.split()
     if name in people and (len(words) > 1 or loc_type in _LOOSE_TYPES):
         return "person"
-    if _ORG_WORDS & set(words) and loc_type not in _CAMP_TYPES:
+    if (
+        _ORG_WORDS & set(words)
+        and loc_type in _LOOSE_TYPES | {"building"}
+        and words[-1] not in _STRUCTURE_WORDS
+    ):
         return "organization name"
     if name in organizations and loc_type in _LOOSE_TYPES:
         return "organization"

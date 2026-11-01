@@ -64,3 +64,14 @@ def test_org_word_in_a_camp_name_is_kept():
         [{"name": "Camp Justice Administration Area", "type": "detention_facility"}]
     )
     assert kept == ["Camp Justice Administration Area"]
+
+
+def test_institution_words_in_areas_and_structures_are_kept():
+    kept, _ = _drop(
+        [
+            {"name": "Bureau County", "type": "region"},
+            {"name": "Administration Building", "type": "building"},
+            {"name": "Camp Justice Administration Area", "type": "detention_facility"},
+        ]
+    )
+    assert len(kept) == 3
