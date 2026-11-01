@@ -48,14 +48,23 @@ dedup:
         - ["Defense Intelligence Agency", "DIA"]
         - ["Joint Task Force Guantanamo", "JTF-GTMO", "JTF GTMO"]
         - ["American Civil Liberties Union", "ACLU"]
-        - ["International Committee of the Red Cross", "ICRC", "Red Cross"]
+        - ["International Committee of the Red Cross", "ICRC", "Red Cross", "International Red Cross"]
         - ["United Nations", "UN", "U.N."]
+        # Also tell the misfiled-locations filter these are not places.
+        - ["Islamic State", "ISIS", "ISIL", "Islamic State of Iraq and Syria"]
+        - ["Syrian Democratic Forces", "SDF"]
+        - ["al-Qaida", "al-Qaeda", "al Qaida", "al Qaeda"]
+        - ["U.S. Senate", "Senate"]
+        - ["U.S. Congress", "Congress"]
+        - ["Office of Military Commissions", "OMC"]
     locations:
       equivalence_groups:
         # The bay/prison and the naval base are kept as separate groups: these
         # names only send a pair to the match check, they never merge it alone.
         - ["Guantanamo Bay", "Guantanamo", "GTMO", "Gitmo"]
-        - ["Naval Station Guantanamo Bay", "Guantanamo Bay Naval Base", "Guantanamo Bay Navy Base", "Guantanamo naval base"]
+        # A bare "Navy base"/"U.S. Navy base" is left out on purpose: the merge
+        # gold labels "U.S. Navy base" vs this base as different.
+        - ["Naval Station Guantanamo Bay", "Guantanamo Bay Naval Base", "Guantanamo Bay Navy Base", "Guantanamo naval base", "Guantanamo Navy Base"]
         - ["United States", "U.S.", "US"]
 
 # Performance / concurrency configuration

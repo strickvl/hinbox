@@ -14,7 +14,11 @@ from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
 from src.utils.cache_utils import sha256_text
 from src.utils.error_handler import handle_article_processing_error
-from src.utils.misfiled_locations import drop_misfiled_locations
+from src.utils.misfiled_locations import (
+    drop_misfiled_locations,
+    drop_misfiled_organizations,
+)
+from src.utils.name_case import recase_entity_names
 from src.utils.outcomes import PhaseOutcome
 from src.utils.quality_controls import (
     filter_entities_by_article_relevance,
@@ -390,6 +394,11 @@ class ArticleProcessor:
                 relevance_outcomes
             )
 
+            # ALL CAPS names copied from a dateline, in the article's own case
+            recased = recase_entity_names(entities, article_content)
+            if recased:
+                processing_metadata["phase_outcomes"]["recased_names"] = recased
+
             # Locations that are really people or organizations (CIA, Trump)
             entities["locations"], misfiled = drop_misfiled_locations(
                 entities, self._org_equivalence_groups()
@@ -401,6 +410,19 @@ class ArticleProcessor:
                     ", ".join(m["name"] for m in misfiled),
                 )
             processing_metadata["phase_outcomes"]["misfiled_locations"] = misfiled
+            # Organizations that are a person from this article ("Donald Trump")
+            entities["organizations"], misfiled_orgs = drop_misfiled_organizations(
+                entities
+            )
+            if misfiled_orgs:
+                logger.info(
+                    "Dropped %d organizations that are people: %s",
+                    len(misfiled_orgs),
+                    ", ".join(m["name"] for m in misfiled_orgs),
+                )
+            processing_metadata["phase_outcomes"]["misfiled_organizations"] = (
+                misfiled_orgs
+            )
 
             # Track reflection attempts across all types
             total_reflections = 0

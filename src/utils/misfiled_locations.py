@@ -1,15 +1,18 @@
-"""Drop extracted "locations" that are really organizations or people.
+"""Drop extracted locations and organizations that are something else.
 
 Small local models put agencies and people into the locations list (typed
 "other" or "building"): CIA, FBI, ACLU, Donald Trump. The four entity types
 are extracted separately, so a location whose name also came back as a person
 or organization from the same article, or that names a configured
-organization, is dropped here. No LLM calls.
+organization, is dropped here, and so is a nationality word, news outlet, law
+or date (``non_place_names``). An organization whose name is a person from
+the same article ("President Donald Trump") is dropped too. No LLM calls.
 """
 
 from typing import Any, Dict, FrozenSet, List, Set, Tuple
 
-from src.utils.name_variants import normalize_for_match
+from src.utils.name_variants import normalize_for_match, person_name_tokens
+from src.utils.non_place_names import non_place_reason
 
 # A name shared with a one-word person or with an organization only counts
 # against types like these: "Fort Lauderdale" is a city and a school team,
@@ -23,8 +26,11 @@ _ORG_WORDS: FrozenSet[str] = frozenset(
     | {"commission", "committee", "division", "association", "sheriff"}
 )
 _STRUCTURE_WORDS: FrozenSet[str] = frozenset(
-    {"building", "center", "centre", "hall", "house", "tower", "courthouse"}
+    {"building", "center", "centre", "hall", "house", "tower", "courthouse", "room"}
 )
+# Location types where a law word is part of a real place name ("ACT" the
+# Australian Capital Territory, "Treaty Room").
+_PLACE_TYPES: FrozenSet[str] = frozenset({"city", "region", "country"})
 
 
 def _names(items: List[Dict[str, Any]]) -> Set[str]:
@@ -45,6 +51,12 @@ def misfiled_reason(
         return ""
     loc_type = str(location.get("type") or "").split(".")[-1].lower()
     words = name.split()
+    non_place = non_place_reason(name)
+    law_in_place_name = non_place == "law" and (
+        loc_type in _PLACE_TYPES or words[-1] in _STRUCTURE_WORDS
+    )
+    if non_place and not law_in_place_name:
+        return non_place
     if name in people and (len(words) > 1 or loc_type in _LOOSE_TYPES):
         return "person"
     if (
@@ -74,4 +86,31 @@ def drop_misfiled_locations(
             dropped.append({"name": str(loc.get("name", "")), "reason": reason})
         else:
             kept.append(loc)
+    return kept, dropped
+
+
+def drop_misfiled_organizations(
+    entities: Dict[str, List[Dict[str, Any]]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+    """Drop organizations that are a person from the same article.
+
+    "President Donald Trump" goes when "Donald Trump" came back as a person
+    (titles and initials ignored). A one-word name ("Trump") only goes when it
+    is typed "other"; "Trump administration" always stays.
+    """
+    people = {
+        tuple(person_name_tokens(name))
+        for person in entities.get("people", [])
+        for name in [person.get("name", ""), *person.get("aliases", [])]
+        if isinstance(name, str) and name.strip()
+    }
+    kept: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, str]] = []
+    for org in entities.get("organizations", []):
+        tokens = tuple(person_name_tokens(str(org.get("name", ""))))
+        org_type = str(org.get("type") or "").split(".")[-1].lower()
+        if tokens in people and (len(tokens) > 1 or org_type in _LOOSE_TYPES):
+            dropped.append({"name": str(org.get("name", "")), "reason": "person"})
+        else:
+            kept.append(org)
     return kept, dropped
