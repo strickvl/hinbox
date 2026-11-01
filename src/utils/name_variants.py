@@ -16,7 +16,7 @@ DEFAULT_ACRONYM_STOPWORDS: FrozenSet[str] = frozenset(
 )
 
 # Punctuation that is removed during match normalization (not display)
-_MATCH_STRIP_RE = re.compile(r"[''\".,;:!?()\[\]{}&/\\–—-]")
+_MATCH_STRIP_RE = re.compile(r"['\u2018\u2019\u201c\u201d\".,;:!?()\[\]{}&/\\–—-]")
 
 
 # ──────────────────────────────────────────────
@@ -34,12 +34,18 @@ def normalize_display(name: str) -> str:
     return unicodedata.normalize("NFC", text)
 
 
+def fold_accents(text: str) -> str:
+    """Drop accents so "Guantánamo" and "Guantanamo" compare equal."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
 def normalize_for_match(name: str) -> str:
-    """Normalize a name for matching: lowercase, strip punctuation, collapse whitespace.
+    """Normalize a name for matching: drop accents, lowercase, strip punctuation.
 
     More aggressive than display normalization — used for comparisons, not storage.
     """
-    text = normalize_display(name).lower()
+    text = fold_accents(normalize_display(name)).lower()
     text = _MATCH_STRIP_RE.sub(" ", text)
     text = " ".join(text.split())
     return text
@@ -391,3 +397,79 @@ def score_canonical_name(name: str) -> float:
         score -= 4.0
 
     return score
+
+
+# ──────────────────────────────────────────────
+# Spelling variants worth a match check
+# ──────────────────────────────────────────────
+
+# Words that only say what kind of place or body a name is ("Broward County"
+# is "Broward"). Dropped from the end of location/organization names.
+_TRAILING_DESIGNATORS: FrozenSet[str] = frozenset({"county", "city"})
+# Prefixes that don't change which entity is meant ("U.S. Navy" is "Navy").
+_LEADING_DESIGNATORS: Tuple[Tuple[str, ...], ...] = (("the",), ("u", "s"), ("us",))
+# Titles in front of a person's name ("President Trump", "Judge Pohl").
+_PERSON_TITLES: FrozenSet[str] = frozenset(
+    {"mr", "mrs", "ms", "dr", "judge", "president", "sen", "senator", "rep", "gov"}
+    | {"governor", "gen", "general", "col", "colonel", "capt", "lt", "sgt", "adm"}
+)
+
+
+def _place_core(name: str) -> str:
+    """Match form without leading "the"/"U.S." or a trailing "County"/"City"."""
+    tokens = normalize_for_match(name).split()
+    for prefix in _LEADING_DESIGNATORS:
+        if len(tokens) > len(prefix) and tuple(tokens[: len(prefix)]) == prefix:
+            tokens = tokens[len(prefix) :]
+            break
+    if len(tokens) > 1 and tokens[-1] in _TRAILING_DESIGNATORS:
+        tokens = tokens[:-1]
+    return " ".join(tokens)
+
+
+def _person_tokens(name: str) -> List[str]:
+    """Name words without titles or single-letter initials ("Donald J. Trump")."""
+    tokens = [t for t in normalize_for_match(name).split() if len(t) > 1]
+    while len(tokens) > 1 and tokens[0] in _PERSON_TITLES:
+        tokens = tokens[1:]
+    return tokens
+
+
+def _people_variants(name_a: str, name_b: str) -> bool:
+    """Same first and last name, or a bare surname that ends the full name."""
+    a, b = _person_tokens(name_a), _person_tokens(name_b)
+    if not a or not b:
+        return False
+    if len(a) >= 2 and len(b) >= 2:
+        # "Khalid Sheik Mohammed" / "Khalid Shaikh Mohammed"
+        return a[0] == b[0] and a[-1] == b[-1]
+    short, long = (a, b) if len(a) < len(b) else (b, a)
+    # "Trump" / "Donald Trump"; a lone first name doesn't count
+    return len(short) == 1 and len(long) >= 2 and short[0] == long[-1]
+
+
+def names_are_variants(
+    name_a: str,
+    name_b: str,
+    *,
+    entity_type: str,
+    equivalence_groups: Optional[List[List[str]]] = None,
+) -> bool:
+    """Whether two names could be spellings of one entity, worth a match check.
+
+    Looser than ``names_likely_same``: "Guantánamo Bay" / "Guantanamo Bay",
+    "Broward" / "Broward County", "Trump" / "Donald Trump". It only decides
+    which pairs the match check sees; the match check decides the merge.
+    """
+    if normalize_for_match(name_a) == normalize_for_match(name_b):
+        return True
+    if equivalence_groups:
+        expanded = expand_equivalents(name_a, equivalence_groups=equivalence_groups)
+        if normalize_for_match(name_b) in {normalize_for_match(e) for e in expanded}:
+            return True
+    if entity_type == "people":
+        return _people_variants(name_a, name_b)
+    if entity_type in ("locations", "organizations"):
+        core_a, core_b = _place_core(name_a), _place_core(name_b)
+        return bool(core_a) and core_a == core_b
+    return False

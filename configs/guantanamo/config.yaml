@@ -43,7 +43,10 @@ dedup:
         - ["United Nations", "UN", "U.N."]
     locations:
       equivalence_groups:
-        - ["Guantanamo Bay", "Guantanamo", "GTMO", "Naval Station Guantanamo Bay", "Guantanamo Bay Naval Base"]
+        # The bay/prison and the naval base are kept as separate groups: these
+        # names only send a pair to the match check, they never merge it alone.
+        - ["Guantanamo Bay", "Guantanamo", "GTMO", "Gitmo"]
+        - ["Naval Station Guantanamo Bay", "Guantanamo Bay Naval Base", "Guantanamo Bay Navy Base", "Guantanamo naval base"]
         - ["United States", "U.S.", "US"]
 
 # Performance / concurrency configuration
