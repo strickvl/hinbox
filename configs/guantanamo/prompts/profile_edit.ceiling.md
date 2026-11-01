@@ -13,7 +13,7 @@ There is no delete. Information already in the profile stays.
 
 Fill in two lists first:
 
-- `disagreements`: compare every date, number, name and outcome in the article that concerns {entity_name} with the profile, including background facts given in passing, such as when a place opened or when an attack happened. List one only when both give a different value for the very same thing, so that both can't be true: the same event on a different date, the same count with a different number. Copy the profile sentence exactly and say what the article says instead. A different year for something the profile already dates counts, even if the difference looks small.
+- `disagreements`: compare every date, number, name and outcome in the article that concerns {entity_name} with the profile, including dates and numbers the article mentions only in passing. List one only when both give a different value for the very same thing, so that both can't be true: the same event on a different date, the same count with a different number. Copy the profile sentence exactly and say what the article says instead. A different year for something the profile already dates counts, even if the difference looks small.
 
   These are not disagreements, so leave them out (most go in `new_facts`):
   - two different events or steps, such as charges filed in one month and a trial ordered in another;
