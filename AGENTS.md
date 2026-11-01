@@ -21,7 +21,8 @@ This document helps contributors work effectively in this repository.
     - `embeddings/` — `EmbeddingManager`, cloud/local providers, similarity helpers
     - `extraction_cache.py` — persistent sidecar cache for extraction results (keyed on content hash, model, prompt, schema, temperature)
     - `cache_utils.py` — thread-safe LRU cache and stable hashing helpers
-    - `name_variants.py` — deterministic name normalisation, acronym detection, equivalence expansion, canonical name scoring
+    - `name_variants.py` — deterministic name normalisation (accents folded), acronym detection, equivalence expansion, spelling-variant checks for the merge fallback (`names_are_variants`), canonical name scoring
+    - `misfiled_locations.py` — drops extracted "locations" that are really people or organizations
     - `quality_controls.py` — extraction QC, profile QC, and profile grounding verification
     - `processing_status.py` — sidecar JSON tracker for article processing status
     - `outcomes.py` — `PhaseOutcome` structured result objects

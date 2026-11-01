@@ -1,7 +1,7 @@
 import contextvars
 from typing import Any, Dict, List, Optional
 
-from src.config_loader import get_system_prompt
+from src.config_loader import get_domain_config, get_system_prompt
 
 # Use the consolidated extractor rather than per-entity wrappers
 from src.engine.extractors import EntityExtractor
@@ -14,6 +14,7 @@ from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
 from src.utils.cache_utils import sha256_text
 from src.utils.error_handler import handle_article_processing_error
+from src.utils.misfiled_locations import drop_misfiled_locations
 from src.utils.outcomes import PhaseOutcome
 from src.utils.quality_controls import (
     filter_entities_by_article_relevance,
@@ -389,6 +390,18 @@ class ArticleProcessor:
                 relevance_outcomes
             )
 
+            # Locations that are really people or organizations (CIA, Trump)
+            entities["locations"], misfiled = drop_misfiled_locations(
+                entities, self._org_equivalence_groups()
+            )
+            if misfiled:
+                logger.info(
+                    "Dropped %d locations that are people or organizations: %s",
+                    len(misfiled),
+                    ", ".join(m["name"] for m in misfiled),
+                )
+            processing_metadata["phase_outcomes"]["misfiled_locations"] = misfiled
+
             # Track reflection attempts across all types
             total_reflections = 0
             for et, items in entities.items():
@@ -407,6 +420,15 @@ class ArticleProcessor:
         except Exception as e:
             handle_article_processing_error(article_id, "extraction", e)
             return entities
+
+    def _org_equivalence_groups(self) -> List[List[str]]:
+        try:
+            cfg = get_domain_config(self.domain).get_name_variants_config(
+                "organizations"
+            )
+        except Exception:
+            return []
+        return cfg.get("equivalence_groups", [])
 
     def convert_pydantic_to_dict(self, items: List) -> List[Dict]:
         """Normalize items to plain dicts, preserving fields for parquet output."""

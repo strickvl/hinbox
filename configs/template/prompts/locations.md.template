@@ -13,7 +13,9 @@ When identifying locations, categorize them using the following location types:
 - Focus on locations that are directly relevant to {DOMAIN_NAME} research
 - Include both specific places and general geographic areas
 - Consider historical names and boundaries when relevant
-- If a location's type is unclear, use the "other" category
+- If a place's type is unclear, use the "other" category
+- Only extract physical places. Organizations (agencies, courts, companies), people, groups, religions and nationalities are extracted separately, so never list them here, even under "other"
+- When a place name stands for the institution inside it ("the Pentagon said"), do not extract it as a location
 
 ## Output Format
 
