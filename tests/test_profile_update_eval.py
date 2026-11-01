@@ -180,6 +180,20 @@ def test_reviews_confirm_or_drop_cases(tmp_path):
     assert [c["case_id"] for c in everything] == ["2", "3"]
 
 
+def test_review_is_void_when_the_rebuilt_case_pairs_other_sentences(tmp_path):
+    case = {**_disputed(), "case_id": "d", "split": "test", "needs_review": True}
+    moved = {**case, "expected": {**case["expected"], "profile_sentence": "Other."}}
+    flipped = {**case, "expected": {**case["expected"], "disputed_value": "2005"}}
+    (tmp_path / pu.REVIEWS_FILE).write_text(
+        json.dumps(
+            {"case_id": "d", "verdict": "keep", "pairing": pu.case_pairing(case)}
+        )
+    )
+    for rebuilt, scored in ((flipped, True), (moved, False)):
+        (tmp_path / "profile_update_cases.jsonl").write_text(json.dumps(rebuilt))
+        assert bool(pu.load_cases(str(tmp_path), "test")) is scored
+
+
 def test_run_updates_counts_errors_as_failures():
     def updater(case):
         if case["case_id"] == "boom":

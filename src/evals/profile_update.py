@@ -33,6 +33,7 @@ A case passes when nothing collapsed, retention is at least
 ``MIN_RETENTION``, no citation was invented, and the kind's own check holds.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -241,6 +242,8 @@ def load_reviews(eval_dir: str) -> Dict[str, Dict[str, Any]]:
     ``keep`` confirms the label (a disputed case then gets scored) and ``drop``
     leaves the case out for good (two different events, a wrong label). The
     file sits apart from the cases, so ``just eval-cases`` can rebuild them.
+    An optional ``pairing`` (``case_pairing()``) ties the verdict to the two
+    sentences that were checked; a rebuild that pairs others voids it.
     """
     path = os.path.join(eval_dir, REVIEWS_FILE)
     if not os.path.exists(path):
@@ -248,6 +251,21 @@ def load_reviews(eval_dir: str) -> Dict[str, Dict[str, Any]]:
     with open(path, encoding="utf-8") as f:
         rows = [json.loads(line) for line in f if line.strip()]
     return {r["case_id"]: r for r in rows}
+
+
+def case_pairing(case: Dict[str, Any]) -> str:
+    """Short hash of the sentences a disputed label rests on, years masked.
+
+    A rebuild can flip the planted year (2001 instead of 1999) and the verdict
+    still holds, but pairing a different profile sentence needs a new check.
+    """
+    expected = case.get("expected", {})
+    text = (
+        expected.get("profile_sentence", "")
+        + "\n"
+        + expected.get("article_sentence", "")
+    )
+    return hashlib.sha256(re.sub(r"\d", "#", text).encode()).hexdigest()[:12]
 
 
 def load_cases(
@@ -260,7 +278,10 @@ def load_cases(
     reviews = load_reviews(eval_dir)
     kept = []
     for c in cases:
-        verdict = reviews.get(c["case_id"], {}).get("verdict")
+        review = reviews.get(c["case_id"], {})
+        verdict = review.get("verdict")
+        if review.get("pairing") not in (None, case_pairing(c)):
+            verdict = None  # checked against sentences this case no longer has
         if verdict == "drop" or (split != "all" and c["split"] != split):
             continue
         if verdict == "keep":
