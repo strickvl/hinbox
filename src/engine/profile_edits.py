@@ -197,8 +197,8 @@ def _messages(
 ) -> List[Dict[str, str]]:
     from src.config_loader import DomainConfig
 
-    # Local models get profile_edit.local.md, GEPA-tuned on Qwen3.6: on the
-    # eval it lifted Qwen and Bolt, but made the cloud model skip real facts
+    # Local models get profile_edit.local.md (GEPA-tuned on Qwen3.6), cloud
+    # models profile_edit.cloud.md; the local one made cloud models skip facts
     template = DomainConfig(domain).load_profile_prompt("edit", model)
     instructions = template.format(
         entity_type=entity_type, entity_name=entity_name, article_id=article_id

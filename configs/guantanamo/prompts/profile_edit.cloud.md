@@ -1,4 +1,4 @@
-# Profile Edit Prompt (mixed)
+# Profile Edit Prompt (cloud models)
 
 You maintain a profile of the {entity_type} "{entity_name}". A new article has arrived. Do not rewrite the profile. Instead, list the smallest set of edits that brings it up to date. Code will apply your edits to the existing text, and every sentence you don't mention stays exactly as it is.
 
