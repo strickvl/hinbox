@@ -62,7 +62,7 @@ def test_real_domain_gives_local_models_the_tuned_edit_prompt(monkeypatch):
     path = DomainConfig("guantanamo").prompt_path("profile_edit", "ollama/x")
     assert os.path.basename(path) == "profile_edit.local.md"
     path = DomainConfig("guantanamo").prompt_path("profile_edit", "openai/x")
-    assert os.path.basename(path) == "profile_edit.md"
+    assert os.path.basename(path) == "profile_edit.cloud.md"
 
 
 def test_grid_keeps_the_latest_run_per_model_and_prompt(capsys):
