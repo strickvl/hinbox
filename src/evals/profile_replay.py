@@ -50,7 +50,7 @@ class ReplayEntity:
     terms: Tuple[str, ...]
 
 
-# Ten well-covered entities across the four types. Article counts are from the
+# Well-covered entities across the four types. Article counts are from the
 # Miami Herald corpus (1,620 articles); "substantive" = a term appears 2+ times.
 DEFAULT_ENTITIES: Tuple[ReplayEntity, ...] = (
     ReplayEntity("Abd al Rahim al Nashiri", "person", ("Nashiri",)),
@@ -67,6 +67,24 @@ DEFAULT_ENTITIES: Tuple[ReplayEntity, ...] = (
     ReplayEntity("Camp Justice", "location", ("Camp Justice",)),
     ReplayEntity("USS Cole bombing", "event", ("USS Cole",)),
     ReplayEntity("Guantánamo hunger strike", "event", ("hunger strike",)),
+    # Added 2026-11-01 so dev and test hold 6 entities each, not 2: with 28
+    # cases a split, one case was 3.5 points and no prompt could be told apart
+    ReplayEntity("Mark Martins", "person", ("Mark Martins", "Gen. Martins", "Martins")),
+    ReplayEntity("Omar Khadr", "person", ("Khadr",)),
+    ReplayEntity("Ramzi bin al Shibh", "person", ("bin al Shibh",)),
+    ReplayEntity(
+        "American Civil Liberties Union",
+        "organization",
+        ("ACLU", "American Civil Liberties Union"),
+    ),
+    ReplayEntity("Periodic Review Board", "organization", ("Periodic Review Board",)),
+    ReplayEntity("Camp 6", "location", ("Camp 6",)),
+    ReplayEntity("Camp X-Ray", "location", ("Camp X-Ray",)),
+    ReplayEntity(
+        "September 11 trial",
+        "event",
+        ("Sept. 11 trial", "9/11 trial", "Sept. 11 case", "9/11 case"),
+    ),
 )
 
 
