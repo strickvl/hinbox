@@ -4,7 +4,9 @@ Constants used throughout the application.
 
 import os
 
-CLOUD_MODEL = os.getenv("HINBOX_CLOUD_MODEL", "gemini/gemini-2.0-flash")
+# GPT-6 Luna: scored on every eval (relevance, merge, profile update); Gemini 2.0
+# Flash, the old default, never was
+CLOUD_MODEL = os.getenv("HINBOX_CLOUD_MODEL", "openai/gpt-6-luna")
 OLLAMA_MODEL = os.getenv("HINBOX_OLLAMA_MODEL", "ollama/qwen2.5:32b-instruct-q5_K_M")
 # Sent to Ollama as ``reasoning_effort``. "none" turns thinking off for models
 # that think by default (e.g. Qwen3.6); set to "" to leave the model's default.

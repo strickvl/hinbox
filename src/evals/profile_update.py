@@ -26,7 +26,8 @@ produces an updated profile, and these checks score it without a model:
   Reported only.
 - For ``disputed`` cases, ``keeps_both``: the original year is still stated
   with one of its original sources, and the changed year is stated with the
-  case's article. A profile that silently swaps one year for the other fails.
+  case's article, in a sentence about the claim or right after the kept one.
+  A profile that silently swaps one year for the other fails.
 
 A case passes when nothing collapsed, retention is at least
 ``MIN_RETENTION``, no citation was invented, and the kind's own check holds.
@@ -99,23 +100,55 @@ def _shares_claim(about: Set[str], words: Set[str]) -> bool:
     return shared >= DISPUTED_MIN_SHARED and shared / smaller >= DISPUTED_OVERLAP
 
 
-def _states(
+def _stating(
     sentences: List[str],
     value: str,
     sources: Set[str],
-    about: Callable[[Set[str]], bool],
-) -> bool:
-    """Whether a sentence states ``value``, cites one of ``sources``, and is
-    about the same claim (``about`` is given its content words). Without that
-    last test, an unrelated sentence that happens to share the year and source
-    ("his lawyer joined in 2006") would count."""
+    about: Optional[Callable[[Set[str]], bool]] = None,
+) -> List[int]:
+    """Indexes of sentences that state ``value``, cite one of ``sources`` and,
+    given ``about``, are about the same claim (``about`` gets their content
+    words). Without that last test, an unrelated sentence that happens to share
+    the year and source ("his lawyer joined in 2006") would count."""
     pattern = re.compile(rf"\b{re.escape(value)}\b")
-    return any(
-        pattern.search(_CITATION.sub("", s))
+    return [
+        i
+        for i, s in enumerate(sentences)
+        if pattern.search(_CITATION.sub("", s))
         and _cited_ids(s) & sources
-        and about(_content_words(s))
-        for s in sentences
+        and (about is None or about(_content_words(s)))
+    ]
+
+
+def _keeps_both(case: Dict[str, Any], new_text: str) -> bool:
+    expected, article = case["expected"], {case["article_id"]}
+    sentences = _sentences(new_text)
+    claim = _content_words(expected.get("profile_sentence", ""))
+    # Older case files stored a grouped citation as one "a1, a2" id
+    sources = {i.strip() for g in expected["original_sources"] for i in g.split(",")}
+    # The old year must stay in a sentence that still makes the original claim
+    kept = _stating(
+        sentences,
+        expected["original_value"],
+        sources,
+        lambda words: _best_overlap(claim, [words]) >= KEPT_OVERLAP,
     )
+    if not kept:
+        return False
+    # The new year may be worded freshly ("another report says 2007"), so it
+    # only has to share a little with either version, or sit right after the
+    # kept claim, where the prompt asks for it: Haiku's "A later report gives
+    # the bombing date as Oct. 12, 2001 instead." shares one word with it
+    either = claim | _content_words(expected.get("article_sentence", ""))
+    if _stating(
+        sentences,
+        expected["disputed_value"],
+        article,
+        lambda words: _shares_claim(either, words),
+    ):
+        return True
+    stated = set(_stating(sentences, expected["disputed_value"], article))
+    return any(i + 1 in stated for i in kept)
 
 
 def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
@@ -179,26 +212,8 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
         "cites_article": article_id in new_ids,
         "invented_citations": sorted(new_ids - known - {article_id}),
     }
-    expected = case.get("expected", {})
     if case["kind"] == "disputed":
-        sentences = _sentences(new_text)
-        claim = _content_words(expected.get("profile_sentence", ""))
-        # The old year must stay in a sentence that still makes the original
-        # claim. The new year may be worded freshly ("another report says
-        # 2007"), so it only has to share a little with either version.
-        either = claim | _content_words(expected.get("article_sentence", ""))
-        scores["keeps_both"] = _states(
-            sentences,
-            expected["original_value"],
-            # Older case files stored a grouped citation as one "a1, a2" id
-            {i.strip() for g in expected["original_sources"] for i in g.split(",")},
-            lambda words: _best_overlap(claim, [words]) >= KEPT_OVERLAP,
-        ) and _states(
-            sentences,
-            expected["disputed_value"],
-            {article_id},
-            lambda words: _shares_claim(either, words),
-        )
+        scores["keeps_both"] = _keeps_both(case, new_text)
     scores["passed"] = case_passed(case, scores)
     return scores
 
@@ -216,6 +231,25 @@ def case_passed(case: Dict[str, Any], scores: Dict[str, Any]) -> bool:
     return True
 
 
+REVIEWS_FILE = "profile_update_reviews.jsonl"
+
+
+def load_reviews(eval_dir: str) -> Dict[str, Dict[str, Any]]:
+    """Hand checks of case labels, by case id (the last row for an id wins).
+
+    One JSON row per checked case: ``{"case_id", "verdict", "note"}``, where
+    ``keep`` confirms the label (a disputed case then gets scored) and ``drop``
+    leaves the case out for good (two different events, a wrong label). The
+    file sits apart from the cases, so ``just eval-cases`` can rebuild them.
+    """
+    path = os.path.join(eval_dir, REVIEWS_FILE)
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    return {r["case_id"]: r for r in rows}
+
+
 def load_cases(
     eval_dir: str, split: str = "all", include_unreviewed: bool = False
 ) -> List[Dict[str, Any]]:
@@ -223,12 +257,17 @@ def load_cases(
     path = os.path.join(eval_dir, "profile_update_cases.jsonl")
     with open(path, encoding="utf-8") as f:
         cases = [json.loads(line) for line in f if line.strip()]
-    return [
-        c
-        for c in cases
-        if (split == "all" or c["split"] == split)
-        and (include_unreviewed or not c.get("needs_review"))
-    ]
+    reviews = load_reviews(eval_dir)
+    kept = []
+    for c in cases:
+        verdict = reviews.get(c["case_id"], {}).get("verdict")
+        if verdict == "drop" or (split != "all" and c["split"] != split):
+            continue
+        if verdict == "keep":
+            c = {**c, "needs_review": False}
+        if include_unreviewed or not c.get("needs_review"):
+            kept.append(c)
+    return kept
 
 
 def make_rewrite_updater(model: str, domain: str) -> Updater:

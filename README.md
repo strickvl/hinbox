@@ -106,7 +106,8 @@ just frontend
 3. **Set up environment variables:**
    ```bash
    # Create a .env file (auto-loaded by just):
-   echo 'GEMINI_API_KEY=your-gemini-api-key' > .env
+   # The default cloud model is openai/gpt-6-luna:
+   echo 'OPENAI_API_KEY=your-openai-api-key' > .env
    # Optional for local processing:
    echo 'OLLAMA_API_URL=http://localhost:11434/v1' >> .env
    ```
@@ -128,12 +129,10 @@ just frontend
    # Override the local model (default: ollama/qwen2.5:32b-instruct-q5_K_M):
    echo 'HINBOX_OLLAMA_MODEL=ollama/gemma3:27b' >> .env
 
-   # Override the cloud model (default: gemini/gemini-2.0-flash):
-   echo 'HINBOX_CLOUD_MODEL=gemini/gemini-2.5-flash' >> .env
-
-   # Other providers: openai/... needs OPENAI_API_KEY; anthropic/... needs
-   # ANTHROPIC_API_KEY and `uv sync --extra anthropic`
-   echo 'HINBOX_CLOUD_MODEL=openai/gpt-6-luna' >> .env
+   # Override the cloud model (default: openai/gpt-6-luna, needs OPENAI_API_KEY).
+   # anthropic/... needs ANTHROPIC_API_KEY and `uv sync --extra anthropic`;
+   # gemini/... needs GEMINI_API_KEY
+   echo 'HINBOX_CLOUD_MODEL=anthropic/claude-haiku-5-5' >> .env
 
    # Give one task its own model; the rest keep the default above. Tasks:
    # RELEVANCE, EXTRACTION, MATCH, DISPUTE, PROFILE. The prefix decides where
@@ -207,15 +206,29 @@ just frontend
 ```
 Explore extracted entities at http://localhost:5001
 
+### Prompts per model
+A prompt that suits one model can hurt another: the profile-edit prompt tuned for Qwen3.6 lifted the local models but made GPT-6 Luna skip real new facts. So every prompt file can have variants named `<prompt>.<variant>.md` next to the default `<prompt>.md`. For each prompt, the pipeline uses the first file that exists:
+
+1. a family listed under `prompt_families` in the domain's `config.yaml` whose name parts appear in the model name (`qwen: [qwen]` makes `ollama/qwen3.6:35b` use `relevance.qwen.md`);
+2. `<prompt>.local.md` for `ollama/` models, `<prompt>.cloud.md` for the rest;
+3. `<prompt>.md`.
+
+This covers relevance, the four extraction prompts and the profile prompts; the merge check builds its prompt in code. Add a variant only when `just eval show --grid` shows it beating the default for that model on the test split.
+
 ### Evaluating Models
 The scoreboard grades any model on your hand-labelled answer keys, so you can compare cloud, frontier and local models (or later, optimized prompts) on equal terms.
 ```bash
 # Score a model on the relevance labels or the merge labels
-just eval relevance --model gemini/gemini-2.0-flash
+just eval relevance --model openai/gpt-6-luna
 just eval merge --model ollama/qwen3.6:35b-a3b --split test
 
-# Show every run so far
+# Show every run so far, or the latest score for each model and prompt file
 just eval show
+just eval show --grid
+
+# Score a prompt variant the pipeline wouldn't pick for this model
+# (relevance.qwen.md, profile_edit.local.md, ...; 'default' = the plain file)
+just eval profile-update --model openai/gpt-6-luna --split test --prompt-variant local
 
 # Pick hard look-alike entity pairs to label (writes merge_candidates_v2.jsonl)
 just eval-mine
@@ -233,9 +246,9 @@ just eval profile-update --model openai/gpt-6-luna --split dev --approach rewrit
 ```
 Gold files live in `{output_dir}/eval/`. Each run writes its per-item predictions to `eval/runs/` and adds one row to `eval/scoreboard.jsonl`. Items are split 60/20/20 into train/dev/test by a stable hash, so anything tuned on `train` is never graded on `test`. Results report balanced accuracy next to the "always give the common answer" baseline, because the label sets are lopsided.
 
-`just eval-replay` prepares data for a profile-update eval. The entity database has no profile built from more than three articles, so it takes ten entities the corpus covers heavily (Nashiri, Judge Pohl, Camp Justice, the USS Cole bombing, ...), creates a profile from the first article mostly about each one, then runs the pipeline's own `update_profile` on each later article. It saves the profile after every step to `eval/profile_replay/<model>/<entity>/step_NNN.json`, and resumes where it stopped.
+`just eval-replay` prepares data for a profile-update eval. The entity database has no profile built from more than three articles, so it takes eighteen entities the corpus covers heavily (Nashiri, Judge Pohl, Camp Justice, the USS Cole bombing, ...), creates a profile from the first article mostly about each one, then runs the pipeline's own `update_profile` on each later article. It saves the profile after every step to `eval/profile_replay/<model>/<entity>/step_NNN.json`, and resumes where it stopped.
 
-`just eval-cases` turns those snapshots into test cases, each one an existing profile plus an article. There are three kinds: an article that only mentions the entity in passing (a good update keeps everything and changes little), the real next article (a good update adds the new facts with its citation and keeps the rest), and a copy of the next article with one year changed (a good update keeps both years, each with its own source). Cases are split into train/dev/test by entity (6/2/2 for the ten replay entities, with every entity type in train), so a tuned prompt never sees a test entity. Disputed cases come from a word-overlap heuristic and are marked `needs_review` until a person confirms the two sentences make the same claim.
+`just eval-cases` turns those snapshots into test cases, each one an existing profile plus an article. There are three kinds: an article that only mentions the entity in passing (a good update keeps everything and changes little), the real next article (a good update adds the new facts with its citation and keeps the rest), and a copy of the next article with one year changed (a good update keeps both years, each with its own source). Cases are split into train/dev/test by entity (6/6/6 for the eighteen replay entities, with every entity type in each split), so a tuned prompt never sees a test entity. Disputed cases come from a word-overlap heuristic and are marked `needs_review` until a person confirms the two sentences make the same claim.
 
 `just eval profile-update` runs the pipeline's `update_profile` on each case and scores the result without a model. A case fails if the profile shrinks by more than 20%, if fewer than 90% of its cited sentences survive (reworded sentences still count as kept), or if it cites an id that is neither an old source nor the new article. Each kind also has its own check: new-fact cases must cite the article, passing-mention cases may add at most two sentences, and disputed cases must keep the old year with its old source and state the new year with the new article. The scoreboard also shows how much old text was kept word for word, because a good update shouldn't rewrite text it had no reason to touch. In the full replay, 40 single updates cut a profile by more than a fifth (one went from 31k characters to 6k), and every one passed the pipeline's own QC.
 

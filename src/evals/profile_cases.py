@@ -67,6 +67,16 @@ ENTITY_SPLITS: Dict[str, str] = {
     "USS Cole bombing": "dev",
     "Vance Spath": "test",
     "Camp 7": "test",
+    # Each split gets every type; the 9/11-trial entities (bin al Shibh, the
+    # trial itself) share many articles, so they sit in the same split
+    "Mark Martins": "dev",
+    "Omar Khadr": "dev",
+    "American Civil Liberties Union": "dev",
+    "Camp 6": "dev",
+    "Ramzi bin al Shibh": "test",
+    "September 11 trial": "test",
+    "Periodic Review Board": "test",
+    "Camp X-Ray": "test",
 }
 
 

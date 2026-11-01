@@ -21,7 +21,8 @@ This document helps contributors work effectively in this repository.
     - `embeddings/` — `EmbeddingManager`, cloud/local providers, similarity helpers
     - `extraction_cache.py` — persistent sidecar cache for extraction results (keyed on content hash, model, prompt, schema, temperature)
     - `cache_utils.py` — thread-safe LRU cache and stable hashing helpers
-    - `name_variants.py` — deterministic name normalisation, acronym detection, equivalence expansion, canonical name scoring
+    - `name_variants.py` — deterministic name normalisation (accents folded), acronym detection, equivalence expansion, spelling-variant checks for the merge fallback (`names_are_variants`), canonical name scoring
+    - `misfiled_locations.py` — drops extracted "locations" that are really people or organizations
     - `quality_controls.py` — extraction QC, profile QC, and profile grounding verification
     - `processing_status.py` — sidecar JSON tracker for article processing status
     - `outcomes.py` — `PhaseOutcome` structured result objects
@@ -34,7 +35,7 @@ This document helps contributors work effectively in this repository.
   - `config_loader.py` — `DomainConfig` loader (per-type thresholds, lexical blocking, cache settings)
   - `logging_config.py` — Rich-based structured logging with colour-coded decision lines
   - `exceptions.py` — custom exception types used across the pipeline
-- `configs/` — domain definitions (types, prompts, dedup settings) by domain (e.g., `guantanamo/`).
+- `configs/` — domain definitions (types, prompts, dedup settings) by domain (e.g., `guantanamo/`). A prompt can have per-model variants `<prompt>.<variant>.md` (a `prompt_families` entry in `config.yaml`, then `local`/`cloud`), picked by `DomainConfig.prompt_path()`.
 - `tests/` — pytest tests (`test_*.py`, `embeddings/` sub-suite). Covers mergers, dispute routing, extraction caching/retry, canonical names, name variants, profile grounding/versioning, privacy mode, and frontend.
 - `scripts/` — domain management (`init_domain.py`, `list_domains.py`), data fetching, resets, diagnostics.
 - `assets/`, `data/`, `design/` — static assets, datasets, design notes (design/ is gitignored).
@@ -50,7 +51,7 @@ This document helps contributors work effectively in this repository.
 - Process articles: `just process --domain <name> --limit N`
 - Start frontend: `just frontend` (http://localhost:5001)
 - Domain management: `just domains` / `just init <name>`
-- Evaluate a model on the gold sets: `just eval <relevance|merge> --model <model>`; `just eval show` prints the scoreboard
+- Evaluate a model on the gold sets: `just eval <relevance|merge> --model <model>`; `just eval show` prints the scoreboard (`--grid`: latest score per model × prompt file); `--prompt-variant <name>` scores a variant on any model
 - DSPy experiments live in `experiments/dspy_opt/` (separate uv project, no LiteLLM): `just dspy-merge --model <model> --optimizer mipro`, `just dspy-test`
 
 ## Coding Style & Naming Conventions

@@ -113,6 +113,17 @@ def test_disputed_ignores_an_unrelated_sentence_with_the_same_year_and_source():
     assert not pu.score_update(_disputed(), swapped)["keeps_both"]
 
 
+def test_disputed_accepts_a_tersely_worded_year_right_after_the_claim():
+    # Shares only "transfer" with the claim, but sits where the prompt asks
+    terse = OLD.replace(
+        "with others.^[a2]", "with others.^[a2] A later report says 2007.^[a9-disputed]"
+    )
+    assert pu.score_update(_disputed(), terse)["keeps_both"]
+    # The same terse sentence elsewhere doesn't count
+    elsewhere = OLD + " A later report says 2007.^[a9-disputed]"
+    assert not pu.score_update(_disputed(), elsewhere)["keeps_both"]
+
+
 def test_rewrite_updater_reports_a_fallback_to_the_old_profile(monkeypatch):
     import src.engine.profiles as profiles
 
@@ -147,6 +158,26 @@ def test_load_cases_filters_split_and_unreviewed(tmp_path):
     )
     assert [c["case_id"] for c in pu.load_cases(str(tmp_path), "dev")] == ["1"]
     assert len(pu.load_cases(str(tmp_path), "all", include_unreviewed=True)) == 3
+
+
+def test_reviews_confirm_or_drop_cases(tmp_path):
+    rows = [
+        {**_case(), "case_id": "1", "split": "test"},
+        {**_disputed(), "case_id": "2", "split": "test", "needs_review": True},
+        {**_disputed(), "case_id": "3", "split": "test", "needs_review": True},
+    ]
+    (tmp_path / "profile_update_cases.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows)
+    )
+    reviews = [
+        {"case_id": "1", "verdict": "keep"},
+        {"case_id": "1", "verdict": "drop", "note": "label wrong"},  # last wins
+        {"case_id": "2", "verdict": "keep"},
+    ]
+    (tmp_path / pu.REVIEWS_FILE).write_text("\n".join(json.dumps(r) for r in reviews))
+    assert [c["case_id"] for c in pu.load_cases(str(tmp_path), "test")] == ["2"]
+    everything = pu.load_cases(str(tmp_path), "all", include_unreviewed=True)
+    assert [c["case_id"] for c in everything] == ["2", "3"]
 
 
 def test_run_updates_counts_errors_as_failures():

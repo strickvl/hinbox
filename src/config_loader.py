@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 
+@lru_cache(maxsize=None)
+def _read_prompt(path: str) -> str:
+    with open(path, "r") as f:
+        return f.read()
+
+
 class DomainConfig:
     """Domain configuration manager."""
 
@@ -72,27 +78,50 @@ class DomainConfig:
         with open(categories_path, "r") as f:
             return yaml.safe_load(f)
 
-    @lru_cache(maxsize=None)
-    def load_prompt(self, entity_type: str) -> str:
-        """Load extraction prompt for an entity type."""
-        prompt_path = os.path.join(self.config_dir, "prompts", f"{entity_type}.md")
-        if not os.path.exists(prompt_path):
-            raise ValueError(f"Prompt file not found: {prompt_path}")
+    def prompt_variants(self, model: Optional[str] = None) -> List[str]:
+        """Prompt variants to try for ``model``, most specific first.
 
-        with open(prompt_path, "r") as f:
-            return f.read()
+        A variant is a file named ``<prompt>.<variant>.md`` next to the default
+        ``<prompt>.md``. The ``prompt_families`` section of ``config.yaml``
+        maps a family name to parts of model names (``qwen: [qwen]`` makes
+        ``ollama/qwen3.6:35b`` try ``relevance.qwen.md``). After the named
+        families comes ``local`` for ``ollama/`` models, else ``cloud``.
+        ``HINBOX_PROMPT_VARIANT`` forces one variant (``default`` forces the
+        plain file), so the eval can score any prompt on any model.
+        """
+        forced = os.getenv("HINBOX_PROMPT_VARIANT", "").strip()
+        if forced:
+            return [] if forced == "default" else [forced]
+        if not model:
+            return []
+        name = model.lower()
+        families = self.load_config().get("prompt_families") or {}
+        named = [
+            family
+            for family, parts in families.items()
+            if any(str(part).lower() in name for part in parts or [])
+        ]
+        return named + ["local" if name.startswith("ollama/") else "cloud"]
 
-    @lru_cache(maxsize=None)
-    def load_profile_prompt(self, prompt_type: str) -> str:
-        """Load profile-related prompt (generation, update, reflection)."""
-        prompt_path = os.path.join(
-            self.config_dir, "prompts", f"profile_{prompt_type}.md"
-        )
-        if not os.path.exists(prompt_path):
-            raise ValueError(f"Profile prompt file not found: {prompt_path}")
+    def prompt_path(self, name: str, model: Optional[str] = None) -> str:
+        """The prompt file ``name`` resolves to for ``model``."""
+        prompts = os.path.join(self.config_dir, "prompts")
+        for variant in self.prompt_variants(model):
+            path = os.path.join(prompts, f"{name}.{variant}.md")
+            if os.path.exists(path):
+                return path
+        path = os.path.join(prompts, f"{name}.md")
+        if not os.path.exists(path):
+            raise ValueError(f"Prompt file not found: {path}")
+        return path
 
-        with open(prompt_path, "r") as f:
-            return f.read()
+    def load_prompt(self, entity_type: str, model: Optional[str] = None) -> str:
+        """Load the extraction (or relevance) prompt for ``model``."""
+        return _read_prompt(self.prompt_path(entity_type, model))
+
+    def load_profile_prompt(self, prompt_type: str, model: Optional[str] = None) -> str:
+        """Load a profile prompt (generation, update, reflection, edit)."""
+        return _read_prompt(self.prompt_path(f"profile_{prompt_type}", model))
 
     def get_data_path(self) -> str:
         """Get the default data path for this domain."""
@@ -422,6 +451,8 @@ def get_prompt(domain: str, entity_type: str) -> str:
     return get_domain_config(domain).load_prompt(entity_type)
 
 
-def get_system_prompt(entity_type: str, domain: str = "guantanamo") -> str:
-    """Get system prompt for an entity type (backward compatibility with existing code)."""
-    return get_domain_config(domain).load_prompt(entity_type)
+def get_system_prompt(
+    entity_type: str, domain: str = "guantanamo", model: Optional[str] = None
+) -> str:
+    """The extraction or relevance prompt for ``model`` (see ``prompt_variants``)."""
+    return get_domain_config(domain).load_prompt(entity_type, model)
