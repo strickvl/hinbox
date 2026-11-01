@@ -113,6 +113,17 @@ def test_disputed_ignores_an_unrelated_sentence_with_the_same_year_and_source():
     assert not pu.score_update(_disputed(), swapped)["keeps_both"]
 
 
+def test_disputed_accepts_a_tersely_worded_year_right_after_the_claim():
+    # Shares only "transfer" with the claim, but sits where the prompt asks
+    terse = OLD.replace(
+        "with others.^[a2]", "with others.^[a2] A later report says 2007.^[a9-disputed]"
+    )
+    assert pu.score_update(_disputed(), terse)["keeps_both"]
+    # The same terse sentence elsewhere doesn't count
+    elsewhere = OLD + " A later report says 2007.^[a9-disputed]"
+    assert not pu.score_update(_disputed(), elsewhere)["keeps_both"]
+
+
 def test_rewrite_updater_reports_a_fallback_to_the_old_profile(monkeypatch):
     import src.engine.profiles as profiles
 
