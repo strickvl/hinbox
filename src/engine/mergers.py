@@ -66,6 +66,9 @@ class MergeStats:
     skipped: int = 0
     disputed: int = 0
     errors: int = 0
+    # Profile create/update calls that failed (also counted in errors); the
+    # article must be merged again for these entities to get its facts
+    failed_profiles: int = 0
 
     @property
     def total(self) -> int:
@@ -600,22 +603,11 @@ class EntityMerger:
                 else:
                     existing_entity = candidate_entity
 
-                # Ensure article is linked
                 existing_entity.setdefault("articles", [])
                 article_exists = any(
                     a.get("article_id") == article_id
                     for a in existing_entity["articles"]
                 )
-                if not article_exists:
-                    existing_entity["articles"].append(
-                        {
-                            "article_id": article_id,
-                            "article_title": article_title,
-                            "article_url": article_url,
-                            "article_published_date": article_published_date,
-                        }
-                    )
-                    entity_updated = True
 
                 # Profile update or repair.
                 # Normal update: new article triggers update_profile on existing profile.
@@ -626,6 +618,7 @@ class EntityMerger:
                     not article_exists and not existing_profile_missing
                 )
                 needs_profile_repair = existing_profile_missing
+                profile_update_failed = False
 
                 if needs_profile_update:
                     # --- Normal update path: existing entity has a usable profile ---
@@ -651,38 +644,51 @@ class EntityMerger:
                             model=task_model("profile", model_type),
                         )
                     )
-                    existing_entity["profile"] = updated_profile
-                    existing_entity["profile_versions"] = (
-                        versioned_profile.model_dump()
-                        if ENABLE_PROFILE_VERSIONING
-                        else None
-                    )
-                    # Defer profile embedding to batch phase 4
-                    pending_profiles.append(
-                        _PendingProfileEmbedding(
-                            entity_ref=existing_entity,
-                            profile_text=updated_profile["text"],
+                    # update_profile hands back the old profile when the model
+                    # call fails, and only a real update cites this article
+                    if article_id not in (updated_profile.get("sources") or []):
+                        log_decision(
+                            DecisionKind.ERROR,
+                            self.entity_type,
+                            self._format_key_for_display(similar_key),
+                            "profile update failed",
                         )
-                    )
+                        stats.errors += 1
+                        stats.failed_profiles += 1
+                        profile_update_failed = True
+                    else:
+                        existing_entity["profile"] = updated_profile
+                        existing_entity["profile_versions"] = (
+                            versioned_profile.model_dump()
+                            if ENABLE_PROFILE_VERSIONING
+                            else None
+                        )
+                        # Defer profile embedding to batch phase 4
+                        pending_profiles.append(
+                            _PendingProfileEmbedding(
+                                entity_ref=existing_entity,
+                                profile_text=updated_profile["text"],
+                            )
+                        )
 
-                    # Reflection history
-                    existing_entity.setdefault("reflection_history", [])
-                    existing_entity["reflection_history"].extend(reflection_history)
+                        # Reflection history
+                        existing_entity.setdefault("reflection_history", [])
+                        existing_entity["reflection_history"].extend(reflection_history)
 
-                    display_markdown(
-                        updated_profile["text"],
-                        title=f"Updated Profile: {self._format_key_for_display(similar_key)}",
-                        style="yellow",
-                    )
+                        display_markdown(
+                            updated_profile["text"],
+                            title=f"Updated Profile: {self._format_key_for_display(similar_key)}",
+                            style="yellow",
+                        )
 
-                    # Update search_embedding with latest evidence
-                    existing_entity["search_embedding"] = evidence_embedding
-                    existing_entity["search_embedding_model"] = emb_model_name
-                    existing_entity["search_embedding_dim"] = emb_dim
-                    existing_entity["search_embedding_fingerprint"] = (
-                        wi.evidence_fingerprint
-                    )
-                    entity_updated = True
+                        # Update search_embedding with latest evidence
+                        existing_entity["search_embedding"] = evidence_embedding
+                        existing_entity["search_embedding_model"] = emb_model_name
+                        existing_entity["search_embedding_dim"] = emb_dim
+                        existing_entity["search_embedding_fingerprint"] = (
+                            wi.evidence_fingerprint
+                        )
+                        entity_updated = True
 
                 elif needs_profile_repair:
                     # --- Merge-path fallback: create profile for matched entity
@@ -714,6 +720,7 @@ class EntityMerger:
                             "profile repair failed",
                         )
                         stats.errors += 1
+                        stats.failed_profiles += 1
                         # Still allow article link and alias absorption below
                     else:
                         existing_entity["profile"] = new_profile
@@ -747,6 +754,19 @@ class EntityMerger:
                             style="green",
                         )
                         entity_updated = True
+
+                # Link the article only once its facts are in the profile, so
+                # a failed update is tried again when the article is rerun
+                if not article_exists and not profile_update_failed:
+                    existing_entity["articles"].append(
+                        {
+                            "article_id": article_id,
+                            "article_title": article_title,
+                            "article_url": article_url,
+                            "article_published_date": article_published_date,
+                        }
+                    )
+                    entity_updated = True
 
                 # Alternative names/titles if different
                 if entity_key != similar_key:
@@ -811,6 +831,7 @@ class EntityMerger:
                         "profile generation failed",
                     )
                     stats.errors += 1
+                    stats.failed_profiles += 1
                     continue
 
                 # Create entity with empty profile embedding (filled in phase 5)
