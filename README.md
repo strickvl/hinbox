@@ -146,6 +146,10 @@ just frontend
    # With thinking on, Ollama calls get at least this many output tokens
    # (default 8192) so the model can finish thinking and still answer:
    echo 'HINBOX_OLLAMA_THINKING_MAX_TOKENS=8192' >> .env
+   # Ollama silently cuts the start off a prompt longer than the model's
+   # context (num_ctx), so Hinbox refuses such prompts. It reads num_ctx from
+   # the Ollama server; set this only if the server doesn't report it:
+   echo 'HINBOX_OLLAMA_NUM_CTX=32768' >> .env
    ```
 
 5. **Verify installation:**

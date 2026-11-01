@@ -41,6 +41,7 @@ from src.utils.logging import (
     log_iterative_complete,
     log_iterative_start,
 )
+from src.utils.ollama_context import check_prompt_fits
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
 from src.utils.step_timing import record_llm_call, timed, timed_step
 
@@ -421,6 +422,7 @@ def _structured_generation(
         request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
 
     msg_kwargs = _prepare_messages_for_target(messages, target)
+    check_prompt_fits(target, messages)
 
     for attempt in range(max_retries + 1):
         try:
@@ -686,6 +688,7 @@ def text_generation(
     slot = local_llm_slot if local else cloud_llm_slot
     msg_kwargs = _prepare_messages_for_target(messages, target)
     sampling = _sampling_kwargs(target, max_tokens, temperature)
+    check_prompt_fits(target, messages)
     for attempt in range(MAX_RETRIES + 1):
         try:
             with slot():
