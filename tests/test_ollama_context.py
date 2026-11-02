@@ -65,3 +65,13 @@ def test_env_override_sets_the_limit(monkeypatch):
         with pytest.raises(PromptTooLongError):
             check_prompt_fits(OLLAMA, _messages(200_000))
         post.assert_not_called()
+
+
+def test_thinking_models_need_room_left_for_their_reasoning(monkeypatch):
+    monkeypatch.setenv("HINBOX_OLLAMA_NUM_CTX", "16384")
+    monkeypatch.setattr(ollama_context, "OLLAMA_REASONING_EFFORT", "medium")
+    # ~14.6k tokens fits in 16k, but leaves Bolt too little room to think
+    with pytest.raises(PromptTooLongError, match="for thinking"):
+        check_prompt_fits(OLLAMA, _messages(58_500))
+    monkeypatch.setattr(ollama_context, "OLLAMA_REASONING_EFFORT", "none")
+    check_prompt_fits(OLLAMA, _messages(58_500))
