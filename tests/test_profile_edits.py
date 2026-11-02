@@ -175,6 +175,23 @@ def test_edit_list_repairs_swapped_closing_quote_and_brace():
     assert [e.text for e in parsed.edits] == ["One.^[a9]", "Two.^[a9]"]
 
 
+def test_edit_list_repairs_dropped_closing_quote():
+    # Bolt ended the last edit with `^[a9]}]`: the text's closing quote is gone
+    edits = (
+        '[{"op": "add", "anchor": "END", "text": "One.^[a9]"}, '
+        '{"op": "add", "anchor": "END", "text": "Two.^[a9]}]'
+    )
+    parsed = ProfileEditList.model_validate({"edits": edits})
+    assert [e.text for e in parsed.edits] == ["One.^[a9]", "Two.^[a9]"]
+
+
+def test_edit_list_repairs_missing_final_bracket():
+    # Bolt stopped at `^[a9]"}` without closing the array
+    edits = '[{"op": "add", "anchor": "END", "text": "Two.^[a9]"}'
+    parsed = ProfileEditList.model_validate({"edits": edits})
+    assert [e.text for e in parsed.edits] == ["Two.^[a9]"]
+
+
 def test_unreadable_new_facts_dont_sink_good_edits():
     parsed = ProfileEditList.model_validate(
         {"new_facts": "He was arraigned", "edits": []}

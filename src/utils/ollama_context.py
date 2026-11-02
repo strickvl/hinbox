@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from src.constants import OLLAMA_REASONING_EFFORT
 from src.logging_config import get_logger
 from src.utils.provider_routing import ProviderTarget
 
@@ -26,6 +27,10 @@ logger = get_logger("utils.ollama_context")
 # English prose runs at about 4 characters per token; dividing by 4 slightly
 # underestimates, so a prompt is only refused when it clearly doesn't fit.
 CHARS_PER_TOKEN = 4
+# A thinking model writes its reasoning into the same window before it answers.
+# Bolt ran out of room with a 14.6k-token prompt on a 16k model, so with
+# thinking on, a prompt must leave at least this much of the window free.
+THINKING_RESERVE = 4096
 
 
 class PromptTooLongError(RuntimeError):
@@ -74,9 +79,15 @@ def check_prompt_fits(target: ProviderTarget, messages: List[Dict[str, Any]]) ->
     if not limit:
         return
     tokens = estimate_prompt_tokens(messages)
-    if tokens > limit:
+    thinking = OLLAMA_REASONING_EFFORT != "none"
+    reserve = THINKING_RESERVE if thinking else 0
+    if tokens + reserve > limit:
+        why = (
+            f"leaving under {reserve} tokens for thinking and the answer"
+            if thinking and tokens <= limit
+            else "Ollama would cut off its start"
+        )
         raise PromptTooLongError(
             f"Prompt is about {tokens} tokens but {target.api_model} has a "
-            f"{limit}-token context; Ollama would cut off its start. Use a model "
-            "with a larger num_ctx."
+            f"{limit}-token context, {why}. Use a model with a larger num_ctx."
         )

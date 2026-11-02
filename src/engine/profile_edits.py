@@ -80,15 +80,33 @@ class ProfileEditList(BaseModel):
 # quote and the object's brace: `...^[id]}"]` instead of `...^[id]"}]`. After
 # `}` closes an object, JSON never has a `"` next, so this only matches the slip
 _SWAPPED_CLOSE = re.compile(r'\]\}"(\s*[,\]])')
+# Or it drops that closing quote altogether: `...^[id]}]`. Every value in an
+# edit is a string, so `]}` straight after a citation can only be this slip
+_DROPPED_QUOTE = re.compile(r'(\^\[[^\]"]*)\]\}(\s*[,\]])')
+
+
+def _repairs(value: str) -> List[str]:
+    """The text as sent, then with each known Bolt slip fixed."""
+    fixed = [
+        value,
+        _SWAPPED_CLOSE.sub(r']"}\1', value),
+        _DROPPED_QUOTE.sub(r'\1]"}\2', value),
+    ]
+    # ... or it stops before the array's final `]`: `...^[id]"}`
+    stripped = value.rstrip()
+    if stripped.startswith("[") and stripped.endswith("}"):
+        fixed += [f"{text.rstrip()}]" for text in fixed]
+    return fixed
 
 
 def _parse_list_string(value: str) -> Optional[List[Any]]:
     """Read a list the model sent as a string, or None if it can't be read.
 
     Handles a plain JSON array, several arrays one after another (Bolt sends
-    '["fact 1"]\\n["fact 2"]', one array per item) and the swapped-close slip.
+    '["fact 1"]\\n["fact 2"]', one array per item) and the slips in
+    ``_repairs()``.
     """
-    for text in (value, _SWAPPED_CLOSE.sub(r']"}\1', value)):
+    for text in _repairs(value):
         items: List[Any] = []
         decoder, pos, text = json.JSONDecoder(), 0, text.strip()
         try:
