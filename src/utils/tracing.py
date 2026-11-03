@@ -299,6 +299,24 @@ def annotate_span(span: Any, **attrs: Any) -> None:
     )
 
 
+@contextmanager
+def request_span(name: str) -> Iterator[None]:
+    """A span around one request and its retries; notes whether it succeeded.
+
+    An exception also marks the span ERROR, which the exporter treats as a
+    failed request for every model call under it.
+    """
+    with tracer().start_as_current_span(
+        name, attributes={"openinference.span.kind": "CHAIN"}
+    ) as span:
+        try:
+            yield
+        except BaseException:
+            annotate_span(span, request_ok=False)
+            raise
+        annotate_span(span, request_ok=True)
+
+
 def start_child_span(name: str, **attrs: Any) -> Any:
     """A span under the current one that the caller enters (``run_in_span``)
     and ends itself, so it can be annotated after later work (which of two

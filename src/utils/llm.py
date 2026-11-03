@@ -44,7 +44,7 @@ from src.utils.logging import (
 from src.utils.ollama_context import check_prompt_fits
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
 from src.utils.step_timing import record_llm_call, timed, timed_step
-from src.utils.tracing import instrument_client
+from src.utils.tracing import instrument_client, request_span
 
 # Get logger for this module
 logger = get_logger("utils.llm")
@@ -391,6 +391,20 @@ def _unwrap_list(response: Any, wrapper: Optional[Type[BaseModel]]) -> Any:
 
 
 def _structured_generation(
+    messages: List[Dict[str, Any]], response_model: Any, *args: Any, **kwargs: Any
+) -> Any:
+    """One structured request (all of Instructor's retries) in one span.
+
+    The span ends with ``hinbox.request_ok``: a reply that never passed schema
+    validation still has a clean model-call span, so without this a failed
+    request would look like a good training example.
+    """
+    name = getattr(response_model, "__name__", None) or str(response_model)
+    with request_span(f"structured {name}"):
+        return _structured_request(messages, response_model, *args, **kwargs)
+
+
+def _structured_request(
     messages: List[Dict[str, Any]],
     response_model: Any,
     model: str,

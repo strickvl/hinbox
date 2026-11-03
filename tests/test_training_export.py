@@ -261,3 +261,29 @@ def test_extraction_attempts_say_which_reply_was_kept(spans, second, kept):
     assert [r["metadata"]["attempt_selected"] for r in rows] == [kept == 1, kept == 2]
     assert [r["metadata"]["task"] for r in rows] == ["extract.people"] * 2
     assert rows[1]["metadata"]["attempt_count"] == len(second)
+
+
+def test_calls_under_a_request_that_gave_up_are_dropped(spans):
+    """Instructor returns each reply fine, then raises after the last fails validation."""
+    client = _client([(None, [("Items", '{"items": "bad"}')], "tool_calls")] * 2)
+    msgs = [{"role": "user", "content": "a"}]
+    with timed_step("profile.update"):
+        try:
+            with tracing.request_span("structured Items"):
+                for _ in range(2):
+                    client.chat.completions.create(model="m", messages=msgs)
+                raise ValueError("validation failed twice")
+        except ValueError:
+            pass  # the caller falls back, so the step itself does not fail
+        with tracing.request_span("structured Items"):
+            client2 = _client([(None, [("Items", '{"items": []}')], "tool_calls")])
+            client2.chat.completions.create(model="m", messages=msgs)
+
+    (row,) = _rows(spans)
+    assert row["metadata"]["request_ok"] is True
+    assert row["messages"][-1]["tool_calls"][0]["function"]["arguments"] == {
+        "items": []
+    }
+    kept = _rows(spans, keep_failed=True)
+    assert [r["metadata"]["failed"] for r in kept] == [True, True, False]
+    assert [r["metadata"]["attempt"] for r in kept] == [1, 2, 1]

@@ -148,11 +148,27 @@ def _context(span: Dict[str, Any], by_id: Dict[str, Dict[str, Any]]) -> Dict[str
     return meta
 
 
-def _is_failed(span: Dict[str, Any]) -> bool:
+def _errored(span: Dict[str, Any]) -> bool:
+    return (span.get("status") or {}).get("status_code") == "ERROR"
+
+
+def _is_failed(span: Dict[str, Any], by_id: Dict[str, Dict[str, Any]]) -> bool:
+    """The call raised, hit the token limit, or sits under a request or step
+    that failed (e.g. Instructor gave up after every reply failed validation:
+    each reply's own span is clean, the request span around them is not)."""
     attrs = span.get("attributes") or {}
     finish = attrs.get("gen_ai.response.finish_reasons") or []
-    errored = (span.get("status") or {}).get("status_code") == "ERROR"
-    return errored or "length" in finish or "max_tokens" in finish
+    if _errored(span) or "length" in finish or "max_tokens" in finish:
+        return True
+    parent = by_id.get(span.get("parent_id") or "")
+    while parent is not None:
+        if (
+            _errored(parent)
+            or (parent.get("attributes") or {}).get("hinbox.request_ok") is False
+        ):
+            return True
+        parent = by_id.get(parent.get("parent_id") or "")
+    return False
 
 
 def task_of(step: str) -> str:
@@ -175,7 +191,8 @@ def examples(spans: List[Dict[str, Any]], keep_failed: bool = False) -> List[Dic
 
     rows = []
     for s in calls:
-        if _is_failed(s) and not keep_failed:
+        failed = _is_failed(s, by_id)
+        if failed and not keep_failed:
             continue
         attrs = s.get("attributes") or {}
         reply = _messages(attrs, "output")
@@ -193,7 +210,7 @@ def examples(spans: List[Dict[str, Any]], keep_failed: bool = False) -> List[Dic
             ),
             "reasoning": attrs.get("hinbox.llm.reasoning"),
             "finish_reasons": list(attrs.get("gen_ai.response.finish_reasons") or []),
-            "failed": _is_failed(s),
+            "failed": failed,
             "attempt": group.index(span_id) + 1,
             "final_attempt": group[-1] == span_id,
             "trace_id": s["context"]["trace_id"],
