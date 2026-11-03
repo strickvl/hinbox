@@ -70,6 +70,24 @@ def version_texts(row: Dict[str, Any]) -> List[str]:
     return texts
 
 
+REPEAT_OVERLAP = 0.8
+_DISPUTE = re.compile(
+    r"\b(sources? (?:disagree|differ|conflict)|conflicting (?:accounts|reports))", re.I
+)
+
+
+def repeats_and_disputes(text: str) -> Tuple[List[str], List[str]]:
+    """Cited sentences that restate an earlier one, and "sources disagree" sentences."""
+    seen: List[Set[str]] = []
+    repeats = []
+    for sentence, words, _ in cited_facts(text):
+        if any(len(words & w) / len(words) >= REPEAT_OVERLAP for w in seen):
+            repeats.append(sentence.strip())
+        seen.append(words)
+    disputes = [s.strip() for s in _sentences(text or "") if _DISPUTE.search(s)]
+    return repeats, disputes
+
+
 def audit_history(texts: List[str]) -> Dict[str, Any]:
     """Lost cited sentences and big shrinks across a profile's versions."""
     final = texts[-1]
@@ -106,7 +124,10 @@ def audit_history(texts: List[str]) -> Dict[str, Any]:
         if a and len(b) < SHRINK * len(a)
     ]
     peak = max(len(t) for t in texts)
+    repeats, disputes = repeats_and_disputes(final)
     return {
+        "repeats": repeats,
+        "disputes": disputes,
         "versions": len(texts),
         "lengths": [len(t) for t in texts],
         "peak_chars": peak,
@@ -202,6 +223,9 @@ def build_report(
         lost = sum(len(h["lost"]) for _, h, _ in multi)
         orphaned = sum(sum(x["orphaned"] for x in h["lost"]) for _, h, _ in multi)
         shrinks = sum(len(h["shrinks"]) for _, h, _ in multi)
+        repeats = sum(len(h["repeats"]) for _, h, _ in hist)
+        disputes = sum(len(h["disputes"]) for _, h, _ in hist)
+        with_repeats = sum(1 for _, h, _ in hist if h["repeats"])
         total_cites = sum(c["citations"] for _, c in cites)
         not_linked = sum(len(c["not_linked"]) for _, c in cites)
         malformed = sum(len(c["malformed"]) for _, c in cites)
@@ -218,6 +242,9 @@ def build_report(
             "lost_sentences": lost,
             "orphaned": orphaned,
             "shrinks": shrinks,
+            "repeated_sentences": repeats,
+            "rows_with_repeats": with_repeats,
+            "dispute_sentences": disputes,
             "citations": total_cites,
             "not_linked": not_linked,
             "malformed": malformed,
@@ -231,6 +258,9 @@ def build_report(
             f"- Cited sentences lost from earlier versions: {lost} "
             f"({orphaned} whose article is no longer cited at all)",
             f"- Single updates that cut the profile by >20%: {shrinks}",
+            f"- Cited sentences that restate an earlier sentence of the same profile "
+            f"(>= {REPEAT_OVERLAP:.0%} of its words): {repeats} in {with_repeats} rows",
+            f"- 'Sources disagree' sentences: {disputes}",
             f"- Citations: {total_cites}; not one of the row's articles: {not_linked} "
             f"(malformed ids: {malformed})",
             f"- Rows with a linked article the profile never cites: {uncited}",
@@ -253,6 +283,20 @@ def build_report(
                     f"- v{x['from_version']}, gone by v{x['gone_at_version']}{tag}: "
                     f"{x['sentence'][:300]}"
                 )
+            lines.append("")
+        rep = sorted(hist, key=lambda h: -len(h[1]["repeats"]))[:n_examples]
+        if any(h["repeats"] for _, h, _ in rep):
+            lines.append("### Most repeated profiles")
+            for name, h, _ in rep:
+                if h["repeats"]:
+                    lines.append(
+                        f"- {name}: {len(h['repeats'])} repeats, e.g. {h['repeats'][0][:200]}"
+                    )
+            lines.append("")
+        dis = [(n, d) for n, h, _ in hist for d in h["disputes"]][: n_examples * 2]
+        if dis:
+            lines.append("### 'Sources disagree' sentences")
+            lines += [f"- {n}: {d[:300]}" for n, d in dis]
             lines.append("")
         bad = [(n, c) for n, c in cites if c["not_linked"]][:n_examples]
         if bad:
@@ -314,7 +358,9 @@ def audit_replay(replay_dir: str, n_examples: int) -> str:
             f"### {slug}: {len(texts)} steps, chars {h['lengths'][0]} -> peak "
             f"{h['peak_chars']} -> {h['final_chars']}; {len(h['lost'])} cited sentences "
             f"lost ({orphaned} orphaned); {len(h['shrinks'])} shrinks >20%; final cites "
-            f"{len(final_sources)} of {len(sources)} articles (step 1 cited {first_cites})"
+            f"{len(final_sources)} of {len(sources)} articles (step 1 cited {first_cites}); "
+            f"{len(h['repeats'])} repeated sentences, {len(h['disputes'])} 'sources disagree'; "
+            f"snapshots dated {snaps[0].get('timestamp', '?')[:10]} to {snaps[-1].get('timestamp', '?')[:10]}"
         )
         for x in h["lost"][:n_examples]:
             tag = " [orphaned]" if x["orphaned"] else ""
