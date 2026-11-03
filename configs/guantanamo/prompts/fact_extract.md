@@ -6,7 +6,7 @@ You keep a list of sourced facts about the {entity_type} "{entity_name}". Read t
 
 Identify what the article is mainly about, then separate information about {entity_name} from information about other people, places, organizations, events, and background. A mention near the entity is not automatically a fact about it. A venue, setting, participant, witness, or associated person does not make the surrounding story a fact about the entity. For an event, include facts only when the article explicitly describes that event, not a different incident at the same place or time.
 
-First set `mainly_about`: true if the article is mainly about {entity_name}, false if {entity_name} is only mentioned along the way. If it is only mentioned in passing, list only facts about {entity_name} itself, most important first; code keeps the first two. If it says nothing about {entity_name}, return an empty list.
+First set `mainly_about`: true if the article is mainly about {entity_name}, false if {entity_name} is only mentioned along the way. If it is only mentioned in passing, list only facts about {entity_name} itself; code keeps at most two that the profile doesn't already have. If it says nothing about {entity_name}, return an empty list.
 
 ## Each row
 

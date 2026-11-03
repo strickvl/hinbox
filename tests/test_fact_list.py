@@ -322,3 +322,36 @@ def test_counts_only_conflict_for_the_same_year():
         "In 2013, 12 captives were on hunger strike.",
         "In 2013, 106 captives were on hunger strike.",
     )
+
+
+def test_the_passing_cap_counts_only_new_claims():
+    # Background the profile has comes first; the new facts after it survive
+    claims = _claims()[:1] + [
+        ArticleClaim(
+            claim=f"Nashiri new point {n}.", section="## Capture", quote="judge ruled"
+        )
+        for n in (1, 2, 3)
+    ]
+
+    def verdicts(messages):
+        return ClaimVerdicts(verdicts=[ClaimVerdict(claim=1, verdict="same", row="f3")])
+
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(mainly_about=False, claims=claims),
+        "ClaimVerdicts": verdicts,
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    report = new["fact_report"]
+    assert (report["same"], report["new"]) == (1, 2)
+    assert report["dropped_passing"] == ["Nashiri new point 3."]
+    assert "new point 1" in new["text"] and "new point 2" in new["text"]

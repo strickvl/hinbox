@@ -20,7 +20,7 @@ trial has 100+ articles. Here no model call ever sees the whole profile:
    rested on a newspaper) is cited. ``conflict`` (accepted only when code
    finds a year, month or number that differs, ``values_differ()``) keeps both: code writes the
    new version right after the old sentence. ``new`` goes to step 5. From an
-   article not mainly about the entity, at most ``MAX_PASSING_CLAIMS`` claims are kept.
+   article not mainly about the entity, at most ``MAX_PASSING_CLAIMS`` new claims are kept.
 5. **Write** (model, one call per changed section): the section's text and its
    new facts; the model says where each goes. Code inserts them, so existing
    text can't be lost.
@@ -357,9 +357,6 @@ def update_from_facts(
     ]
     report["claims"] = len(extracted)
     report["dropped_quotes"] = [c.claim for c in extracted if c not in claims]
-    if not answer.mainly_about and len(claims) > MAX_PASSING_CLAIMS:
-        report["dropped_passing"] = [c.claim for c in claims[MAX_PASSING_CLAIMS:]]
-        claims = claims[:MAX_PASSING_CLAIMS]
 
     # 2-3. Look up the likely rows, then compare (claims with none are new)
     found = [candidates(c.claim, rows) for c in claims]
@@ -420,6 +417,13 @@ def update_from_facts(
             )
             continue
         tally["new"] += 1
+        # Capped among the *new* claims only: articles open with background
+        # the profile has ("the bombing killed 17 sailors"), and capping the
+        # first two claims kept those and dropped the new charge further down
+        if not answer.mainly_about and tally["new"] > MAX_PASSING_CLAIMS:
+            tally["new"] -= 1
+            report.setdefault("dropped_passing", []).append(claim.claim)
+            continue
         section = _match_heading(claim.section, headings)
         new_facts.setdefault(section, []).append((n, claim))
     report.update(tally)
