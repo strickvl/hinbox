@@ -7,6 +7,7 @@ from src.engine.fact_list import (
     ClaimVerdicts,
     Placement,
     SectionPlacements,
+    _match_heading,
     candidates,
     quote_found,
     rows_from_profile,
@@ -355,3 +356,18 @@ def test_the_passing_cap_counts_only_new_claims():
     assert (report["same"], report["new"]) == (1, 2)
     assert report["dropped_passing"] == ["Nashiri new point 3."]
     assert "new point 1" in new["text"] and "new point 2" in new["text"]
+
+
+def test_article_subheadings_are_not_copied_in_as_sections():
+    article = ARTICLE + "\n\nASTROTURF FOR CAMP?\n\nThe camp got $30 million."
+    assert (
+        _match_heading("## ASTROTURF FOR CAMP?", ["## Capture"], article)
+        == "## Capture"
+    )
+    assert _match_heading("Funding", ["## Capture"], article) == "## Funding"
+    assert _match_heading("### capture", ["## Capture"]) == "## Capture"
+    assert (
+        _match_heading("Shouting Heading NOW", ["## A"], near="## B")
+        == "## Shouting Heading NOW"
+    )
+    assert _match_heading("IF A DEATH OCCURS", ["## A"], near="## B") == "## B"

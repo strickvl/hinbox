@@ -245,15 +245,32 @@ def values_differ(claim: str, row_claim: str) -> bool:
     return bool(counts - r_counts and r_counts - counts and years & r_years)
 
 
-def _match_heading(section: str, headings: List[str]) -> str:
-    """An existing heading with the same words at any level, else a new
-    ``## heading``: Luna wrote "### Role and Position" beside "## Role and
-    Position" and got a second section."""
+def _match_heading(
+    section: str, headings: List[str], article: str = "", near: str = ""
+) -> str:
+    """The heading a new fact goes under.
+
+    An existing heading with the same words at any level wins: Luna wrote
+    "### Role and Position" beside "## Role and Position" and got a second
+    section. A new heading copied from the article's own subheadings
+    ("## ASTROTURF FOR CAMP?") goes to ``near`` (the section of the most
+    similar existing fact), else the last section, instead.
+    """
     words = section.strip().lstrip("#").strip()
     for heading in headings:
         if heading.lstrip("#").strip().lower() == words.lower():
             return heading
-    return f"## {words}" if words else "## Other"
+    letters = [c for c in words if c.isalpha()]
+    shouting = len(letters) > 3 and sum(c.isupper() for c in letters) > 0.8 * len(
+        letters
+    )
+    copied = words and any(
+        line.strip().strip("#*: ").lower() == words.lower()
+        for line in article.splitlines()
+    )
+    if shouting or copied or not words:
+        return near or (headings[-1] if headings else "## Background")
+    return f"## {words}"
 
 
 def _with_citation(sentence: str, article_id: str) -> str:
@@ -424,7 +441,8 @@ def update_from_facts(
             tally["new"] -= 1
             report.setdefault("dropped_passing", []).append(claim.claim)
             continue
-        section = _match_heading(claim.section, headings)
+        near = rows_for[0]["section"] if rows_for else ""
+        section = _match_heading(claim.section, headings, article_text, near)
         new_facts.setdefault(section, []).append((n, claim))
     report.update(tally)
 
