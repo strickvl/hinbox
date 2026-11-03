@@ -36,6 +36,35 @@ _STRUCTURE_WORDS: FrozenSet[str] = frozenset(
 _PLACE_TYPES: FrozenSet[str] = frozenset({"city", "region", "country"})
 
 
+# Organizations named like a facility: "Camp 7", "Guantanamo Bay Navy Base",
+# "Guantánamo detention center". The camp or base belongs in locations; the
+# people running it are "Joint Task Force Guantanamo" or "U.S. Southern Command".
+_FACILITY_FIRST: FrozenSet[str] = frozenset({"camp"})
+_FACILITY_LAST: FrozenSet[str] = frozenset({"base", "prison"})
+_FACILITY_PHRASES: Tuple[str, ...] = (
+    "detention center",
+    "detention facility",
+    "naval station",
+)
+
+
+def _is_facility_name(name: str) -> bool:
+    """Whether a ``normalize_for_match`` name ("camp 7") names a camp or base."""
+    words = name.split()
+    return bool(words) and (
+        (words[0] in _FACILITY_FIRST and len(words) > 1)
+        or words[-1] in _FACILITY_LAST
+        or any(p in name for p in _FACILITY_PHRASES)
+    )
+
+
+# Types a facility org gets ("military" for Camp 7); a "legal" or "media" org
+# with one of these words is left alone.
+_FACILITY_ORG_TYPES: FrozenSet[str] = (
+    frozenset({"military", "government"}) | _LOOSE_TYPES
+)
+
+
 def _names(items: List[Dict[str, Any]]) -> Set[str]:
     out: Set[str] = set()
     for item in items:
@@ -68,7 +97,13 @@ def misfiled_reason(
         and words[-1] not in _STRUCTURE_WORDS
     ):
         return "organization name"
-    if name in organizations and loc_type in _LOOSE_TYPES:
+    # "Camp 7" also extracted as a military org stays a location: the org copy
+    # is the one drop_misfiled_organizations() removes
+    if (
+        name in organizations
+        and loc_type in _LOOSE_TYPES
+        and not _is_facility_name(name)
+    ):
         return "organization"
     return ""
 
@@ -92,23 +127,6 @@ def drop_misfiled_locations(
     return kept, dropped
 
 
-# Organizations named like a facility: "Camp 7", "Guantanamo Bay Navy Base",
-# "Guantánamo detention center". The camp or base belongs in locations; the
-# people running it are "Joint Task Force Guantanamo" or "U.S. Southern Command".
-_FACILITY_FIRST: FrozenSet[str] = frozenset({"camp"})
-_FACILITY_LAST: FrozenSet[str] = frozenset({"base", "prison"})
-_FACILITY_PHRASES: Tuple[str, ...] = (
-    "detention center",
-    "detention facility",
-    "naval station",
-)
-# Types a facility org gets ("military" for Camp 7); a "legal" or "media" org
-# with one of these words is left alone.
-_FACILITY_ORG_TYPES: FrozenSet[str] = (
-    frozenset({"military", "government"}) | _LOOSE_TYPES
-)
-
-
 def _place_reason(
     org: Dict[str, Any], org_type: str, location_types: Dict[str, str]
 ) -> str:
@@ -119,13 +137,7 @@ def _place_reason(
         return ""
     if location_types.get(name) == "country":
         return "country"
-    facility = (
-        words[0] in _FACILITY_FIRST
-        and len(words) > 1
-        or words[-1] in _FACILITY_LAST
-        or any(p in name for p in _FACILITY_PHRASES)
-    )
-    if facility and org_type in _FACILITY_ORG_TYPES:
+    if _is_facility_name(name) and org_type in _FACILITY_ORG_TYPES:
         return "facility"
     return ""
 

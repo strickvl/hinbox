@@ -183,3 +183,15 @@ def test_organizations_that_are_countries_or_camps_are_dropped():
         "Guantanamo Bay Navy Base": "facility",
         "Guantánamo detention center": "facility",
     }
+
+
+def test_camp_found_as_location_and_org_keeps_the_location():
+    entities = {
+        "people": [],
+        "organizations": [{"name": "Camp 7", "type": "military"}],
+        "locations": [{"name": "Camp 7", "type": "other"}],
+    }
+    entities["locations"], _ = drop_misfiled_locations(entities, ORG_GROUPS)
+    entities["organizations"], dropped = drop_misfiled_organizations(entities)
+    assert [loc["name"] for loc in entities["locations"]] == ["Camp 7"]
+    assert entities["organizations"] == [] and dropped[0]["reason"] == "facility"
