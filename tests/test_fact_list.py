@@ -371,3 +371,11 @@ def test_article_subheadings_are_not_copied_in_as_sections():
         == "## Shouting Heading NOW"
     )
     assert _match_heading("IF A DEATH OCCURS", ["## A"], near="## B") == "## B"
+
+
+def test_a_loose_quote_must_match_one_stretch_in_order():
+    article = (
+        "Nashiri was captured in 2002. His lawyer said he was not charged until 2011."
+    )
+    assert not quote_found("Nashiri was not captured in 2002.", article)
+    assert quote_found("His lawyer said that he was not charged until 2011", article)

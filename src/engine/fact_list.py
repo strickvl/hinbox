@@ -31,6 +31,7 @@ were, word for word.
 """
 
 import re
+from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
@@ -182,10 +183,22 @@ def quote_found(quote: str, article: str) -> bool:
     if quote_n in article_n:
         return True
     words = re.findall(r"[a-z0-9']+", quote_n)
-    present = set(re.findall(r"[a-z0-9']+", article_n))
-    return len(words) >= 4 and sum(w in present for w in words) / len(words) >= (
-        MIN_QUOTE_WORDS
-    )
+    if len(words) < 4:
+        return False
+    # Nearly all the quote's words, in order, within one stretch of the
+    # article. Words found anywhere would pass "Nashiri was not captured in
+    # 2002" against "Nashiri was captured in 2002. ... not charged until 2011."
+    tokens = re.findall(r"[a-z0-9']+", article_n)
+    span, needed = len(words) + 3, MIN_QUOTE_WORDS * len(words)
+    first = set(words[:2])
+    for start, token in enumerate(tokens):
+        if token not in first:
+            continue
+        window = tokens[start : start + span]
+        blocks = SequenceMatcher(None, words, window, autojunk=False)
+        if sum(b.size for b in blocks.get_matching_blocks()) >= needed:
+            return True
+    return False
 
 
 def _stems(text: str) -> set:
@@ -271,6 +284,11 @@ def _match_heading(
     if shouting or copied or not words:
         return near or (headings[-1] if headings else "## Background")
     return f"## {words}"
+
+
+def _kinds(row: Dict[str, Any]) -> str:
+    kinds = sorted({s["kind"] for s in row["sources"] if s.get("kind")})
+    return ", ".join(kinds) or "not recorded"
 
 
 def _with_citation(sentence: str, article_id: str) -> str:
@@ -383,7 +401,11 @@ def update_from_facts(
         for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
             if not rows_for:
                 continue
-            known = "\n".join(f"  [{r['id']}] {r['claim']}" for r in rows_for)
+            # The source kinds, so ``new_evidence`` isn't a guess; rows read
+            # back from profile text have only article ids
+            known = "\n".join(
+                f"  [{r['id']}] {r['claim']} (source: {_kinds(r)})" for r in rows_for
+            )
             blocks.append(f"Claim {n}: {claim.claim} (source: {claim.source})\n{known}")
         compared = ask("fact_compare", "\n\n".join(blocks), ClaimVerdicts)
         verdicts = {v.claim: v for v in compared.verdicts}

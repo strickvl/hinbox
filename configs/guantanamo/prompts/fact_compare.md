@@ -4,7 +4,7 @@ You keep a list of sourced facts about the {entity_type} "{entity_name}". A new 
 
 ## Verdicts
 
-- `same`: one of the known facts already says this, possibly in other words. Give its id in `row`. Set `new_evidence` to true only when the claim comes from a different kind of source than the known fact and that matters to a historian: a court record, official document or first-hand witness where the known fact rested on a secondhand report, or the reverse. A second newspaper repeating the same thing is not new evidence.
+- `same`: one of the known facts already says this, possibly in other words. Give its id in `row`. Set `new_evidence` to true only when the claim comes from a different kind of source than the known fact and that matters to a historian: a court record, official document or first-hand witness where the known fact rested on a secondhand report, or the reverse. A second newspaper repeating the same thing is not new evidence. When the known fact's source is "not recorded", judge from its wording ("a court filing said", "according to his lawyer"); if it gives no source either, set `new_evidence` only for a court record, official document or first-hand witness.
 - `conflict`: one known fact gives a different value for the very same thing, so both can't be true: the same event on a different date, the same count with a different number. Give its id in `row`.
 - `new`: none of the known facts says this. Also use `new` when the claim adds real detail (a date, an outcome, a new step) to a known fact.
 
