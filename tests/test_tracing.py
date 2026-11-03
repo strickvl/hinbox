@@ -304,3 +304,16 @@ def test_article_trace_holds_worker_extraction_and_main_thread_merge(spans):
     (event,) = merge.events
     assert event.attributes["kind"] == "MERGE"
     assert event.attributes["name"] == "Vance Spath"
+
+
+def test_article_outcome_shows_incomplete_reason(spans):
+    span = tracing.start_article_span(2, {"id": "a2", "title": "t"})
+    result = SimpleNamespace(
+        was_extracted=True,
+        skip_reason=None,
+        processing_metadata={"reason": "incomplete: error_people"},
+    )
+    with tracing.article_scope(span, result):
+        pass
+    (root,) = _by_name(spans, "article #2")
+    assert root.attributes["hinbox.article.outcome"] == "incomplete: error_people"

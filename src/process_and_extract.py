@@ -712,6 +712,7 @@ def merge_and_finalize(
 
     problems = incomplete_reasons(result.processing_metadata)
     if problems:
+        result.processing_metadata["reason"] = f"incomplete: {', '.join(problems)}"
         # The types that worked come from the extraction cache next time, and
         # entities already merged from this article are not updated twice
         log(
