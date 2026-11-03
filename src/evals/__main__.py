@@ -92,6 +92,7 @@ _PROMPTS = {
     "relevance": "relevance",
     "edit": "profile_edit",
     "rewrite": "profile_update",
+    "facts": "fact_extract",
 }
 
 
@@ -180,10 +181,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--approach",
-        choices=("edit", "rewrite"),
+        choices=("edit", "rewrite", "facts"),
         default="edit",
         help="profile-update: apply a list of edits (the pipeline's default), "
-        "or the old whole-profile rewrite with reflection",
+        "the old whole-profile rewrite with reflection, or the fact-list "
+        "prototype (src/engine/fact_list.py)",
     )
     parser.add_argument(
         "--prompt-variant",
