@@ -141,3 +141,28 @@ def test_annotate_is_a_no_op_without_a_recording_span():
 def test_task_is_the_innermost_step():
     assert task_of("merge.people/profile.update") == "profile.update"
     assert task_of("") == "unknown"
+
+
+def test_eval_edit_updater_calls_land_under_profile_update(spans, monkeypatch):
+    from src.evals import profile_update as pu
+
+    def fake_edit_profile(*args, **kwargs):
+        client = _client([("[]", [], "stop")])
+        client.chat.completions.create(
+            model="m", messages=[{"role": "user", "content": "x"}]
+        )
+        return {"text": "unchanged"}
+
+    monkeypatch.setattr("src.engine.profile_edits.edit_profile", fake_edit_profile)
+    case = {
+        "entity_type": "people",
+        "entity_name": "Vance Spath",
+        "profile": {"text": "unchanged"},
+        "article_text": "a",
+        "article_id": "a9",
+    }
+    assert pu.make_edit_updater("openai/x", "guantanamo")(case) == "unchanged"
+    (row,) = _rows(spans)
+    assert row["metadata"]["task"] == "profile.update"
+    assert row["metadata"]["entity_name"] == "Vance Spath"
+    assert row["metadata"]["approach"] == "edit"
