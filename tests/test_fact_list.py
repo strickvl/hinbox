@@ -491,3 +491,34 @@ def test_update_profile_can_use_the_fact_list(monkeypatch):
     )
     assert profile["text"].endswith("New.^[a9]\n") and profile[FACT_ROWS_KEY] == "[]"
     assert history == []
+
+
+def test_a_new_date_for_the_same_past_event_is_a_conflict_not_an_update():
+    claim = ArticleClaim(
+        claim="Nashiri was captured in the United Arab Emirates in November 2003.",
+        section="## Capture",
+        quote="captured in the United Arab Emirates in October 2002",
+    )
+
+    def verdicts(messages):
+        return ClaimVerdicts(
+            verdicts=[ClaimVerdict(claim=1, verdict="update", row="f2")]
+        )
+
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(claims=[claim]),
+        "ClaimVerdicts": verdicts,
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    assert new["fact_report"]["update_to_conflict"] == 1
+    assert "November 2002.^[a1] Another report differs:" in new["text"]

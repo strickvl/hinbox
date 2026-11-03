@@ -48,7 +48,10 @@ MIN_SHARED = 2  # word stems a row must share with a claim to be shown
 MAX_PASSING_CLAIMS = 2  # claims kept from an article not mainly about the entity
 MIN_QUOTE_WORDS = 0.9
 # Share of the shorter sentence's word stems a conflicting row must share
-SAME_SUBJECT = 0.4  # share of a loose quote's words that must be in the article
+SAME_SUBJECT = 0.4
+# ...and the share above which an ``update`` with a different date is really
+# the same event given a different date (a conflict)
+SAME_EVENT = 0.6  # share of a loose quote's words that must be in the article
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 _HEADING = re.compile(r"^#{1,6} .*$", re.MULTILINE)
 _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)*\b")
@@ -290,13 +293,22 @@ def values_differ(claim: str, row_claim: str) -> bool:
     return bool(counts - r_counts and r_counts - counts and years & r_years)
 
 
-def same_subject(claim: str, row_claim: str) -> bool:
+def dates_differ(claim: str, row_claim: str) -> bool:
+    """Each sentence gives a year or month the other doesn't."""
+    (years, months, _), (r_years, r_months, _) = _values(claim), _values(row_claim)
+    return bool(
+        (years - r_years and r_years - years)
+        or (months - r_months and r_months - months)
+    )
+
+
+def same_subject(claim: str, row_claim: str, threshold: float = 0.0) -> bool:
     """Code's second check on a ``conflict``: the two sentences are mostly
     about the same thing, numbers aside. Two different events with different
     years ("still deciding" in 2009, "decided" in 2011) share less."""
     mine, theirs = _stems(claim), _stems(row_claim)
     smaller = min(len(mine), len(theirs)) or 1
-    return len(mine & theirs) / smaller >= SAME_SUBJECT
+    return len(mine & theirs) / smaller >= (threshold or SAME_SUBJECT)
 
 
 def _match_heading(
@@ -460,6 +472,7 @@ def update_from_facts(
         "conflict": 0,
         "not_conflict": 0,
         "update": 0,
+        "update_to_conflict": 0,
         "new": 0,
     }
     for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
@@ -492,6 +505,18 @@ def update_from_facts(
             ):
                 tally["not_conflict"] += 1  # written as a plain new fact below
                 verdict = None
+        if (
+            verdict
+            and row in rows_for
+            and verdict.verdict == "update"
+            and dates_differ(claim.claim, row["claim"])
+            and same_subject(claim.claim, row["claim"], SAME_EVENT)
+        ):
+            # A past event can't move: "the bombing was on Oct. 12, 1999"
+            # against "Oct. 12, 2000" in nearly the same words is a conflict.
+            # On test, Qwen and Luna called every planted date change an update
+            tally["update_to_conflict"] += 1
+            verdict = verdict.model_copy(update={"verdict": "conflict"})
         if verdict and row in rows_for and verdict.verdict == "update":
             # A later state of the same thing (moved camps, decided after
             # deciding): a new fact on the timeline, linked to the old row
