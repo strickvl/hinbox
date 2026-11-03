@@ -287,12 +287,25 @@ def annotate(**attrs: Any) -> None:
     article) and how it ended (verdict, QC flags, edits applied), so a trace
     can be turned into training examples without re-deriving either.
     """
-    span = trace.get_current_span()
+    annotate_span(trace.get_current_span(), **attrs)
+
+
+def annotate_span(span: Any, **attrs: Any) -> None:
+    """``annotate()`` on a given span (e.g. one attempt of several)."""
     if not span.is_recording():
         return
     span.set_attributes(
         {f"hinbox.{k}": _attr_value(v) for k, v in attrs.items() if v is not None}
     )
+
+
+def start_child_span(name: str, **attrs: Any) -> Any:
+    """A span under the current one that the caller enters (``run_in_span``)
+    and ends itself, so it can be annotated after later work (which of two
+    attempts was kept) before it ends."""
+    span = tracer().start_span(name, attributes={"openinference.span.kind": "CHAIN"})
+    annotate_span(span, **attrs)
+    return span
 
 
 def note_prompt_file(path: str) -> None:

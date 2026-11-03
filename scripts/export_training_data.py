@@ -16,6 +16,12 @@ the token limit are left out unless ``--keep-failed`` is given.
     uv run python -m scripts.export_training_data data/guantanamo/entities/traces/*.jsonl \\
         --out data/guantanamo/entities/training
 
+``attempt``/``final_attempt`` count Instructor's retries within one request.
+An extraction's QC repair retry is a separate request: its calls carry
+``extraction_attempt`` (1 or 2), that attempt's own ``attempt_count`` and
+``attempt_qc_flags``, and ``attempt_selected`` for the one the pipeline kept;
+the step's ``final_count``/``qc_flags`` describe the kept result.
+
 Anthropic tool declarations are converted to the OpenAI ``function`` form;
 an Anthropic retry turn (``tool_use``/``tool_result`` content blocks) is kept
 as sent. Prompt provenance is ``prompt_files``: every prompt file the step

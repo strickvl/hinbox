@@ -226,3 +226,32 @@ def test_anthropic_tool_declarations_exported_in_openai_form():
     }
     openai_form = {"type": "function", "function": {"name": "Items"}}
     assert _openai_tool(openai_form) == openai_form
+
+
+@pytest.mark.parametrize(
+    "second, kept", [([], 1), ([{"name": "Alice Smith", "type": "detainee"}], 2)]
+)
+def test_extraction_attempts_say_which_reply_was_kept(spans, second, kept):
+    from unittest.mock import patch
+
+    from src.engine.article_processor import ArticleProcessor
+
+    processor = ArticleProcessor(domain="guantanamo", model_type="gemini")
+    client = _client([(None, [("Items", '{"items": []}')], "tool_calls")] * 2)
+    replies = [[], second]
+
+    def run(extractor, content, repair_hint=None):
+        client.chat.completions.create(
+            model="m", messages=[{"role": "user", "content": "a"}]
+        )
+        return [dict(e) for e in replies.pop(0)]
+
+    with patch.object(processor, "_run_extraction", side_effect=run):
+        with timed_step("extract.people"):
+            processor.extract_single_entity_type("people", "text", "a1")
+
+    rows = _rows(spans)
+    assert [r["metadata"]["extraction_attempt"] for r in rows] == [1, 2]
+    assert [r["metadata"]["attempt_selected"] for r in rows] == [kept == 1, kept == 2]
+    assert [r["metadata"]["task"] for r in rows] == ["extract.people"] * 2
+    assert rows[1]["metadata"]["attempt_count"] == len(second)
