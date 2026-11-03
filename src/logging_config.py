@@ -11,6 +11,8 @@ from rich.logging import RichHandler
 from rich.markdown import Markdown
 from rich.panel import Panel
 
+from src.utils.tracing import record_decision
+
 # Create a shared console instance
 console = Console()
 
@@ -126,6 +128,7 @@ def log_decision(
         parts.append(f" {detail}")
     line = "  ".join(parts)
     logging.getLogger("hinbox").info(line)
+    record_decision(kind.value, entity_type, name, detail)
 
 
 # Module-level flag controlling Rich profile panels.

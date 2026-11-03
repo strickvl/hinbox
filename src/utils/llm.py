@@ -44,6 +44,7 @@ from src.utils.logging import (
 from src.utils.ollama_context import check_prompt_fits
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
 from src.utils.step_timing import record_llm_call, timed, timed_step
+from src.utils.tracing import instrument_client
 
 # Get logger for this module
 logger = get_logger("utils.llm")
@@ -160,16 +161,17 @@ def _create_raw_client(target: ProviderTarget) -> Any:
                 "The anthropic package is required for anthropic/* models. "
                 "Install it with: uv pip install 'hinbox[anthropic]'"
             ) from None
-        return Anthropic(api_key=target.api_key)
+        return instrument_client(Anthropic(api_key=target.api_key), target)
 
     # OpenAI-compatible (OpenAI, Gemini, Ollama, OpenRouter, etc.).
     # For OpenAI itself, api_key=None lets the SDK read OPENAI_API_KEY.
-    return OpenAI(
+    client = OpenAI(
         base_url=target.base_url,
         api_key=target.api_key
         if target.provider_label == "openai"
         else (target.api_key or "not-set"),
     )
+    return instrument_client(client, target)
 
 
 def _create_instructor_client(

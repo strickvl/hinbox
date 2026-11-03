@@ -210,6 +210,14 @@ just frontend
 ```
 Explore extracted entities at http://localhost:5001
 
+### Traces of every model call
+Every run records each pipeline step and each model call (the prompt sent, the reply or tool-call arguments, any reasoning the model returned, token counts, finish reason) as OpenTelemetry spans. One trace per article: `article #3` → `extraction` → `extract.people` → `chat qwen3.6:35b`, and `merge.people` → `match_check` → `chat …`, with each NEW/MERGE/SKIP decision as an event on its merge step.
+
+- **Always**: every span is written as one JSON line to `{output_dir}/traces/run-<timestamp>.jsonl`. That file is ours to keep, whatever viewer we use.
+- **To browse them**: run `just phoenix` in a second terminal (Arize Phoenix, one process, stores traces in a SQLite file under `~/.phoenix/`), then run the pipeline with `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:6006/v1/traces` (e.g. in `.env`) and open http://localhost:6006. Any other OpenTelemetry backend works the same way, e.g. a self-hosted Langfuse at `http://<host>:3000/api/public/otel`.
+- **`--local` runs** refuse to start if that endpoint is not on this machine, the LAN or Tailscale, so private articles never leave the network.
+- `HINBOX_TRACING=off` turns tracing off.
+
 ### Prompts per model
 A prompt that suits one model can hurt another: the profile-edit prompt tuned for Qwen3.6 lifted the local models but made GPT-6 Luna skip real new facts. So every prompt file can have variants named `<prompt>.<variant>.md` next to the default `<prompt>.md`. For each prompt, the pipeline uses the first file that exists:
 
