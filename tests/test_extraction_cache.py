@@ -105,6 +105,23 @@ class TestExtractionSidecarCache:
         k2 = cache.make_key(text="Article B", **common)
         assert k1 != k2
 
+    def test_make_key_sensitive_to_list_request_format(self, tmp_path, monkeypatch):
+        """Results cached under the old one-call-per-item format are not reused."""
+        import src.utils.extraction_cache as ec
+
+        cache = self._make_cache(tmp_path)
+        common = dict(
+            text="Article A",
+            system_prompt="Extract people",
+            response_model=List[FakePerson],
+            model="openai/gpt-6-luna",
+            entity_type="people",
+            temperature=0,
+        )
+        k1 = cache.make_key(**common)
+        monkeypatch.setattr(ec, "LIST_REQUEST_FORMAT", "parallel-tools")
+        assert cache.make_key(**common) != k1
+
     def test_make_key_sensitive_to_entity_type(self, tmp_path):
         cache = self._make_cache(tmp_path)
         common = dict(

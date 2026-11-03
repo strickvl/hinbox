@@ -83,7 +83,17 @@ def run(args: argparse.Namespace) -> None:
 
     os.makedirs(os.path.join(args.out, "runs"), exist_ok=True)
     arts = pick_articles(args.domain, args.limit, args.min_chars, args.max_chars)
-    with open(os.path.join(args.out, "articles.jsonl"), "w") as f:
+    manifest = os.path.join(args.out, "articles.jsonl")
+    if os.path.exists(manifest) and not args.overwrite:
+        with open(manifest) as f:
+            old_ids = [json.loads(x)["id"] for x in f if x.strip()]
+        if old_ids != [a["id"] for a in arts]:
+            # earlier runs here used other articles; mixing them breaks the diff
+            raise SystemExit(
+                f"{manifest} holds a different article sample; use a new --out "
+                "or --overwrite to redo every run"
+            )
+    with open(manifest, "w") as f:
         for a in arts:
             f.write(json.dumps(a, default=str) + "\n")
     print(f"{len(arts)} articles -> {args.out}/articles.jsonl")
