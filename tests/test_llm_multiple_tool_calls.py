@@ -21,11 +21,6 @@ class FakeEntity(BaseModel):
     type: str
 
 
-class _BadParallelResult:
-    def __iter__(self):
-        raise TypeError("'NoneType' object is not iterable")
-
-
 def _make_multiple_tool_calls_error(payloads: List[dict]) -> Exception:
     """Build an exception carrying a synthetic ``last_completion`` payload."""
     tool_calls = [
@@ -116,115 +111,31 @@ def test_cloud_generation_uses_direct_recovery_before_retrying():
     assert create_mock.call_count == 1
 
 
-@patch.dict(os.environ, _GEMINI_ENV)
-def test_cloud_generation_uses_parallel_tools_mode_for_list_models():
-    mode_seen = {}
-    fake_client = SimpleNamespace(
-        chat=SimpleNamespace(
-            completions=SimpleNamespace(
-                create=MagicMock(
-                    return_value=iter([FakeEntity(name="Alice", type="detainee")])
-                )
-            )
-        )
-    )
-
-    def _fake_create_client(target, mode):
-        mode_seen["mode"] = mode
-        return fake_client
-
-    with patch(
-        "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
-    ):
-        result = cloud_generation(
-            messages=[
-                {"role": "system", "content": "Extract entities"},
-                {"role": "user", "content": "Alice is mentioned."},
-            ],
-            response_model=List[FakeEntity],
-            model="gemini/gemini-2.0-flash",
-            temperature=0,
-        )
-
-    assert mode_seen["mode"] == instructor.Mode.PARALLEL_TOOLS
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert isinstance(result[0], FakeEntity)
-
-
-@patch.dict(os.environ, _GEMINI_ENV)
-def test_cloud_generation_falls_back_when_parallel_tools_has_no_tool_calls():
-    modes_seen = []
-    parallel_client = SimpleNamespace(
-        chat=SimpleNamespace(
-            completions=SimpleNamespace(
-                create=MagicMock(return_value=_BadParallelResult())
-            )
-        )
-    )
-    tools_client = SimpleNamespace(
-        chat=SimpleNamespace(
-            completions=SimpleNamespace(
-                create=MagicMock(
-                    return_value=[FakeEntity(name="Alice", type="detainee")]
-                )
-            )
-        )
-    )
-
-    def _fake_create_client(target, mode):
-        modes_seen.append(mode)
-        if mode == instructor.Mode.PARALLEL_TOOLS:
-            return parallel_client
-        return tools_client
-
-    with patch(
-        "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
-    ):
-        result = cloud_generation(
-            messages=[
-                {"role": "system", "content": "Extract entities"},
-                {"role": "user", "content": "Alice is mentioned."},
-            ],
-            response_model=List[FakeEntity],
-            model="gemini/gemini-2.0-flash",
-            temperature=0,
-        )
-
-    assert modes_seen[0] == instructor.Mode.PARALLEL_TOOLS
-    assert instructor.Mode.TOOLS in modes_seen[1:]
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert isinstance(result[0], FakeEntity)
-
-
-@patch.dict(os.environ, _GEMINI_ENV)
-def test_strategy1_uses_tools_mode_after_parallel_none_type_failure():
-    modes_seen = []
-    parallel_client = SimpleNamespace(
-        chat=SimpleNamespace(
-            completions=SimpleNamespace(
-                create=MagicMock(return_value=_BadParallelResult())
-            )
-        )
-    )
-    tools_create = MagicMock(
-        side_effect=[
-            RuntimeError(
-                "Instructor does not support multiple tool calls, use List[Model] instead"
-            ),
-            [FakeEntity(name="Alice", type="detainee")],
+def _wrapped(**kw):
+    """Fake Instructor reply: the requested {"items": [...]} wrapper, filled."""
+    return kw["response_model"](
+        items=[
+            FakeEntity(name="Alice", type="detainee"),
+            FakeEntity(name="Bob", type="military_personnel"),
         ]
     )
-    tools_client = SimpleNamespace(
-        chat=SimpleNamespace(completions=SimpleNamespace(create=tools_create))
-    )
+
+
+@patch.dict(os.environ, _GEMINI_ENV)
+def test_cloud_generation_asks_for_the_whole_list_in_one_tool_call():
+    """Lists go out as one {"items": [...]} tool call, never one call per item.
+
+    In parallel-tools mode GPT-6 Luna returned 1 event per article on 20 of
+    20 articles; as one object it returned 2 to 14.
+    """
+    modes_seen = []
+    create_mock = MagicMock(side_effect=_wrapped)
 
     def _fake_create_client(target, mode):
         modes_seen.append(mode)
-        if mode == instructor.Mode.PARALLEL_TOOLS:
-            return parallel_client
-        return tools_client
+        return SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+        )
 
     with patch(
         "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
@@ -232,19 +143,89 @@ def test_strategy1_uses_tools_mode_after_parallel_none_type_failure():
         result = cloud_generation(
             messages=[
                 {"role": "system", "content": "Extract entities"},
-                {"role": "user", "content": "Alice is mentioned."},
+                {"role": "user", "content": "Alice and Bob are mentioned."},
             ],
             response_model=List[FakeEntity],
             model="gemini/gemini-2.0-flash",
             temperature=0,
         )
 
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert isinstance(result[0], FakeEntity)
-    assert modes_seen[0] == instructor.Mode.PARALLEL_TOOLS
-    # One TOOLS client for nonetype fallback, another for strategy 1 retry.
-    assert modes_seen.count(instructor.Mode.TOOLS) >= 2
+    assert modes_seen == [instructor.Mode.TOOLS]
+    assert [e.name for e in result] == ["Alice", "Bob"]
+    kwargs = create_mock.call_args.kwargs
+    assert set(kwargs["response_model"].model_fields) == {"items"}
+    assert kwargs["parallel_tool_calls"] is False
+
+
+@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+def test_anthropic_list_calls_use_single_tool_mode():
+    modes_seen = []
+    create_mock = MagicMock(side_effect=_wrapped)
+
+    def _fake_create_client(target, mode):
+        modes_seen.append(mode)
+        return SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+        )
+
+    with patch(
+        "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
+    ):
+        result = cloud_generation(
+            messages=[
+                {"role": "system", "content": "Extract entities"},
+                {"role": "user", "content": "Alice and Bob are mentioned."},
+            ],
+            response_model=List[FakeEntity],
+            model="anthropic/claude-haiku-5-5",
+        )
+
+    assert modes_seen == [instructor.Mode.ANTHROPIC_TOOLS]
+    assert len(result) == 2
+    assert "parallel_tool_calls" not in create_mock.call_args.kwargs
+
+
+def test_recover_list_split_across_several_wrapper_tool_calls():
+    err = _make_multiple_tool_calls_error(
+        [
+            {"items": [{"name": "Alice", "type": "detainee"}]},
+            {"items": [{"name": "Bob", "type": "military_personnel"}]},
+        ]
+    )
+
+    recovered = _recover_multiple_tool_calls(error=err, response_model=List[FakeEntity])
+
+    assert [e.name for e in recovered] == ["Alice", "Bob"]
+
+
+@patch.dict(os.environ, _GEMINI_ENV)
+def test_strategy1_retry_unwraps_the_list():
+    calls = {"n": 0}
+
+    def _create(**kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError(
+                "Instructor does not support multiple tool calls, use List[Model] instead"
+            )
+        return _wrapped(**kw)
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=_create))
+    )
+    with patch("src.utils.llm._create_instructor_client", return_value=fake_client):
+        result = cloud_generation(
+            messages=[
+                {"role": "system", "content": "Extract entities"},
+                {"role": "user", "content": "Alice and Bob are mentioned."},
+            ],
+            response_model=List[FakeEntity],
+            model="gemini/gemini-2.0-flash",
+            temperature=0,
+        )
+
+    assert calls["n"] == 2
+    assert [e.name for e in result] == ["Alice", "Bob"]
 
 
 def test_local_generation_uses_json_schema_mode_for_list_models():

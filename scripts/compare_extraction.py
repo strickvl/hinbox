@@ -76,34 +76,6 @@ def _extract_one(proc: Any, model: str, rep: int, a: Dict) -> Dict:
     }
 
 
-def _wrapped_cloud(
-    text: str,
-    system_prompt: str,
-    response_model: Any,
-    model: str,
-    temperature: float = 0,
-    *,
-    entity_type: str = "",
-) -> List[Any]:
-    """Cloud extraction as one tool call returning ``{"items": [...]}``.
-
-    The pipeline's cloud path uses parallel tool calls (one call per entity).
-    This asks for the whole list in a single call instead, the way local
-    models are asked, to test whether the call style changes what is found.
-    """
-    from src.utils.extraction import create_messages
-    from src.utils.llm import _list_item_model, _list_wrapper_model, cloud_generation
-
-    wrapper = _list_wrapper_model(_list_item_model(response_model))
-    reply = cloud_generation(
-        messages=create_messages(system_content=system_prompt, user_content=text),
-        response_model=wrapper,
-        model=model,
-        temperature=temperature,
-    )
-    return list(reply.items)
-
-
 def run(args: argparse.Namespace) -> None:
     from src.config_loader import DomainConfig
     from src.engine.article_processor import ArticleProcessor
@@ -116,10 +88,6 @@ def run(args: argparse.Namespace) -> None:
             f.write(json.dumps(a, default=str) + "\n")
     print(f"{len(arts)} articles -> {args.out}/articles.jsonl")
 
-    if args.cloud_wrapped:
-        import src.engine.extractors as extractors
-
-        extractors.extract_entities_cloud = _wrapped_cloud
     cc = DomainConfig(args.domain).get_concurrency_config()
     configure_llm_concurrency(
         cloud_in_flight=cc["llm_in_flight"], local_in_flight=cc["ollama_in_flight"]
@@ -128,9 +96,7 @@ def run(args: argparse.Namespace) -> None:
         os.environ["HINBOX_EXTRACTION_MODEL"] = model
         model_type = "ollama" if model.startswith("ollama/") else "gemini"
         proc = ArticleProcessor(domain=args.domain, model_type=model_type)
-        label = model + (
-            "+wrapped" if args.cloud_wrapped and model_type != "ollama" else ""
-        )
+        label = model + (f"+{args.tag}" if args.tag else "")
         for rep in range(1, args.repeats + 1):
             path = os.path.join(args.out, "runs", f"{_slug(label)}__r{rep}.jsonl")
             if os.path.exists(path) and not args.overwrite:
@@ -286,9 +252,7 @@ def main() -> None:
     r.add_argument("--max-chars", type=int, default=12000)
     r.add_argument("--overwrite", action="store_true")
     r.add_argument(
-        "--cloud-wrapped",
-        action="store_true",
-        help="cloud models return the list in one tool call (as local ones do)",
+        "--tag", default="", help="suffix for the run files, e.g. after a code change"
     )
     r.add_argument("--out", required=True)
     c = sub.add_parser("compare")
