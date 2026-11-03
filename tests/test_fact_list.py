@@ -1,6 +1,9 @@
 """The fact-list updater keeps old text, collapses repeats and keeps both sides."""
 
+import json
+
 from src.engine.fact_list import (
+    FACT_ROWS_KEY,
     ArticleClaim,
     ArticleClaims,
     ClaimVerdict,
@@ -9,8 +12,10 @@ from src.engine.fact_list import (
     SectionPlacements,
     _match_heading,
     candidates,
+    load_rows,
     quote_found,
     rows_from_profile,
+    same_subject,
     split_sections,
     update_from_facts,
     values_differ,
@@ -379,3 +384,110 @@ def test_a_loose_quote_must_match_one_stretch_in_order():
     )
     assert not quote_found("Nashiri was not captured in 2002.", article)
     assert quote_found("His lawyer said that he was not charged until 2011", article)
+
+
+def test_a_later_state_is_a_timeline_entry_and_rows_survive_to_the_next_update():
+    claim = ArticleClaim(
+        claim="Nashiri was moved from the secret sites to Guantánamo in 2006.",
+        section="## Other",
+        quote="judge ruled",
+        source="Pentagon statement",
+    )
+
+    def verdicts(messages):
+        return ClaimVerdicts(
+            verdicts=[ClaimVerdict(claim=1, verdict="update", row="f3")]
+        )
+
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(claims=[claim]),
+        "ClaimVerdicts": verdicts,
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    assert new["fact_report"]["update"] == 1
+    assert "Another report differs" not in new["text"]
+    # Goes in the section of the state it follows, not a new "## Other"
+    assert (
+        "secret sites.^[a2]\nNashiri was moved from the secret sites to Guantánamo in 2006.^[a9]"
+        in new["text"]
+    )
+    # The saved rows keep the new row's source kind for the next update
+    rows = load_rows({"text": new["text"], FACT_ROWS_KEY: new[FACT_ROWS_KEY]})
+    moved = next(r for r in rows if "moved" in r["claim"])
+    assert moved["sources"][0]["kind"] == "Pentagon statement"
+    assert len({r["id"] for r in rows}) == len(rows) == 6
+
+
+def test_saved_rows_whose_sentence_is_gone_are_dropped():
+    saved = json.dumps(
+        [
+            {
+                "id": "f9",
+                "section": "## Capture",
+                "claim": "Old",
+                "text": "Gone.^[a1]",
+                "sources": [{"article_id": "a1", "kind": "court filing"}],
+                "repeats": [],
+            },
+            {
+                "id": "f2",
+                "section": "## Capture",
+                "claim": "He was held by the CIA at secret sites.",
+                "text": "He was held by the CIA at secret sites.^[a2]",
+                "sources": [{"article_id": "a2", "kind": "court filing"}],
+                "repeats": ["a7"],
+            },
+        ]
+    )
+    rows = load_rows({"text": PROFILE, FACT_ROWS_KEY: saved})
+    assert "Gone.^[a1]" not in [r["text"] for r in rows]
+    held = next(r for r in rows if r["id"] == "f2")
+    assert held["repeats"] == ["a7"] and held["sources"][0]["kind"] == "court filing"
+    assert len(rows) == 5  # the other four sentences are read from the text
+
+
+def test_a_conflict_must_be_about_the_same_thing():
+    assert same_subject(
+        "The camps opened in January 2003.", "The prison camps opened in January 2002."
+    )
+    assert not same_subject(
+        "Attorney General Eric Holder decided the defendants should face federal "
+        "trials in New York.",
+        "The Obama administration was still deciding where to stage the trials of "
+        "five alleged co-conspirators.",
+    )
+
+
+def test_update_profile_can_use_the_fact_list(monkeypatch):
+    from src.engine import fact_list, profiles
+
+    def fake(*args, **kwargs):
+        return {
+            "text": PROFILE + "New.^[a9]\n",
+            "sources": ["a9"],
+            "fact_report": {},
+            FACT_ROWS_KEY: "[]",
+        }
+
+    monkeypatch.setattr(fact_list, "update_from_facts", fake)
+    profile, _, history = profiles.update_profile(
+        "people",
+        "Nashiri",
+        {"text": PROFILE, "sources": []},
+        profiles.VersionedProfile(),
+        ARTICLE,
+        "a9",
+        approach="facts",
+    )
+    assert profile["text"].endswith("New.^[a9]\n") and profile[FACT_ROWS_KEY] == "[]"
+    assert history == []

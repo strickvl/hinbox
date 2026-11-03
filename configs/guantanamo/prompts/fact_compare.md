@@ -6,9 +6,10 @@ You keep a list of sourced facts about the {entity_type} "{entity_name}". A new 
 
 - `same`: one of the known facts already says this, possibly in other words. Give its id in `row`. Set `new_evidence` to true only when the claim comes from a different kind of source than the known fact and that matters to a historian: a court record, official document or first-hand witness where the known fact rested on a secondhand report, or the reverse. A second newspaper repeating the same thing is not new evidence. When the known fact's source is "not recorded", judge from its wording ("a court filing said", "according to his lawyer"); if it gives no source either, set `new_evidence` only for a court record, official document or first-hand witness.
 - `conflict`: one known fact gives a different value for the very same thing, so both can't be true: the same event on a different date, the same count with a different number. Give its id in `row`.
+- `update`: the claim is a later state of the same thing as a known fact, so both were true at their own time: a detainee moved to another camp, a decision made after "still deciding", a new trial date, a new count for a later date, a new role. Give the known fact's id in `row`. Both stay in the profile as a timeline.
 - `new`: none of the known facts says this. Also use `new` when the claim adds real detail (a date, an outcome, a new step) to a known fact.
 
-These are not conflicts (most are `new`):
+These are not conflicts (they are `update` or `new`):
 - two different events or steps, such as charges filed in one month and a trial ordered in another;
 - an older report saying something hadn't happened yet;
 - a later development, such as a new role, a transfer, or a rescheduled hearing;
