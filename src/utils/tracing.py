@@ -296,7 +296,13 @@ def annotate(**attrs: Any) -> None:
 
 
 def note_prompt_file(path: str) -> None:
-    """Record which prompt file a step used, and a hash of its text."""
+    """Add ``<file>@<hash of its text>`` to the step's ``hinbox.prompt_files``.
+
+    A step can load several prompts (profile creation loads the generation and
+    the reflection prompt before its first call), so this keeps a list rather
+    than overwriting one value: the list says which prompt versions produced
+    the step's calls, not which call used which file.
+    """
     span = trace.get_current_span()
     if not span.is_recording():
         return
@@ -305,9 +311,12 @@ def note_prompt_file(path: str) -> None:
             digest = hashlib.sha256(f.read()).hexdigest()[:16]
     except OSError:
         digest = ""
-    span.set_attributes(
-        {"hinbox.prompt_file": os.path.basename(path), "hinbox.prompt_sha": digest}
+    entry = f"{os.path.basename(path)}@{digest}"
+    seen = list(
+        (getattr(span, "attributes", None) or {}).get("hinbox.prompt_files", ())
     )
+    if entry not in seen:
+        span.set_attribute("hinbox.prompt_files", seen + [entry])
 
 
 @contextmanager

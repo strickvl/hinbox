@@ -16,6 +16,11 @@ the token limit are left out unless ``--keep-failed`` is given.
     uv run python -m scripts.export_training_data data/guantanamo/entities/traces/*.jsonl \\
         --out data/guantanamo/entities/training
 
+Anthropic tool declarations are converted to the OpenAI ``function`` form;
+an Anthropic retry turn (``tool_use``/``tool_result`` content blocks) is kept
+as sent. Prompt provenance is ``prompt_files``: every prompt file the step
+loaded, with a hash of its text.
+
 The output holds article text: keep it off GitHub (the repo is public).
 """
 
@@ -95,9 +100,19 @@ def _input_messages(attrs: Dict[str, Any]) -> List[Dict[str, Any]]:
     return _messages(attrs, "input")
 
 
+def _openai_tool(tool: Any) -> Any:
+    """An Anthropic tool declaration (``name``/``input_schema``) in OpenAI form."""
+    if isinstance(tool, dict) and "input_schema" in tool and "function" not in tool:
+        fn = {"name": tool.get("name", ""), "parameters": tool["input_schema"]}
+        if tool.get("description"):
+            fn["description"] = tool["description"]
+        return {"type": "function", "function": fn}
+    return tool
+
+
 def _tools(attrs: Dict[str, Any]) -> List[Any]:
     tools = {int(m.group(1)): v for k, v in attrs.items() if (m := _TOOL.match(k))}
-    return [_json_or_text(tools[i]) for i in sorted(tools)]
+    return [_openai_tool(_json_or_text(tools[i])) for i in sorted(tools)]
 
 
 def _context(span: Dict[str, Any], by_id: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:

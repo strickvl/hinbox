@@ -126,12 +126,19 @@ def test_tool_call_reply_and_schema_kept_and_retries_numbered(spans):
     assert [r["metadata"]["failed"] for r in both] == [True, False]
 
 
-def test_prompt_file_and_hash_noted_on_the_step(spans):
-    with timed_step("profile.update"):
-        path = DomainConfig("guantanamo").prompt_path("profile_edit", "openai/x")
-    (span,) = [s for s in spans.get_finished_spans() if s.name == "profile.update"]
-    assert span.attributes["hinbox.prompt_file"] == path.rsplit("/", 1)[-1]
-    assert len(span.attributes["hinbox.prompt_sha"]) == 16
+def test_every_prompt_file_a_step_loads_is_kept_with_its_hash(spans):
+    cfg = DomainConfig("guantanamo")
+    with timed_step("profile.create"):
+        gen = cfg.prompt_path("profile_generation", "openai/x")
+        ref = cfg.prompt_path("profile_reflection", "openai/x")
+        cfg.prompt_path("profile_generation", "openai/x")  # loaded again
+    (span,) = [s for s in spans.get_finished_spans() if s.name == "profile.create"]
+    files = span.attributes["hinbox.prompt_files"]
+    assert [f.split("@")[0] for f in files] == [
+        gen.rsplit("/", 1)[-1],
+        ref.rsplit("/", 1)[-1],
+    ]
+    assert all(len(f.split("@")[1]) == 16 for f in files)
 
 
 def test_annotate_is_a_no_op_without_a_recording_span():
@@ -203,3 +210,19 @@ def test_instructor_retry_turns_keep_tool_call_names_and_ids(spans):
 
     (row,) = _rows(spans)
     assert row["messages"][:3] == retry  # exported exactly as sent
+
+
+def test_anthropic_tool_declarations_exported_in_openai_form():
+    from scripts.export_training_data import _openai_tool
+
+    native = {"name": "Items", "description": "d", "input_schema": {"type": "object"}}
+    assert _openai_tool(native) == {
+        "type": "function",
+        "function": {
+            "name": "Items",
+            "description": "d",
+            "parameters": {"type": "object"},
+        },
+    }
+    openai_form = {"type": "function", "function": {"name": "Items"}}
+    assert _openai_tool(openai_form) == openai_form
