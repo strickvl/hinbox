@@ -327,11 +327,17 @@ def item_span(name: str, **attrs: Any) -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 
+def _jsonable(value: Any) -> Any:
+    """SDK objects (pydantic models) as plain dicts; anything else as text."""
+    dump = getattr(value, "model_dump", None)
+    return dump(exclude_none=True) if callable(dump) else str(value)
+
+
 def _text(value: Any) -> str:
     if isinstance(value, str):
         return value
     try:
-        return json.dumps(value, default=str, ensure_ascii=False)
+        return json.dumps(value, default=_jsonable, ensure_ascii=False)
     except (TypeError, ValueError):
         return str(value)
 
@@ -343,10 +349,19 @@ def _message_attrs(prefix: str, messages: List[Dict[str, Any]]) -> Dict[str, Any
         content = msg.get("content")
         if content is not None:
             attrs[f"{prefix}.{i}.message.content"] = _text(content)
+        for key in ("tool_call_id", "name"):  # a tool reply names its call
+            if msg.get(key):
+                attrs[f"{prefix}.{i}.message.{key}"] = str(msg[key])
         for j, call in enumerate(msg.get("tool_calls") or []):
-            base = f"{prefix}.{i}.message.tool_calls.{j}.tool_call.function"
-            attrs[f"{base}.name"] = str(call.get("name", ""))
-            attrs[f"{base}.arguments"] = _text(call.get("arguments", ""))
+            call = call if isinstance(call, dict) else _jsonable(call)
+            # OpenAI messages nest name/arguments under "function" (Instructor's
+            # retry messages do); our own reply records keep them at the top
+            fn = call.get("function") or call
+            base = f"{prefix}.{i}.message.tool_calls.{j}.tool_call"
+            if call.get("id"):
+                attrs[f"{base}.id"] = str(call["id"])
+            attrs[f"{base}.function.name"] = str(fn.get("name", ""))
+            attrs[f"{base}.function.arguments"] = _text(fn.get("arguments", ""))
     return attrs
 
 

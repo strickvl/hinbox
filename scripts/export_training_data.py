@@ -27,7 +27,9 @@ from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional
 
 _MSG = re.compile(r"^llm\.(input|output)_messages\.(\d+)\.message\.(.+)$")
-_TOOL_CALL = re.compile(r"^tool_calls\.(\d+)\.tool_call\.function\.(name|arguments)$")
+_TOOL_CALL = re.compile(
+    r"^tool_calls\.(\d+)\.tool_call\.(id|function\.name|function\.arguments)$"
+)
 _TOOL = re.compile(r"^llm\.tools\.(\d+)\.tool\.json_schema$")
 
 
@@ -57,7 +59,7 @@ def _messages(attrs: Dict[str, Any], side: str) -> List[Dict[str, Any]]:
         call = _TOOL_CALL.match(field)
         if call:
             calls = msg.setdefault("_calls", defaultdict(dict))
-            calls[int(call.group(1))][call.group(2)] = value
+            calls[int(call.group(1))][call.group(2).removeprefix("function.")] = value
         else:
             msg[field.removeprefix("message.")] = value
     out = []
@@ -67,6 +69,7 @@ def _messages(attrs: Dict[str, Any], side: str) -> List[Dict[str, Any]]:
         if calls:
             msg["tool_calls"] = [
                 {
+                    **({"id": c["id"]} if c.get("id") else {}),
                     "type": "function",
                     "function": {
                         "name": c.get("name", ""),
@@ -78,6 +81,18 @@ def _messages(attrs: Dict[str, Any], side: str) -> List[Dict[str, Any]]:
         msg.setdefault("content", None)
         out.append(msg)
     return out
+
+
+def _input_messages(attrs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The request's messages as sent (``input.value``), else the flattened ones.
+
+    ``input.value`` is the whole request as JSON, so retry turns keep their
+    tool-call ids and ``tool_call_id`` links.
+    """
+    sent = _json_or_text(attrs.get("input.value"))
+    if isinstance(sent, dict) and isinstance(sent.get("messages"), list):
+        return sent["messages"]
+    return _messages(attrs, "input")
 
 
 def _tools(attrs: Dict[str, Any]) -> List[Any]:
@@ -156,7 +171,7 @@ def examples(spans: List[Dict[str, Any]], keep_failed: bool = False) -> List[Dic
             if v is not None and not k.startswith(("telemetry.", "service."))
         }
         row: Dict[str, Any] = {
-            "messages": _messages(attrs, "input") + reply,
+            "messages": _input_messages(attrs) + reply,
             "metadata": meta,
         }
         tools = _tools(attrs)

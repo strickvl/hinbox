@@ -166,3 +166,40 @@ def test_eval_edit_updater_calls_land_under_profile_update(spans, monkeypatch):
     assert row["metadata"]["task"] == "profile.update"
     assert row["metadata"]["entity_name"] == "Vance Spath"
     assert row["metadata"]["approach"] == "edit"
+
+
+def test_instructor_retry_turns_keep_tool_call_names_and_ids(spans):
+    """Instructor's reask appends an OpenAI-shaped assistant tool call + a tool reply."""
+    client = _client([(None, [("Items", '{"items": []}')], "tool_calls")])
+    retry = [
+        {"role": "user", "content": "article text"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "Items", "arguments": '{"items": "oops"}'},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_1",
+            "name": "Items",
+            "content": "Validation Error found",
+        },
+    ]
+    with timed_step("extract.people"):
+        client.chat.completions.create(model="m", messages=retry)
+
+    (span,) = [s for s in spans.get_finished_spans() if s.name.startswith("chat")]
+    a = span.attributes
+    base = "llm.input_messages.1.message.tool_calls.0.tool_call"
+    assert a[f"{base}.id"] == "call_1"
+    assert a[f"{base}.function.name"] == "Items"
+    assert a["llm.input_messages.2.message.tool_call_id"] == "call_1"
+
+    (row,) = _rows(spans)
+    assert row["messages"][:3] == retry  # exported exactly as sent
