@@ -145,3 +145,41 @@ def test_law_words_inside_real_place_names_are_kept():
         ]
     )
     assert kept == ["Treaty Room", "ACT"]
+
+
+def test_organizations_that_are_countries_or_camps_are_dropped():
+    entities = {
+        "locations": [
+            {"name": "France", "type": "country"},
+            {"name": "Camp 7", "type": "detention_facility"},
+        ],
+        "organizations": [
+            {"name": "France", "type": "government"},
+            {"name": "Israel", "type": "government"},  # no country location: kept
+            {"name": "French government", "type": "government"},
+            {"name": "Camp 7", "type": "military"},
+            {"name": "Camp Justice", "type": "military"},
+            {"name": "Guantanamo Bay Navy Base", "type": "military"},
+            {"name": "Guantánamo detention center", "type": "military"},
+            {"name": "Joint Task Force-GTMO", "type": "military"},
+            {"name": "U.S. Southern Command", "type": "military"},
+            {"name": "Prison Legal News", "type": "media"},
+            {"name": "Camp", "type": "other"},  # one word: not a named camp
+        ],
+    }
+    kept, dropped = drop_misfiled_organizations(entities)
+    assert [o["name"] for o in kept] == [
+        "Israel",
+        "French government",
+        "Joint Task Force-GTMO",
+        "U.S. Southern Command",
+        "Prison Legal News",
+        "Camp",
+    ]
+    assert {d["name"]: d["reason"] for d in dropped} == {
+        "France": "country",
+        "Camp 7": "facility",
+        "Camp Justice": "facility",
+        "Guantanamo Bay Navy Base": "facility",
+        "Guantánamo detention center": "facility",
+    }

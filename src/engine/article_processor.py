@@ -410,13 +410,13 @@ class ArticleProcessor:
                     ", ".join(m["name"] for m in misfiled),
                 )
             processing_metadata["phase_outcomes"]["misfiled_locations"] = misfiled
-            # Organizations that are a person from this article ("Donald Trump")
+            # Organizations that are a person or a place ("Donald Trump", "Camp 7")
             entities["organizations"], misfiled_orgs = drop_misfiled_organizations(
                 entities
             )
             if misfiled_orgs:
                 logger.info(
-                    "Dropped %d organizations that are people: %s",
+                    "Dropped %d organizations that are people or places: %s",
                     len(misfiled_orgs),
                     ", ".join(m["name"] for m in misfiled_orgs),
                 )
