@@ -337,9 +337,29 @@ def make_edit_updater(model: str, domain: str) -> Updater:
     return update
 
 
+def make_fact_updater(model: str, domain: str) -> Updater:
+    """Prototype: update from a list of sourced facts (``src/engine/fact_list.py``)."""
+    from src.engine.fact_list import update_from_facts
+
+    def update(case: Dict[str, Any]) -> str:
+        profile = update_from_facts(
+            case["entity_type"],
+            case["entity_name"],
+            case["profile"],
+            case["article_text"],
+            case["article_id"],
+            model=model,
+            domain=domain,
+        )
+        return profile["text"]
+
+    return update
+
+
 UPDATERS: Dict[str, Callable[[str, str], Updater]] = {
     "rewrite": make_rewrite_updater,
     "edit": make_edit_updater,
+    "facts": make_fact_updater,
 }
 
 
