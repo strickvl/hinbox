@@ -42,6 +42,7 @@ from src.evals.runner import (
 )
 from src.logging_config import console
 from src.utils.llm import configure_llm_concurrency
+from src.utils.tracing import configure_tracing
 
 _COLUMNS = (
     ("dataset", "Dataset"),
@@ -215,6 +216,17 @@ def main() -> None:
             _print_rows(updates, "Profile updates", _UPDATE_COLUMNS)
         return
 
+    # Eval runs are traced too: their model calls carry gold labels and scores,
+    # which makes them the best training examples we have
+    try:
+        configure_tracing(
+            domain_cfg.get_output_dir(),
+            local=args.model.startswith("ollama/"),
+            run_name=f"eval-{args.task}",
+            domain=args.domain,
+        )
+    except ValueError as e:
+        parser.error(str(e))
     if args.task == "profile-update":
         _run_profile_update(args, parser, eval_dir)
         return

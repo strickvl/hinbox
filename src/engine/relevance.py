@@ -17,6 +17,7 @@ from src.utils.sectioned_prompt import (
     read_bool,
 )
 from src.utils.step_timing import timed
+from src.utils.tracing import annotate
 
 logger = get_logger("engine.relevance")
 
@@ -72,22 +73,28 @@ def _check_relevance(text: str, model: str, domain: str, *, local: bool):
             temperature=0,
         )
         fields = parse_sections(reply)
-        return ArticleRelevance(
+        verdict = ArticleRelevance(
             is_relevant=read_bool(fields, "is_relevant"),
             reason=fields.get("reasoning", ""),
         )
+        annotate(answered_by="sectioned", is_relevant=verdict.is_relevant)
+        return verdict
     except Exception as e:
         logger.warning(
             "Sectioned relevance check failed (%s); using the structured prompt", e
         )
     extract = extract_entities_local if local else extract_entities_cloud
-    return extract(
+    verdict = extract(
         text=text,
         system_prompt=get_system_prompt("relevance", domain, model),
         response_model=ArticleRelevance,
         model=model,
         temperature=0,
     )
+    annotate(
+        answered_by="structured", is_relevant=getattr(verdict, "is_relevant", None)
+    )
+    return verdict
 
 
 def gemini_check_relevance(

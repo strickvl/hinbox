@@ -26,10 +26,12 @@ library use) the tracer is OpenTelemetry's no-op one and nothing is recorded.
 
 import contextvars
 import functools
+import hashlib
 import ipaddress
 import json
 import logging
 import os
+import subprocess
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
@@ -72,8 +74,37 @@ def is_local_endpoint(url: str) -> bool:
 _TAILSCALE = ipaddress.ip_network("100.64.0.0/10")
 
 
+def _git_commit() -> str:
+    """The checked-out commit, with ``-dirty`` for uncommitted changes."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        run = lambda *a: subprocess.run(  # noqa: E731
+            ["git", *a], cwd=here, capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        commit = run("rev-parse", "HEAD")
+        return f"{commit}-dirty" if commit and run("status", "--porcelain") else commit
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _model_settings() -> Dict[str, str]:
+    """Every ``HINBOX_*`` model/prompt setting in force for this run."""
+    secret = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+    keys = sorted(
+        k
+        for k in os.environ
+        if k.startswith("HINBOX_") and not any(s in k.upper() for s in secret)
+    )
+    return {f"hinbox.env.{k}": os.environ[k] for k in keys}
+
+
+# OpenTelemetry's defaults (128 attributes and 128 events per span) would
+# silently drop the tail of a long conversation or of a busy merge step.
+SPAN_LIMIT = 4096
+
+
 def configure_tracing(
-    output_dir: str, *, local: bool, run_name: str = "run"
+    output_dir: str, *, local: bool, run_name: str = "run", domain: str = ""
 ) -> Optional[str]:
     """Start recording spans; returns the JSONL path, or None if turned off.
 
@@ -91,7 +122,7 @@ def configure_tracing(
             "point it at a local Phoenix."
         )
     from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
+    from opentelemetry.sdk.trace import SpanLimits, SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     run_id = f"{run_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -107,8 +138,21 @@ def configure_tracing(
 
     provider = TracerProvider(
         resource=Resource.create(
-            {"service.name": "hinbox", "openinference.project.name": "hinbox"}
-        )
+            {
+                "service.name": "hinbox",
+                "openinference.project.name": "hinbox",
+                "hinbox.run_id": run_id,
+                "hinbox.domain": domain,
+                "hinbox.local": local,
+                "hinbox.git_commit": _git_commit(),
+                **_model_settings(),
+            }
+        ),
+        span_limits=SpanLimits(
+            max_span_attributes=SPAN_LIMIT,
+            max_events=SPAN_LIMIT,
+            max_event_attributes=SPAN_LIMIT,
+        ),
     )
     provider.add_span_processor(_SessionProcessor())
     provider.add_span_processor(
@@ -191,6 +235,8 @@ def start_article_span(row_index: int, article: Dict[str, Any]) -> Any:
             "hinbox.article.title": title,
             "hinbox.article.url": str(article.get("url") or ""),
             "hinbox.article.published_date": str(article.get("published_date") or ""),
+            "hinbox.article.source_type": str(article.get("source_type") or ""),
+            "hinbox.article.chars": len(str(article.get("content") or "")),
             "input.value": title,
         },
     )
@@ -224,6 +270,56 @@ def record_decision(kind: str, entity_type: str, name: str, detail: str) -> None
             f"{kind} {name}",
             {"kind": kind, "entity_type": entity_type, "name": name, "detail": detail},
         )
+
+
+def _attr_value(value: Any) -> Any:
+    if isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, (list, tuple)) and all(isinstance(v, str) for v in value):
+        return list(value)
+    return _text(value)
+
+
+def annotate(**attrs: Any) -> None:
+    """Set ``hinbox.<name>`` attributes on the current span (``None`` skipped).
+
+    Steps call this with what the model call was about (entity, candidate,
+    article) and how it ended (verdict, QC flags, edits applied), so a trace
+    can be turned into training examples without re-deriving either.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    span.set_attributes(
+        {f"hinbox.{k}": _attr_value(v) for k, v in attrs.items() if v is not None}
+    )
+
+
+def note_prompt_file(path: str) -> None:
+    """Record which prompt file a step used, and a hash of its text."""
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    try:
+        with open(path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()[:16]
+    except OSError:
+        digest = ""
+    span.set_attributes(
+        {"hinbox.prompt_file": os.path.basename(path), "hinbox.prompt_sha": digest}
+    )
+
+
+@contextmanager
+def item_span(name: str, **attrs: Any) -> Iterator[None]:
+    """A root span (own trace) for one eval item; annotate it with the result."""
+    with tracer().start_as_current_span(
+        name,
+        context=otel_context.Context(),
+        attributes={"openinference.span.kind": "CHAIN"},
+    ):
+        annotate(**attrs)
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -263,8 +359,13 @@ def _request_attrs(target: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         for k, v in kwargs.items()
         if k not in {"messages", "system", "tools", "model"}
     }
+    system = next(
+        (_text(m.get("content")) for m in messages if m.get("role") == "system"), ""
+    )
     attrs: Dict[str, Any] = {
         "openinference.span.kind": "LLM",
+        "hinbox.step": _current_step(),
+        "hinbox.system_prompt_sha": hashlib.sha256(system.encode()).hexdigest()[:16],
         "llm.provider": target.provider_label,
         "llm.model_name": target.api_model,
         "llm.invocation_parameters": _text(params),
@@ -277,6 +378,12 @@ def _request_attrs(target: Any, kwargs: Dict[str, Any]) -> Dict[str, Any]:
     for i, tool in enumerate(kwargs.get("tools") or []):
         attrs[f"llm.tools.{i}.tool.json_schema"] = _text(tool)
     return attrs
+
+
+def _current_step() -> str:
+    from src.utils.step_timing import current_step  # step_timing imports us
+
+    return current_step()
 
 
 def _openai_reply(response: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:

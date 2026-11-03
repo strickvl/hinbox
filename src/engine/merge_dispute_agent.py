@@ -21,6 +21,7 @@ from src.logging_config import log
 from src.utils.llm import cloud_generation, local_generation
 from src.utils.step_timing import timed
 from src.utils.task_models import is_local_model, task_model
+from src.utils.tracing import annotate
 
 # Deferred disputes are appended here, under the domain's output directory
 REVIEW_QUEUE_FILENAME = "merge_review_queue.jsonl"
@@ -147,6 +148,14 @@ def run_merge_dispute_agent(
             reason=f"Dispute agent API error: {str(e)}",
         )
 
+    annotate(
+        entity_type=entity_type,
+        new_name=new_name,
+        existing_name=existing_name,
+        similarity=similarity_score,
+        dispute_action=decision.action.value,
+        confidence=decision.confidence,
+    )
     log(
         f"Dispute agent decision for '{new_name}' vs '{existing_name}': "
         f"{decision.action.value} (confidence={decision.confidence:.2f})",

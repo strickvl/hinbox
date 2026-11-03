@@ -30,7 +30,7 @@ This document helps contributors work effectively in this repository.
     - `outcomes.py` — `PhaseOutcome` structured result objects
     - `llm.py` — SDK/Instructor wrappers with multi-tool-call recovery
     - `provider_routing.py` — model prefix → SDK target resolution
-    - `tracing.py` — OpenTelemetry spans for steps, articles and every model call; JSONL copy under `{output_dir}/traces/`, optional OTLP export (Phoenix: `just phoenix`)
+    - `tracing.py` — OpenTelemetry spans for steps, articles and every model call; JSONL copy under `{output_dir}/traces/`, optional OTLP export (Phoenix: `just phoenix`); `annotate()` notes each step's subject and outcome; eval/replay runs are traced; `scripts/export_training_data.py` (`just export-training`) turns traces into TRL-style chat examples per task
     - `extraction.py` — extraction dispatch with sidecar cache integration
     - `file_ops.py` — Parquet I/O, batched writes, atomic file operations
     - `error_handler.py`, `logging.py` — error handling and logging utilities

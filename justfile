@@ -54,6 +54,11 @@ eval-cases *args:
 eval-mine *args:
     uv run python -m src.evals.mine_merge_pairs {{args}}
 
+# Turn trace files into chat-format training examples, one file per task
+# (e.g. `just export-training data/guantanamo/entities/traces/*.jsonl --out data/guantanamo/entities/training`)
+export-training *args:
+    uv run python -m scripts.export_training_data {{args}}
+
 # ─── DSPy experiments (own environment in experiments/dspy_opt/, no LiteLLM) ──
 
 # Optimise the edit-list profile updater with DSPy GEPA (e.g. `just dspy-profile --model ollama/local-qwen36-16k:latest --reflection-model openai/gpt-6-luna`)

@@ -105,14 +105,18 @@ class DomainConfig:
 
     def prompt_path(self, name: str, model: Optional[str] = None) -> str:
         """The prompt file ``name`` resolves to for ``model``."""
+        from src.utils.tracing import note_prompt_file
+
         prompts = os.path.join(self.config_dir, "prompts")
         for variant in self.prompt_variants(model):
             path = os.path.join(prompts, f"{name}.{variant}.md")
             if os.path.exists(path):
+                note_prompt_file(path)
                 return path
         path = os.path.join(prompts, f"{name}.md")
         if not os.path.exists(path):
             raise ValueError(f"Prompt file not found: {path}")
+        note_prompt_file(path)
         return path
 
     def load_prompt(self, entity_type: str, model: Optional[str] = None) -> str:

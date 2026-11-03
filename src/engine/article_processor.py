@@ -26,6 +26,7 @@ from src.utils.quality_controls import (
 )
 from src.utils.step_timing import timed_step
 from src.utils.task_models import is_local_model, task_model
+from src.utils.tracing import annotate
 
 logger = get_logger("article_processor")
 
@@ -310,9 +311,18 @@ class ArticleProcessor:
         self, entity_type: str, article_content: str, article_id: str
     ) -> PhaseOutcome:
         with timed_step(f"extract.{entity_type}"):
-            return self.extract_single_entity_type(
+            annotate(entity_type=entity_type, article_id=article_id)
+            outcome = self.extract_single_entity_type(
                 entity_type, article_content, article_id
             )
+            annotate(
+                ok=outcome.success,
+                final_count=len(outcome.value or []),
+                qc_flags=list(outcome.flags),
+                retry_used=outcome.meta.get("retry_used"),
+                outcome=outcome.to_metadata_dict(),
+            )
+            return outcome
 
     def extract_all_entities(
         self,

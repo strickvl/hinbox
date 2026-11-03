@@ -418,7 +418,25 @@ def run_updates(
     from concurrent.futures import ThreadPoolExecutor
     from time import perf_counter
 
+    from src.utils.tracing import annotate, item_span
+
     def one(case: Dict[str, Any]) -> Dict[str, Any]:
+        with item_span(
+            f"eval {case['case_id']}",
+            eval_item_id=case["case_id"],
+            eval_kind=case["kind"],
+            eval_split=case["split"],
+        ):
+            record = score_one(case)
+            scores = record.get("scores") or {}
+            annotate(
+                eval_passed=scores.get("passed"),
+                eval_scores=scores or None,
+                eval_error=record.get("error"),
+            )
+            return record
+
+    def score_one(case: Dict[str, Any]) -> Dict[str, Any]:
         start = perf_counter()
         record: Dict[str, Any] = {
             "item_id": case["case_id"],

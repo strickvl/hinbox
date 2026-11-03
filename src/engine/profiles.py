@@ -35,6 +35,7 @@ from src.utils.outcomes import PhaseOutcome
 from src.utils.profiles import extract_profile_text
 from src.utils.quality_controls import run_profile_qc
 from src.utils.step_timing import timed
+from src.utils.tracing import annotate
 
 logger = get_logger("profiles")
 
@@ -504,6 +505,12 @@ def _edit_profile_update(
         )
         return existing_profile, []
     report = edited["edit_report"]
+    annotate(
+        edits_applied=report["applied"],
+        edits_appended=report["appended"],
+        edits_skipped=len(report["skipped"]),
+        disagreements=len(edited["disagreements"]),
+    )
     log(
         f"Edited profile for {entity_name}: {report['applied']} applied, "
         f"{report['appended']} appended, {len(report['skipped'])} skipped, "
@@ -538,6 +545,13 @@ def update_profile(
     edit approach has no reflection rounds, so its history is empty.
     """
     approach = approach or PROFILE_UPDATE_APPROACH
+    annotate(
+        entity_type=entity_type,
+        entity_name=entity_name,
+        article_id=new_article_id,
+        approach=approach,
+        chars_before=len(str(existing_profile.get("text") or "")),
+    )
     if approach not in ("edit", "rewrite"):
         raise ValueError(f"Unknown profile update approach: {approach!r}")
     update = _edit_profile_update if approach == "edit" else _update_profile_internal
@@ -553,6 +567,7 @@ def update_profile(
     )
 
     updated_profile = _apply_profile_qc(updated_profile, entity_name)
+    _annotate_profile(updated_profile)
 
     # Add new version if versioning enabled
     if ENABLE_PROFILE_VERSIONING:
@@ -561,6 +576,15 @@ def update_profile(
         )
 
     return updated_profile, versioned_profile, history
+
+
+def _annotate_profile(profile: Dict) -> None:
+    qc = profile.get("qc") or {}
+    annotate(
+        chars_after=len(str(profile.get("text") or "")),
+        qc_passed=qc.get("passed"),
+        qc_flags=[str(f) for f in qc.get("flags") or []],
+    )
 
 
 @timed("profile.create")
@@ -577,6 +601,7 @@ def create_profile(
     Create an initial profile for an entity based on article text using structured extraction.
     Returns (profile_dict, versioned_profile, improvement_history).
     """
+    annotate(entity_type=entity_type, entity_name=entity_name, article_id=article_id)
     log(
         f"Creating profile for {entity_type} '{entity_name}' "
         f"(model={model or model_type}, article={article_id}, {len(article_text)}ch)",
@@ -597,6 +622,7 @@ def create_profile(
         # Extract the actual text from nested/parsed fields before logging
         profile_dict = extract_profile_text(profile_dict)
         profile_dict = _apply_profile_qc(profile_dict, entity_name)
+        _annotate_profile(profile_dict)
 
         log(
             f"Created profile for {entity_name}: "
