@@ -1,5 +1,5 @@
 import contextvars
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.config_loader import get_domain_config, get_system_prompt
 
@@ -26,6 +26,12 @@ from src.utils.quality_controls import (
 )
 from src.utils.step_timing import timed_step
 from src.utils.task_models import is_local_model, task_model
+from src.utils.tracing import (
+    annotate,
+    annotate_span,
+    run_in_span,
+    start_child_span,
+)
 
 logger = get_logger("article_processor")
 
@@ -195,16 +201,31 @@ class ArticleProcessor:
         """
         phase = f"extract.{entity_type}"
 
+        # One span per attempt, so a trace says which reply was kept and
+        # what QC found in each (training examples must not mix them up)
+        attempts: List[Any] = []
+
+        def attempt(n: int, **kwargs: Any) -> Tuple[List[Dict], Any]:
+            span = start_child_span(f"extraction attempt {n}", extraction_attempt=n)
+            attempts.append(span)
+            raw = run_in_span(
+                span, self._run_extraction, extractor, article_content, **kwargs
+            )
+            result = run_extraction_qc(
+                entity_type=entity_type, entities=raw, domain=self.domain
+            )
+            annotate_span(
+                span,
+                attempt_count=result[1].output_count,
+                attempt_qc_flags=list(result[1].flags),
+            )
+            return result
+
         try:
             extractor = EntityExtractor(entity_type, self.domain)
 
             # --- Attempt 1 ---
-            raw_dicts = self._run_extraction(extractor, article_content)
-            cleaned, qc_report = run_extraction_qc(
-                entity_type=entity_type,
-                entities=raw_dicts,
-                domain=self.domain,
-            )
+            cleaned, qc_report = attempt(1)
 
             # --- Conditional retry ---
             retry_meta: Dict[str, Any] = {"retry_attempted": False}
@@ -220,14 +241,7 @@ class ArticleProcessor:
                 )
 
                 hint = _build_repair_hint(entity_type, qc_report.flags)
-                raw_dicts_v2 = self._run_extraction(
-                    extractor, article_content, repair_hint=hint
-                )
-                cleaned_v2, qc_report_v2 = run_extraction_qc(
-                    entity_type=entity_type,
-                    entities=raw_dicts_v2,
-                    domain=self.domain,
-                )
+                cleaned_v2, qc_report_v2 = attempt(2, repair_hint=hint)
 
                 retry_meta["retry_output_count"] = qc_report_v2.output_count
 
@@ -247,6 +261,9 @@ class ArticleProcessor:
                 else:
                     retry_meta["retry_used"] = False
 
+            kept = 2 if retry_meta.get("retry_used") else 1
+            for n, span in enumerate(attempts, 1):
+                annotate_span(span, attempt_selected=n == kept)
             return PhaseOutcome.ok(
                 phase,
                 value=cleaned,
@@ -276,6 +293,9 @@ class ArticleProcessor:
                 },
                 flags=["extraction_exception"],
             )
+        finally:
+            for span in attempts:
+                span.end()
 
     def track_reflection_attempts(
         self, extracted_entities: Any, entity_type: str, verbose: bool = False
@@ -310,9 +330,18 @@ class ArticleProcessor:
         self, entity_type: str, article_content: str, article_id: str
     ) -> PhaseOutcome:
         with timed_step(f"extract.{entity_type}"):
-            return self.extract_single_entity_type(
+            annotate(entity_type=entity_type, article_id=article_id)
+            outcome = self.extract_single_entity_type(
                 entity_type, article_content, article_id
             )
+            annotate(
+                ok=outcome.success,
+                final_count=len(outcome.value or []),
+                qc_flags=list(outcome.flags),
+                retry_used=outcome.meta.get("retry_used"),
+                outcome=outcome.to_metadata_dict(),
+            )
+            return outcome
 
     def extract_all_entities(
         self,

@@ -885,7 +885,7 @@ def main():
     # anything off this machine/LAN under --local
     try:
         task_models = check_task_models(model_type)
-        configure_tracing(base_dir, local=args.local)
+        configure_tracing(base_dir, local=args.local, domain=args.domain)
     except ValueError as e:
         log(str(e), level="error")
         sys.exit(1)
