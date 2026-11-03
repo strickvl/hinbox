@@ -228,7 +228,28 @@ def task_of(step: str) -> str:
     return step.rsplit("/", 1)[-1] if step else "unknown"
 
 
-def examples(spans: List[Dict[str, Any]], keep_failed: bool = False) -> List[Dict]:
+def _without_retry_turns(messages: List[Any]) -> List[Any]:
+    """The prompt as first sent: everything before the first assistant turn.
+
+    Instructor's retries append the rejected reply and the validation error
+    to the prompt. Training on those teaches the model to answer after being
+    told it was wrong, and the rejected reply's values (``"items": "oops"``)
+    clash with the good reply's types in one dataset column. So by default the
+    final good reply is paired with the original prompt. (Hinbox's own
+    prompts never contain an assistant turn, so nothing else is cut.)
+    """
+    first = next(
+        (i for i, m in enumerate(messages) if (m or {}).get("role") == "assistant"),
+        len(messages),
+    )
+    return messages[:first]
+
+
+def examples(
+    spans: List[Dict[str, Any]],
+    keep_failed: bool = False,
+    keep_retry_turns: bool = False,
+) -> List[Dict]:
     """One training example per model call, in the order the calls started."""
     by_id = {s["context"]["span_id"]: s for s in spans}
     calls = [
@@ -273,8 +294,12 @@ def examples(spans: List[Dict[str, Any]], keep_failed: bool = False) -> List[Dic
             for k, v in meta.items()
             if v is not None and not k.startswith(("telemetry.", "service."))
         }
+        sent = _input_messages(attrs)
+        prompt = sent if keep_retry_turns else _without_retry_turns(sent)
+        if len(prompt) < len(sent):
+            meta["retry_turns_dropped"] = len(sent) - len(prompt)
         row: Dict[str, Any] = {
-            "messages": _input_messages(attrs) + reply,
+            "messages": prompt + reply,
             "metadata": meta,
         }
         tools = _tools(attrs)
@@ -294,9 +319,18 @@ def main() -> None:
         action="store_true",
         help="also keep calls that raised or hit the token limit",
     )
+    parser.add_argument(
+        "--keep-retry-turns",
+        action="store_true",
+        help="keep Instructor's rejected replies and error turns in the prompt",
+    )
     args = parser.parse_args()
 
-    rows = examples(load_spans(args.traces), keep_failed=args.keep_failed)
+    rows = examples(
+        load_spans(args.traces),
+        keep_failed=args.keep_failed,
+        keep_retry_turns=args.keep_retry_turns,
+    )
     by_task: Dict[str, List[Dict]] = defaultdict(list)
     for row in rows:
         task = row["metadata"]["task"]

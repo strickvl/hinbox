@@ -208,7 +208,11 @@ def test_instructor_retry_turns_keep_tool_call_names_and_ids(spans):
     assert a[f"{base}.function.name"] == "Items"
     assert a["llm.input_messages.2.message.tool_call_id"] == "call_1"
 
-    (row,) = _rows(spans)
+    (row,) = _rows(spans)  # default: the original prompt + the good reply
+    assert [m["role"] for m in row["messages"]] == ["user", "assistant"]
+    assert row["metadata"]["retry_turns_dropped"] == 2
+
+    (row,) = _rows(spans, keep_retry_turns=True)
     # exported as sent, but with arguments decoded like the reply's
     sent_call = row["messages"][1]["tool_calls"][0]
     assert sent_call["id"] == "call_1"
