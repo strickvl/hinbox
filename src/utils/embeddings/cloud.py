@@ -7,6 +7,7 @@ from openai import OpenAI
 
 from src.logging_config import get_logger
 from src.utils.provider_routing import resolve_embedding_target
+from src.utils.tracing import in_current_context, instrument_embeddings
 
 from .base import EmbeddingConfig, EmbeddingProvider, EmbeddingResult
 
@@ -79,14 +80,16 @@ class CloudEmbeddingProvider(EmbeddingProvider):
             base_url=target.base_url,
             api_key=target.api_key or "not-set",
         )
+        instrument_embeddings(client, target)
 
         for attempt in range(self.config.max_retries):
             try:
                 response = await loop.run_in_executor(
                     None,
-                    lambda: client.embeddings.create(
-                        model=target.api_model,
-                        input=texts,
+                    in_current_context(
+                        lambda: client.embeddings.create(
+                            model=target.api_model, input=texts
+                        )
                     ),
                 )
                 return response

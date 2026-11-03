@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
@@ -49,6 +48,12 @@ from src.utils.step_timing import (
     write_partial_report,
 )
 from src.utils.task_models import check_task_models
+from src.utils.tracing import (
+    article_scope,
+    configure_tracing,
+    run_in_span,
+    start_article_span,
+)
 
 # Get module-specific logger
 logger = get_logger("process_and_extract")
@@ -370,21 +375,6 @@ def incomplete_reasons(processing_metadata: Dict) -> List[str]:
         for key in processing_metadata
         if key.startswith(("error_", "failed_profiles_"))
     ]
-
-
-def write_updated_articles(processed_rows: List[Dict], articles_path: str) -> None:
-    """Write updated articles back to the parquet file."""
-    temp_file = articles_path + ".tmp.parquet"
-    try:
-        log("Writing updated articles to parquet file...", level="processing")
-        new_table = pa.Table.from_pylist(processed_rows)
-        pq.write_table(new_table, temp_file)
-        os.replace(temp_file, articles_path)
-        log("Successfully updated articles parquet file", level="success")
-    except Exception as e:
-        log("Could not write updated articles to parquet", level="error", exception=e)
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
 
 
 def calculate_reflection_statistics(
@@ -722,6 +712,7 @@ def merge_and_finalize(
 
     problems = incomplete_reasons(result.processing_metadata)
     if problems:
+        result.processing_metadata["reason"] = f"incomplete: {', '.join(problems)}"
         # The types that worked come from the extraction cache next time, and
         # entities already merged from this article are not updated twice
         log(
@@ -815,8 +806,11 @@ def process_articles_batch(
         # before an interrupt could save the merged entities.
         pool = ThreadPoolExecutor(max_workers=extract_workers)
         try:
+            spans = [start_article_span(i, r) for i, r in enumerate(active_rows, 1)]
             futures = [
                 pool.submit(
+                    run_in_span,
+                    spans[row_index - 1],
                     extract_single_article_only,
                     row,
                     row_index,
@@ -830,19 +824,19 @@ def process_articles_batch(
             ]
 
             # --- Consume results in submission (article) order ---
-            for future in futures:
+            for span, future in zip(spans, futures):
                 result = future.result()
                 processed_rows.append(result.row)
-
-                merge_and_finalize(
-                    result,
-                    entities=entities,
-                    processor=processor,
-                    args=args,
-                    domain_config=domain_cfg,
-                    status_tracker=status_tracker,
-                    counters=counters,
-                )
+                with article_scope(span, result):
+                    merge_and_finalize(
+                        result,
+                        entities=entities,
+                        processor=processor,
+                        args=args,
+                        domain_config=domain_cfg,
+                        status_tracker=status_tracker,
+                        counters=counters,
+                    )
 
                 progress.update(task_id, advance=1)
                 write_partial_report(
@@ -887,9 +881,11 @@ def main():
             level="info",
         )
 
-    # Per-task models (HINBOX_<TASK>_MODEL); refuses cloud models under --local
+    # Per-task models (HINBOX_<TASK>_MODEL) and the trace endpoint; both refuse
+    # anything off this machine/LAN under --local
     try:
         task_models = check_task_models(model_type)
+        configure_tracing(base_dir, local=args.local)
     except ValueError as e:
         log(str(e), level="error")
         sys.exit(1)

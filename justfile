@@ -29,6 +29,11 @@ frontend:
     uv run python -m src.frontend
 
 alias web := frontend
+
+# Trace viewer: Phoenix on http://localhost:6006 (own uvx env, not in Hinbox's lockfile).
+# Then run the pipeline with OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:6006/v1/traces
+phoenix:
+    PHOENIX_WORKING_DIR="${PHOENIX_WORKING_DIR:-$HOME/.phoenix}" uvx --python 3.12 --from arize-phoenix phoenix serve
 alias ui := frontend
 
 # ─── Evaluation ───────────────────────────────────────

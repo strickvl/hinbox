@@ -30,6 +30,7 @@ This document helps contributors work effectively in this repository.
     - `outcomes.py` — `PhaseOutcome` structured result objects
     - `llm.py` — SDK/Instructor wrappers with multi-tool-call recovery
     - `provider_routing.py` — model prefix → SDK target resolution
+    - `tracing.py` — OpenTelemetry spans for steps, articles and every model call; JSONL copy under `{output_dir}/traces/`, optional OTLP export (Phoenix: `just phoenix`)
     - `extraction.py` — extraction dispatch with sidecar cache integration
     - `file_ops.py` — Parquet I/O, batched writes, atomic file operations
     - `error_handler.py`, `logging.py` — error handling and logging utilities
@@ -52,6 +53,7 @@ This document helps contributors work effectively in this repository.
 - **File length limit**: `just check-file-length` fails if any tracked `.py` file is over 1000 lines. It runs in `just ci` and in GitHub Actions. Split the file rather than raising the limit.
 - Process articles: `just process --domain <name> --limit N`
 - Start frontend: `just frontend` (http://localhost:5001)
+- Trace viewer: `just phoenix` (http://localhost:6006), then run with `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:6006/v1/traces`
 - Domain management: `just domains` / `just init <name>`
 - Evaluate a model on the gold sets: `just eval <relevance|merge> --model <model>`; `just eval show` prints the scoreboard (`--grid`: latest score per model × prompt file); `--prompt-variant <name>` scores a variant on any model
 - DSPy experiments live in `experiments/dspy_opt/` (separate uv project, no LiteLLM): `just dspy-merge --model <model> --optimizer mipro`, `just dspy-test`

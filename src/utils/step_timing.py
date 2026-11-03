@@ -9,7 +9,8 @@ under whatever step is active, with the time spent waiting for a
 concurrency slot kept apart from the time the model took.
 
 ``write_report()`` saves the totals as JSON at the end of a run. Timings are
-always collected; it is a dictionary update per step, so cheap.
+always collected; it is a dictionary update per step, so cheap. Each step is
+also an OpenTelemetry span (``src/utils/tracing.py``).
 """
 
 import functools
@@ -21,6 +22,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Callable, Dict, Iterator, Optional, TypeVar
+
+from src.utils.tracing import step_span
 
 _current_step: ContextVar[Optional[str]] = ContextVar("hinbox_step", default=None)
 _lock = threading.Lock()
@@ -48,7 +51,8 @@ def timed_step(name: str) -> Iterator[None]:
     token = _current_step.set(path)
     start = time.perf_counter()
     try:
-        yield
+        with step_span(name, path):
+            yield
     finally:
         _add(_steps, path, count=1, seconds=time.perf_counter() - start)
         _current_step.reset(token)
