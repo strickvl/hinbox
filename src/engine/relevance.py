@@ -17,7 +17,7 @@ from src.utils.sectioned_prompt import (
     read_bool,
 )
 from src.utils.step_timing import timed
-from src.utils.tracing import annotate
+from src.utils.tracing import annotate, request_span
 
 logger = get_logger("engine.relevance")
 
@@ -66,17 +66,19 @@ def _check_relevance(text: str, model: str, domain: str, *, local: bool):
     structured prompt when the reply has no readable yes/no."""
     ArticleRelevance = get_relevance_model(domain)
     try:
-        reply = text_generation(
-            _sectioned_messages(text, domain, model),
-            model=model,
-            local=local,
-            temperature=0,
-        )
-        fields = parse_sections(reply)
-        verdict = ArticleRelevance(
-            is_relevant=read_bool(fields, "is_relevant"),
-            reason=fields.get("reasoning", ""),
-        )
+        # parse inside the span: an unreadable reply marks the request failed
+        with request_span("sectioned relevance"):
+            reply = text_generation(
+                _sectioned_messages(text, domain, model),
+                model=model,
+                local=local,
+                temperature=0,
+            )
+            fields = parse_sections(reply)
+            verdict = ArticleRelevance(
+                is_relevant=read_bool(fields, "is_relevant"),
+                reason=fields.get("reasoning", ""),
+            )
         annotate(answered_by="sectioned", is_relevant=verdict.is_relevant)
         return verdict
     except Exception as e:

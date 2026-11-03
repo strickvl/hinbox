@@ -287,3 +287,72 @@ def test_calls_under_a_request_that_gave_up_are_dropped(spans):
     kept = _rows(spans, keep_failed=True)
     assert [r["metadata"]["failed"] for r in kept] == [True, True, False]
     assert [r["metadata"]["attempt"] for r in kept] == [1, 2, 1]
+
+
+def test_anthropic_retry_blocks_become_openai_tool_messages():
+    from scripts.export_training_data import _decode_arguments, _from_anthropic
+
+    retry = [
+        {"role": "user", "content": "article"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Calling."},
+                {
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "Items",
+                    "input": {"items": 1},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "tu_1",
+                    "content": "Validation Error",
+                }
+            ],
+        },
+    ]
+    out = [_decode_arguments(m) for msg in retry for m in _from_anthropic(msg)]
+    assert out == [
+        {"role": "user", "content": "article"},
+        {
+            "role": "assistant",
+            "content": "Calling.",
+            "tool_calls": [
+                {
+                    "id": "tu_1",
+                    "type": "function",
+                    "function": {"name": "Items", "arguments": {"items": 1}},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "tu_1", "content": "Validation Error"},
+    ]
+
+
+def test_unreadable_sectioned_reply_is_exported_as_failed(spans, monkeypatch):
+    from src.engine import relevance
+
+    client = _client([("no verdict here", [], "stop")])
+
+    def fake_text_generation(messages, **kwargs):
+        resp = client.chat.completions.create(model="m", messages=messages)
+        return resp.choices[0].message.content
+
+    monkeypatch.setattr(relevance, "text_generation", fake_text_generation)
+    monkeypatch.setattr(
+        relevance,
+        "extract_entities_cloud",
+        lambda **kw: relevance.get_relevance_model("guantanamo")(
+            is_relevant=True, reason="r"
+        ),
+    )
+    relevance._check_relevance("article", "openai/x", "guantanamo", local=False)
+    assert _rows(spans) == []  # the unreadable reply is not a training target
+    (row,) = _rows(spans, keep_failed=True)
+    assert row["metadata"]["failed"] is True and row["metadata"]["request_ok"] is False

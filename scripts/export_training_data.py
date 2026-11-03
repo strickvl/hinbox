@@ -22,9 +22,9 @@ An extraction's QC repair retry is a separate request: its calls carry
 ``attempt_qc_flags``, and ``attempt_selected`` for the one the pipeline kept;
 the step's ``final_count``/``qc_flags`` describe the kept result.
 
-Anthropic tool declarations are converted to the OpenAI ``function`` form;
-an Anthropic retry turn (``tool_use``/``tool_result`` content blocks) is kept
-as sent. Prompt provenance is ``prompt_files``: every prompt file the step
+Anthropic tool declarations are converted to the OpenAI ``function`` form,
+and an Anthropic retry turn's ``tool_use``/``tool_result`` content blocks to
+assistant ``tool_calls`` and linked ``role="tool"`` messages. Prompt provenance is ``prompt_files``: every prompt file the step
 loaded, with a hash of its text.
 
 The output holds article text: keep it off GitHub (the repo is public).
@@ -102,8 +102,60 @@ def _input_messages(attrs: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     sent = _json_or_text(attrs.get("input.value"))
     if isinstance(sent, dict) and isinstance(sent.get("messages"), list):
-        return [_decode_arguments(m) for m in sent["messages"]]
+        openai_form = [m for msg in sent["messages"] for m in _from_anthropic(msg)]
+        return [_decode_arguments(m) for m in openai_form]
     return _messages(attrs, "input")
+
+
+def _block_text(blocks: List[Any]) -> str:
+    return "".join(
+        b.get("text", "")
+        for b in blocks
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+
+
+def _from_anthropic(msg: Any) -> List[Any]:
+    """An Anthropic message with content blocks as OpenAI-style messages.
+
+    ``tool_use`` blocks become the assistant's ``tool_calls``; each
+    ``tool_result`` block becomes a ``role="tool"`` message linked by
+    ``tool_call_id``; text blocks become plain string content. Anything else
+    passes through unchanged.
+    """
+    if not isinstance(msg, dict) or not isinstance(msg.get("content"), list):
+        return [msg]
+    blocks = [b for b in msg["content"] if isinstance(b, dict)]
+    text = _block_text(blocks)
+    if msg.get("role") == "assistant":
+        calls = [
+            {
+                "id": b.get("id", ""),
+                "type": "function",
+                "function": {
+                    "name": b.get("name", ""),
+                    "arguments": b.get("input", {}),
+                },
+            }
+            for b in blocks
+            if b.get("type") == "tool_use"
+        ]
+        out = {"role": "assistant", "content": text or None}
+        return [{**out, "tool_calls": calls} if calls else out]
+    results = [b for b in blocks if b.get("type") == "tool_result"]
+    tool_msgs = [
+        {
+            "role": "tool",
+            "tool_call_id": b.get("tool_use_id", ""),
+            "content": b["content"]
+            if isinstance(b.get("content"), str)
+            else _block_text(b.get("content") or []),
+        }
+        for b in results
+    ]
+    if text or not results:
+        tool_msgs.append({"role": msg.get("role", "user"), "content": text})
+    return tool_msgs
 
 
 def _decode_arguments(msg: Any) -> Any:

@@ -15,7 +15,7 @@ from src.utils.sectioned_prompt import (
     read_unit_float,
 )
 from src.utils.step_timing import timed
-from src.utils.tracing import annotate
+from src.utils.tracing import annotate, request_span
 
 logger = get_logger("engine.match_checker")
 
@@ -310,19 +310,21 @@ def _check_match(
 
     local = backend == "local"
     try:
-        reply = text_generation(
-            _build_sectioned_messages(
-                new_name,
-                existing_name,
-                new_profile_text,
-                existing_profile_text,
-                entity_type,
-            ),
-            model=model,
-            local=local,
-            temperature=0,
-        )
-        result = parse_sectioned_reply(reply)
+        # parse inside the span: an unreadable reply marks the request failed
+        with request_span("sectioned match_check"):
+            reply = text_generation(
+                _build_sectioned_messages(
+                    new_name,
+                    existing_name,
+                    new_profile_text,
+                    existing_profile_text,
+                    entity_type,
+                ),
+                model=model,
+                local=local,
+                temperature=0,
+            )
+            result = parse_sectioned_reply(reply)
         annotate(answered_by="sectioned")
     except Exception as e:
         logger.warning(
