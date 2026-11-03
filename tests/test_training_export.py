@@ -209,7 +209,13 @@ def test_instructor_retry_turns_keep_tool_call_names_and_ids(spans):
     assert a["llm.input_messages.2.message.tool_call_id"] == "call_1"
 
     (row,) = _rows(spans)
-    assert row["messages"][:3] == retry  # exported exactly as sent
+    # exported as sent, but with arguments decoded like the reply's
+    sent_call = row["messages"][1]["tool_calls"][0]
+    assert sent_call["id"] == "call_1"
+    assert sent_call["function"]["arguments"] == {"items": "oops"}
+    reply_args = row["messages"][-1]["tool_calls"][0]["function"]["arguments"]
+    assert isinstance(reply_args, dict)
+    assert row["messages"][2] == retry[2] and row["messages"][0] == retry[0]
 
 
 def test_anthropic_tool_declarations_exported_in_openai_form():

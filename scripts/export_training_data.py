@@ -102,8 +102,21 @@ def _input_messages(attrs: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     sent = _json_or_text(attrs.get("input.value"))
     if isinstance(sent, dict) and isinstance(sent.get("messages"), list):
-        return sent["messages"]
+        return [_decode_arguments(m) for m in sent["messages"]]
     return _messages(attrs, "input")
+
+
+def _decode_arguments(msg: Any) -> Any:
+    """Tool-call ``arguments`` as a dict, as in the reply, so a column holds one
+    type (Arrow-backed datasets can't mix JSON strings and objects)."""
+    if not isinstance(msg, dict) or not msg.get("tool_calls"):
+        return msg
+    calls = []
+    for call in msg["tool_calls"]:
+        fn = dict(call.get("function") or {})
+        fn["arguments"] = _json_or_text(fn.get("arguments", ""))
+        calls.append({**call, "function": fn})
+    return {**msg, "tool_calls": calls}
 
 
 def _openai_tool(tool: Any) -> Any:
