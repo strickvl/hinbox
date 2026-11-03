@@ -17,8 +17,10 @@ trial has 100+ articles. Here no model call ever sees the whole profile:
 4. **Apply** (code). ``same`` adds nothing to the text: the article is counted
    on the row as a repeat, so the 50th report of the same flight doesn't add a
    50th citation. Only a different kind of source (a court record where the row
-   rested on a newspaper) is cited. ``conflict`` keeps both: code writes the
-   new version right after the old sentence. ``new`` goes to step 5.
+   rested on a newspaper) is cited. ``conflict`` (accepted only when code
+   finds a year, month or number that differs, ``values_differ()``) keeps both: code writes the
+   new version right after the old sentence. ``new`` goes to step 5. From an
+   article not mainly about the entity, at most ``MAX_PASSING_CLAIMS`` claims are kept.
 5. **Write** (model, one call per changed section): the section's text and its
    new facts; the model says where each goes. Code inserts them, so existing
    text can't be lost.
@@ -41,10 +43,16 @@ from src.utils.llm import cloud_generation, local_generation
 FACT_MAX_TOKENS = 4096
 MAX_CANDIDATES = 4  # existing rows shown beside each new claim
 MIN_SHARED = 2  # word stems a row must share with a claim to be shown
+MAX_PASSING_CLAIMS = 2  # claims kept from an article not mainly about the entity
 MIN_QUOTE_WORDS = 0.9  # share of a loose quote's words that must be in the article
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 _HEADING = re.compile(r"^#{1,6} .*$", re.MULTILINE)
 _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)*\b")
+_YEAR = re.compile(r"^(?:1[89]|20)\d\d$")
+_MONTH = re.compile(
+    r"\b(Jan(?:uary)?|Feb(?:ruary)?|March|April|May|June|July|Aug(?:ust)?"
+    r"|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?"
+)
 
 
 def _list_from_string(value: Any) -> Any:
@@ -63,6 +71,11 @@ class ArticleClaim(BaseModel):
 
 
 class ArticleClaims(BaseModel):
+    # Asked first, so a passing mention can be capped by code: on dev, Luna
+    # listed 5-6 claims from a hearing that only mentioned the Cole bombing
+    mainly_about: bool = Field(
+        default=True, description="Is the article mainly about the entity?"
+    )
     claims: List[ArticleClaim] = Field(default_factory=list)
 
     @field_validator("claims", mode="before")
@@ -88,9 +101,18 @@ class ClaimVerdicts(BaseModel):
 
 
 class Placement(BaseModel):
-    fact: int = Field(description="The fact's number")
+    facts: List[int] = Field(
+        description="The numbers of the facts this sentence states"
+    )
     after: str = Field(description="An existing sentence copied exactly, or END")
-    sentence: str = Field(description="The fact as a sentence, ending in its citation")
+    sentence: str = Field(
+        description="The fact(s) as a sentence, ending in the citation"
+    )
+
+    @field_validator("facts", mode="before")
+    @classmethod
+    def _one_number(cls, value: Any) -> Any:
+        return [value] if isinstance(value, (int, str)) else value
 
 
 class SectionPlacements(BaseModel):
@@ -189,6 +211,43 @@ def candidates(claim: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [row for _, _, row in scored[:MAX_CANDIDATES]]
 
 
+def _values(text: str) -> Tuple[set, set, set]:
+    """(years, months, other numbers) in the text, citations left out."""
+    text = _CITATION.sub("", text)
+    numbers = set(_NUMBER.findall(text))
+    years = {n for n in numbers if _YEAR.match(n)}
+    months = {m.lower()[:3] for m in _MONTH.findall(text)}
+    return years, months, numbers - years
+
+
+def values_differ(claim: str, row_claim: str) -> bool:
+    """Code's check on a ``conflict`` verdict: for years, months or other
+    numbers, each sentence has a value the other doesn't ("October 2003"
+    against "November 2002"). Extra detail ("Camp 6 is a 200-cell building"
+    against "Camp 6 opened in 2006") doesn't count.
+
+    On dev, Qwen called 12 ordinary facts conflicts ("Camp 6 is a 200-cell
+    penitentiary style building" against a sentence dated 2006; a Cole death
+    toll that agreed with the profile). A planted dispute changes one year,
+    so it passes; those don't.
+    """
+    return any(
+        mine - theirs and theirs - mine
+        for mine, theirs in zip(_values(claim), _values(row_claim))
+    )
+
+
+def _match_heading(section: str, headings: List[str]) -> str:
+    """An existing heading with the same words at any level, else a new
+    ``## heading``: Luna wrote "### Role and Position" beside "## Role and
+    Position" and got a second section."""
+    words = section.strip().lstrip("#").strip()
+    for heading in headings:
+        if heading.lstrip("#").strip().lower() == words.lower():
+            return heading
+    return f"## {words}" if words else "## Other"
+
+
 def _with_citation(sentence: str, article_id: str) -> str:
     """Add ``article_id`` to the sentence's last citation (or a new one)."""
     ids = _ids(sentence)
@@ -278,17 +337,21 @@ def update_from_facts(
         return _call(generate, model, system, user, schema)
 
     # 1. Extract, keeping only claims whose quote is really in the article
-    extracted = ask(
+    answer = ask(
         "fact_extract",
         f"Article (ID: {article_id}):\n----------------\n{article_text}",
         ArticleClaims,
         headings="\n".join(headings) or "(none yet)",
-    ).claims
+    )
+    extracted = answer.claims
     claims = [
         c for c in extracted if c.claim.strip() and quote_found(c.quote, article_text)
     ]
     report["claims"] = len(extracted)
     report["dropped_quotes"] = [c.claim for c in extracted if c not in claims]
+    if not answer.mainly_about and len(claims) > MAX_PASSING_CLAIMS:
+        report["dropped_passing"] = [c.claim for c in claims[MAX_PASSING_CLAIMS:]]
+        claims = claims[:MAX_PASSING_CLAIMS]
 
     # 2-3. Look up the likely rows, then compare (claims with none are new)
     found = [candidates(c.claim, rows) for c in claims]
@@ -300,13 +363,13 @@ def update_from_facts(
                 continue
             known = "\n".join(f"  [{r['id']}] {r['claim']}" for r in rows_for)
             blocks.append(f"Claim {n}: {claim.claim} (source: {claim.source})\n{known}")
-        answer = ask("fact_compare", "\n\n".join(blocks), ClaimVerdicts)
-        verdicts = {v.claim: v for v in answer.verdicts}
+        compared = ask("fact_compare", "\n\n".join(blocks), ClaimVerdicts)
+        verdicts = {v.claim: v for v in compared.verdicts}
 
     by_id = {r["id"]: r for r in rows}
     section_edits: Dict[str, List[ProfileEdit]] = {}
     new_facts: Dict[str, List[Tuple[int, ArticleClaim]]] = {}
-    tally = {"same": 0, "new_evidence": 0, "conflict": 0, "new": 0}
+    tally = {"same": 0, "new_evidence": 0, "conflict": 0, "new": 0, "not_conflict": 0}
     for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
         verdict = verdicts.get(n)
         # A verdict naming a row it wasn't shown is a slip: treat it as new
@@ -330,6 +393,10 @@ def update_from_facts(
                 row["repeats"].append(article_id)
             continue
         if verdict and row in rows_for and verdict.verdict == "conflict":
+            if not values_differ(claim.claim, row["claim"]):
+                tally["not_conflict"] += 1  # written as a plain new fact below
+                verdict = None
+        if verdict and row in rows_for and verdict.verdict == "conflict":
             # Written by code, right after the old sentence: both stay, each cited
             tally["conflict"] += 1
             body = _CITATION.sub("", claim.claim).strip()
@@ -345,15 +412,7 @@ def update_from_facts(
             )
             continue
         tally["new"] += 1
-        section = (
-            claim.section.strip()
-            if claim.section.strip() in headings
-            else (
-                claim.section.strip()
-                if claim.section.strip().startswith("#")
-                else f"## {claim.section.strip()}"
-            )
-        )
+        section = _match_heading(claim.section, headings)
         new_facts.setdefault(section, []).append((n, claim))
     report.update(tally)
 
@@ -373,20 +432,29 @@ def update_from_facts(
         except Exception as e:  # noqa: BLE001 — fall back to the end of the section
             report.setdefault("write_errors", []).append(f"{type(e).__name__}: {e}")
             placed = []
-        given = {p.fact: p for p in placed}
-        for n, claim in items:
-            p = given.get(n)
-            sentence = _clean_sentence(
-                p.sentence if p and p.sentence.strip() else claim.claim, article_id
-            )
-            anchor = (
-                p.after.strip()
-                if p and p.after.strip() and p.after.strip() != "END"
-                else section
-            )
+        # One sentence may state several facts; any fact the model left out
+        # is written as extracted, at the end of the section
+        numbers = {n for n, _ in items}
+        written: set = set()
+        for p in placed:
+            facts = [n for n in p.facts if n in numbers and n not in written]
+            if not facts or not p.sentence.strip():
+                continue
+            written.update(facts)
+            after = p.after.strip()
             section_edits.setdefault(section, []).append(
-                ProfileEdit(op="add", anchor=anchor, text=sentence)
+                ProfileEdit(
+                    op="add",
+                    anchor=after if after and after != "END" else section,
+                    text=_clean_sentence(p.sentence, article_id),
+                )
             )
+        for n, claim in items:
+            sentence = "" if n in written else _clean_sentence(claim.claim, article_id)
+            if sentence:
+                section_edits.setdefault(section, []).append(
+                    ProfileEdit(op="add", anchor=section, text=sentence)
+                )
             rows.append(_new_row(rows, section, claim, article_id, text=sentence))
 
     # Apply each section's edits to that section's text only

@@ -12,6 +12,7 @@ from src.engine.fact_list import (
     rows_from_profile,
     split_sections,
     update_from_facts,
+    values_differ,
 )
 from src.evals.profile_update import score_update
 
@@ -88,7 +89,7 @@ def _write(messages):
     return SectionPlacements(
         placements=[
             Placement(
-                fact=3,
+                facts=[3],
                 after="The judge set a trial date for February 2015.^[a3]",
                 sentence="A military judge ruled the confession inadmissible.^[a9]",
             )
@@ -223,3 +224,90 @@ def test_a_new_section_is_added_at_the_end_and_scores_as_kept():
     }
     scores = score_update(case, new["text"])
     assert scores["passed"] and scores["fact_retention"] == 1.0
+
+
+def test_a_conflict_needs_a_different_year_or_number():
+    assert values_differ(
+        "Nashiri was captured in October 2003.", "captured in November 2002"
+    )
+    # Different kinds of number, or the claim's numbers already in the row
+    assert not values_differ("Camp 6 is a 200-cell building.", "Camp 6 opened in 2006.")
+    assert not values_differ(
+        "The bombing killed 17 sailors in 2000.",
+        "The 2000 bombing of the USS Cole killed 17 sailors.",
+    )
+    assert not values_differ("Nashiri was held at secret sites.", "held in 2002")
+
+
+def test_a_conflict_without_differing_values_is_written_as_a_new_fact():
+    claim = ArticleClaim(
+        claim="Nashiri was captured in the United Arab Emirates.",
+        section="## Capture",
+        quote="captured in the United Arab Emirates",
+    )
+
+    def verdicts(messages):
+        return ClaimVerdicts(
+            verdicts=[ClaimVerdict(claim=1, verdict="conflict", row="f2")]
+        )
+
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(claims=[claim]),
+        "ClaimVerdicts": verdicts,
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    assert "Another report differs" not in new["text"]
+    assert new["fact_report"]["not_conflict"] == 1
+    # The model wrote no sentence for it, so it goes in as extracted
+    assert (
+        "secret sites.^[a2]\nNashiri was captured in the United Arab Emirates.^[a9]"
+        in (new["text"])
+    )
+
+
+def test_passing_mentions_keep_two_claims_and_headings_are_reused():
+    claims = [
+        ArticleClaim(
+            claim=f"Nashiri fact number {n} about the judge.",
+            section="### legal proceedings",
+            quote="judge ruled",
+        )
+        for n in range(1, 5)
+    ]
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(mainly_about=False, claims=claims),
+        "SectionPlacements": lambda m: SectionPlacements(
+            placements=[
+                Placement(
+                    facts=[1, 2],
+                    after="END",
+                    sentence="He faced facts one and two.^[a1]",
+                )
+            ]
+        ),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    assert len(new["fact_report"]["dropped_passing"]) == 2
+    assert new["text"].count("Legal Proceedings") == 1
+    assert new["text"].endswith(
+        "February 2015.^[a3]\nHe faced facts one and two.^[a9]\n"
+    )
