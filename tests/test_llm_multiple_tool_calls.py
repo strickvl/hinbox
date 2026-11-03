@@ -9,7 +9,11 @@ from unittest.mock import MagicMock, patch
 import instructor
 from pydantic import BaseModel
 
-from src.utils.llm import _recover_multiple_tool_calls, cloud_generation
+from src.utils.llm import (
+    _recover_multiple_tool_calls,
+    cloud_generation,
+    local_generation,
+)
 
 
 class FakeEntity(BaseModel):
@@ -241,3 +245,37 @@ def test_strategy1_uses_tools_mode_after_parallel_none_type_failure():
     assert modes_seen[0] == instructor.Mode.PARALLEL_TOOLS
     # One TOOLS client for nonetype fallback, another for strategy 1 retry.
     assert modes_seen.count(instructor.Mode.TOOLS) >= 2
+
+
+def test_local_generation_uses_json_schema_mode_for_list_models():
+    """Local list calls ask for {"items": [...]} under a JSON schema, then unwrap it."""
+    modes_seen = []
+    create_mock = MagicMock(
+        side_effect=lambda **kw: kw["response_model"](
+            items=[FakeEntity(name="Alice", type="detainee")]
+        )
+    )
+
+    def _fake_create_client(target, mode):
+        modes_seen.append(mode)
+        return SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock))
+        )
+
+    with patch(
+        "src.utils.llm._create_instructor_client", side_effect=_fake_create_client
+    ):
+        result = local_generation(
+            messages=[
+                {"role": "system", "content": "Extract entities"},
+                {"role": "user", "content": "Alice is mentioned."},
+            ],
+            response_model=List[FakeEntity],
+            model="ollama/local-qwen36-32k",
+        )
+
+    assert modes_seen == [instructor.Mode.JSON_SCHEMA]
+    assert result == [FakeEntity(name="Alice", type="detainee")]
+    kwargs = create_mock.call_args.kwargs
+    assert set(kwargs["response_model"].model_fields) == {"items"}
+    assert "parallel_tool_calls" not in kwargs

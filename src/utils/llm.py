@@ -7,6 +7,7 @@ import threading
 import time
 from contextlib import contextmanager
 from enum import Enum
+from functools import lru_cache
 from typing import (
     Any,
     Dict,
@@ -22,7 +23,7 @@ from typing import (
 
 import instructor
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from src.constants import (
     BASE_DELAY,
@@ -148,6 +149,11 @@ def _resolve_instructor_mode(
     # OpenAI-compatible providers
     if json_fallback:
         return instructor.Mode.MD_JSON
+    # Local servers (Ollama, llama.cpp) constrain output to a JSON schema.
+    # Local models follow that far more reliably than tool calls: Qwen3.6
+    # often answers tool requests with a bare JSON array and no tool call.
+    if target.is_local:
+        return instructor.Mode.JSON_SCHEMA
     return instructor.Mode.PARALLEL_TOOLS if parallel else instructor.Mode.TOOLS
 
 
@@ -370,6 +376,12 @@ def _parallel_tools_response_model(response_model: Any) -> Optional[Any]:
     return Iterable[item_model]
 
 
+@lru_cache(maxsize=None)
+def _list_wrapper_model(item_model: Type[BaseModel]) -> Type[BaseModel]:
+    """Wrap ``List[Model]`` in an object, since a JSON schema root must be one."""
+    return create_model(f"{item_model.__name__}List", items=(List[item_model], ...))
+
+
 def _normalize_generation_response(response: Any, *, parallel_tools: bool) -> Any:
     """Normalize Instructor return shape to match current callers' expectations."""
     if parallel_tools:
@@ -402,11 +414,20 @@ def _structured_generation(
 
     target = resolve_chat_target(model)
 
-    parallel_response_model = _parallel_tools_response_model(response_model)
-    use_parallel_tools = parallel_response_model is not None
+    local_item_model = _list_item_model(response_model) if target.is_local else None
+    if target.is_local:
+        use_parallel_tools = False
+        request_response_model = (
+            _list_wrapper_model(local_item_model)
+            if local_item_model
+            else response_model
+        )
+    else:
+        parallel_response_model = _parallel_tools_response_model(response_model)
+        use_parallel_tools = parallel_response_model is not None
+        request_response_model = parallel_response_model or response_model
     mode = _resolve_instructor_mode(target, parallel=use_parallel_tools)
     client = _create_instructor_client(target, mode)
-    request_response_model = parallel_response_model or response_model
     logger.debug(
         "%s_generation setup: model=%s mode=%s max_tokens=%s temperature=%s",
         label,
@@ -420,7 +441,7 @@ def _structured_generation(
     base_delay = BASE_DELAY
 
     request_kwargs = dict(kwargs)
-    if target.sdk != "anthropic":
+    if target.sdk != "anthropic" and not target.is_local:
         request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
 
     msg_kwargs = _prepare_messages_for_target(messages, target)
@@ -437,6 +458,8 @@ def _structured_generation(
                     **request_kwargs,
                 )
             logger.debug(f"Successfully generated response with {model}")
+            if local_item_model is not None:
+                return response.items
             return _normalize_generation_response(
                 response, parallel_tools=use_parallel_tools
             )
