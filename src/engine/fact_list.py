@@ -228,13 +228,21 @@ def values_differ(claim: str, row_claim: str) -> bool:
 
     On dev, Qwen called 12 ordinary facts conflicts ("Camp 6 is a 200-cell
     penitentiary style building" against a sentence dated 2006; a Cole death
-    toll that agreed with the profile). A planted dispute changes one year,
-    so it passes; those don't.
+    toll that agreed with the profile), and after this check six more that
+    were counts from different dates ("12 captives were on hunger strike").
+    A planted dispute changes one year, so it passes; those don't.
     """
-    return any(
-        mine - theirs and theirs - mine
-        for mine, theirs in zip(_values(claim), _values(row_claim))
+    (years, months, counts), (r_years, r_months, r_counts) = (
+        _values(claim),
+        _values(row_claim),
     )
+    if (years - r_years and r_years - years) or (
+        months - r_months and r_months - months
+    ):
+        return True
+    # A count changes over time ("12 captives were on hunger strike" against
+    # "about 100 were"), so it only conflicts when both give the same year
+    return bool(counts - r_counts and r_counts - counts and years & r_years)
 
 
 def _match_heading(section: str, headings: List[str]) -> str:

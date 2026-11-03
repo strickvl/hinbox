@@ -68,7 +68,8 @@ _SOURCE_WORDS = re.compile(
 )
 MIN_CONTENT_WORDS = 3  # shorter lines (headers, "Tags:") aren't facts
 
-Updater = Callable[[Dict[str, Any]], str]
+# Returns the new text, or {"text", "report"} to keep a report in the run file
+Updater = Callable[[Dict[str, Any]], Any]
 
 
 def _cited_ids(text: str) -> Set[str]:
@@ -351,7 +352,8 @@ def make_fact_updater(model: str, domain: str) -> Updater:
             model=model,
             domain=domain,
         )
-        return profile["text"]
+        report = {**profile["fact_report"], "rows": profile["fact_rows"][-12:]}
+        return {"text": profile["text"], "report": report}
 
     return update
 
@@ -424,8 +426,16 @@ def run_updates(
             "split": case["split"],
         }
         try:
-            new_text = updater(case)
+            result = updater(case)
+            # An updater may also hand back a report of what it did
+            new_text, report = (
+                (result["text"], result.get("report"))
+                if isinstance(result, dict)
+                else (result, None)
+            )
             record.update(new_text=new_text, scores=score_update(case, new_text))
+            if report:
+                record["report"] = report
         except Exception as e:  # noqa: BLE001 — one failed call must not stop the run
             record["error"] = f"{type(e).__name__}: {e}"
         record["seconds"] = round(perf_counter() - start, 3)

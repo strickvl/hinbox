@@ -311,3 +311,14 @@ def test_passing_mentions_keep_two_claims_and_headings_are_reused():
     assert new["text"].endswith(
         "February 2015.^[a3]\nHe faced facts one and two.^[a9]\n"
     )
+
+
+def test_counts_only_conflict_for_the_same_year():
+    assert not values_differ(
+        "As of last week, 12 captives were on hunger strike.",
+        "About 100 captives were on hunger strike.",
+    )
+    assert values_differ(
+        "In 2013, 12 captives were on hunger strike.",
+        "In 2013, 106 captives were on hunger strike.",
+    )
