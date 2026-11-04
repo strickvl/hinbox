@@ -18,7 +18,7 @@ Scores, per profile, without a model:
 With ``--grounding``, ``verify_profile_grounding()`` checks each cited claim
 against the article with the cloud model and reports the supported share. With
 a claim-labels file (``{eval_dir}/claim_labels.jsonl``, rows with
-``"use": "create"``), the labelled facts found, core facts missed and
+``"use": "create"``; ``--claim-labels draft`` also uses unreviewed rows), the labelled facts found, core facts missed and
 must-not hits are added (``src/evals/claim_labels.py``).
 
 Per-profile records keep the profile text, which is article-derived: they stay
@@ -150,7 +150,7 @@ def score_profile(text: str, article_id: str, article: str) -> Dict[str, Any]:
 
 
 def _grounding(text: str, article_id: str, article: str) -> Dict[str, Any]:
-    from src.utils.quality_controls import verify_profile_grounding
+    from src.utils.grounding import verify_profile_grounding
 
     report = verify_profile_grounding(
         profile_text=text, article_texts={article_id: article}, model_type="gemini"
@@ -172,32 +172,23 @@ def _grounding(text: str, article_id: str, article: str) -> Dict[str, Any]:
 def _claim_scores(
     labels: Dict[Tuple[str, str], Dict[str, Any]], case: Dict[str, Any], text: str
 ) -> Optional[Dict[str, Any]]:
-    label = labels.get((case["entity_name"].lower(), case["article_id"]))
-    if not label:
-        return None
-    try:
-        from src.evals.claim_labels import score_claims  # from PR #75
-    except ImportError:
-        return None
-    return score_claims(label, "", text, case["article_id"])
+    from src.evals.claim_labels import score_claims
+
+    label = labels.get((case["entity_name"], case["article_id"]))
+    return score_claims(label, "", text, case["article_id"]) if label else None
 
 
 def load_create_labels(
-    eval_dir: str, include_drafts: bool = False
+    eval_dir: str, status: str = "reviewed"
 ) -> Dict[Tuple[str, str], Dict[str, Any]]:
-    path = os.path.join(eval_dir, "claim_labels.jsonl")
-    if not os.path.exists(path):
-        return {}
-    out = {}
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            row = json.loads(line) if line.strip() else None
-            if not row or row.get("use") != "create":
-                continue
-            if row.get("status") != "reviewed" and not include_drafts:
-                continue
-            out[(row["entity_name"].lower(), row["article_id"])] = row
-    return out
+    """Claim labels written for first profiles (``"use": "create"``)."""
+    from src.evals.claim_labels import load_labels
+
+    return {
+        k: v
+        for k, v in load_labels(eval_dir, status).items()
+        if v.get("use") == "create"
+    }
 
 
 def run_creates(
@@ -355,7 +346,7 @@ def run_profile_create(args, parser, domain_cfg, eval_dir: str) -> None:
     configure_llm_concurrency(
         cloud_in_flight=args.workers, local_in_flight=args.workers
     )
-    labels = load_create_labels(eval_dir, args.include_unreviewed)
+    labels = load_create_labels(eval_dir, args.claim_labels)
     console.print(
         f"Writing {len(cases)} first profiles x {approaches} with {args.model}"
         f"{' + grounding' if args.grounding else ''}"
