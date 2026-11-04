@@ -49,9 +49,6 @@ MAX_PASSING_CLAIMS = 2  # claims kept from an article not mainly about the entit
 MIN_QUOTE_WORDS = 0.9
 # Share of the shorter sentence's word stems a conflicting row must share
 SAME_SUBJECT = 0.4
-# ...and the share above which an ``update`` with a different date is really
-# the same event given a different date (a conflict)
-SAME_EVENT = 0.6  # share of a loose quote's words that must be in the article
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 _HEADING = re.compile(r"^#{1,6} .*$", re.MULTILINE)
 _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)*\b")
@@ -300,22 +297,13 @@ def adds_values(claim: str, row_claim: str) -> bool:
     )
 
 
-def dates_differ(claim: str, row_claim: str) -> bool:
-    """Each sentence gives a year or month the other doesn't."""
-    (years, months, _), (r_years, r_months, _) = _values(claim), _values(row_claim)
-    return bool(
-        (years - r_years and r_years - years)
-        or (months - r_months and r_months - months)
-    )
-
-
-def same_subject(claim: str, row_claim: str, threshold: float = 0.0) -> bool:
+def same_subject(claim: str, row_claim: str) -> bool:
     """Code's second check on a ``conflict``: the two sentences are mostly
     about the same thing, numbers aside. Two different events with different
     years ("still deciding" in 2009, "decided" in 2011) share less."""
     mine, theirs = _stems(claim), _stems(row_claim)
     smaller = min(len(mine), len(theirs)) or 1
-    return len(mine & theirs) / smaller >= (threshold or SAME_SUBJECT)
+    return len(mine & theirs) / smaller >= SAME_SUBJECT
 
 
 def _match_heading(
@@ -479,7 +467,6 @@ def update_from_facts(
         "conflict": 0,
         "not_conflict": 0,
         "update": 0,
-        "update_to_conflict": 0,
         "same_with_detail": 0,
         "new": 0,
     }
@@ -523,18 +510,6 @@ def update_from_facts(
             ):
                 tally["not_conflict"] += 1  # written as a plain new fact below
                 verdict = None
-        if (
-            verdict
-            and row in rows_for
-            and verdict.verdict == "update"
-            and dates_differ(claim.claim, row["claim"])
-            and same_subject(claim.claim, row["claim"], SAME_EVENT)
-        ):
-            # A past event can't move: "the bombing was on Oct. 12, 1999"
-            # against "Oct. 12, 2000" in nearly the same words is a conflict.
-            # On test, Qwen and Luna called every planted date change an update
-            tally["update_to_conflict"] += 1
-            verdict = verdict.model_copy(update={"verdict": "conflict"})
         if verdict and row in rows_for and verdict.verdict == "update":
             # A later state of the same thing (moved camps, decided after
             # deciding): a new fact on the timeline, linked to the old row
@@ -591,24 +566,27 @@ def update_from_facts(
             placed = []
         # One sentence may state several facts; any fact the model left out
         # is written as extracted, at the end of the section
+        # Each fact's row keeps the sentence that states it (shared when one
+        # sentence states several), so its quote and source kind are saved
         numbers = {n for n, _ in items}
-        written: set = set()
+        written: Dict[int, str] = {}
         for p in placed:
             facts = [n for n in p.facts if n in numbers and n not in written]
             if not facts or not p.sentence.strip():
                 continue
-            written.update(facts)
+            sentence = _clean_sentence(p.sentence, article_id)
+            written.update({n: sentence for n in facts})
             after = p.after.strip()
             section_edits.setdefault(section, []).append(
                 ProfileEdit(
                     op="add",
                     anchor=after if after and after != "END" else section,
-                    text=_clean_sentence(p.sentence, article_id),
+                    text=sentence,
                 )
             )
         for n, claim in items:
-            sentence = "" if n in written else _clean_sentence(claim.claim, article_id)
-            if sentence:
+            sentence = written.get(n) or _clean_sentence(claim.claim, article_id)
+            if n not in written:
                 section_edits.setdefault(section, []).append(
                     ProfileEdit(op="add", anchor=section, text=sentence)
                 )

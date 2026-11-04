@@ -493,21 +493,17 @@ def test_update_profile_can_use_the_fact_list(monkeypatch):
     assert history == []
 
 
-def test_a_new_date_for_the_same_past_event_is_a_conflict_not_an_update():
+def test_a_rescheduled_date_stays_on_the_timeline():
     claim = ArticleClaim(
-        claim="Nashiri was captured in the United Arab Emirates in November 2003.",
-        section="## Capture",
-        quote="captured in the United Arab Emirates in October 2002",
+        claim="The judge set a trial date for June 2016.",
+        section="## Legal Proceedings",
+        quote="judge ruled",
     )
-
-    def verdicts(messages):
-        return ClaimVerdicts(
-            verdicts=[ClaimVerdict(claim=1, verdict="update", row="f2")]
-        )
-
     answers = {
         "ArticleClaims": lambda m: ArticleClaims(claims=[claim]),
-        "ClaimVerdicts": verdicts,
+        "ClaimVerdicts": lambda m: ClaimVerdicts(
+            verdicts=[ClaimVerdict(claim=1, verdict="update", row="f5")]
+        ),
         "SectionPlacements": lambda m: SectionPlacements(),
     }
     generate, _ = _fake(answers)
@@ -520,8 +516,25 @@ def test_a_new_date_for_the_same_past_event_is_a_conflict_not_an_update():
         model="m",
         generate=generate,
     )
-    assert new["fact_report"]["update_to_conflict"] == 1
-    assert "November 2002.^[a1] Another report differs:" in new["text"]
+    assert new["fact_report"]["update"] == 1
+    assert "Another report differs" not in new["text"]
+    assert "February 2015.^[a3]" in new["text"] and "June 2016.^[a9]" in new["text"]
+
+
+def test_placed_facts_keep_their_quote_and_source_kind():
+    generate, _ = _fake(ANSWERS)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    saved = json.loads(new[FACT_ROWS_KEY])
+    placed = next(r for r in saved if "inadmissible" in r["text"])
+    assert placed["sources"][0]["quote"].startswith("a military judge ruled")
 
 
 def test_a_same_claim_with_a_new_number_is_written_not_dropped():
