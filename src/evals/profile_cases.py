@@ -94,9 +94,10 @@ def load_snapshots(entity_dir: str) -> Tuple[Dict[str, Any], Dict[int, Dict[str,
 
 
 # A period after these isn't a sentence end ("Rear Adm. Harris", "U.S.",
-# "George W. Bush", "Oct. 12"), so pieces ending in one are joined again
+# "George W. Bush", "Oct. 12", "9 a.m. Tuesday"), so pieces ending in one
+# are joined again
 _ABBREVIATION = re.compile(
-    r"(?:\b[A-Z]|\b(?:Adm|Gen|Lt|Col|Capt|Cmdr|Sgt|Maj|Mr|Mrs|Ms|Dr|St|Sen|Rep"
+    r"(?:\b[A-Z]|\b[ap]\.m|\b(?:Adm|Gen|Lt|Col|Capt|Cmdr|Sgt|Maj|Mr|Mrs|Ms|Dr|St|Sen|Rep"
     r"|Gov|Jr|Sr|No|Inc|Corp|Co|vs|Brig|Jan|Feb|Mar|Apr|Aug|Sept|Sep|Oct|Nov|Dec))\.$"
 )
 _MONTHS = (
