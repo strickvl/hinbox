@@ -291,11 +291,35 @@ def values_differ(claim: str, row_claim: str) -> bool:
     return bool(counts - r_counts and r_counts - counts and years & r_years)
 
 
-def adds_values(claim: str, row_claim: str) -> bool:
-    """The claim has a year, month or number the row doesn't."""
-    return any(
-        mine - theirs for mine, theirs in zip(_values(claim), _values(row_claim))
+# "one" is left out: "one of the 17 sailors" isn't a count of one
+_NUMBER_WORDS = dict(
+    zip(
+        "two three four five six seven eight nine ten eleven twelve thirteen "
+        "fourteen fifteen sixteen seventeen eighteen nineteen twenty".split(),
+        map(str, range(2, 21)),
     )
+)
+_NUMBER_WORD = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r")\b", re.IGNORECASE)
+
+
+def _digits(text: str) -> str:
+    """Spelled-out numbers as digits, so "seventeen sailors" matches "17"."""
+    return _NUMBER_WORD.sub(lambda m: _NUMBER_WORDS[m.group(1).lower()], text)
+
+
+def adds_values(claim: str, row_claim: str, profile_text: str = "") -> bool:
+    """The claim has a year, month or number that neither the row nor the
+    rest of the profile has.
+
+    Checked against the whole profile, not just the row: in the 60-article
+    Qwen run, 29 of 38 ``same`` claims with a value the row lacked were
+    background the profile already stated in another sentence ("killed 17
+    sailors", "Oct. 12, 2000" on the Cole, Yemen and al-Qaida profiles) or in
+    words ("seventeen"). Written as new facts, each article would have added
+    the Cole bombing again.
+    """
+    known = _values(_digits(f"{row_claim} {profile_text}"))
+    return any(mine - theirs for mine, theirs in zip(_values(_digits(claim)), known))
 
 
 def same_subject(claim: str, row_claim: str) -> bool:
@@ -482,9 +506,9 @@ def update_from_facts(
             verdict
             and row in rows_for
             and verdict.verdict == "same"
-            and adds_values(claim.claim, row["claim"])
+            and adds_values(claim.claim, row["claim"], text)
         ):
-            # "Same" but with a number or date the row lacks ("a 78-minute
+            # "Same" but with a number or date the profile lacks ("a 78-minute
             # secret session"): the detail is new, so write it, don't drop it
             tally["same_with_detail"] += 1
             verdict = None
