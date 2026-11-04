@@ -22,9 +22,9 @@ trial has 100+ articles. Here no model call ever sees the whole profile:
    finds a year, month or number that differs, ``values_differ()``) keeps both: code writes the
    new version right after the old sentence. ``new`` goes to step 5. Each
    claim is marked ``news`` (what the article reports) or background (history
-   it recaps); news is handled first. From an article not mainly about the
-   entity, background is dropped and at most ``MAX_PASSING_CLAIMS`` new news
-   claims are kept.
+   it recaps); news is handled first. At most ``MAX_BACKGROUND_CLAIMS`` new
+   background claims are kept, and from an article not mainly about the
+   entity at most ``MAX_PASSING_CLAIMS`` new claims in all.
 4b. **Date check** (code pairs, one model call; ``date_disputes.py``): a date
    in a sentence step 1 skipped ("the bombing on Oct. 12, 1999") that differs
    from a profile sentence on the same event is written after it, like a conflict.
@@ -59,7 +59,8 @@ from src.utils.step_timing import timed_step
 FACT_MAX_TOKENS = 4096
 MAX_CANDIDATES = 4  # existing rows shown beside each new claim
 MIN_SHARED = 2  # word stems a row must share with a claim to be shown
-MAX_PASSING_CLAIMS = 3  # news claims kept from an article not mainly about the entity
+MAX_PASSING_CLAIMS = 2  # new claims kept from an article not mainly about the entity
+MAX_BACKGROUND_CLAIMS = 1  # new background claims kept from any article
 MIN_QUOTE_WORDS = 0.9
 # Share of the shorter sentence's word stems a conflicting row must share
 SAME_SUBJECT = 0.4
@@ -544,10 +545,12 @@ def update_from_facts(
         "same_with_detail": 0,
         "new": 0,
     }
+    kept_background = 0
     for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
         verdict = verdicts.get(n)
+        log = report["claim_log"][n - 1]
         if verdict:
-            report["claim_log"][n - 1].update(verdict=verdict.verdict, row=verdict.row)
+            log.update(verdict=verdict.verdict, row=verdict.row)
         # A verdict naming a row it wasn't shown is a slip: treat it as new
         row = by_id.get(verdict.row) if verdict else None
         if (
@@ -616,15 +619,19 @@ def update_from_facts(
             )
             continue
         tally["new"] += 1
-        # Capped among the *new* claims only: articles open with background
-        # the profile has ("the bombing killed 17 sailors"), and capping the
-        # first two claims kept those and dropped the new charge further down
-        # A passing mention's background ("bin al Shibh is a Yemeni") is
-        # dropped; only what the article reports about the entity is kept
-        if not answer.mainly_about and (
-            not claim.news or tally["new"] > MAX_PASSING_CLAIMS
-        ):
+        # Capped among the *new* claims only, news first: articles open with
+        # background ("the bombing killed 17 sailors"), and capping the first
+        # two claims in article order kept those and dropped the new charge
+        # further down. Background is capped even in an article about the
+        # entity: on dev, Luna added "The bombing left 37 people wounded" and
+        # three more recap sentences from Cole hearing articles
+        if not claim.news:
+            kept_background += 1
+        if (
+            not answer.mainly_about and tally["new"] > MAX_PASSING_CLAIMS
+        ) or kept_background > MAX_BACKGROUND_CLAIMS:
             tally["new"] -= 1
+            log["dropped"] = True
             report.setdefault("dropped_passing", []).append(claim.claim)
             continue
         near = rows_for[0]["section"] if rows_for else ""
