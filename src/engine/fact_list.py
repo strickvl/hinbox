@@ -50,8 +50,9 @@ MIN_QUOTE_WORDS = 0.9
 # Share of the shorter sentence's word stems a conflicting row must share
 SAME_SUBJECT = 0.4
 # ...and the share above which an ``update`` with a different date is really
-# the same event given a different date (a conflict)
-SAME_EVENT = 0.6  # share of a loose quote's words that must be in the article
+# the same event given a different date (a conflict). 0.6 never fired in 180+
+# updates on dev/test: claims are worded differently from the stored row
+SAME_EVENT = 0.4  # share of a loose quote's words that must be in the article
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 _HEADING = re.compile(r"^#{1,6} .*$", re.MULTILINE)
 _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)*\b")
@@ -481,12 +482,26 @@ def update_from_facts(
         "update": 0,
         "update_to_conflict": 0,
         "same_with_detail": 0,
+        "same_to_conflict": 0,
         "new": 0,
     }
     for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
         verdict = verdicts.get(n)
         # A verdict naming a row it wasn't shown is a slip: treat it as new
         row = by_id.get(verdict.row) if verdict else None
+        trusted_match = False
+        if (
+            verdict
+            and row in rows_for
+            and verdict.verdict == "same"
+            and dates_differ(claim.claim, row["claim"])
+        ):
+            # The model says it's the same claim, yet the year or month
+            # differs: that is a conflict. On test Luna called "the bombing
+            # was on Oct. 12, 1999" the same as the row giving 2000
+            tally["same_to_conflict"] += 1
+            verdict = verdict.model_copy(update={"verdict": "conflict"})
+            trusted_match = True
         if (
             verdict
             and row in rows_for
@@ -519,7 +534,7 @@ def update_from_facts(
         if verdict and row in rows_for and verdict.verdict == "conflict":
             if not (
                 values_differ(claim.claim, row["claim"])
-                and same_subject(claim.claim, row["claim"])
+                and (trusted_match or same_subject(claim.claim, row["claim"]))
             ):
                 tally["not_conflict"] += 1  # written as a plain new fact below
                 verdict = None
@@ -530,6 +545,7 @@ def update_from_facts(
             and dates_differ(claim.claim, row["claim"])
             and same_subject(claim.claim, row["claim"], SAME_EVENT)
         ):
+            trusted_match = True
             # A past event can't move: "the bombing was on Oct. 12, 1999"
             # against "Oct. 12, 2000" in nearly the same words is a conflict.
             # On test, Qwen and Luna called every planted date change an update
