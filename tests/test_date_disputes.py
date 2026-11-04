@@ -226,3 +226,31 @@ def test_publication_dates_are_not_event_dates():
         "Khadr pleaded guilty in October 2011.",
         "The May 1, 2010 article said Khadr pleaded guilty in October 2010.",
     )
+
+
+def test_a_re_cited_row_is_still_date_checked():
+    from src.engine.fact_list import ClaimVerdict
+
+    assignment = ArticleClaim(
+        claim="In July 2014, Smith was assigned to the case against Nashiri.",
+        section="## Career",
+        quote="Judge Smith ruled on Tuesday",
+        source="court record",
+    )
+
+    def generate(messages, response_model, model, max_tokens):
+        if response_model is ArticleClaims:
+            return ArticleClaims(claims=[assignment])
+        if response_model is ClaimVerdicts:
+            return ClaimVerdicts(
+                verdicts=[
+                    ClaimVerdict(claim=1, verdict="same", row="f1", new_evidence=True)
+                ]
+            )
+        if response_model is DateVerdicts:
+            return _conflict()(messages)
+        return SectionPlacements(placements=[])
+
+    new = _update(generate)
+    recited = OLD.replace("^[a1]", "^[a1, a9]")
+    assert f"{recited} Another report differs: The USS Cole" in new["text"]

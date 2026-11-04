@@ -478,7 +478,6 @@ def update_from_facts(
         verdicts = {v.claim: v for v in compared.verdicts}
 
     by_id = {r["id"]: r for r in rows}
-    texts_before = {r["id"]: r["text"] for r in rows}
     section_edits: Dict[str, List[ProfileEdit]] = {}
     new_facts: Dict[str, List[Tuple[int, ArticleClaim]]] = {}
     tally = {
@@ -577,7 +576,6 @@ def update_from_facts(
         _add_date_disputes(
             ask,
             rows,
-            texts_before,
             new_facts,
             section_edits,
             article_text,
@@ -673,7 +671,6 @@ def update_from_facts(
 def _add_date_disputes(
     ask: Callable[..., Any],
     rows: List[Dict[str, Any]],
-    texts_before: Dict[str, str],
     new_facts: Dict[str, List[Tuple[int, ArticleClaim]]],
     section_edits: Dict[str, List[ProfileEdit]],
     article_text: str,
@@ -689,11 +686,10 @@ def _add_date_disputes(
     twice; a second fact from the same sentence ("...dismissed the charges on
     Tuesday") stays.
     """
-    # Rows re-cited by this update have new text to anchor on; leave them
-    current = {r["id"]: r["text"] for r in rows}
-    changed = {i for i, t in texts_before.items() if current.get(i) != t}
+    # A row re-cited in step 4 is still checked: its ``text`` is already the
+    # re-cited sentence, and edits apply in order, so the dispute goes after it
     disputes, found = find_date_disputes(
-        ask, rows, article_text, article_id, skip=changed
+        ask, rows, article_text, article_id, skip=set()
     )
     report.update(found)
     for dispute in disputes:
