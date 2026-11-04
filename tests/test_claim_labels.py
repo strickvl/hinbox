@@ -132,3 +132,6 @@ def test_time_of_day_does_not_split_a_cited_sentence():
     text = "Bin al Shibh refused to leave his cell until 9 a.m. Tuesday.^[a9]"
     label = {"facts": [{"id": "refused", "match": [["refus"], ["cell"]]}]}
     assert cl.score_claims(label, "", text, "a9")["claims_ok"]
+    # A time that really ends a sentence still ends it
+    two = "He refused to leave his cell until 9 a.m. The hearing resumed.^[a9]"
+    assert not cl.score_claims(label, "", two, "a9")["claims_ok"]
