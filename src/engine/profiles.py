@@ -524,6 +524,62 @@ def _edit_profile_update(
     }, []
 
 
+def _fact_profile_update(
+    entity_type: str,
+    entity_name: str,
+    existing_profile: Dict,
+    new_article_text: str,
+    new_article_id: str,
+    model_type: str = "gemini",
+    domain: str = "guantanamo",
+    model: Optional[str] = None,
+) -> Tuple[Dict, list]:
+    """Update from the profile's fact list (``src/engine/fact_list.py``).
+
+    Saves the rows under ``fact_rows_json`` for the next update; the step
+    report is logged, not stored. Falls back to the existing profile on failure.
+    """
+    from src.engine.fact_list import FACT_ROWS_KEY, update_from_facts
+
+    if _resolve_mode(model_type, model) == GenerationMode.LOCAL and not model:
+        model = OLLAMA_MODEL
+    try:
+        updated = update_from_facts(
+            entity_type,
+            entity_name,
+            existing_profile,
+            new_article_text,
+            new_article_id,
+            model=model,
+            domain=domain,
+        )
+    except Exception as e:
+        log(
+            f"Fact-list update failed for {entity_name}, keeping existing profile: {e}",
+            level="warning",
+        )
+        return existing_profile, []
+    report = updated["fact_report"]
+    log(
+        f"Fact-list update for {entity_name}: {report.get('claims', 0)} claims, "
+        f"{report.get('new', 0)} new, {report.get('same', 0)} same, "
+        f"{report.get('update', 0)} timeline, {report.get('conflict', 0)} conflict",
+        level="debug",
+    )
+    return {
+        **existing_profile,
+        "text": updated["text"],
+        "sources": updated["sources"],
+        FACT_ROWS_KEY: updated[FACT_ROWS_KEY],
+    }, []
+
+
+_UPDATERS = {
+    "edit": _edit_profile_update,
+    "facts": _fact_profile_update,
+}
+
+
 @timed("profile.update")
 def update_profile(
     entity_type: str,
@@ -540,7 +596,8 @@ def update_profile(
     """
     Update profile and add version if versioning is enabled.
 
-    ``approach`` is "edit" or "rewrite" (default: ``PROFILE_UPDATE_APPROACH``).
+    ``approach`` is "edit", "facts" (the fact-list updater) or "rewrite"
+    (default: ``PROFILE_UPDATE_APPROACH``).
     Returns (updated_profile, versioned_profile, improvement_history); the
     edit approach has no reflection rounds, so its history is empty.
     """
@@ -552,9 +609,9 @@ def update_profile(
         approach=approach,
         chars_before=len(str(existing_profile.get("text") or "")),
     )
-    if approach not in ("edit", "rewrite"):
+    if approach not in ("edit", "rewrite", "facts"):
         raise ValueError(f"Unknown profile update approach: {approach!r}")
-    update = _edit_profile_update if approach == "edit" else _update_profile_internal
+    update = _UPDATERS.get(approach, _update_profile_internal)
     updated_profile, history = update(
         entity_type,
         entity_name,

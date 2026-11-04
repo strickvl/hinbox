@@ -30,6 +30,7 @@ sentence, with its section and sources. Unchanged sections are copied as they
 were, word for word.
 """
 
+import json
 import re
 from difflib import SequenceMatcher
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
@@ -46,7 +47,9 @@ FACT_MAX_TOKENS = 4096
 MAX_CANDIDATES = 4  # existing rows shown beside each new claim
 MIN_SHARED = 2  # word stems a row must share with a claim to be shown
 MAX_PASSING_CLAIMS = 2  # claims kept from an article not mainly about the entity
-MIN_QUOTE_WORDS = 0.9  # share of a loose quote's words that must be in the article
+MIN_QUOTE_WORDS = 0.9
+# Share of the shorter sentence's word stems a conflicting row must share
+SAME_SUBJECT = 0.4
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 _HEADING = re.compile(r"^#{1,6} .*$", re.MULTILINE)
 _NUMBER = re.compile(r"\b\d+(?:[.,]\d+)*\b")
@@ -88,8 +91,10 @@ class ArticleClaims(BaseModel):
 
 class ClaimVerdict(BaseModel):
     claim: int = Field(description="The claim's number")
-    verdict: Literal["same", "new", "conflict"]
-    row: str = Field(default="", description="The known fact's id, for same/conflict")
+    verdict: Literal["same", "new", "update", "conflict"]
+    row: str = Field(
+        default="", description="The known fact's id, for same/update/conflict"
+    )
     new_evidence: bool = False
 
 
@@ -154,7 +159,7 @@ def rows_from_profile(text: str) -> List[Dict[str, Any]]:
                 continue
             rows.append(
                 {
-                    "id": f"f{len(rows) + 1}",
+                    "id": f"f{_next_id(rows)}",
                     "section": section,
                     "claim": _CITATION.sub("", sentence).strip(),
                     "text": sentence,
@@ -162,6 +167,33 @@ def rows_from_profile(text: str) -> List[Dict[str, Any]]:
                     "repeats": [],
                 }
             )
+    return rows
+
+
+FACT_ROWS_KEY = "fact_rows_json"  # a JSON string, so Parquet sees one column
+
+
+def load_rows(profile: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The profile's saved rows, plus rows for cited sentences they don't cover.
+
+    Saved rows keep what the text can't: each source's kind and quote, the
+    articles that only repeated a fact, which row a conflict disputes. A saved
+    row whose sentence is no longer in the text (the profile was rewritten
+    another way) is dropped, so rows and text can't drift apart.
+    """
+    text = profile.get("text", "")
+    try:
+        saved = json.loads(profile.get(FACT_ROWS_KEY) or "[]")
+    except (TypeError, ValueError):
+        saved = []
+    rows = [r for r in saved if r.get("text") and r["text"] in text]
+    covered = {r["text"] for r in rows}
+    used = {int(r["id"][1:]) for r in rows if str(r.get("id", ""))[1:].isdigit()}
+    next_id = max(used, default=0) + 1
+    for row in rows_from_profile(text):
+        if row["text"] not in covered:
+            rows.append({**row, "id": f"f{next_id}"})
+            next_id += 1
     return rows
 
 
@@ -257,6 +289,22 @@ def values_differ(claim: str, row_claim: str) -> bool:
     # A count changes over time ("12 captives were on hunger strike" against
     # "about 100 were"), so it only conflicts when both give the same year
     return bool(counts - r_counts and r_counts - counts and years & r_years)
+
+
+def adds_values(claim: str, row_claim: str) -> bool:
+    """The claim has a year, month or number the row doesn't."""
+    return any(
+        mine - theirs for mine, theirs in zip(_values(claim), _values(row_claim))
+    )
+
+
+def same_subject(claim: str, row_claim: str) -> bool:
+    """Code's second check on a ``conflict``: the two sentences are mostly
+    about the same thing, numbers aside. Two different events with different
+    years ("still deciding" in 2009, "decided" in 2011) share less."""
+    mine, theirs = _stems(claim), _stems(row_claim)
+    smaller = min(len(mine), len(theirs)) or 1
+    return len(mine & theirs) / smaller >= SAME_SUBJECT
 
 
 def _match_heading(
@@ -369,7 +417,7 @@ def update_from_facts(
     model = model or (OLLAMA_MODEL if local else CLOUD_MODEL)
     generate = generate or (local_generation if local else cloud_generation)
     text = existing_profile.get("text", "")
-    rows = rows_from_profile(text)
+    rows = load_rows(existing_profile)
     chunks = split_sections(text)
     headings = [h for h in (_heading(c) for c in chunks) if h]
     names = {"entity_type": entity_type, "entity_name": entity_name}
@@ -417,11 +465,29 @@ def update_from_facts(
     by_id = {r["id"]: r for r in rows}
     section_edits: Dict[str, List[ProfileEdit]] = {}
     new_facts: Dict[str, List[Tuple[int, ArticleClaim]]] = {}
-    tally = {"same": 0, "new_evidence": 0, "conflict": 0, "new": 0, "not_conflict": 0}
+    tally = {
+        "same": 0,
+        "new_evidence": 0,
+        "conflict": 0,
+        "not_conflict": 0,
+        "update": 0,
+        "same_with_detail": 0,
+        "new": 0,
+    }
     for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
         verdict = verdicts.get(n)
         # A verdict naming a row it wasn't shown is a slip: treat it as new
         row = by_id.get(verdict.row) if verdict else None
+        if (
+            verdict
+            and row in rows_for
+            and verdict.verdict == "same"
+            and adds_values(claim.claim, row["claim"])
+        ):
+            # "Same" but with a number or date the row lacks ("a 78-minute
+            # secret session"): the detail is new, so write it, don't drop it
+            tally["same_with_detail"] += 1
+            verdict = None
         if verdict and row in rows_for and verdict.verdict == "same":
             tally["same"] += 1
             if verdict.new_evidence:
@@ -437,26 +503,44 @@ def update_from_facts(
                 section_edits.setdefault(row["section"], []).append(
                     ProfileEdit(op="replace", anchor=row["text"], text=cited)
                 )
+                # Rows that share this sentence follow it, or they'd be lost
+                for other in rows:
+                    if other is not row and other.get("text") == row["text"]:
+                        other["text"] = cited
+                row["text"] = cited
             else:
                 row["repeats"].append(article_id)
             continue
         if verdict and row in rows_for and verdict.verdict == "conflict":
-            if not values_differ(claim.claim, row["claim"]):
+            if not (
+                values_differ(claim.claim, row["claim"])
+                and same_subject(claim.claim, row["claim"])
+            ):
                 tally["not_conflict"] += 1  # written as a plain new fact below
                 verdict = None
+        if verdict and row in rows_for and verdict.verdict == "update":
+            # A later state of the same thing (moved camps, decided after
+            # deciding): a new fact on the timeline, linked to the old row
+            tally["update"] += 1
+            claim.section = row["section"]  # next to the state it follows
+            verdict = None
         if verdict and row in rows_for and verdict.verdict == "conflict":
             # Written by code, right after the old sentence: both stay, each cited
             tally["conflict"] += 1
             body = _CITATION.sub("", claim.claim).strip()
+            sentence = f"Another report differs: {body}^[{article_id}]"
             section_edits.setdefault(row["section"], []).append(
-                ProfileEdit(
-                    op="add",
-                    anchor=row["text"],
-                    text=f"Another report differs: {body}^[{article_id}]",
-                )
+                ProfileEdit(op="add", anchor=row["text"], text=sentence)
             )
             rows.append(
-                _new_row(rows, row["section"], claim, article_id, disputes=row["id"])
+                _new_row(
+                    rows,
+                    row["section"],
+                    claim,
+                    article_id,
+                    text=sentence,
+                    disputes=row["id"],
+                )
             )
             continue
         tally["new"] += 1
@@ -490,24 +574,27 @@ def update_from_facts(
             placed = []
         # One sentence may state several facts; any fact the model left out
         # is written as extracted, at the end of the section
+        # Each fact's row keeps the sentence that states it (shared when one
+        # sentence states several), so its quote and source kind are saved
         numbers = {n for n, _ in items}
-        written: set = set()
+        written: Dict[int, str] = {}
         for p in placed:
             facts = [n for n in p.facts if n in numbers and n not in written]
             if not facts or not p.sentence.strip():
                 continue
-            written.update(facts)
+            sentence = _clean_sentence(p.sentence, article_id)
+            written.update({n: sentence for n in facts})
             after = p.after.strip()
             section_edits.setdefault(section, []).append(
                 ProfileEdit(
                     op="add",
                     anchor=after if after and after != "END" else section,
-                    text=_clean_sentence(p.sentence, article_id),
+                    text=sentence,
                 )
             )
         for n, claim in items:
-            sentence = "" if n in written else _clean_sentence(claim.claim, article_id)
-            if sentence:
+            sentence = written.get(n) or _clean_sentence(claim.claim, article_id)
+            if n not in written:
                 section_edits.setdefault(section, []).append(
                     ProfileEdit(op="add", anchor=section, text=sentence)
                 )
@@ -544,9 +631,19 @@ def update_from_facts(
         **existing_profile,
         "text": new_text,
         "sources": sources + ([article_id] if article_id not in sources else []),
+        # Rows whose sentence made it into the text; saved for the next update
+        FACT_ROWS_KEY: json.dumps(
+            [r for r in rows if r.get("text") and r["text"] in new_text],
+            ensure_ascii=False,
+        ),
         "fact_rows": rows,
         "fact_report": report,
     }
+
+
+def _next_id(rows: List[Dict[str, Any]]) -> int:
+    ids = [int(r["id"][1:]) for r in rows if str(r.get("id", ""))[1:].isdigit()]
+    return max(ids, default=0) + 1
 
 
 def _new_row(
@@ -558,7 +655,7 @@ def _new_row(
     disputes: Optional[str] = None,
 ) -> Dict[str, Any]:
     row: Dict[str, Any] = {
-        "id": f"f{len(rows) + 1}",
+        "id": f"f{_next_id(rows)}",
         "section": section,
         "claim": claim.claim,
         "text": text,
