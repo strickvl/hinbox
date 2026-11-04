@@ -89,3 +89,23 @@ def test_parse_tolerates_a_header_missing_its_closing_hashes():
 def test_parse_reads_only_the_first_word_of_the_answer():
     text = REPLY.replace("True", "False\nThey are different moments.")
     assert parse_sectioned_reply(text).is_match is False
+
+
+def test_parse_reads_confidence_before_a_completed_marker_without_a_space():
+    """GPT-6 Luna ends with "[[ ## completed ##]]"; that used to be glued onto
+    the confidence, which then failed to parse and fell back to 0.5."""
+    luna = (
+        "[[ ## reasoning ## ]]\nSame lockdown.\n\n[[ ## is_match ## ]]\nTrue\n\n"
+        "[[ ## confidence ## ]]\n0.95\n\n[[ ## completed ##]]"
+    )
+    result = parse_sectioned_reply(luna)
+    assert result.is_match is True
+    assert result.confidence == pytest.approx(0.95)
+
+
+@pytest.mark.parametrize(
+    "written, expected", [("**0.8**", 0.8), ("0.7 (fairly sure)", 0.7), ("85%", 0.85)]
+)
+def test_parse_reads_a_decorated_confidence(written, expected):
+    reply = REPLY.replace("0.92", written)
+    assert parse_sectioned_reply(reply).confidence == pytest.approx(expected)
