@@ -49,8 +49,9 @@ PROFILE_UPDATE_APPROACH = os.getenv("HINBOX_PROFILE_UPDATE_APPROACH", "edit").st
 # How create_profile() writes a first profile. "check" (default): one draft,
 # code fixes, at most one repair call (src/engine/profile_create.py). "reflect":
 # a draft, then up to 3 rounds of a model reviewer (which never sees the
-# article) and a fresh redraft. On 6 labelled first articles (Luna) check found
-# 10/26 labelled facts vs 6/26 and missed 6 core facts vs 13, with half the calls.
+# article) and a fresh redraft. On 6 labelled first articles both stated the
+# labelled facts (Luna 26/26 each, Qwen 25/26 each) with 1/2 (Luna) to 1/3
+# (Qwen) of the calls.
 PROFILE_CREATE_APPROACH = os.getenv("HINBOX_PROFILE_CREATE_APPROACH", "check").strip()
 DEFAULT_TEMPERATURE = 0
 # Output limit for reflection verdicts (valid, reasoning, issues)
