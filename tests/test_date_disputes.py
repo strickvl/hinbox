@@ -84,6 +84,7 @@ def test_dates_differ_needs_a_value_on_each_side():
     assert dates_differ("moved in September 2005", "transferred in September 2006")
     assert dates_differ("captured in October 2002", "captured in November 2002")
     assert dates_differ("on Oct. 12, 1999", "the October 2000 bombing")
+    assert dates_differ("captured in Mar. 2002", "captured in April 2002")
     # An extra year on one side is more detail, not another date
     assert not dates_differ("opened in 2002 and grew in 2006", "opened in 2002")
     assert not dates_differ("opened in 2002", "it opened in January 2002")

@@ -56,7 +56,7 @@ DATE_CHECK_ENV = "HINBOX_FACT_DATE_CHECK"
 _CITATION = re.compile(r"\^\[([^\]]+)\]")
 _YEAR = re.compile(r"\b(?:1[89]|20)\d\d\b")
 _MONTH = re.compile(
-    r"\b(Jan(?:uary)?|Feb(?:ruary)?|March|April|May|June|July|Aug(?:ust)?"
+    r"\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?"
     r"|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b\.?"
 )
 _DATE = rf"(?:{_MONTH.pattern}\s+(?:\d{{1,2}},?\s+)?)?(?:1[89]|20)\d\d"
