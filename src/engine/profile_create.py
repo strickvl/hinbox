@@ -81,7 +81,8 @@ def _cite_paragraphs(text: str, article_id: str) -> Tuple[str, int]:
     out = []
     for part in paragraphs:
         body = part.strip()
-        if body and not body.startswith("#") and marker not in part:
+        # Cite any block with prose, even one that opens with its heading line
+        if body and marker not in part:
             lines = part.rstrip().split("\n")
             prose = [i for i, ln in enumerate(lines) if not ln.lstrip().startswith("#")]
             if prose and lines[prose[-1]].strip():
@@ -162,6 +163,7 @@ def create_with_checks(
     """
     profile = parse_draft(draft(generation_messages))
     history: List[Dict[str, Any]] = []
+    calls = 1
     problems = model_problems(profile)
     if problems and problems[0] in ("unparseable", "too_short"):
         retry = generation_messages + [
@@ -173,16 +175,19 @@ def create_with_checks(
         ]
         with timed_step("regenerate"):
             profile = parse_draft(draft(retry)) or profile
+        calls += 1
         history.append({"iteration": 1, "check": "code", "problems": problems})
         problems = model_problems(profile)
     if profile is None:
         return None, history
     profile, fixed = code_fixes(profile, article_id, entity_type)
-    if problems == ["no_headings"]:
+    # One repair call at most: a redraft already used it
+    if problems == ["no_headings"] and calls == 1:
         messages = [
             {"role": "system", "content": HEADINGS_PROMPT},
             {"role": "user", "content": profile["text"]},
         ]
+        calls += 1
         try:
             with timed_step("repair.headings"):
                 reply = write_text(messages)
@@ -204,6 +209,7 @@ def create_with_checks(
             "problems": problems,
             "fixed": fixed,
             "issues": remaining,
+            "model_calls": calls,
         }
     )
     return profile, history

@@ -141,11 +141,13 @@ def test_count_calls_reads_both_histories():
         count_calls("reflect", [{"valid": False, "reasoning": "Reflection failed: x"}])
         == 2
     )
-    check = [
-        {"check": "code", "problems": ["no_headings"], "fixed": ["headings_added"]}
-    ]
+    check = [{"check": "code", "problems": ["no_headings"], "model_calls": 2}]
     assert count_calls("check", check) == 2
-    assert count_calls("check", [{"check": "code", "problems": [], "fixed": []}]) == 1
+    redraft = [
+        {"problems": ["too_short"]},
+        {"problems": ["too_short"], "model_calls": 2},
+    ]
+    assert count_calls("check", redraft) == 2
 
 
 def test_score_profile_flags_wrong_ids_and_novel_names():
@@ -159,3 +161,19 @@ def test_score_profile_flags_wrong_ids_and_novel_names():
     s = score_profile(text, "a1", article)
     assert s["wrong_ids"] == 1 and s["headings"] == 1 and s["uncited_paragraphs"] == 0
     assert s["names_not_in_article"] == ["2009", "obama"]
+
+
+def test_heading_block_with_uncited_prose_gets_cited():
+    text = "### Background\nUncited fact one.\n\n### Role\nUncited fact two."
+    profile, _ = code_fixes({"text": text, "tags": ["a", "b"]}, AID, "people")
+    assert profile["text"] == (
+        f"### Background\nUncited fact one.^[{AID}]\n\n"
+        f"### Role\nUncited fact two.^[{AID}]"
+    )
+
+
+def test_redraft_uses_the_repair_budget():
+    body = "John Smith is a lawyer for the detainee and spoke to reporters on Monday."
+    profile, history, calls = _run(["{}", _draft(body + " " + body)], "### X\n" + body)
+    assert calls == {"draft": 2, "text": 0}
+    assert history[-1]["model_calls"] == 2

@@ -113,13 +113,7 @@ def replay_cases(eval_dir: str) -> List[Dict[str, Any]]:
 def count_calls(approach: str, history: List[Dict[str, Any]]) -> int:
     """Model calls behind one profile, read from its history."""
     if approach == "check":
-        calls = 1
-        for h in history:
-            if h.get("problems") and h["problems"][0] in ("unparseable", "too_short"):
-                calls += 1
-            fixed = h.get("fixed") or []
-            calls += any(f.startswith("headings_") for f in fixed)
-        return calls
+        return max((h.get("model_calls") or 0 for h in history), default=1) or 1
     regenerations = sum(
         1
         for h in history
