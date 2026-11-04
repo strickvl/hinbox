@@ -6,6 +6,7 @@ from src.engine.date_disputes import (
     date_check_enabled,
     date_pairs,
     dates_differ,
+    dates_share_context,
     dispute_text,
 )
 from src.engine.fact_list import (
@@ -279,3 +280,18 @@ def test_two_shared_words_need_the_same_subject():
     )
     article = "President Bush had Nashiri moved to Guantánamo in September 2006."
     assert not date_pairs(rows_from_profile(profile), article, set())
+
+
+def test_the_dates_must_sit_next_to_shared_words():
+    # The hearing's date and the grenade's date: one sentence names both
+    # events, but the 2010 sits by "hearing" and the 2002 by "grenade"
+    hearing = (
+        "At the May 2010 suppression hearing, prosecutors argued that Khadr "
+        "confessed to throwing the grenade that killed Christopher Speer."
+    )
+    grenade = "Khadr admitted to throwing a grenade in July 2002 that killed a soldier."
+    assert not dates_share_context(grenade, hearing)
+    assert dates_share_context(
+        "Khadr pleaded guilty to war crimes in October 2010.",
+        "He had pleaded guilty to war crimes in 2011 in exchange for return to Canada.",
+    )

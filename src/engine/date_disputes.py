@@ -44,6 +44,15 @@ MIN_DATE_SHARED = 2  # and at least this many words
 # Mohammed in 2009" / "withdrew the 2008 case") passes it
 WEAK_SHARED = 2
 SAME_SUBJECT = 0.4
+# Words either side of a differing date; the two sentences must share one.
+# On the eval, every wrongly written dispute paired dates of two different
+# events about one entity: "At the May 2010 suppression hearing, prosecutors
+# argued ... the grenade" against "Khadr admitted to throwing a grenade in July
+# 2002"; "As of August 2011, defense lawyers were assembling teams" against
+# the 9/11 attacks. The words next to each date name its event ("hearing",
+# "hijacked"), and in every real or planted dispute they shared one ("pleaded
+# guilty ... in 2011" / "pleaded guilty ... in October 2010")
+DATE_WINDOW = 6
 MAX_DATE_PAIRS = 8  # pairs shown to the model per article
 # Rows one article sentence may be paired with: a profile often states one
 # event in two sections, and the closest by words isn't always the one dated
@@ -155,6 +164,30 @@ def overlap(a: str, b: str) -> Tuple[int, float]:
     return shared, shared / (min(len(mine), len(theirs)) or 1)
 
 
+def _near_dates(text: str, years: Set[str]) -> Set[str]:
+    """The words within ``DATE_WINDOW`` words of each of ``years``."""
+    text = _PUBLISHED.sub("the article", _CITATION.sub("", text))
+    tokens = re.findall(r"[A-Za-z0-9'’-]+", text)
+    found: Set[str] = set()
+    for i, token in enumerate(tokens):
+        if token in years:
+            found |= _words(
+                " ".join(tokens[max(0, i - DATE_WINDOW) : i + DATE_WINDOW + 1])
+            )
+    return found
+
+
+def dates_share_context(article_sentence: str, profile_sentence: str) -> bool:
+    """The words around the differing dates overlap, so both dates are
+    attached to the same event. Where only a month differs, the shared year
+    is the anchor."""
+    a_years, p_years = _dates(article_sentence)[0], _dates(profile_sentence)[0]
+    a_only, p_only = (a_years - p_years) or a_years, (p_years - a_years) or p_years
+    return bool(
+        _near_dates(article_sentence, a_only) & _near_dates(profile_sentence, p_only)
+    )
+
+
 def _same_subject(a: str, b: str) -> bool:
     mine = {w[:5] for w in _content_words(a)}
     theirs = {w[:5] for w in _content_words(b)}
@@ -182,6 +215,8 @@ def date_pairs(
                 continue
             shared, share = overlap(sentence, row["claim"])
             if shared <= WEAK_SHARED and not _same_subject(sentence, row["claim"]):
+                continue
+            if not dates_share_context(sentence, row["claim"]):
                 continue
             if shared >= MIN_DATE_SHARED and share >= DATE_PAIR_OVERLAP:
                 context = sentences[i - 1] if i else ""
