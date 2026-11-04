@@ -303,7 +303,7 @@ def summarize_creates(records: List[Dict[str, Any]], approach: str) -> Dict[str,
         out["mean_grounding"] = round(sum(scores) / len(scores), 3) if scores else None
     if c:
         out["labelled"] = len(c)
-        for key in ("facts_found", "core_missing", "must_not_hits"):
+        for key in ("claims_expected", "claims_found", "core_missing", "must_not_hits"):
             vals = [x.get(key) for x in c]
             out[key] = sum(len(v) if isinstance(v, list) else (v or 0) for v in vals)
     return out
