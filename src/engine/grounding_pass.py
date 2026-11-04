@@ -7,17 +7,17 @@ written back to the entity dicts on the calling thread.
 """
 
 import contextvars
-import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple
 
 from src.engine.article_processor import ArticleProcessor
 from src.logging_config import log
-from src.utils.quality_controls import (
-    CITATION_RE,
+from src.utils.grounding import (
     GroundingReport,
+    grounding_is_current,
     verify_profile_grounding,
 )
+from src.utils.quality_controls import CITATION_RE
 
 
 def run_profile_grounding_postprocess(
@@ -32,11 +32,15 @@ def run_profile_grounding_postprocess(
 
     For each entity with citations in its profile, verifies that claims are
     supported by source article text. Stores the grounding report on each
-    entity as entity["profile_grounding"]. Skips entities whose profile
-    hasn't changed since the last verification (hash-based). Up to
+    entity as entity["profile_grounding"]. Skips entities whose stored report
+    is still current (``grounding_is_current()``: same text, and no failed or
+    newly available source). Otherwise the stored report goes to the check,
+    which re-asks the model only for articles that need it. Up to
     ``workers`` profiles are checked at once.
 
-    Returns summary counts of verified/skipped/failed entities.
+    Returns summary counts: ``verified`` profiles, ``skipped_unchanged``,
+    ``skipped_no_citations``, plus ``llm_checks`` (article checks sent to the
+    model) and ``reused_checks`` (article checks kept from earlier reports).
     """
     # Build article_id -> content map from rows
     article_texts: Dict[str, str] = {}
@@ -45,7 +49,13 @@ def run_profile_grounding_postprocess(
         if info["id"] and info["content"]:
             article_texts[info["id"]] = info["content"]
 
-    counts = {"verified": 0, "skipped_unchanged": 0, "skipped_no_citations": 0}
+    counts = {
+        "verified": 0,
+        "skipped_unchanged": 0,
+        "skipped_no_citations": 0,
+        "llm_checks": 0,
+        "reused_checks": 0,
+    }
     jobs: List[Tuple[str, str, Dict[str, Any], str]] = []
 
     for entity_type, entity_dict in entities.items():
@@ -59,33 +69,40 @@ def run_profile_grounding_postprocess(
                 counts["skipped_no_citations"] += 1
                 continue
 
-            # Skip if profile hasn't changed since last grounding check
-            current_hash = hashlib.sha256(profile_text.encode()).hexdigest()
-            existing_grounding = entity_data.get("profile_grounding")
-            if (
-                isinstance(existing_grounding, dict)
-                and existing_grounding.get("profile_text_hash") == current_hash
-            ):
+            # Skip if the stored report still answers for this text and these
+            # articles. A report with a failed call or a missing source that is
+            # now available is not current, even when the text is unchanged.
+            existing = entity_data.get("profile_grounding")
+            if grounding_is_current(existing, profile_text, article_texts):
                 counts["skipped_unchanged"] += 1
                 continue
             jobs.append((entity_type, entity_key, entity_data, profile_text))
 
-    def verify(profile_text: str) -> GroundingReport:
+    def verify(profile_text: str, previous: Any) -> GroundingReport:
         return verify_profile_grounding(
             profile_text=profile_text,
             article_texts=article_texts,
             model_type=model_type,
+            previous=previous,
         )
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         # copy_context() so each check's timing nests under the caller's step
         futures = [
-            pool.submit(contextvars.copy_context().run, verify, job[3]) for job in jobs
+            pool.submit(
+                contextvars.copy_context().run,
+                verify,
+                job[3],
+                job[2].get("profile_grounding"),
+            )
+            for job in jobs
         ]
         for (entity_type, entity_key, entity_data, _), future in zip(jobs, futures):
             report = future.result()
             entity_data["profile_grounding"] = report.model_dump(exclude_none=True)
             counts["verified"] += 1
+            counts["llm_checks"] += report.checked_articles
+            counts["reused_checks"] += report.reused_articles
             if report.grounding_score is not None:
                 log(
                     f"Grounding for {entity_type}/{entity_key}: "

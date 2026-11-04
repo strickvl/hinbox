@@ -11,7 +11,7 @@ These tests verify:
 from typing import Dict, List
 from unittest.mock import patch
 
-from src.utils.quality_controls import (
+from src.utils.grounding import (
     ClaimVerification,
     GroundingReport,
     SupportLevel,
@@ -357,6 +357,7 @@ class TestGroundingPostprocess:
                     "profile": {"text": profile_text},
                     "profile_grounding": {
                         "profile_text_hash": text_hash,
+                        "total_citations": 1,
                         "grounding_score": 1.0,
                     },
                 }
@@ -455,7 +456,7 @@ class TestGroundingPostprocess:
             }
         }
 
-        def fake_verify(*, profile_text, article_texts, model_type):
+        def fake_verify(*, profile_text, article_texts, model_type, previous):
             return GroundingReport(
                 profile_text_hash=profile_text, total_citations=1, verified=1
             )

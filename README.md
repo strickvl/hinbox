@@ -316,7 +316,8 @@ src/
 │   ├── name_variants.py    # Deterministic name normalisation, acronym detection, canonical scoring
 │   ├── processing_status.py # Sidecar JSON tracker (replaces in-Parquet status)
 │   ├── outcomes.py         # PhaseOutcome structured result objects
-│   └── quality_controls.py # Extraction QC, profile QC, and profile grounding verification
+│   ├── grounding.py        # Profile grounding verification
+│   └── quality_controls.py # Extraction QC and profile QC
 ├── config_loader.py        # Domain config loader (incl. per-type thresholds, lexical blocking)
 ├── dynamic_models.py       # Domain-driven Pydantic model factories
 ├── constants.py            # Model defaults, embedding settings, thresholds, privacy controls
