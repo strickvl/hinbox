@@ -209,6 +209,33 @@ class TestGroundingIsCurrent:
         }
         assert not grounding_is_current(old, text, self.ARTICLES)
 
+    def test_report_with_old_claim_text_is_not_current(self):
+        """A report checked when the parser cut a different claim (". Freed")
+        goes back for a recheck of that article only."""
+        text = "Held in 2002^[a1]. Freed in 2016^[a2]."
+        report, _ = _run(text, self.ARTICLES)
+        stored = report.model_dump()
+        assert grounding_is_current(stored, text, self.ARTICLES)
+        stored["sources"][1]["claims_hash"] = "hash-of-old-claims"
+        assert not grounding_is_current(stored, text, self.ARTICLES)
+        _, calls = _run(text, self.ARTICLES, previous=stored)
+        assert calls == 1
+
+    def test_old_report_with_punctuation_claim_is_not_current(self):
+        import hashlib
+
+        text = "Held.^[a1].^[a2]"
+        old: Dict = {
+            "profile_text_hash": hashlib.sha256(text.encode()).hexdigest(),
+            "total_citations": 2,
+            "flags": [],
+            "verifications": [
+                {"article_id": "a1", "claim": "Held.", "support_level": "supported"},
+                {"article_id": "a2", "claim": ".", "support_level": "not_supported"},
+            ],
+        }
+        assert not grounding_is_current(old, text, self.ARTICLES)
+
     def test_parquet_round_trip_keeps_report_usable(self, tmp_path):
         import pyarrow as pa
         import pyarrow.parquet as pq
