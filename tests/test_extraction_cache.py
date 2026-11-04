@@ -446,3 +446,22 @@ class TestExtractionCacheIntegration:
             assert mock_gen.call_count == 2
 
         reset_extraction_sidecar_cache()
+
+
+def test_extraction_asks_for_a_long_reply():
+    """Long articles' event lists don't fit in the 2048-token default."""
+    from src.constants import DEFAULT_MAX_TOKENS, EXTRACTION_MAX_TOKENS
+    from src.utils.extraction import extract_entities_cloud, extract_entities_local
+
+    assert EXTRACTION_MAX_TOKENS > DEFAULT_MAX_TOKENS
+    for fn, target in (
+        (extract_entities_cloud, "cloud_generation"),
+        (extract_entities_local, "local_generation"),
+    ):
+        with patch(f"src.utils.extraction.{target}", return_value=[]) as mock_gen:
+            fn(
+                text="Some text",
+                system_prompt="Extract",
+                response_model=List[FakePerson],
+            )
+        assert mock_gen.call_args.kwargs["max_tokens"] == EXTRACTION_MAX_TOKENS
