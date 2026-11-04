@@ -84,11 +84,17 @@ def _citing_sentences(text: str, article_id: str) -> List[str]:
     for paragraph in text.split("\n"):
         waiting: List[str] = []
         for sentence in _sentences(paragraph):
-            waiting.append(sentence)
-            if _CITATION.search(sentence):
-                if _cites(sentence, article_id):
-                    citing.extend(waiting)
-                waiting = []
+            first = _CITATION.search(sentence)
+            if not first:
+                waiting.append(sentence)
+                continue
+            # Earlier sentences are backed by the first citation they reach;
+            # the citing sentence itself by any of its citations
+            if any(i.strip() == article_id for i in first.group(1).split(",")):
+                citing.extend(waiting)
+            if _cites(sentence, article_id):
+                citing.append(sentence)
+            waiting = []
     return citing
 
 

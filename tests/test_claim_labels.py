@@ -147,5 +147,6 @@ def test_paragraph_citation_backs_earlier_sentences():
         "He refused to leave his cell.\nThe judge waited.^[a9]",
         "He refused to leave his cell.^[a1] The judge waited.^[a9]",
         "The judge waited.^[a9] He refused to leave his cell.",
+        "He refused to leave his cell. Guards said so^[a1], and the judge too^[a9].",
     ):
         assert not cl.score_claims(label, "", text, "a9")["claims_ok"]
