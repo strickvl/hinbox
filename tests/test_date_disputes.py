@@ -69,6 +69,7 @@ def _conflict(sentence="The USS Cole bombing happened on Oct. 12, 1999."):
 
 
 def _update(generate, profile=None, **kwargs):
+    kwargs.setdefault("date_check", True)  # off by default in the pipeline
     return update_from_facts(
         "people",
         "Smith",
@@ -200,6 +201,7 @@ def test_another_fact_from_the_disputed_sentence_is_kept():
         "a9",
         model="m",
         generate=generate,
+        date_check=True,
     )
     assert "Another report differs" in new["text"]
     assert "Smith dismissed the charges against Nashiri.^[a9]" in new["text"]
@@ -211,10 +213,12 @@ def test_a_made_up_third_date_is_not_written():
     assert "1998" not in text and "Oct. 12, 1999" in text
 
 
-def test_the_check_can_be_turned_off(monkeypatch):
+def test_the_check_is_off_unless_turned_on(monkeypatch):
     generate, calls = _fake(_conflict())
     _update(generate, date_check=False)
     assert "DateVerdicts" not in [name for name, _ in calls]
+    monkeypatch.delenv("HINBOX_FACT_DATE_CHECK", raising=False)
+    assert not date_check_enabled()
     monkeypatch.setenv("HINBOX_FACT_DATE_CHECK", "off")
     assert not date_check_enabled()
     monkeypatch.setenv("HINBOX_FACT_DATE_CHECK", "on")

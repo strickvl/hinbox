@@ -421,7 +421,7 @@ def update_from_facts(
 ) -> Dict[str, Any]:
     """Run steps 1-5 on one article. Raises if a model call fails.
 
-    ``date_check`` (default: on, ``HINBOX_FACT_DATE_CHECK=off`` turns it off)
+    ``date_check`` (default: off, ``HINBOX_FACT_DATE_CHECK=on`` turns it on)
     adds step 4b, ``date_disputes.py``: background dates the extract step
     skipped are checked against the profile's dated sentences.
 

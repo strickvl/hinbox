@@ -117,10 +117,15 @@ class DateVerdicts(BaseModel):
 
 
 def date_check_enabled(flag: Optional[bool] = None) -> bool:
-    """On unless turned off by argument or ``HINBOX_FACT_DATE_CHECK=off``."""
+    """Off unless turned on by argument or ``HINBOX_FACT_DATE_CHECK=on``.
+
+    Off by default: on the eval (Luna, 160 cases per round) it found two real
+    errors in profiles but also wrote 1-3 wrong "Another report differs"
+    sentences per round, which the updater without it never writes.
+    """
     if flag is not None:
         return flag
-    return os.getenv(DATE_CHECK_ENV, "on").strip().lower() not in {"off", "0", "no"}
+    return os.getenv(DATE_CHECK_ENV, "off").strip().lower() in {"on", "1", "yes"}
 
 
 def _words(text: str) -> Set[str]:
