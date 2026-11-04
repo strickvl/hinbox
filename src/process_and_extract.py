@@ -960,7 +960,9 @@ def main():
             log(
                 f"Grounding complete: {grounding_counts['verified']} verified, "
                 f"{grounding_counts['skipped_unchanged']} unchanged, "
-                f"{grounding_counts['skipped_no_citations']} no citations",
+                f"{grounding_counts['skipped_no_citations']} no citations; "
+                f"{grounding_counts['llm_checks']} article checks sent to the model, "
+                f"{grounding_counts['reused_checks']} kept from earlier runs",
                 level="success",
             )
     except KeyboardInterrupt:
