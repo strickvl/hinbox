@@ -33,10 +33,17 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field, field_validator
 
-from src.evals.profile_cases import _sentences
+from src.evals.profile_cases import _content_words, _sentences
 
 DATE_PAIR_OVERLAP = 0.25  # share of the shorter sentence's words both must use
 MIN_DATE_SHARED = 2  # and at least this many words
+# A pair sharing only 2 words must also pass fact_list's same-subject test
+# (40% of 5-letter stems). On the eval, Qwen called 2-word pairs about
+# different things conflicts ("Bush had him moved to Guantánamo in 2006"
+# beside 2009 talk of a trial in Charleston); the real 2-word pair ("charged
+# Mohammed in 2009" / "withdrew the 2008 case") passes it
+WEAK_SHARED = 2
+SAME_SUBJECT = 0.4
 MAX_DATE_PAIRS = 8  # pairs shown to the model per article
 # Rows one article sentence may be paired with: a profile often states one
 # event in two sections, and the closest by words isn't always the one dated
@@ -73,6 +80,12 @@ _STOP = set(
 
 class DateVerdict(BaseModel):
     pair: int = Field(description="The pair's number")
+    # Asked before the verdict: naming the one event both sentences date is
+    # what separates a real conflict from two events that share some words
+    event: str = Field(
+        default="",
+        description="The one past event both sentences give a date for, or empty",
+    )
     verdict: Literal["conflict", "different", "later"]
     sentence: str = Field(
         default="",
@@ -142,6 +155,12 @@ def overlap(a: str, b: str) -> Tuple[int, float]:
     return shared, shared / (min(len(mine), len(theirs)) or 1)
 
 
+def _same_subject(a: str, b: str) -> bool:
+    mine = {w[:5] for w in _content_words(a)}
+    theirs = {w[:5] for w in _content_words(b)}
+    return len(mine & theirs) / (min(len(mine), len(theirs)) or 1) >= SAME_SUBJECT
+
+
 def date_pairs(
     rows: List[Dict[str, Any]], article_text: str, skip: Set[str]
 ) -> List[Dict[str, Any]]:
@@ -162,6 +181,8 @@ def date_pairs(
             if not dates_differ(sentence, row["claim"]):
                 continue
             shared, share = overlap(sentence, row["claim"])
+            if shared <= WEAK_SHARED and not _same_subject(sentence, row["claim"]):
+                continue
             if shared >= MIN_DATE_SHARED and share >= DATE_PAIR_OVERLAP:
                 context = sentences[i - 1] if i else ""
                 found.append((share, shared, i, row, sentence, context))
@@ -240,10 +261,16 @@ def find_date_disputes(
     answer = ask("date_check", pairs_prompt(pairs), DateVerdicts)
     verdicts = {v.pair: v for v in answer.verdicts}
     disputes = []
+    used: Set[str] = set()
     for n, pair in enumerate(pairs, 1):
         verdict = verdicts.get(n)
-        if not verdict or verdict.verdict != "conflict":
+        if not verdict or verdict.verdict != "conflict" or not verdict.event.strip():
             continue
+        # One article sentence disputes one profile sentence: Qwen wrote the
+        # same "pleaded guilty in October 2010" after two different sentences
+        if pair["sentence"] in used:
+            continue
+        used.add(pair["sentence"])
         disputes.append(
             {
                 "row": pair["row"],

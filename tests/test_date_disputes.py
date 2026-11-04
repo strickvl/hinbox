@@ -56,7 +56,14 @@ def _fake(date_answer, claims=(HEARING,)):
 
 def _conflict(sentence="The USS Cole bombing happened on Oct. 12, 1999."):
     return lambda m: DateVerdicts(
-        verdicts=[DateVerdict(pair=1, verdict="conflict", sentence=sentence)]
+        verdicts=[
+            DateVerdict(
+                pair=1,
+                event="the USS Cole bombing",
+                verdict="conflict",
+                sentence=sentence,
+            )
+        ]
     )
 
 
@@ -254,3 +261,20 @@ def test_a_re_cited_row_is_still_date_checked():
     new = _update(generate)
     recited = OLD.replace("^[a1]", "^[a1, a9]")
     assert f"{recited} Another report differs: The USS Cole" in new["text"]
+
+
+def test_a_conflict_must_name_its_event():
+    answer = lambda m: DateVerdicts(  # noqa: E731
+        verdicts=[DateVerdict(pair=1, verdict="conflict", sentence="It was in 1999.")]
+    )
+    new = _update(_fake(answer)[0])
+    assert "Another report" not in new["text"]
+
+
+def test_two_shared_words_need_the_same_subject():
+    profile = (
+        "# Nashiri\n\n## Detention\n\n"
+        "In November 2009, aides said Nashiri might be tried in Charleston.^[a1]\n"
+    )
+    article = "President Bush had Nashiri moved to Guantánamo in September 2006."
+    assert not date_pairs(rows_from_profile(profile), article, set())
