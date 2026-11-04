@@ -36,6 +36,10 @@ DEFAULT_MAX_TOKENS = 2048
 # At 2048 tokens profiles stop at roughly 6-7k characters: the JSON is cut off
 # mid-way and the update fails.
 PROFILE_MAX_TOKENS = int(os.getenv("HINBOX_PROFILE_MAX_TOKENS", "16384"))
+# Extraction returns every entity of one type in one reply. For long articles
+# GPT-6 Luna's events list ran past 2048 tokens, all 3 tries were cut off and
+# the article was saved with no events (3 of the first ~10 articles of a run).
+EXTRACTION_MAX_TOKENS = int(os.getenv("HINBOX_EXTRACTION_MAX_TOKENS", "8192"))
 # How update_profile() changes an existing profile. "edit": one call returns a
 # list of add/replace edits and code applies them (src/engine/profile_edits.py).
 # "rewrite": the model writes the whole profile again, then up to 3
