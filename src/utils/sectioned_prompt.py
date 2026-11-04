@@ -88,7 +88,7 @@ def read_bool(fields: Dict[str, str], name: str) -> bool:
 
 def read_unit_float(fields: Dict[str, str], name: str, default: float) -> float:
     """A field as a number clamped to [0, 1], or ``default`` if unreadable."""
-    found = re.search(r"\d*\.?\d+(%?)", fields.get(name, ""))
+    found = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?(%?)", fields.get(name, ""))
     if not found:
         return default
     value = float(found.group().rstrip("%"))

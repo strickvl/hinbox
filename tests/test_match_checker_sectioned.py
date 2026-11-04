@@ -104,7 +104,14 @@ def test_parse_reads_confidence_before_a_completed_marker_without_a_space():
 
 
 @pytest.mark.parametrize(
-    "written, expected", [("**0.8**", 0.8), ("0.7 (fairly sure)", 0.7), ("85%", 0.85)]
+    "written, expected",
+    [
+        ("**0.8**", 0.8),
+        ("0.7 (fairly sure)", 0.7),
+        ("85%", 0.85),
+        ("1e-1", 0.1),
+        ("-0.9", 0.0),
+    ],
 )
 def test_parse_reads_a_decorated_confidence(written, expected):
     reply = REPLY.replace("0.92", written)
