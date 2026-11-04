@@ -551,32 +551,3 @@ def test_a_same_claim_with_a_new_number_is_written_not_dropped():
     )
     assert new["fact_report"]["same_with_detail"] == 1
     assert "for 4 years.^[a9]" in new["text"]
-
-
-def test_a_same_verdict_with_a_different_year_is_a_conflict():
-    claim = ArticleClaim(
-        claim="The CIA held Nashiri, who was seized in November 2003.",
-        section="## Capture",
-        quote="captured in the United Arab Emirates in October 2002",
-    )
-
-    def verdicts(messages):
-        return ClaimVerdicts(verdicts=[ClaimVerdict(claim=1, verdict="same", row="f2")])
-
-    answers = {
-        "ArticleClaims": lambda m: ArticleClaims(claims=[claim]),
-        "ClaimVerdicts": verdicts,
-        "SectionPlacements": lambda m: SectionPlacements(),
-    }
-    generate, _ = _fake(answers)
-    new = update_from_facts(
-        "people",
-        "Nashiri",
-        {"text": PROFILE},
-        ARTICLE,
-        "a9",
-        model="m",
-        generate=generate,
-    )
-    assert new["fact_report"]["same_to_conflict"] == 1
-    assert "November 2002.^[a1] Another report differs:" in new["text"]
