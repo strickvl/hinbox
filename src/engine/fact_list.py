@@ -503,6 +503,10 @@ def update_from_facts(
                 section_edits.setdefault(row["section"], []).append(
                     ProfileEdit(op="replace", anchor=row["text"], text=cited)
                 )
+                # Rows that share this sentence follow it, or they'd be lost
+                for other in rows:
+                    if other is not row and other.get("text") == row["text"]:
+                        other["text"] = cited
                 row["text"] = cited
             else:
                 row["repeats"].append(article_id)

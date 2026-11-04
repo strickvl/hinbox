@@ -564,3 +564,57 @@ def test_a_same_claim_with_a_new_number_is_written_not_dropped():
     )
     assert new["fact_report"]["same_with_detail"] == 1
     assert "for 4 years.^[a9]" in new["text"]
+
+
+def test_new_evidence_keeps_rows_that_share_its_sentence():
+    shared = "Nashiri was held by the CIA at secret sites in Thailand.^[a2]"
+    profile = PROFILE.replace("He was held by the CIA at secret sites.^[a2]", shared)
+    rows = [
+        {
+            "id": "f1",
+            "section": "## Capture",
+            "claim": "Nashiri was held by the CIA at secret sites.",
+            "text": shared,
+            "sources": [{"article_id": "a2", "kind": "official"}],
+            "repeats": [],
+        },
+        {
+            "id": "f2",
+            "section": "## Capture",
+            "claim": "Nashiri was held at secret sites in Thailand.",
+            "text": shared,
+            "sources": [{"article_id": "a2", "kind": "leak"}],
+            "repeats": [],
+        },
+    ]
+    claim = ArticleClaim(
+        claim="Nashiri was held by the CIA at secret sites.",
+        section="## Capture",
+        quote="He was held by the CIA at secret sites.",
+        source="court filing",
+    )
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(claims=[claim]),
+        "ClaimVerdicts": lambda m: ClaimVerdicts(
+            verdicts=[
+                ClaimVerdict(claim=1, verdict="same", row="f1", new_evidence=True)
+            ]
+        ),
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": profile, FACT_ROWS_KEY: json.dumps(rows)},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    saved = {r["claim"]: r for r in json.loads(new[FACT_ROWS_KEY])}
+    assert "Nashiri was held by the CIA at secret sites." in saved
+    assert "Nashiri was held at secret sites in Thailand." in saved
+    assert saved["Nashiri was held at secret sites in Thailand."]["sources"] == [
+        {"article_id": "a2", "kind": "leak"}
+    ]
