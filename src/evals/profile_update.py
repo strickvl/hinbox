@@ -24,6 +24,10 @@ produces an updated profile, and these checks score it without a model:
   that contain numbers, none of which appear in the article. Qwen wrote "A
   later report gives the year as 2007 instead" where the article had no 2007.
   Reported only.
+- With a reviewed claim label (``src/evals/claim_labels.py``) for the case's
+  entity and article, ``claims_found``/``core_missing``/``must_not_hits``:
+  which expected facts the new profile states (in a sentence citing the
+  article) and which wrong readings (wrong actor, reversed meaning) it adds.
 - For ``disputed`` cases, ``keeps_both``: the original year is still stated
   with one of its original sources, and the changed year is stated with the
   case's article, in a sentence about the claim or right after the kept one.
@@ -31,6 +35,9 @@ produces an updated profile, and these checks score it without a model:
 
 A case passes when nothing collapsed, retention is at least
 ``MIN_RETENTION``, no citation was invented, and the kind's own check holds.
+For a labelled ``new_fact`` case that check is every core fact stated, no
+wrong reading added and, unless the article itself reports a conflict, no
+"sources disagree" sentence; an unlabelled one only has to cite the article.
 """
 
 import hashlib
@@ -40,6 +47,7 @@ import re
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional, Set
 
+from src.evals.claim_labels import label_for, load_labels, score_claims
 from src.evals.profile_cases import _CITATION, _content_words, _sentences
 
 COLLAPSE_RATIO = 0.8
@@ -217,6 +225,10 @@ def score_update(case: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     }
     if case["kind"] == "disputed":
         scores["keeps_both"] = _keeps_both(case, new_text)
+    label = case.get("claim_label")
+    if label:
+        scores.update(score_claims(label, old_text, new_text, article_id))
+        scores["disputes_ok"] = bool(label.get("disputes_ok"))
     scores["passed"] = case_passed(case, scores)
     return scores
 
@@ -228,6 +240,12 @@ def case_passed(case: Dict[str, Any], scores: Dict[str, Any]) -> bool:
     if case["kind"] == "irrelevant":
         return scores["added_sentences"] <= expected.get("max_new_sentences", 2)
     if case["kind"] == "new_fact":
+        if "claims_ok" in scores:  # labelled: the right facts, read the right way
+            return (
+                scores["cites_article"]
+                and scores["claims_ok"]
+                and (scores["disputes_ok"] or not scores["dispute_claims"])
+            )
         return scores["cites_article"]
     if case["kind"] == "disputed":
         return scores["keeps_both"]
@@ -271,9 +289,17 @@ def case_pairing(case: Dict[str, Any]) -> str:
 
 
 def load_cases(
-    eval_dir: str, split: str = "all", include_unreviewed: bool = False
+    eval_dir: str,
+    split: str = "all",
+    include_unreviewed: bool = False,
+    claim_labels: str = "reviewed",
 ) -> List[Dict[str, Any]]:
-    """Read ``profile_update_cases.jsonl``, leaving out unconfirmed labels."""
+    """Read ``profile_update_cases.jsonl``, leaving out unconfirmed labels.
+
+    Each case with a claim label (``claim_labels``: ``reviewed`` rows only,
+    ``draft`` for unreviewed ones too, ``off`` for none) gets it under
+    ``claim_label``, which ``score_update()`` then checks.
+    """
     path = os.path.join(eval_dir, "profile_update_cases.jsonl")
     with open(path, encoding="utf-8") as f:
         cases = [json.loads(line) for line in f if line.strip()]
@@ -290,6 +316,11 @@ def load_cases(
             c = {**c, "needs_review": False}
         if include_unreviewed or not c.get("needs_review"):
             kept.append(c)
+    labels = load_labels(eval_dir, claim_labels)
+    for c in kept:
+        label = label_for(labels, c) if c["kind"] == "new_fact" else None
+        if label:
+            c["claim_label"] = label
     return kept
 
 
@@ -417,6 +448,13 @@ def summarize_updates(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "unsupported_numbers": sum(
             r["scores"].get("unsupported_numbers", 0) for r in scored
         ),
+        # Cases with a claim label, the expected facts they missed and the
+        # wrong readings (wrong actor, reversed meaning) they added
+        "labelled": sum("claims_ok" in r["scores"] for r in scored),
+        "core_missing": sum(len(r["scores"].get("core_missing", [])) for r in scored),
+        "wrong_readings": sum(
+            len(r["scores"].get("must_not_hits", [])) for r in scored
+        ),
         "median_seconds": _median([r["seconds"] for r in records]),
     }
     for kind in sorted({r["kind"] for r in records}):
@@ -480,3 +518,23 @@ def run_updates(
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         return list(pool.map(one, cases))
+
+
+def rescore_run(
+    records: List[Dict[str, Any]], cases: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Score a saved run's profiles again with today's checks, no model calls.
+
+    Records whose case is no longer loaded (dropped, other split) are left out;
+    failed calls stay failed.
+    """
+    by_id = {c["case_id"]: c for c in cases}
+    out = []
+    for r in records:
+        case = by_id.get(r.get("item_id"))
+        if case is None:
+            continue
+        if "new_text" in r:
+            r = {**r, "scores": score_update(case, r["new_text"])}
+        out.append(r)
+    return out

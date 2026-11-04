@@ -45,12 +45,22 @@ DEFAULT_MAX_TOKENS = 2048
 # At 2048 tokens profiles stop at roughly 6-7k characters: the JSON is cut off
 # mid-way and the update fails.
 PROFILE_MAX_TOKENS = int(os.getenv("HINBOX_PROFILE_MAX_TOKENS", "16384"))
+# Extraction returns every entity of one type in one reply. For long articles
+# GPT-6 Luna's events list ran past 2048 tokens, all 3 tries were cut off and
+# the article was saved with no events (3 of the first ~10 articles of a run).
+EXTRACTION_MAX_TOKENS = int(os.getenv("HINBOX_EXTRACTION_MAX_TOKENS", "8192"))
 # How update_profile() changes an existing profile. "edit": one call returns a
 # list of add/replace edits and code applies them (src/engine/profile_edits.py).
 # "rewrite": the model writes the whole profile again, then up to 3
 # reflect/regenerate rounds. On the profile-update eval, edit scored 0.89 vs
 # 0.29 on Luna and ran ~10x faster (2.2s vs 21s per update).
 PROFILE_UPDATE_APPROACH = os.getenv("HINBOX_PROFILE_UPDATE_APPROACH", "edit").strip()
+# How create_profile() writes a first profile. "check" (default): one draft,
+# code fixes, at most one repair call (src/engine/profile_create.py). "reflect":
+# a draft, then up to 3 rounds of a model reviewer (which never sees the
+# article) and a fresh redraft. On 6 labelled first articles (Luna) check found
+# 10/26 labelled facts vs 6/26 and missed 6 core facts vs 13, with half the calls.
+PROFILE_CREATE_APPROACH = os.getenv("HINBOX_PROFILE_CREATE_APPROACH", "check").strip()
 DEFAULT_TEMPERATURE = 0
 # Output limit for reflection verdicts (valid, reasoning, issues)
 REFLECTION_MAX_TOKENS = int(os.getenv("HINBOX_REFLECTION_MAX_TOKENS", "1024"))

@@ -63,8 +63,11 @@ def build_sectioned_messages(
     ]
 
 
-# Models sometimes drop the closing "##" ("[[ ## confidence ]]"), so it's optional
-_HEADER = r"\[\[ ## (\w+)(?: ##)? \]\]"
+# Models sometimes drop the closing "##" ("[[ ## confidence ]]") or the space
+# before "]]" ("[[ ## completed ##]]", GPT-6 Luna), so both are optional.
+# Without that, "0.95\n\n[[ ## completed ##]]" was read as the confidence,
+# failed to parse, and every Luna match check came back as confidence 0.5.
+_HEADER = r"\[\[ ?## (\w+)(?: ?##)? ?\]\]"
 _SECTION = re.compile(
     _HEADER + r"\s*(.*?)(?=" + _HEADER.replace("(\\w+)", "\\w+") + r"|$)", re.S
 )
@@ -85,7 +88,8 @@ def read_bool(fields: Dict[str, str], name: str) -> bool:
 
 def read_unit_float(fields: Dict[str, str], name: str, default: float) -> float:
     """A field as a number clamped to [0, 1], or ``default`` if unreadable."""
-    try:
-        return min(max(float(fields.get(name, "")), 0.0), 1.0)
-    except ValueError:
+    found = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?(%?)", fields.get(name, ""))
+    if not found:
         return default
+    value = float(found.group().rstrip("%"))
+    return min(max(value / 100 if found.group(1) else value, 0.0), 1.0)

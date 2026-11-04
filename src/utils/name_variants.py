@@ -504,9 +504,29 @@ def _same_group(
     )
 
 
+# One spelling for words that English-language papers transliterate several
+# ways ("Khalid Sheik Mohammed" / "Khalid Shaikh Mohammed").
+_TRANSLITERATIONS = {
+    **dict.fromkeys(("sheik", "shaikh", "shaykh", "sheikh"), "sheikh"),
+    **dict.fromkeys(
+        ("mohammed", "mohammad", "mohamed", "muhammed", "muhammad"), "muhammad"
+    ),
+    **dict.fromkeys(("qaida", "qaeda"), "qaida"),
+}
+# Arabic name particles: never a name on their own ("al" in "Abd al Hadi al Iraqi").
+_NAME_PARTICLES: FrozenSet[str] = frozenset(
+    {"al", "el", "abd", "abu", "bin", "ibn", "bint", "ben"}
+)
+
+
+def _match_words(name: str) -> List[str]:
+    """Match-normalized words with one spelling per transliterated word."""
+    return [_TRANSLITERATIONS.get(t, t) for t in normalize_for_match(name).split()]
+
+
 def person_name_tokens(name: str) -> List[str]:
     """Name words without titles or single-letter initials ("Donald J. Trump")."""
-    tokens = [t for t in normalize_for_match(name).split() if len(t) > 1]
+    tokens = [t for t in _match_words(name) if len(t) > 1]
     while len(tokens) > 1 and tokens[0] in _PERSON_TITLES:
         tokens = tokens[1:]
     return tokens
@@ -523,19 +543,72 @@ def _people_variants(name_a: str, name_b: str) -> bool:
         first, last = a[0] == b[0], a[-1] == b[-1]
         return (
             (first and last)
+            or _ends_full_name(a, b)
             or (last and _same_word_spelled_differently(a[0], b[0], edits=True))
             or (first and _same_word_spelled_differently(a[-1], b[-1], edits=True))
         )
     short, long = (a, b) if len(a) < len(b) else (b, a)
-    # "Trump" / "Donald Trump"; a lone first name doesn't count
+    # "Trump" / "Donald Trump"; a lone first name doesn't count here (see
+    # ``lone_name_in_full_name``)
     return len(short) == 1 and len(long) >= 2 and short[0] == long[-1]
+
+
+def _ends_full_name(a: List[str], b: List[str]) -> bool:
+    """A name of two or more real words that ends a longer one:
+    "Hadi al Iraqi" / "Abd al Hadi al Iraqi"."""
+    short, long = sorted((a, b), key=len)
+    real = [t for t in short if t not in _NAME_PARTICLES]
+    return len(real) >= 2 and len(short) < len(long) and long[-len(short) :] == short
+
+
+def lone_name_in_full_name(name_a: str, name_b: str) -> bool:
+    """A one-word name that is a first or middle name of the other name:
+    "Lara" / "Lara Tur", "Hadi" / "Abd al Hadi al Iraqi".
+
+    Weaker than ``names_are_variants``: "Daniel" is many people, so the merge
+    only sends such a pair to the match check when exactly one entity in the
+    table fits (``name_variant_candidate``).
+    """
+    a, b = person_name_tokens(name_a), person_name_tokens(name_b)
+    short, long = (a, b) if len(a) < len(b) else (b, a)
+    if len(short) != 1 or len(long) < 2:
+        return False
+    word = short[0]
+    return len(word) >= 3 and word not in _NAME_PARTICLES and word in long[:-1]
+
+
+# Head words of a body named after a person: "Bush administration".
+_PERSON_LED_HEADS: FrozenSet[str] = frozenset({"administration", "government"})
+
+
+def _person_led_variants(a: List[str], b: List[str]) -> bool:
+    """ "Bush administration" / "George W. Bush administration": the same head
+    word after two spellings of one person's name."""
+    if len(a) < 2 or len(b) < 2 or a[-1] != b[-1] or a[-1] not in _PERSON_LED_HEADS:
+        return False
+    return _people_variants(" ".join(a[:-1]), " ".join(b[:-1]))
+
+
+def _words_inserted(a: List[str], b: List[str], *, max_extra: int) -> bool:
+    """The longer list is the shorter one with one run of at most ``max_extra``
+    words added before its last word: "Waterboarding of KSM" / "CIA
+    waterboarding of KSM". Words added in two places ("Easing of lockdown
+    conditions in Camp 6" / "Lockdown of Camp 6") don't count."""
+    short, long = sorted((a, b), key=len)
+    extra = len(long) - len(short)
+    if len(short) < 3 or not 0 < extra <= max_extra:
+        return False
+    return any(
+        long[:i] == short[:i] and long[i + extra :] == short[i:]
+        for i in range(len(short))
+    )
 
 
 _EVENT_STOPWORDS: FrozenSet[str] = DEFAULT_ACRONYM_STOPWORDS | {"as", "from", "with"}
 
 
 def _event_words(name: str) -> List[str]:
-    return [t for t in normalize_for_match(name).split() if t not in _EVENT_STOPWORDS]
+    return [t for t in _match_words(name) if t not in _EVENT_STOPWORDS]
 
 
 def names_are_variants(
@@ -566,10 +639,18 @@ def names_are_variants(
         ):
             return True
         a, b = core_a.split(), core_b.split()
-        return _one_word_respelled(a, b) or _middle_words_dropped(a, b)
+        return (
+            _one_word_respelled(a, b)
+            or _middle_words_dropped(a, b)
+            or _person_led_variants(a, b)
+        )
     if entity_type == "events":
         # "Firing of Convening Authority Harvey Rishikof" /
         # "Firing of Harvey Rishikof as convening authority"
         a, b = _event_words(name_a), _event_words(name_b)
-        return (len(a) >= 2 and sorted(a) == sorted(b)) or _one_word_respelled(a, b)
+        return (
+            (len(a) >= 2 and sorted(a) == sorted(b))
+            or _one_word_respelled(a, b)
+            or _words_inserted(a, b, max_extra=2)
+        )
     return False
