@@ -9,6 +9,7 @@ failed, whose text became available, or whose claims changed.
 """
 
 import hashlib
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -73,6 +74,10 @@ class GroundingReport(BaseModel):
     reused_articles: int = 0  # articles whose results came from the last report
 
 
+_LEADING_PUNCT = re.compile(r"^[\s.,;:!?)\]]+")
+_HAS_WORD = re.compile(r"\w")
+
+
 def _extract_cited_claims(profile_text: str) -> List[Dict[str, str]]:
     """Extract citation-anchored claims from profile text.
 
@@ -93,8 +98,13 @@ def _extract_cited_claims(profile_text: str) -> List[Dict[str, str]]:
         citation = match.group(0)  # e.g. "^[art-123]" or "^[a1, a2]"
 
         # Claim is the text between the end of the last citation and this one
-        claim_text = profile_text[last_end : match.start()].strip()
-        if not claim_text:
+        # The span starts right after the previous marker, so "fact^[a1]. Next
+        # fact^[a2]" leaves ". Next fact" here: drop that leading punctuation.
+        # A span with no letters or digits at all ("fact^[a1].^[a2]") is not
+        # a claim, so it reuses the previous one.
+        claim_text = _LEADING_PUNCT.sub("", profile_text[last_end : match.start()])
+        claim_text = claim_text.strip()
+        if not _HAS_WORD.search(claim_text):
             claim_text = last_claim  # reuse last non-empty claim for adjacent citations
 
         if claim_text:
@@ -146,6 +156,7 @@ def _previous_results(
 
 # Article text sent to the grounding check (and hashed to spot changes)
 GROUNDING_MAX_ARTICLE_CHARS = 12000
+GROUNDING_MAX_CLAIM_CHARS = 600
 
 _GROUNDING_SYSTEM_PROMPT = """You are a fact-checking assistant verifying whether claims in an entity profile are supported by source article text.
 
@@ -175,7 +186,7 @@ def verify_profile_grounding(
     article_texts: Dict[str, str],
     model_type: str = "gemini",
     max_article_chars: int = GROUNDING_MAX_ARTICLE_CHARS,
-    max_claim_chars: int = 600,
+    max_claim_chars: int = GROUNDING_MAX_CLAIM_CHARS,
     min_grounding_score: float = 0.7,
     previous: Optional[Dict[str, Any]] = None,
 ) -> GroundingReport:
@@ -358,22 +369,29 @@ def grounding_is_current(
     profile_text: str,
     article_texts: Dict[str, str],
     max_article_chars: int = GROUNDING_MAX_ARTICLE_CHARS,
+    max_claim_chars: int = GROUNDING_MAX_CLAIM_CHARS,
 ) -> bool:
     """True when a stored report still answers for this profile text and
     these articles, so checking again would only repeat the same calls.
 
     It is not current when the text changed, the citation parser now finds a
     different number of citations, an article's check failed, a missing
-    article has become available, or a checked article's text changed.
-    Reports saved before per-article ``sources`` existed are judged by their
-    flags and missing-source claims instead.
+    article has become available, a checked article's text changed, or the
+    claims parsed from the text now differ from the ones that were checked
+    (the claim parser changed). Reports saved before per-article ``sources``
+    existed are judged by their flags, missing-source claims and claims with
+    no words in them instead.
     """
     if not isinstance(report, dict):
         return False
     if report.get("profile_text_hash") != _sha(profile_text):
         return False
-    if report.get("total_citations") != len(_extract_cited_claims(profile_text)):
+    claims = _extract_cited_claims(profile_text)
+    if report.get("total_citations") != len(claims):
         return False
+    by_article: Dict[str, List[Dict[str, str]]] = {}
+    for c in claims:
+        by_article.setdefault(c["article_id"], []).append(c)
 
     def available(aid: str) -> bool:
         return bool((article_texts.get(aid) or "").strip())
@@ -382,15 +400,22 @@ def grounding_is_current(
     if not sources:
         if any(f in (report.get("flags") or []) for f in _RETRY_FLAGS):
             return False
+        old = [v for v in report.get("verifications") or [] if isinstance(v, dict)]
         return not any(
-            v.get("support_level") == SupportLevel.MISSING_SOURCE.value
-            and available(v.get("article_id", ""))
-            for v in report.get("verifications") or []
-            if isinstance(v, dict)
+            (
+                v.get("support_level") == SupportLevel.MISSING_SOURCE.value
+                and available(v.get("article_id", ""))
+            )
+            or not _HAS_WORD.search(v.get("claim") or "")
+            for v in old
         )
+    if {s.get("article_id", "") for s in sources} != set(by_article):
+        return False
     for s in sources:
         aid = s.get("article_id", "")
         status = s.get("status")
+        if s.get("claims_hash") != _claims_hash(by_article[aid], max_claim_chars):
+            return False
         if status == "missing":
             if available(aid):
                 return False

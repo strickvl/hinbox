@@ -75,6 +75,18 @@ class TestGroupedCitations:
         assert qc.citation_count == 2
         assert "no_citations" not in qc.flags
 
+    def test_punctuation_after_marker_is_not_a_claim(self):
+        claims = _extract_cited_claims("He was held.^[a1].^[a2] Then freed^[a3].")
+        assert [c["claim"] for c in claims] == [
+            "He was held.",
+            "He was held.",
+            "Then freed",
+        ]
+
+    def test_leading_punctuation_dropped_from_next_claim(self):
+        claims = _extract_cited_claims("Held in 2002^[a1]. Freed in 2016^[a2].")
+        assert claims[1]["claim"] == "Freed in 2016"
+
 
 class TestReuseEarlierResults:
     ARTICLES = {"a1": "Article one text", "a2": "Article two text"}
@@ -194,6 +206,33 @@ class TestGroundingIsCurrent:
             "total_citations": 0,  # the old parser skipped "a1, a2"
             "flags": ["no_citations"],
             "verifications": [],
+        }
+        assert not grounding_is_current(old, text, self.ARTICLES)
+
+    def test_report_with_old_claim_text_is_not_current(self):
+        """A report checked when the parser cut a different claim (". Freed")
+        goes back for a recheck of that article only."""
+        text = "Held in 2002^[a1]. Freed in 2016^[a2]."
+        report, _ = _run(text, self.ARTICLES)
+        stored = report.model_dump()
+        assert grounding_is_current(stored, text, self.ARTICLES)
+        stored["sources"][1]["claims_hash"] = "hash-of-old-claims"
+        assert not grounding_is_current(stored, text, self.ARTICLES)
+        _, calls = _run(text, self.ARTICLES, previous=stored)
+        assert calls == 1
+
+    def test_old_report_with_punctuation_claim_is_not_current(self):
+        import hashlib
+
+        text = "Held.^[a1].^[a2]"
+        old: Dict = {
+            "profile_text_hash": hashlib.sha256(text.encode()).hexdigest(),
+            "total_citations": 2,
+            "flags": [],
+            "verifications": [
+                {"article_id": "a1", "claim": "Held.", "support_level": "supported"},
+                {"article_id": "a2", "claim": ".", "support_level": "not_supported"},
+            ],
         }
         assert not grounding_is_current(old, text, self.ARTICLES)
 
