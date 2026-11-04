@@ -299,15 +299,25 @@ _NUMBER_WORDS = dict(
         map(str, range(2, 21)),
     )
 )
-# Not part of a compound ("twenty-five" would become "20-5", two counts)
-_NUMBER_WORD = re.compile(
-    r"(?<![\w-])(" + "|".join(_NUMBER_WORDS) + r")(?![\w-])", re.IGNORECASE
+# A run of number words ("twenty-five", "two hundred", "thirty one") is
+# converted only when it is a single word in the table: converting its parts
+# would give "20-5" or "2 hundred", which read as new counts
+_SPELLED = (
+    "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen"
+    "|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty"
+    "|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|dozen"
+)
+_NUMBER_RUN = re.compile(
+    rf"(?<![\w-])(?:{_SPELLED})(?:(?:[\s-]+|\s+and\s+)(?:{_SPELLED}))*(?![\w-])",
+    re.IGNORECASE,
 )
 
 
 def _digits(text: str) -> str:
     """Spelled-out numbers as digits, so "seventeen sailors" matches "17"."""
-    return _NUMBER_WORD.sub(lambda m: _NUMBER_WORDS[m.group(1).lower()], text)
+    return _NUMBER_RUN.sub(
+        lambda m: _NUMBER_WORDS.get(m.group(0).lower(), m.group(0)), text
+    )
 
 
 def adds_values(claim: str, row_claim: str, profile_text: str = "") -> bool:

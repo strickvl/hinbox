@@ -635,6 +635,8 @@ def test_a_same_claim_is_not_rewritten_for_a_number_the_profile_already_has():
     )
     # A compound is left as words, not read as "20-5"
     assert not adds_values("Twenty-five sailors were hurt.", "25 sailors were hurt.")
+    assert not adds_values("Two hundred men were held.", "200 men were held.")
+    assert not adds_values("Thirty one men were held.", "31 men were held.")
     # "one of the 17" is not a count of one
     assert not adds_values(
         "Gunn was one of the 17 Americans killed.",
