@@ -45,6 +45,7 @@ from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.engine.date_disputes import (
     DISPUTE_PREFIX,
     date_check_enabled,
+    dates_differ,
     find_date_disputes,
 )
 from src.engine.profile_edits import ProfileEdit, _parse_list_string, apply_edits
@@ -681,20 +682,19 @@ def _add_date_disputes(
 ) -> None:
     """Write each date dispute right after its old sentence, like a conflict.
 
-    A failed call only skips the check: the rest of the update still holds.
-    A new fact quoting the disputed article sentence is dropped, so the other
-    date isn't written twice (once as a dispute, once as a plain fact).
+    A failed call raises like any other step, so the pipeline keeps the old
+    profile and retries the article next run instead of marking it processed
+    unchecked. A new fact that quotes the disputed article sentence *and*
+    states the differing date is dropped, so the other date isn't written
+    twice; a second fact from the same sentence ("...dismissed the charges on
+    Tuesday") stays.
     """
     # Rows re-cited by this update have new text to anchor on; leave them
     current = {r["id"]: r["text"] for r in rows}
     changed = {i for i, t in texts_before.items() if current.get(i) != t}
-    try:
-        disputes, found = find_date_disputes(
-            ask, rows, article_text, article_id, skip=changed
-        )
-    except Exception as e:  # noqa: BLE001
-        report["date_check_error"] = f"{type(e).__name__}: {e}"
-        return
+    disputes, found = find_date_disputes(
+        ask, rows, article_text, article_id, skip=changed
+    )
     report.update(found)
     for dispute in disputes:
         row = dispute["row"]
@@ -720,7 +720,10 @@ def _add_date_disputes(
             kept = [
                 (n, c)
                 for n, c in new_facts[section]
-                if not quote_found(c.quote, dispute["quote"])
+                if not (
+                    quote_found(c.quote, dispute["quote"])
+                    and dates_differ(c.claim, row["claim"])
+                )
             ]
             if len(kept) < len(new_facts[section]):
                 report["date_dropped_new"] = report.get("date_dropped_new", 0) + (

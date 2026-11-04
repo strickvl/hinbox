@@ -197,11 +197,17 @@ def dispute_text(verdict_sentence: str, pair: Dict[str, Any], article_id: str) -
     """The sentence code writes after the old one, cited to the article.
 
     The model's sentence is used only when it states the article's differing
-    date; otherwise (empty, or it copied the profile's date) the article's
-    own sentence is written.
+    date and no year the article sentence doesn't give; otherwise (empty, it
+    copied the profile's date, or it made up a third one) the article's own
+    sentence is written.
     """
     body = _CITATION.sub("", verdict_sentence).strip()
-    if not body or not dates_differ(body, pair["row"]["claim"]):
+    article_years = _dates(pair["sentence"])[0]
+    if (
+        not body
+        or not dates_differ(body, pair["row"]["claim"])
+        or not _dates(body)[0] <= article_years
+    ):
         body = _CITATION.sub("", pair["sentence"]).strip()
     body = body.removeprefix(DISPUTE_PREFIX.strip()).strip()
     return f"{DISPUTE_PREFIX}{body}^[{article_id}]"

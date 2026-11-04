@@ -70,6 +70,8 @@ def _fake(answers):
 
     def generate(messages, response_model, model, max_tokens):
         calls.append((response_model.__name__, messages))
+        if response_model.__name__ not in answers:  # the date check: no disputes
+            return response_model()
         return answers[response_model.__name__](messages)
 
     return generate, calls

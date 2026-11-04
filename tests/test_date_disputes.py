@@ -162,13 +162,44 @@ def test_the_next_article_with_the_same_other_date_adds_nothing():
     assert "DateVerdicts" not in [name for name, _ in calls]
 
 
-def test_a_failed_check_keeps_the_rest_of_the_update():
+def test_a_failed_check_fails_the_update_so_the_article_is_retried():
+    import pytest
+
     def broken(messages):
         raise RuntimeError("timeout")
 
-    new = _update(_fake(broken)[0])
-    assert "hearing would go ahead in May" in new["text"]
-    assert new["fact_report"]["date_check_error"] == "RuntimeError: timeout"
+    with pytest.raises(RuntimeError, match="timeout"):
+        _update(_fake(broken)[0])
+
+
+def test_another_fact_from_the_disputed_sentence_is_kept():
+    article = ARTICLE.replace(
+        "and prosecutors say Nashiri planned it.",
+        "and Smith dismissed the charges against Nashiri.",
+    )
+    dismissal = ArticleClaim(
+        claim="Smith dismissed the charges against Nashiri.",
+        section="## Career",
+        quote="Smith dismissed the charges against Nashiri",
+    )
+    generate, _ = _fake(_conflict(), claims=(HEARING, dismissal))
+    new = update_from_facts(
+        "people",
+        "Smith",
+        {"text": PROFILE},
+        article,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    assert "Another report differs" in new["text"]
+    assert "Smith dismissed the charges against Nashiri.^[a9]" in new["text"]
+
+
+def test_a_made_up_third_date_is_not_written():
+    pair = date_pairs(rows_from_profile(PROFILE), ARTICLE, set())[0]
+    text = dispute_text("The USS Cole bombing happened in 1998.", pair, "a9")
+    assert "1998" not in text and "Oct. 12, 1999" in text
 
 
 def test_the_check_can_be_turned_off(monkeypatch):
