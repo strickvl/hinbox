@@ -181,8 +181,10 @@ def _claim_scores(
     label = labels.get((case["entity_name"].lower(), case["article_id"]))
     if not label:
         return None
-    from src.evals.claim_labels import score_claims  # built in a sibling branch
-
+    try:
+        from src.evals.claim_labels import score_claims  # from PR #75
+    except ImportError:
+        return None
     return score_claims(label, "", text, case["article_id"])
 
 
