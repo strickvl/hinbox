@@ -125,3 +125,13 @@ def test_rescore_run_uses_todays_checks():
     ]
     out = pu.rescore_run(saved, [case])
     assert len(out) == 1 and not out[0]["scores"]["passed"]
+
+
+def test_time_of_day_does_not_split_a_cited_sentence():
+    # "9 a.m. Tuesday" used to end the sentence, leaving the citation behind
+    text = "Bin al Shibh refused to leave his cell until 9 a.m. Tuesday.^[a9]"
+    label = {"facts": [{"id": "refused", "match": [["refus"], ["cell"]]}]}
+    assert cl.score_claims(label, "", text, "a9")["claims_ok"]
+    # A time that really ends a sentence still ends it
+    two = "He refused to leave his cell until 9 a.m. The hearing resumed.^[a9]"
+    assert not cl.score_claims(label, "", two, "a9")["claims_ok"]
