@@ -126,6 +126,19 @@ class TestCloudEmbeddingProvider:
             assert result.usage == {"prompt_tokens": 15, "total_tokens": 15}
 
     @pytest.mark.asyncio
+    async def test_embed_batch_missing_prompt_tokens(self, provider):
+        """Jina can reply with prompt_tokens=None; count it as 0, don't crash."""
+        mock_response = MagicMock()
+        mock_response.data = [SimpleNamespace(embedding=[0.1, 0.2])]
+        mock_response.model = "jina-embeddings-v3"
+        mock_response.usage = SimpleNamespace(prompt_tokens=None, total_tokens=7)
+
+        with patch.object(provider, "_call_with_retry", return_value=mock_response):
+            result = await provider.embed_batch(["text"])
+            assert result.embeddings == [[0.1, 0.2]]
+            assert result.usage == {"prompt_tokens": 0, "total_tokens": 7}
+
+    @pytest.mark.asyncio
     @patch.dict(os.environ, _JINA_ENV)
     async def test_call_with_retry_success(self, provider):
         """Test successful API call."""
