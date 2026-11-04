@@ -9,6 +9,7 @@ failed, whose text became available, or whose claims changed.
 """
 
 import hashlib
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -73,6 +74,10 @@ class GroundingReport(BaseModel):
     reused_articles: int = 0  # articles whose results came from the last report
 
 
+_LEADING_PUNCT = re.compile(r"^[\s.,;:!?)\]]+")
+_HAS_WORD = re.compile(r"\w")
+
+
 def _extract_cited_claims(profile_text: str) -> List[Dict[str, str]]:
     """Extract citation-anchored claims from profile text.
 
@@ -93,8 +98,13 @@ def _extract_cited_claims(profile_text: str) -> List[Dict[str, str]]:
         citation = match.group(0)  # e.g. "^[art-123]" or "^[a1, a2]"
 
         # Claim is the text between the end of the last citation and this one
-        claim_text = profile_text[last_end : match.start()].strip()
-        if not claim_text:
+        # The span starts right after the previous marker, so "fact^[a1]. Next
+        # fact^[a2]" leaves ". Next fact" here: drop that leading punctuation.
+        # A span with no letters or digits at all ("fact^[a1].^[a2]") is not
+        # a claim, so it reuses the previous one.
+        claim_text = _LEADING_PUNCT.sub("", profile_text[last_end : match.start()])
+        claim_text = claim_text.strip()
+        if not _HAS_WORD.search(claim_text):
             claim_text = last_claim  # reuse last non-empty claim for adjacent citations
 
         if claim_text:

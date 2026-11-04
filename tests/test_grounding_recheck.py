@@ -75,6 +75,18 @@ class TestGroupedCitations:
         assert qc.citation_count == 2
         assert "no_citations" not in qc.flags
 
+    def test_punctuation_after_marker_is_not_a_claim(self):
+        claims = _extract_cited_claims("He was held.^[a1].^[a2] Then freed^[a3].")
+        assert [c["claim"] for c in claims] == [
+            "He was held.",
+            "He was held.",
+            "Then freed",
+        ]
+
+    def test_leading_punctuation_dropped_from_next_claim(self):
+        claims = _extract_cited_claims("Held in 2002^[a1]. Freed in 2016^[a2].")
+        assert claims[1]["claim"] == "Freed in 2016"
+
 
 class TestReuseEarlierResults:
     ARTICLES = {"a1": "Article one text", "a2": "Article two text"}
