@@ -11,7 +11,6 @@ from functools import lru_cache
 from typing import (
     Any,
     Dict,
-    Iterable,
     Iterator,
     List,
     Optional,
@@ -45,7 +44,7 @@ from src.utils.logging import (
 from src.utils.ollama_context import check_prompt_fits
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
 from src.utils.step_timing import record_llm_call, timed, timed_step
-from src.utils.tracing import instrument_client
+from src.utils.tracing import instrument_client, request_span
 
 # Get logger for this module
 logger = get_logger("utils.llm")
@@ -134,18 +133,18 @@ class ReflectionResult(BaseModel):
 def _resolve_instructor_mode(
     target: ProviderTarget,
     *,
-    parallel: bool,
     json_fallback: bool = False,
 ) -> instructor.Mode:
-    """Pick the right Instructor mode for the given provider target."""
+    """Pick the right Instructor mode for the given provider target.
+
+    Never a parallel-tools mode: asked for a list as one tool call per item,
+    GPT-6 Luna often made just one call (1 event per article on 20 of 20
+    articles), so lists are asked for as one ``{"items": [...]}`` object.
+    """
     if target.sdk == "anthropic":
         if json_fallback:
             return instructor.Mode.ANTHROPIC_JSON
-        return (
-            instructor.Mode.ANTHROPIC_PARALLEL_TOOLS
-            if parallel
-            else instructor.Mode.ANTHROPIC_TOOLS
-        )
+        return instructor.Mode.ANTHROPIC_TOOLS
     # OpenAI-compatible providers
     if json_fallback:
         return instructor.Mode.MD_JSON
@@ -154,7 +153,7 @@ def _resolve_instructor_mode(
     # often answers tool requests with a bare JSON array and no tool call.
     if target.is_local:
         return instructor.Mode.JSON_SCHEMA
-    return instructor.Mode.PARALLEL_TOOLS if parallel else instructor.Mode.TOOLS
+    return instructor.Mode.TOOLS
 
 
 def _create_raw_client(target: ProviderTarget) -> Any:
@@ -360,20 +359,17 @@ def _recover_multiple_tool_calls(
         else:
             return None
 
-        recovered.append(item_model.model_validate(payload, strict=False))
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if isinstance(items, list) and "items" not in item_model.model_fields:
+            # one call per chunk of the list, each a {"items": [...]} object
+            recovered.extend(item_model.model_validate(i, strict=False) for i in items)
+        else:
+            recovered.append(item_model.model_validate(payload, strict=False))
 
     logger.warning(
         "Recovered %d items from multiple tool calls without retry", len(recovered)
     )
     return recovered
-
-
-def _parallel_tools_response_model(response_model: Any) -> Optional[Any]:
-    """Return an Iterable[Model] response type for Instructor parallel-tools mode."""
-    item_model = _list_item_model(response_model)
-    if item_model is None:
-        return None
-    return Iterable[item_model]
 
 
 @lru_cache(maxsize=None)
@@ -382,10 +378,10 @@ def _list_wrapper_model(item_model: Type[BaseModel]) -> Type[BaseModel]:
     return create_model(f"{item_model.__name__}List", items=(List[item_model], ...))
 
 
-def _normalize_generation_response(response: Any, *, parallel_tools: bool) -> Any:
-    """Normalize Instructor return shape to match current callers' expectations."""
-    if parallel_tools:
-        return list(response)
+def _unwrap_list(response: Any, wrapper: Optional[Type[BaseModel]]) -> Any:
+    """Return the items of a ``{"items": [...]}`` reply; anything else as is."""
+    if wrapper is not None and isinstance(response, wrapper):
+        return list(response.items)
     return response
 
 
@@ -395,6 +391,20 @@ def _normalize_generation_response(response: Any, *, parallel_tools: bool) -> An
 
 
 def _structured_generation(
+    messages: List[Dict[str, Any]], response_model: Any, *args: Any, **kwargs: Any
+) -> Any:
+    """One structured request (all of Instructor's retries) in one span.
+
+    The span ends with ``hinbox.request_ok``: a reply that never passed schema
+    validation still has a clean model-call span, so without this a failed
+    request would look like a good training example.
+    """
+    name = getattr(response_model, "__name__", None) or str(response_model)
+    with request_span(f"structured {name}"):
+        return _structured_request(messages, response_model, *args, **kwargs)
+
+
+def _structured_request(
     messages: List[Dict[str, Any]],
     response_model: Any,
     model: str,
@@ -414,19 +424,13 @@ def _structured_generation(
 
     target = resolve_chat_target(model)
 
-    local_item_model = _list_item_model(response_model) if target.is_local else None
-    if target.is_local:
-        use_parallel_tools = False
-        request_response_model = (
-            _list_wrapper_model(local_item_model)
-            if local_item_model
-            else response_model
-        )
-    else:
-        parallel_response_model = _parallel_tools_response_model(response_model)
-        use_parallel_tools = parallel_response_model is not None
-        request_response_model = parallel_response_model or response_model
-    mode = _resolve_instructor_mode(target, parallel=use_parallel_tools)
+    item_model = _list_item_model(response_model)
+    # A list is asked for as one {"items": [...]} object (a JSON schema root
+    # must be an object, and one call per item lost items; see
+    # _resolve_instructor_mode), then unwrapped before returning.
+    wrapper = _list_wrapper_model(item_model) if item_model else None
+    request_response_model = wrapper or response_model
+    mode = _resolve_instructor_mode(target)
     client = _create_instructor_client(target, mode)
     logger.debug(
         "%s_generation setup: model=%s mode=%s max_tokens=%s temperature=%s",
@@ -442,7 +446,7 @@ def _structured_generation(
 
     request_kwargs = dict(kwargs)
     if target.sdk != "anthropic" and not target.is_local:
-        request_kwargs.setdefault("parallel_tool_calls", bool(use_parallel_tools))
+        request_kwargs.setdefault("parallel_tool_calls", False)
 
     msg_kwargs = _prepare_messages_for_target(messages, target)
     check_prompt_fits(target, messages)
@@ -458,61 +462,9 @@ def _structured_generation(
                     **request_kwargs,
                 )
             logger.debug(f"Successfully generated response with {model}")
-            if local_item_model is not None:
-                return response.items
-            return _normalize_generation_response(
-                response, parallel_tools=use_parallel_tools
-            )
+            return _unwrap_list(response, wrapper)
         except Exception as e:
             error_str = str(e)
-            tools_mode_due_to_parallel_failure = False
-
-            # PARALLEL_TOOLS can fail when a provider returns no tool calls.
-            if (
-                use_parallel_tools
-                and "nonetype" in error_str.lower()
-                and "not iterable" in error_str.lower()
-            ):
-                try:
-                    recovered = _recover_multiple_tool_calls(
-                        error=e, response_model=response_model
-                    )
-                except Exception as recovery_e:
-                    logger.warning(
-                        "%s text recovery failed: %s", label.title(), recovery_e
-                    )
-                    recovered = None
-                if recovered is not None:
-                    return recovered
-                logger.warning(
-                    "Parallel-tools %s response had no tool calls; "
-                    "retrying with TOOLS mode",
-                    label,
-                )
-                try:
-                    fallback_mode = _resolve_instructor_mode(target, parallel=False)
-                    fallback_client = _create_instructor_client(target, fallback_mode)
-                    fallback_kwargs = dict(request_kwargs)
-                    if target.sdk != "anthropic":
-                        fallback_kwargs["parallel_tool_calls"] = False
-                    fallback_kwargs["max_retries"] = 0
-                    with slot():
-                        response = fallback_client.chat.completions.create(
-                            model=target.api_model,
-                            **_sampling_kwargs(target, max_tokens, temperature),
-                            response_model=response_model,
-                            **msg_kwargs,
-                            **fallback_kwargs,
-                        )
-                    logger.debug(
-                        "Recovered %s parallel-tools empty response with TOOLS mode",
-                        label,
-                    )
-                    return response
-                except Exception as fallback_e:
-                    e = fallback_e
-                    error_str = str(fallback_e)
-                    tools_mode_due_to_parallel_failure = True
 
             # Handle Instructor multiple tool calls error
             if "multiple tool calls" in error_str.lower():
@@ -539,40 +491,23 @@ def _structured_generation(
                         "%s direct recovery failed: %s", label.title(), recovery_e0
                     )
 
-                # Strategy 1: force non-parallel with deterministic settings.
+                # Strategy 1: retry once with deterministic settings.
                 try:
                     logger.debug(
                         "Trying %s with temperature=0 and max_retries=0", label
                     )
-                    retry_client = client
-                    retry_response_model = request_response_model
-                    retry_parallel_tools = bool(use_parallel_tools)
-                    if tools_mode_due_to_parallel_failure:
-                        retry_mode = _resolve_instructor_mode(target, parallel=False)
-                        retry_client = _create_instructor_client(target, retry_mode)
-                        retry_response_model = response_model
-                        retry_parallel_tools = False
-                        logger.warning(
-                            "%s strategy 1 switching to TOOLS mode after "
-                            "parallel-tools fallback failure",
-                            label.title(),
-                        )
                     retry_kwargs = dict(request_kwargs)
                     retry_kwargs["max_retries"] = 0
-                    if target.sdk != "anthropic":
-                        retry_kwargs["parallel_tool_calls"] = retry_parallel_tools
                     with slot():
-                        response = retry_client.chat.completions.create(
+                        response = client.chat.completions.create(
                             model=target.api_model,
                             **_sampling_kwargs(target, max_tokens, 0),
-                            response_model=retry_response_model,
+                            response_model=request_response_model,
                             **msg_kwargs,
                             **retry_kwargs,
                         )
                     logger.debug("Recovered %s with strategy 1", label)
-                    return _normalize_generation_response(
-                        response, parallel_tools=retry_parallel_tools
-                    )
+                    return _unwrap_list(response, wrapper)
                 except Exception as recovery_e1:
                     logger.warning(
                         "%s strategy 1 failed (%s): %s",
@@ -584,9 +519,7 @@ def _structured_generation(
                 # Strategy 2: fall back to JSON mode (no tool calls).
                 try:
                     logger.debug("Trying %s JSON mode fallback", label)
-                    json_mode = _resolve_instructor_mode(
-                        target, parallel=False, json_fallback=True
-                    )
+                    json_mode = _resolve_instructor_mode(target, json_fallback=True)
                     json_client = _create_instructor_client(target, json_mode)
                     modified_messages = messages.copy()
                     if modified_messages and modified_messages[0]["role"] == "system":

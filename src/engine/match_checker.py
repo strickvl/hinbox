@@ -15,6 +15,7 @@ from src.utils.sectioned_prompt import (
     read_unit_float,
 )
 from src.utils.step_timing import timed
+from src.utils.tracing import annotate, request_span
 
 logger = get_logger("engine.match_checker")
 
@@ -290,6 +291,7 @@ def _check_match(
     model: str,
 ) -> MatchCheckResult:
     """Ask the sectioned prompt; fall back to the structured prompt if unparseable."""
+    annotate(entity_type=entity_type, new_name=new_name, existing_name=existing_name)
     if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
         memo_key = _match_memo_key(
             backend=backend,
@@ -303,23 +305,27 @@ def _check_match(
         cached = _MATCH_MEMO.get(memo_key)
         if cached is not None:
             logger.debug(f"Match-check memo hit for {new_name} vs {existing_name}")
+            annotate(memo_hit=True, is_match=cached.is_match)
             return cached
 
     local = backend == "local"
     try:
-        reply = text_generation(
-            _build_sectioned_messages(
-                new_name,
-                existing_name,
-                new_profile_text,
-                existing_profile_text,
-                entity_type,
-            ),
-            model=model,
-            local=local,
-            temperature=0,
-        )
-        result = parse_sectioned_reply(reply)
+        # parse inside the span: an unreadable reply marks the request failed
+        with request_span("sectioned match_check"):
+            reply = text_generation(
+                _build_sectioned_messages(
+                    new_name,
+                    existing_name,
+                    new_profile_text,
+                    existing_profile_text,
+                    entity_type,
+                ),
+                model=model,
+                local=local,
+                temperature=0,
+            )
+            result = parse_sectioned_reply(reply)
+        annotate(answered_by="sectioned")
     except Exception as e:
         logger.warning(
             "Sectioned match check failed for %s vs %s (%s); "
@@ -346,12 +352,14 @@ def _check_match(
                 model=model,
                 temperature=0,
             )
+            annotate(answered_by="structured")
         except Exception as e2:
             log(f"Error with {backend} match check API", level="error", exception=e2)
             result = MatchCheckResult(
                 is_match=False, confidence=0.0, reason=f"API error: {str(e2)}"
             )
 
+    annotate(is_match=result.is_match, confidence=result.confidence)
     if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
         _MATCH_MEMO.set(memo_key, result)
     return result

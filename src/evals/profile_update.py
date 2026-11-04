@@ -37,7 +37,8 @@ import hashlib
 import json
 import os
 import re
-from typing import Any, Callable, Dict, List, Optional, Set
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set
 
 from src.evals.profile_cases import _CITATION, _content_words, _sentences
 
@@ -319,20 +320,37 @@ def make_rewrite_updater(model: str, domain: str) -> Updater:
     return update
 
 
+@contextmanager
+def _update_step(case: Dict[str, Any], approach: str) -> Iterator[None]:
+    """The ``profile.update`` step the pipeline would open around this call."""
+    from src.utils.step_timing import timed_step
+    from src.utils.tracing import annotate
+
+    with timed_step("profile.update"):
+        annotate(
+            entity_type=case["entity_type"],
+            entity_name=case["entity_name"],
+            article_id=case["article_id"],
+            approach=approach,
+        )
+        yield
+
+
 def make_edit_updater(model: str, domain: str) -> Updater:
     """Ask for a list of edits and apply them (``src/engine/profile_edits.py``)."""
     from src.engine.profile_edits import edit_profile
 
     def update(case: Dict[str, Any]) -> str:
-        profile = edit_profile(
-            case["entity_type"],
-            case["entity_name"],
-            case["profile"],
-            case["article_text"],
-            case["article_id"],
-            model=model,
-            domain=domain,
-        )
+        with _update_step(case, "edit"):
+            profile = edit_profile(
+                case["entity_type"],
+                case["entity_name"],
+                case["profile"],
+                case["article_text"],
+                case["article_id"],
+                model=model,
+                domain=domain,
+            )
         return profile["text"]
 
     return update
@@ -343,15 +361,16 @@ def make_fact_updater(model: str, domain: str) -> Updater:
     from src.engine.fact_list import update_from_facts
 
     def update(case: Dict[str, Any]) -> str:
-        profile = update_from_facts(
-            case["entity_type"],
-            case["entity_name"],
-            case["profile"],
-            case["article_text"],
-            case["article_id"],
-            model=model,
-            domain=domain,
-        )
+        with _update_step(case, "facts"):
+            profile = update_from_facts(
+                case["entity_type"],
+                case["entity_name"],
+                case["profile"],
+                case["article_text"],
+                case["article_id"],
+                model=model,
+                domain=domain,
+            )
         report = {**profile["fact_report"], "rows": profile["fact_rows"][-12:]}
         return {"text": profile["text"], "report": report}
 
@@ -418,7 +437,25 @@ def run_updates(
     from concurrent.futures import ThreadPoolExecutor
     from time import perf_counter
 
+    from src.utils.tracing import annotate, item_span
+
     def one(case: Dict[str, Any]) -> Dict[str, Any]:
+        with item_span(
+            f"eval {case['case_id']}",
+            eval_item_id=case["case_id"],
+            eval_kind=case["kind"],
+            eval_split=case["split"],
+        ):
+            record = score_one(case)
+            scores = record.get("scores") or {}
+            annotate(
+                eval_passed=scores.get("passed"),
+                eval_scores=scores or None,
+                eval_error=record.get("error"),
+            )
+            return record
+
+    def score_one(case: Dict[str, Any]) -> Dict[str, Any]:
         start = perf_counter()
         record: Dict[str, Any] = {
             "item_id": case["case_id"],

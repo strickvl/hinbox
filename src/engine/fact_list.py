@@ -41,6 +41,7 @@ from src.constants import CLOUD_MODEL, OLLAMA_MODEL
 from src.engine.profile_edits import ProfileEdit, _parse_list_string, apply_edits
 from src.evals.profile_cases import _content_words, _sentences
 from src.utils.llm import cloud_generation, local_generation
+from src.utils.step_timing import timed_step
 
 FACT_MAX_TOKENS = 4096
 MAX_CANDIDATES = 4  # existing rows shown beside each new claim
@@ -423,9 +424,12 @@ def update_from_facts(
     report: Dict[str, Any] = {"rows_before": len(rows), "prompt_chars": []}
 
     def ask(name: str, user: str, schema: Any, **values: str) -> Any:
-        system = _prompt(domain, name, model, article_id=article_id, **names, **values)
-        report["prompt_chars"].append(len(system) + len(user))
-        return _call(generate, model, system, user, schema)
+        with timed_step(name):  # each stage is its own task in traces
+            system = _prompt(
+                domain, name, model, article_id=article_id, **names, **values
+            )
+            report["prompt_chars"].append(len(system) + len(user))
+            return _call(generate, model, system, user, schema)
 
     # 1. Extract, keeping only claims whose quote is really in the article
     answer = ask(

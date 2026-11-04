@@ -27,6 +27,11 @@ from src.utils.cache_utils import sha256_jsonable, sha256_text
 logger = get_logger(__name__)
 
 
+# How ``src/utils/llm.py`` asks for a ``List[Model]``. Part of the cache key,
+# so changing it re-extracts: results cached under one-parallel-tool-call-per-
+# item ("parallel-tools") were missing items (1 event per article).
+LIST_REQUEST_FORMAT = "items-object"
+
 # ---------------------------------------------------------------------------
 # Schema hashing
 # ---------------------------------------------------------------------------
@@ -107,6 +112,7 @@ class ExtractionSidecarCache:
             f"|content={content_hash}"
             f"|prompt={prompt_hash}"
             f"|schema={schema_hash}"
+            f"|lists={LIST_REQUEST_FORMAT}"
         )
         return sha256_text(parts)
 

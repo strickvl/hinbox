@@ -39,6 +39,7 @@ import pyarrow.parquet as pq
 from src.config_loader import DomainConfig
 from src.constants import CLOUD_MODEL
 from src.logging_config import console
+from src.utils.tracing import configure_tracing
 
 
 @dataclass(frozen=True)
@@ -316,6 +317,12 @@ def main() -> None:
         plans.append((entity, chosen, passing))
     if args.list:
         return
+    configure_tracing(
+        domain_cfg.get_output_dir(),
+        local=args.model.startswith("ollama/"),
+        run_name="replay",
+        domain=args.domain,
+    )
 
     def run(plan: Tuple[ReplayEntity, List[Dict[str, Any]], List[Dict[str, Any]]]):
         entity, chosen, passing = plan

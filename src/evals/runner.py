@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from src.evals.datasets import EvalItem
 from src.evals.metrics import binary_metrics
+from src.utils.tracing import annotate, item_span
 
 Predictor = Callable[[Dict[str, Any]], bool]
 
@@ -62,6 +63,23 @@ def make_pipeline_predictor(task: str, model: str, domain: str) -> Predictor:
 
 
 def _predict_one(predictor: Predictor, item: EvalItem) -> Dict[str, Any]:
+    """Score one item inside its own trace, tagged with the gold label."""
+    with item_span(
+        f"eval {item.item_id}",
+        eval_item_id=item.item_id,
+        eval_split=item.split,
+        eval_label=item.label,
+    ):
+        record = _predict(predictor, item)
+        annotate(
+            eval_prediction=record["prediction"],
+            eval_correct=record["correct"],
+            eval_error=record["error"],
+        )
+        return record
+
+
+def _predict(predictor: Predictor, item: EvalItem) -> Dict[str, Any]:
     start = time.perf_counter()
     try:
         prediction: Optional[bool] = predictor(item.inputs)
