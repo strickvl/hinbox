@@ -62,8 +62,9 @@ class CloudEmbeddingProvider(EmbeddingProvider):
                 model=self.config.model_name,  # stable configured name
                 dimension=dim,
                 usage={
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "total_tokens": response.usage.total_tokens,
+                    # Jina can leave prompt_tokens out (None)
+                    "prompt_tokens": response.usage.prompt_tokens or 0,
+                    "total_tokens": response.usage.total_tokens or 0,
                 },
                 metadata={"resolved_model": response.model},
             )
