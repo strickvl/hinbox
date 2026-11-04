@@ -4,6 +4,7 @@ import json
 
 from src.evals import claim_labels as cl
 from src.evals import profile_update as pu
+from src.evals.profile_cases import _sentences
 
 OLD = (
     "## Background\n"
@@ -134,4 +135,17 @@ def test_time_of_day_does_not_split_a_cited_sentence():
     assert cl.score_claims(label, "", text, "a9")["claims_ok"]
     # A time that really ends a sentence still ends it
     two = "He refused to leave his cell until 9 a.m. The hearing resumed.^[a9]"
-    assert not cl.score_claims(label, "", two, "a9")["claims_ok"]
+    assert len(_sentences(two)) == 2
+
+
+def test_paragraph_citation_backs_earlier_sentences():
+    label = {"facts": [{"id": "refused", "match": [["refus"], ["cell"]]}]}
+    para = "He refused to leave his cell. The judge waited.^[a9]"
+    assert cl.score_claims(label, "", para, "a9")["claims_ok"]
+    # ...but not across a paragraph, a different source's citation, or after it
+    for text in (
+        "He refused to leave his cell.\nThe judge waited.^[a9]",
+        "He refused to leave his cell.^[a1] The judge waited.^[a9]",
+        "The judge waited.^[a9] He refused to leave his cell.",
+    ):
+        assert not cl.score_claims(label, "", text, "a9")["claims_ok"]

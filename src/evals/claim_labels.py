@@ -25,7 +25,9 @@ at Camp 7 were routine". Attribution goes into the groups: a fact the article
 only reports as an allegation gets a group like ``["ruiz", "lawyer", "said",
 "alleg"]``, so stating it as plain fact doesn't count.
 
-A fact counts as stated when a sentence citing the article matches it. A
+A fact counts as stated when a sentence backed by the article matches it:
+the sentence cites it, or the paragraph's next citation does ("A. B.^[a9]"
+backs A too, since profiles cite once per paragraph). A
 ``must_not`` reading counts when any new or changed sentence matches it. The
 matcher can't read negation ("did not clear him of wrongdoing" holds both
 "clear" and "wrongdoing"), so ``must_not`` groups use wording a correct
@@ -73,6 +75,23 @@ def _cites(sentence: str, article_id: str) -> bool:
     )
 
 
+def _citing_sentences(text: str, article_id: str) -> List[str]:
+    """Sentences backed by a citation of ``article_id``: one that carries it,
+    or one whose paragraph's next citation does. Profiles are asked to cite
+    once per paragraph, so "A. B. C.^[a9]" backs all three sentences with a9;
+    a sentence after the paragraph's last citation is backed by nothing."""
+    citing: List[str] = []
+    for paragraph in text.split("\n"):
+        waiting: List[str] = []
+        for sentence in _sentences(paragraph):
+            waiting.append(sentence)
+            if _CITATION.search(sentence):
+                if _cites(sentence, article_id):
+                    citing.extend(waiting)
+                waiting = []
+    return citing
+
+
 def load_labels(
     eval_dir: str, status: str = "reviewed"
 ) -> Dict[Tuple[str, str], Dict[str, Any]]:
@@ -104,7 +123,7 @@ def score_claims(
     old = _sentences(old_text)
     new = _sentences(new_text)
     old_set: Set[str] = {_norm(s) for s in old}
-    citing = [s for s in new if _cites(s, article_id)]
+    citing = _citing_sentences(new_text, article_id)
     changed = [s for s in new if _norm(s) not in old_set]
 
     found: List[str] = []
