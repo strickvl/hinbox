@@ -522,3 +522,32 @@ def test_a_new_date_for_the_same_past_event_is_a_conflict_not_an_update():
     )
     assert new["fact_report"]["update_to_conflict"] == 1
     assert "November 2002.^[a1] Another report differs:" in new["text"]
+
+
+def test_a_same_claim_with_a_new_number_is_written_not_dropped():
+    claim = ArticleClaim(
+        claim="Nashiri was held by the CIA at secret sites for 4 years.",
+        section="## Capture",
+        quote="He was held by the CIA at secret sites.",
+    )
+
+    def verdicts(messages):
+        return ClaimVerdicts(verdicts=[ClaimVerdict(claim=1, verdict="same", row="f3")])
+
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(claims=[claim]),
+        "ClaimVerdicts": verdicts,
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    assert new["fact_report"]["same_with_detail"] == 1
+    assert "for 4 years.^[a9]" in new["text"]

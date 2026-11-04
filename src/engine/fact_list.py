@@ -293,6 +293,13 @@ def values_differ(claim: str, row_claim: str) -> bool:
     return bool(counts - r_counts and r_counts - counts and years & r_years)
 
 
+def adds_values(claim: str, row_claim: str) -> bool:
+    """The claim has a year, month or number the row doesn't."""
+    return any(
+        mine - theirs for mine, theirs in zip(_values(claim), _values(row_claim))
+    )
+
+
 def dates_differ(claim: str, row_claim: str) -> bool:
     """Each sentence gives a year or month the other doesn't."""
     (years, months, _), (r_years, r_months, _) = _values(claim), _values(row_claim)
@@ -473,12 +480,23 @@ def update_from_facts(
         "not_conflict": 0,
         "update": 0,
         "update_to_conflict": 0,
+        "same_with_detail": 0,
         "new": 0,
     }
     for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
         verdict = verdicts.get(n)
         # A verdict naming a row it wasn't shown is a slip: treat it as new
         row = by_id.get(verdict.row) if verdict else None
+        if (
+            verdict
+            and row in rows_for
+            and verdict.verdict == "same"
+            and adds_values(claim.claim, row["claim"])
+        ):
+            # "Same" but with a number or date the row lacks ("a 78-minute
+            # secret session"): the detail is new, so write it, don't drop it
+            tally["same_with_detail"] += 1
+            verdict = None
         if verdict and row in rows_for and verdict.verdict == "same":
             tally["same"] += 1
             if verdict.new_evidence:
