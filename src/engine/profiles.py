@@ -21,6 +21,7 @@ from src.exceptions import (
     ProfileUpdateError,
 )
 from src.logging_config import get_logger, log
+from src.utils.citation_ids import repair_profile_citations
 from src.utils.error_handler import (
     handle_profile_error,
     retry_on_error,
@@ -86,13 +87,19 @@ def _apply_profile_qc(profile: Optional[Dict], entity_name: str) -> Optional[Dic
     """Run deterministic profile QC and record the result on the profile.
 
     Applies QC's safe fixes (default tags, clamped confidence) and stores
-    ``{"passed", "flags"}`` under ``profile["qc"]``. A failing profile is kept
+    ``{"passed", "flags"}`` under ``profile["qc"]``. A cited article ID one or
+    two typos away from one of the profile's sources is snapped back to it first
+    (``repair_profile_citations``). A failing profile is kept
     as-is; QC only flags it, it never triggers regeneration.
     """
     if not isinstance(profile, dict):
         return profile
+    profile, repaired = repair_profile_citations(profile)
     profile, report = run_profile_qc(profile=profile)
-    profile["qc"] = {"passed": report.passed, "flags": list(report.flags)}
+    flags = list(report.flags) + (["citation_ids_repaired"] if repaired else [])
+    profile["qc"] = {"passed": report.passed, "flags": flags}
+    if repaired:
+        log(f"Fixed {repaired} garbled citation ID(s) in '{entity_name}'", level="info")
     if not report.passed:
         log(
             f"Profile QC failed for '{entity_name}': {', '.join(report.flags)}",

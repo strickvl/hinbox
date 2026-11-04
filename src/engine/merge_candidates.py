@@ -18,6 +18,7 @@ from src.utils.name_variants import (
     is_acronym_form,
     is_name_contained,
     is_shouting_name,
+    lone_name_in_full_name,
     names_are_variants,
     names_likely_same,
     score_canonical_name,
@@ -145,6 +146,10 @@ def _shares_name_variant(
         for a in names_a
         for b in names_b
     )
+
+
+def _shares_lone_name(names_a: List[str], names_b: List[str]) -> bool:
+    return any(lone_name_in_full_name(a, b) for a in names_a for b in names_b)
 
 
 def lexical_block(
@@ -386,6 +391,11 @@ def name_variant_candidate(
 ) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
     """The candidate whose name is a spelling variant of the query's, highest cosine first.
 
+    For people, when no candidate is a spelling variant, a lone first or middle
+    name ("Lara" / "Lara Tur") still counts if exactly one person in the table
+    fits: with two ("Daniel Harding", "Daniel Ellsberg") there's no telling
+    which one a bare "Daniel" is, so neither goes to the match check.
+
     Keys in ``exclude`` (candidates the match check already rejected) are skipped.
     """
     if not entity_embedding:
@@ -395,17 +405,30 @@ def name_variant_candidate(
     query_names = entity_name_texts(entity_key, query_entity or {}, alternative_field)
     best_key: Optional[Union[str, Tuple]] = None
     best_score = -1.0
+    lone_name_keys: List[Union[str, Tuple]] = []
     for key, existing in entities[entity_type].items():
+        names = entity_name_texts(key, existing, alternative_field)
+        if not _shares_name_variant(entity_type, query_names, names, groups):
+            if entity_type == "people" and _shares_lone_name(query_names, names):
+                lone_name_keys.append(key)
+            continue
         if key in exclude or not get_search_embedding(existing):
             continue
         if not embeddings_compatible(new_dim, existing, embedding_model):
             continue
-        names = entity_name_texts(key, existing, alternative_field)
-        if not _shares_name_variant(entity_type, query_names, names, groups):
-            continue
         score = compute_similarity(entity_embedding, get_search_embedding(existing))
         if score > best_score:
             best_key, best_score = key, score
+    if best_key is None and len(lone_name_keys) == 1:
+        key = lone_name_keys[0]
+        existing = entities[entity_type][key]
+        emb = get_search_embedding(existing)
+        if (
+            key not in exclude
+            and emb
+            and embeddings_compatible(new_dim, existing, embedding_model)
+        ):
+            best_key, best_score = key, compute_similarity(entity_embedding, emb)
     if best_key is None:
         return None, None
     log(
