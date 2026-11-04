@@ -633,6 +633,8 @@ def test_a_same_claim_is_not_rewritten_for_a_number_the_profile_already_has():
         "The Pentagon released the transcript of a closed hearing.",
         "### Release\nThe transcript came out in 2013.^[a1]",
     )
+    # A compound is left as words, not read as "20-5"
+    assert not adds_values("Twenty-five sailors were hurt.", "25 sailors were hurt.")
     # "one of the 17" is not a count of one
     assert not adds_values(
         "Gunn was one of the 17 Americans killed.",

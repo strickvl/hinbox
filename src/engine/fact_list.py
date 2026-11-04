@@ -299,7 +299,10 @@ _NUMBER_WORDS = dict(
         map(str, range(2, 21)),
     )
 )
-_NUMBER_WORD = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r")\b", re.IGNORECASE)
+# Not part of a compound ("twenty-five" would become "20-5", two counts)
+_NUMBER_WORD = re.compile(
+    r"(?<![\w-])(" + "|".join(_NUMBER_WORDS) + r")(?![\w-])", re.IGNORECASE
+)
 
 
 def _digits(text: str) -> str:
