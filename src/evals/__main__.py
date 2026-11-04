@@ -6,6 +6,7 @@ Examples::
     just eval merge --model ollama/qwen3.6:35b-a3b --split test
     just eval profile-update --model openai/gpt-6-luna --split dev
     just eval profile-update --model openai/gpt-6-luna --prompt-variant local
+    just eval profile-create --model openai/gpt-6-luna --limit 40 --grounding
     just eval profile-update --rescore <run file>   # re-score saved profiles
     just eval show                       # print the scoreboard
     just eval show --grid                # latest score per model and prompt
@@ -28,6 +29,7 @@ from src.evals.datasets import (
     load_merge_items,
     load_relevance_items,
 )
+from src.evals.profile_create import run_profile_create
 from src.evals.profile_update import (
     UPDATERS,
     load_cases,
@@ -207,7 +209,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Score models on hand-labelled gold sets"
     )
-    parser.add_argument("task", choices=(*TASKS, "profile-update", "show"))
+    parser.add_argument(
+        "task", choices=(*TASKS, "profile-update", "profile-create", "show")
+    )
     parser.add_argument(
         "--model", default=CLOUD_MODEL, help="e.g. ollama/qwen3.6:35b-a3b"
     )
@@ -242,6 +246,25 @@ def main() -> None:
     )
     parser.add_argument(
         "--grid", action="store_true", help="show: latest score per model and prompt"
+    )
+    create = parser.add_argument_group("profile-create")
+    create.add_argument(
+        "--cases",
+        choices=("entities", "replay"),
+        default="entities",
+        help="pairs from an entity database, or each replay entity's first article",
+    )
+    create.add_argument("--entities-dir", default=None, help="default: output dir")
+    create.add_argument("--seed", type=int, default=0)
+    create.add_argument(
+        "--create-approaches",
+        default="reflect,check",
+        help="comma-separated create_profile() approaches to compare",
+    )
+    create.add_argument(
+        "--grounding",
+        action="store_true",
+        help="also check each cited claim against the article (cloud model)",
     )
     parser.add_argument(
         "--claim-labels",
@@ -293,6 +316,9 @@ def main() -> None:
         parser.error(str(e))
     if args.task == "profile-update":
         _run_profile_update(args, parser, eval_dir)
+        return
+    if args.task == "profile-create":
+        run_profile_create(args, parser, domain_cfg, eval_dir)
         return
 
     if args.task == "relevance":

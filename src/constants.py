@@ -46,6 +46,12 @@ EXTRACTION_MAX_TOKENS = int(os.getenv("HINBOX_EXTRACTION_MAX_TOKENS", "8192"))
 # reflect/regenerate rounds. On the profile-update eval, edit scored 0.89 vs
 # 0.29 on Luna and ran ~10x faster (2.2s vs 21s per update).
 PROFILE_UPDATE_APPROACH = os.getenv("HINBOX_PROFILE_UPDATE_APPROACH", "edit").strip()
+# How create_profile() writes a first profile. "check" (default): one draft,
+# code fixes, at most one repair call (src/engine/profile_create.py). "reflect":
+# a draft, then up to 3 rounds of a model reviewer (which never sees the
+# article) and a fresh redraft. On 6 labelled first articles (Luna) check found
+# 10/26 labelled facts vs 6/26 and missed 6 core facts vs 13, with half the calls.
+PROFILE_CREATE_APPROACH = os.getenv("HINBOX_PROFILE_CREATE_APPROACH", "check").strip()
 DEFAULT_TEMPERATURE = 0
 # Output limit for reflection verdicts (valid, reasoning, issues)
 REFLECTION_MAX_TOKENS = int(os.getenv("HINBOX_REFLECTION_MAX_TOKENS", "1024"))
