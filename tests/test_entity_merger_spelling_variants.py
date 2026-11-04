@@ -82,3 +82,33 @@ def test_normal_case_name_replaces_an_all_caps_key_on_merge():
     ]
     merged = entities["locations"][("Guantanamo Bay Navy Base", "military_base")]
     assert merged["name"] == "Guantanamo Bay Navy Base"
+
+
+def test_lone_first_name_merges_into_the_only_person_with_it():
+    """'Lara' is far from 'Lara Tur' on cosine and isn't a surname; she is the
+    only Lara, so the match check is asked and its yes merges them."""
+    entities = make_empty_entities()
+    entities["people"] = {"Lara Tur": _entity("Lara Tur", [0, 1.0, 0])}
+    stats, asked = _merge("people", {"name": "Lara"}, entities, True)
+    assert asked == ["Lara Tur"]
+    assert stats.merged == 1 and stats.new == 0
+    assert list(entities["people"]) == ["Lara Tur"]
+
+
+def test_rejected_lone_first_name_becomes_its_own_entity():
+    entities = make_empty_entities()
+    entities["people"] = {"Lara Tur": _entity("Lara Tur", [0, 1.0, 0])}
+    stats, asked = _merge("people", {"name": "Lara"}, entities, False)
+    assert asked == ["Lara Tur"]  # asked once, not retried after the no
+    assert stats.merged == 0 and stats.new == 1
+    assert set(entities["people"]) == {"Lara Tur", "Lara"}
+
+
+def test_lone_first_name_shared_by_two_people_is_not_checked():
+    entities = make_empty_entities()
+    entities["people"] = {
+        n: _entity(n, [0, 1.0, 0]) for n in ("John Kelly", "John Kerry")
+    }
+    stats, asked = _merge("people", {"name": "John"}, entities, True)
+    assert asked == []
+    assert stats.new == 1
