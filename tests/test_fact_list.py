@@ -195,6 +195,7 @@ def test_a_new_kind_of_source_is_cited_on_the_old_sentence():
         "a9",
         model="m",
         generate=generate,
+        date_check=False,  # the October/November capture is tested on its own
     )
     assert "secret sites.^[a2, a9]" in new["text"]
     assert len(calls) == 2  # nothing new to write
@@ -216,6 +217,7 @@ def test_a_new_section_is_added_at_the_end_and_scores_as_kept():
         "a9",
         model="m",
         generate=generate,
+        date_check=False,
     )
     assert new["text"].endswith(
         "## Detention conditions\nNashiri went on hunger strike in 2013.^[a9]\n"

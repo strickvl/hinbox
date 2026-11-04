@@ -1,6 +1,7 @@
 """Update a profile from a list of sourced facts, without showing the model the profile.
 
-Prototype, used only by ``just eval profile-update --approach facts``.
+Used by the pipeline with ``HINBOX_PROFILE_UPDATE_APPROACH=facts`` and by
+``just eval profile-update --approach facts``.
 
 The edit-list updater (``profile_edits.py``) keeps the model's *output* small,
 but every update still sends the whole profile. A 40k-character profile plus
@@ -21,6 +22,9 @@ trial has 100+ articles. Here no model call ever sees the whole profile:
    finds a year, month or number that differs, ``values_differ()``) keeps both: code writes the
    new version right after the old sentence. ``new`` goes to step 5. From an
    article not mainly about the entity, at most ``MAX_PASSING_CLAIMS`` new claims are kept.
+4b. **Date check** (code pairs, one model call; ``date_disputes.py``): a date
+   in a sentence step 1 skipped ("the bombing on Oct. 12, 1999") that differs
+   from a profile sentence on the same event is written after it, like a conflict.
 5. **Write** (model, one call per changed section): the section's text and its
    new facts; the model says where each goes. Code inserts them, so existing
    text can't be lost.
@@ -38,6 +42,11 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field, field_validator
 
 from src.constants import CLOUD_MODEL, OLLAMA_MODEL
+from src.engine.date_disputes import (
+    DISPUTE_PREFIX,
+    date_check_enabled,
+    find_date_disputes,
+)
 from src.engine.profile_edits import ProfileEdit, _parse_list_string, apply_edits
 from src.evals.profile_cases import _content_words, _sentences
 from src.utils.llm import cloud_generation, local_generation
@@ -407,8 +416,13 @@ def update_from_facts(
     model: Optional[str] = None,
     domain: str = "guantanamo",
     generate: Optional[Generate] = None,
+    date_check: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Run steps 1-5 on one article. Raises if a model call fails.
+
+    ``date_check`` (default: on, ``HINBOX_FACT_DATE_CHECK=off`` turns it off)
+    adds step 4b, ``date_disputes.py``: background dates the extract step
+    skipped are checked against the profile's dated sentences.
 
     Returns the profile with new ``text`` and ``sources``, its ``fact_rows``
     after the update, and a ``fact_report`` of what each step did.
@@ -463,6 +477,7 @@ def update_from_facts(
         verdicts = {v.claim: v for v in compared.verdicts}
 
     by_id = {r["id"]: r for r in rows}
+    texts_before = {r["id"]: r["text"] for r in rows}
     section_edits: Dict[str, List[ProfileEdit]] = {}
     new_facts: Dict[str, List[Tuple[int, ArticleClaim]]] = {}
     tally = {
@@ -528,7 +543,7 @@ def update_from_facts(
             # Written by code, right after the old sentence: both stay, each cited
             tally["conflict"] += 1
             body = _CITATION.sub("", claim.claim).strip()
-            sentence = f"Another report differs: {body}^[{article_id}]"
+            sentence = f"{DISPUTE_PREFIX}{body}^[{article_id}]"
             section_edits.setdefault(row["section"], []).append(
                 ProfileEdit(op="add", anchor=row["text"], text=sentence)
             )
@@ -555,6 +570,19 @@ def update_from_facts(
         section = _match_heading(claim.section, headings, article_text, near)
         new_facts.setdefault(section, []).append((n, claim))
     report.update(tally)
+
+    # 4b. Dates in sentences the extract step skipped (see date_disputes.py)
+    if date_check_enabled(date_check):
+        _add_date_disputes(
+            ask,
+            rows,
+            texts_before,
+            new_facts,
+            section_edits,
+            article_text,
+            article_id,
+            report,
+        )
 
     # 5. Write the new facts, one call per existing section that gets any
     for section, items in new_facts.items():
@@ -639,6 +667,69 @@ def update_from_facts(
         "fact_rows": rows,
         "fact_report": report,
     }
+
+
+def _add_date_disputes(
+    ask: Callable[..., Any],
+    rows: List[Dict[str, Any]],
+    texts_before: Dict[str, str],
+    new_facts: Dict[str, List[Tuple[int, ArticleClaim]]],
+    section_edits: Dict[str, List[ProfileEdit]],
+    article_text: str,
+    article_id: str,
+    report: Dict[str, Any],
+) -> None:
+    """Write each date dispute right after its old sentence, like a conflict.
+
+    A failed call only skips the check: the rest of the update still holds.
+    A new fact quoting the disputed article sentence is dropped, so the other
+    date isn't written twice (once as a dispute, once as a plain fact).
+    """
+    # Rows re-cited by this update have new text to anchor on; leave them
+    current = {r["id"]: r["text"] for r in rows}
+    changed = {i for i, t in texts_before.items() if current.get(i) != t}
+    try:
+        disputes, found = find_date_disputes(
+            ask, rows, article_text, article_id, skip=changed
+        )
+    except Exception as e:  # noqa: BLE001
+        report["date_check_error"] = f"{type(e).__name__}: {e}"
+        return
+    report.update(found)
+    for dispute in disputes:
+        row = dispute["row"]
+        section_edits.setdefault(row["section"], []).append(
+            ProfileEdit(op="add", anchor=row["text"], text=dispute["text"])
+        )
+        claim = ArticleClaim(
+            claim=dispute["text"].removeprefix(DISPUTE_PREFIX).split("^[")[0],
+            section=row["section"],
+            quote=dispute["quote"],
+        )
+        rows.append(
+            _new_row(
+                rows,
+                row["section"],
+                claim,
+                article_id,
+                text=dispute["text"],
+                disputes=row["id"],
+            )
+        )
+        for section in list(new_facts):
+            kept = [
+                (n, c)
+                for n, c in new_facts[section]
+                if not quote_found(c.quote, dispute["quote"])
+            ]
+            if len(kept) < len(new_facts[section]):
+                report["date_dropped_new"] = report.get("date_dropped_new", 0) + (
+                    len(new_facts[section]) - len(kept)
+                )
+            if kept:
+                new_facts[section] = kept
+            else:
+                del new_facts[section]
 
 
 def _next_id(rows: List[Dict[str, Any]]) -> int:
