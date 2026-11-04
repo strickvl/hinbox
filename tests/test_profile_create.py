@@ -177,3 +177,13 @@ def test_redraft_uses_the_repair_budget():
     profile, history, calls = _run(["{}", _draft(body + " " + body)], "### X\n" + body)
     assert calls == {"draft": 2, "text": 0}
     assert history[-1]["model_calls"] == 2
+
+
+def test_score_profile_counts_heading_led_uncited_prose():
+    from src.evals.profile_create import score_profile
+
+    text = "### Background\nUncited fact.\n\n### Role\nCited fact^[a1]."
+    assert (
+        score_profile(text, "a1", "Uncited fact. Cited fact.")["uncited_paragraphs"]
+        == 1
+    )

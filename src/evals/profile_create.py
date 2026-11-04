@@ -130,8 +130,10 @@ def _words_in(text: str) -> set:
 def score_profile(text: str, article_id: str, article: str) -> Dict[str, Any]:
     """No-model checks on one first profile."""
     cites = _CITE.findall(text)
-    paragraphs = [
-        p for p in re.split(r"\n\s*\n", text) if p.strip() and not _HEADING.match(p)
+    paragraphs = [  # blocks with prose; a heading line on top doesn't exclude one
+        p
+        for p in re.split(r"\n\s*\n", text)
+        if any(ln.strip() and not ln.lstrip().startswith("#") for ln in p.splitlines())
     ]
     body = _CITE.sub("", re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE))
     starts = {m.lower() for m in _SENTENCE_START.findall(body)}
