@@ -20,8 +20,11 @@ trial has 100+ articles. Here no model call ever sees the whole profile:
    50th citation. Only a different kind of source (a court record where the row
    rested on a newspaper) is cited. ``conflict`` (accepted only when code
    finds a year, month or number that differs, ``values_differ()``) keeps both: code writes the
-   new version right after the old sentence. ``new`` goes to step 5. From an
-   article not mainly about the entity, at most ``MAX_PASSING_CLAIMS`` new claims are kept.
+   new version right after the old sentence. ``new`` goes to step 5. Each
+   claim is marked ``news`` (what the article reports) or background (history
+   it recaps); news is handled first. From an article not mainly about the
+   entity, background is dropped and at most ``MAX_PASSING_CLAIMS`` new news
+   claims are kept.
 4b. **Date check** (code pairs, one model call; ``date_disputes.py``): a date
    in a sentence step 1 skipped ("the bombing on Oct. 12, 1999") that differs
    from a profile sentence on the same event is written after it, like a conflict.
@@ -56,7 +59,7 @@ from src.utils.step_timing import timed_step
 FACT_MAX_TOKENS = 4096
 MAX_CANDIDATES = 4  # existing rows shown beside each new claim
 MIN_SHARED = 2  # word stems a row must share with a claim to be shown
-MAX_PASSING_CLAIMS = 2  # claims kept from an article not mainly about the entity
+MAX_PASSING_CLAIMS = 3  # news claims kept from an article not mainly about the entity
 MIN_QUOTE_WORDS = 0.9
 # Share of the shorter sentence's word stems a conflicting row must share
 SAME_SUBJECT = 0.4
@@ -83,6 +86,15 @@ class ArticleClaim(BaseModel):
     section: str = Field(description="An existing '## heading' or a new one")
     quote: str = Field(description="The article's words it rests on, copied exactly")
     source: str = Field(default="the reporter", description="Who says it")
+    # On the labelled test cases, most missed facts were the article's news
+    # cut by the passing-mention cap while recapped history ("Camp 7 is a
+    # secretive prison") was kept: code now puts news first, and drops
+    # background from passing mentions
+    news: bool = Field(
+        default=True,
+        description="True if the article reports this as new (done, said or "
+        "decided now); false for history or description it recaps",
+    )
 
 
 class ArticleClaims(BaseModel):
@@ -496,6 +508,12 @@ def update_from_facts(
     ]
     report["claims"] = len(extracted)
     report["dropped_quotes"] = [c.claim for c in extracted if c not in claims]
+    report["mainly_about"] = answer.mainly_about
+    # News first, so the cap and the write step see it before background
+    claims = sorted(claims, key=lambda c: not c.news)
+    report["claim_log"] = [
+        {"claim": c.claim, "news": c.news, "verdict": "new"} for c in claims
+    ]
 
     # 2-3. Look up the likely rows, then compare (claims with none are new)
     found = [candidates(c.claim, rows) for c in claims]
@@ -528,6 +546,8 @@ def update_from_facts(
     }
     for n, (claim, rows_for) in enumerate(zip(claims, found), 1):
         verdict = verdicts.get(n)
+        if verdict:
+            report["claim_log"][n - 1].update(verdict=verdict.verdict, row=verdict.row)
         # A verdict naming a row it wasn't shown is a slip: treat it as new
         row = by_id.get(verdict.row) if verdict else None
         if (
@@ -599,7 +619,11 @@ def update_from_facts(
         # Capped among the *new* claims only: articles open with background
         # the profile has ("the bombing killed 17 sailors"), and capping the
         # first two claims kept those and dropped the new charge further down
-        if not answer.mainly_about and tally["new"] > MAX_PASSING_CLAIMS:
+        # A passing mention's background ("bin al Shibh is a Yemeni") is
+        # dropped; only what the article reports about the entity is kept
+        if not answer.mainly_about and (
+            not claim.news or tally["new"] > MAX_PASSING_CLAIMS
+        ):
             tally["new"] -= 1
             report.setdefault("dropped_passing", []).append(claim.claim)
             continue
