@@ -36,6 +36,10 @@ def test_counts_schedules_and_posts_change_over_time():
     # One-off past events don't change; a different year is a real dispute
     assert not is_time_varying("Nashiri was captured in November 2002")
     assert not is_time_varying("the sources disagree on the date of the conviction")
+    # When a hunger strike began is a past event, how many are on strike isn't
+    assert not is_time_varying("the hunger strike began on March 11, 2013")
+    assert is_time_varying("since the strike began, 59 captives were hunger strikers")
+    assert not is_time_varying("the attacks killed 2,974 people")
     # A post named next to a one-off event is about the event
     assert not is_time_varying("the current judge says Nashiri was captured in 2002")
 

@@ -37,14 +37,22 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 _CITATION = re.compile(r"\^\[[^\]]*\]")
 _CITED = re.compile(r"\^\[([^\]]+)\]")
 
-# A count of an ongoing state, or a schedule: both change from week to week,
-# so a newer value is news, never a dispute
-_CHANGING = re.compile(
+# An ongoing state (hunger strikes, tube feedings, lockdown) ...
+_STATE = re.compile(
     r"hunger[- ]?strik|\bon strike\b|tube[- ]?fe|force[- ]?fe|forced[- ]?feed"
-    r"|nasogastric|\bfeedings?\b|lockdown|single[- ]cell|\bpopulation\b"
-    r"|\b(?:number|count|total|tally) of (?:detainees|captives|prisoners|men"
-    r"|inmates|hunger)"
-    r"|\btrial (?:date|timeline|schedule|start)|\bschedul\w*|\bpostpon\w*"
+    r"|nasogastric|\bfeedings?\b|lockdown|single[- ]cell|\bpopulation\b",
+    re.I,
+)
+# ... a count of one ("the number of hunger strikers", "59 captives") ...
+_COUNT = re.compile(
+    r"\b(?:number|count|total|tally|figure)\b"
+    r"|\b\d+\s+(?:of\s+(?:the\s+)?\d+\s+)?(?:captives|detainees|prisoners|men"
+    r"|inmates|hunger strikers|strikers|people|were|are)\b",
+    re.I,
+)
+# ... or a schedule: all change from week to week, so a newer value is news
+_SCHEDULE = re.compile(
+    r"\btrial (?:date|timeline|schedule|start)|\bschedul\w*|\bpostpon\w*"
     r"|\bpushed (?:back|to|the)|\bdelay\w*|\bresched\w*|\btimeline\b"
     r"|\bdeadline\b|\bnext (?:hearing|session)\b|\bset (?:for|to (?:begin|start))"
     r"|\bexpected to (?:begin|start|open|close|end|resume)|\bearliest\b",
@@ -67,17 +75,24 @@ _POST = re.compile(
 _ONE_OFF = re.compile(
     r"\b(?:born|birth|captur\w*|arrest\w*|killed|death toll|died|bomb(?:ing|ed)"
     r"|attack\w*|plead\w*|pleaded|convict\w*|sentenced|founded|nationality"
-    r"|charged|moved to|transferred|arrived|opened|built|released)\b",
+    r"|charged|moved to|transferred|arrived|opened|built|released|began|begun"
+    r"|started|ended|launched|first|start of|end of)\b",
     re.I,
 )
 
 
 def is_time_varying(text: str) -> bool:
-    """The sentence is about a count, schedule, post or status that changes."""
+    """The sentence is about a count, schedule, post or status that changes.
+
+    When it names a one-off event ("the hunger strike began on March 11",
+    "captured in 2002"), only a count of an ongoing state or a schedule
+    still counts: the day a strike began can't change, the number on strike
+    can, and a death toll is about the attack."""
     text = _CITATION.sub("", text)
-    if _CHANGING.search(text):
-        return True
-    return bool(_POST.search(text)) and not _ONE_OFF.search(text)
+    if _ONE_OFF.search(text):
+        state_count = _STATE.search(text) and _COUNT.search(text)
+        return bool(state_count or _SCHEDULE.search(text))
+    return bool(_STATE.search(text) or _SCHEDULE.search(text) or _POST.search(text))
 
 
 # Verbs that introduce what the source says ("reports that B") ...
