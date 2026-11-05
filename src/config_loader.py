@@ -133,7 +133,14 @@ class DomainConfig:
         return config["data_sources"]["default_path"]
 
     def get_output_dir(self) -> str:
-        """Get the output directory for this domain."""
+        """Get the output directory for this domain.
+
+        ``HINBOX_OUTPUT_DIR`` replaces the configured folder, so a benchmark
+        run can write its entity tables, caches and timings somewhere fresh.
+        """
+        override = os.getenv("HINBOX_OUTPUT_DIR", "").strip()
+        if override:
+            return override
         config = self.load_config()
         return config["output"]["directory"]
 
@@ -186,6 +193,9 @@ class DomainConfig:
         Reads from the ``performance.concurrency`` and ``performance.queue``
         sections of the domain config.  Missing keys fall back to safe
         defaults that preserve serial behaviour (1 worker, 1 in-flight).
+        An environment variable ``HINBOX_<KEY>`` (e.g. ``HINBOX_EXTRACT_WORKERS``,
+        ``HINBOX_MAX_BUFFERED_ARTICLES``) beats the config file, so a speed
+        benchmark can try settings without editing ``config.yaml``.
         """
         config = self.load_config()
         perf = config.get("performance", {})
@@ -210,6 +220,10 @@ class DomainConfig:
             result["max_buffered_articles"] = max(
                 1, int(queue_cfg["max_buffered_articles"])
             )
+        for key in defaults:
+            env_value = os.getenv(f"HINBOX_{key.upper()}", "").strip()
+            if env_value:
+                result[key] = max(1, int(env_value))
 
         return result
 

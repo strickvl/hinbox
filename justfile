@@ -36,6 +36,11 @@ phoenix:
     PHOENIX_WORKING_DIR="${PHOENIX_WORKING_DIR:-$HOME/.phoenix}" uvx --python 3.12 --from arize-phoenix phoenix serve
 alias ui := frontend
 
+# Speed + quality baseline on a fixed article set, fresh and cached passes
+# (e.g. `just speed-baseline run --out bench --label before --set max_buffered_articles=1000`)
+speed-baseline *args:
+    uv run python -m scripts.speed_baseline {{args}}
+
 # ─── Evaluation ───────────────────────────────────────
 
 # Score a model on hand-labelled gold sets (e.g. `just eval relevance --model ollama/qwen3.6:35b-a3b`)
