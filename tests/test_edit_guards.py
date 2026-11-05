@@ -35,6 +35,18 @@ def test_a_restated_sentence_is_a_repeat():
     ]
     spath = "Nashiri's military defense lawyer consulted Judge Spath about the hearing.^[a9]"
     assert not is_repeat(spath, pohl)
+    # A changed outcome in a short word is new
+    won = [
+        "Nashiri's lawyers won the appeal against the military commission ruling.^[a1]"
+    ]
+    lost = (
+        "Nashiri's lawyers lost the appeal against the military commission ruling.^[a9]"
+    )
+    assert not is_repeat(lost, won)
+    # The model's "the article states" wrapping doesn't hide a repeat
+    assert is_repeat(
+        "The article states that the appeal was won by Nashiri's lawyers.^[a9]", won
+    )
     # Different news about the same camp shares too few words
     assert not is_repeat(
         "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]", known

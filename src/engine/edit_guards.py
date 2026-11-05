@@ -8,8 +8,8 @@ it added 320 sentences that restated one already in the profile, and 312
 be checked without a model, so each new sentence of an ``add`` edit is checked
 here:
 
-- **Repeat**: nearly all its content words (``REPEAT_OVERLAP``) are in one
-  existing sentence, it gives no year, month or number that sentence lacks, and
+- **Repeat**: every word of it (filler such as "the article states" aside)
+  is in one existing sentence, it gives no year, month or number that sentence lacks, and
   it has as many negations ("not", "never") as that sentence.
   Dropped.
 - **Invented dispute**: it says sources or reports disagree, but no existing
@@ -28,7 +28,6 @@ from src.engine.fact_list import _stems, _values, adds_values
 from src.engine.profile_edits import ProfileEdit
 from src.evals.profile_cases import _sentences
 
-REPEAT_OVERLAP = 0.8  # share of the new sentence's word stems in one old sentence
 MIN_STEMS = 3  # shorter lines (headings, "Tags:") aren't checked
 _CITATION = re.compile(r"\^\[[^\]]*\]")
 # The same wording the profile-update eval counts as "sources disagree"
@@ -61,18 +60,43 @@ def _claim(sentence: str) -> str:
     return _CITATION.sub("", sentence).strip()
 
 
+# Words that carry no fact, and the wrapping models put round a restated one
+# ("The article states that ...")
+_FILLER = set(
+    "the a an of in on at to for and or by with as is was were be been being "
+    "has had have that this these those from its it his her their they he she "
+    "which who whom also there then than into about after before while "
+    "article articles report reports reported states stated notes noted "
+    "according describes described says said new profile".split()
+)
+
+
+def _words(text: str) -> set:
+    """Every word of the sentence but filler, cut to 5 letters ("detainees"
+    and "detained" match). Short words count: "won" and "lost", "Pohl" and
+    "Spath" are what separate two otherwise identical sentences."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return {w[:5] for w in words if w not in _FILLER}
+
+
 def is_repeat(sentence: str, known: List[str]) -> bool:
-    """Nearly every content word is in one known sentence, and it adds no value."""
-    stems = _stems(_claim(sentence))
-    if len(stems) < MIN_STEMS:
+    """Every word of the sentence is in one known sentence (filler aside), it
+    adds no value, and it has as many negations.
+
+    Not "most words": in review, "lost the appeal" against "won the appeal",
+    "consulted Judge Spath" against "Judge Pohl" and "could not attend"
+    against "could attend" all shared over 80% of their long words.
+    """
+    words = _words(_claim(sentence))
+    if len(_stems(_claim(sentence))) < MIN_STEMS:
         return False
     negations, names = _negations(sentence), set(_NAME.findall(_claim(sentence)))
     for other in known:
-        shared = len(stems & _stems(_claim(other))) / len(stems)
         if (
-            shared >= REPEAT_OVERLAP
+            words <= _words(_claim(other))
             and _negations(other) == negations
-            and names <= set(_NAME.findall(_claim(other)))
+            # Any capitalised word of the other counts, its first one too
+            and names <= set(re.findall(r"\b[A-Z][a-z]{2,}\b", _claim(other)))
             # Against this sentence only: a year the profile gives elsewhere
             # ("filed an appeal in 2014") still makes "in 2014 the judge
             # scheduled" a change to "in 2013 the judge scheduled"
