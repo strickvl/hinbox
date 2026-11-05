@@ -6,11 +6,14 @@ Examples::
     just eval merge --model ollama/qwen3.6:35b-a3b --split test
     just eval profile-update --model openai/gpt-6-luna --split dev
     just eval profile-update --model openai/gpt-6-luna --prompt-variant local
+    just eval profile-create --model openai/gpt-6-luna --limit 40 --grounding
+    just eval profile-update --rescore <run file>   # re-score saved profiles
     just eval show                       # print the scoreboard
     just eval show --grid                # latest score per model and prompt
 """
 
 import argparse
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
@@ -26,9 +29,11 @@ from src.evals.datasets import (
     load_merge_items,
     load_relevance_items,
 )
+from src.evals.profile_create import run_profile_create
 from src.evals.profile_update import (
     UPDATERS,
     load_cases,
+    rescore_run,
     run_updates,
     summarize_updates,
 )
@@ -75,6 +80,9 @@ _UPDATE_COLUMNS = (
     ("invented_citations", "Invented cites"),
     ("dispute_claims", '"Sources differ"'),
     ("unsupported_numbers", "Unsupported nums"),
+    ("labelled", "Labelled"),
+    ("core_missing", "Facts missed"),
+    ("wrong_readings", "Wrong readings"),
     ("median_seconds", "Median s"),
 )
 
@@ -126,11 +134,51 @@ def _print_grid(rows: List[Dict[str, Any]]) -> None:
         console.print(table)
 
 
+def _rescore(path: str, cases: List[Dict[str, Any]]) -> None:
+    """Print a saved run's summary as saved and as scored today."""
+    with open(path, encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    ids = {c["case_id"] for c in cases}
+    before = [r for r in records if r.get("item_id") in ids]
+    after = rescore_run(before, cases)
+    rows = [
+        {"approach": "as saved", **summarize_updates(before)},
+        {"approach": "today", **summarize_updates(after)},
+    ]
+    _print_rows(rows, os.path.basename(path), _UPDATE_COLUMNS)
+    for old, new in zip(before, after):
+        was = (old.get("scores") or {}).get("passed")
+        now = (new.get("scores") or {}).get("passed")
+        if was != now:
+            s = new.get("scores") or {}
+            why = (
+                [f"missed {', '.join(s['core_missing'])}"]
+                if s.get("core_missing")
+                else []
+            )
+            why += [
+                f"{h['kind']}: {h['sentence'][:120]}"
+                for h in s.get("must_not_hits", [])
+            ]
+            if (
+                s.get("claims_ok") is not None
+                and s.get("dispute_claims")
+                and not s.get("disputes_ok")
+            ):
+                why.append(f"{s['dispute_claims']} 'sources disagree' sentence(s)")
+            console.print(f"{new['item_id']}: {was} -> {now}  {'; '.join(why)}")
+
+
 def _run_profile_update(args, parser, eval_dir: str) -> None:
     try:
-        cases = load_cases(eval_dir, args.split, args.include_unreviewed)
+        cases = load_cases(
+            eval_dir, args.split, args.include_unreviewed, args.claim_labels
+        )
     except FileNotFoundError as e:
         parser.error(f"Cases missing (run `just eval-cases`): {e.filename}")
+    if args.rescore:
+        _rescore(args.rescore, cases)
+        return
     cases = cases[: args.limit]
     if not cases:
         parser.error(f"No profile-update cases for split {args.split!r}")
@@ -161,7 +209,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Score models on hand-labelled gold sets"
     )
-    parser.add_argument("task", choices=(*TASKS, "profile-update", "show"))
+    parser.add_argument(
+        "task", choices=(*TASKS, "profile-update", "profile-create", "show")
+    )
     parser.add_argument(
         "--model", default=CLOUD_MODEL, help="e.g. ollama/qwen3.6:35b-a3b"
     )
@@ -197,6 +247,39 @@ def main() -> None:
     parser.add_argument(
         "--grid", action="store_true", help="show: latest score per model and prompt"
     )
+    create = parser.add_argument_group("profile-create")
+    create.add_argument(
+        "--cases",
+        choices=("entities", "replay"),
+        default="entities",
+        help="pairs from an entity database, or each replay entity's first article",
+    )
+    create.add_argument("--entities-dir", default=None, help="default: output dir")
+    create.add_argument("--seed", type=int, default=0)
+    create.add_argument(
+        "--create-approaches",
+        default="reflect,check",
+        help="comma-separated create_profile() approaches to compare",
+    )
+    create.add_argument(
+        "--grounding",
+        action="store_true",
+        help="also check each cited claim against the article (cloud model)",
+    )
+    parser.add_argument(
+        "--claim-labels",
+        choices=("reviewed", "draft", "off"),
+        default="reviewed",
+        help="profile-update: which claim labels (claim_labels.jsonl) to check "
+        "new_fact cases against; 'draft' also uses unreviewed ones",
+    )
+    parser.add_argument(
+        "--rescore",
+        default=None,
+        metavar="RUN_FILE",
+        help="profile-update: re-score a saved run file with today's checks "
+        "(no model calls) and print before/after",
+    )
     args = parser.parse_args()
     if args.prompt_variant:
         os.environ["HINBOX_PROMPT_VARIANT"] = args.prompt_variant
@@ -216,6 +299,10 @@ def main() -> None:
             _print_rows(updates, "Profile updates", _UPDATE_COLUMNS)
         return
 
+    if args.task == "profile-update" and args.rescore:  # no model calls to trace
+        _run_profile_update(args, parser, eval_dir)
+        return
+
     # Eval runs are traced too: their model calls carry gold labels and scores,
     # which makes them the best training examples we have
     try:
@@ -229,6 +316,9 @@ def main() -> None:
         parser.error(str(e))
     if args.task == "profile-update":
         _run_profile_update(args, parser, eval_dir)
+        return
+    if args.task == "profile-create":
+        run_profile_create(args, parser, domain_cfg, eval_dir)
         return
 
     if args.task == "relevance":

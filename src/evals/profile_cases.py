@@ -99,6 +99,12 @@ _ABBREVIATION = re.compile(
     r"(?:\b[A-Z]|\b(?:Adm|Gen|Lt|Col|Capt|Cmdr|Sgt|Maj|Mr|Mrs|Ms|Dr|St|Sen|Rep"
     r"|Gov|Jr|Sr|No|Inc|Corp|Co|vs|Brig|Jan|Feb|Mar|Apr|Aug|Sept|Sep|Oct|Nov|Dec))\.$"
 )
+# "9 a.m. Tuesday" is one sentence; "until 9 a.m. The hearing resumed" is two
+_TIME_END = re.compile(r"\b[ap]\.m\.$")
+_TIME_GOES_ON = re.compile(
+    r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*day\b|(?:ET|EST|EDT|GMT|UTC|Eastern"
+    r"|Cuba|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b"
+)
 _MONTHS = (
     "jan",
     "feb",
@@ -123,7 +129,10 @@ def _sentences(text: str) -> List[str]:
         pieces = re.split(r"(?<=[.!?\]])\s+(?=[A-Z#])", line)
         merged: List[str] = []
         for piece in pieces:
-            if merged and _ABBREVIATION.search(merged[-1]):
+            if merged and (
+                _ABBREVIATION.search(merged[-1])
+                or (_TIME_END.search(merged[-1]) and _TIME_GOES_ON.match(piece))
+            ):
                 merged[-1] += " " + piece
             else:
                 merged.append(piece)

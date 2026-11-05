@@ -11,6 +11,7 @@ from src.engine.fact_list import (
     Placement,
     SectionPlacements,
     _match_heading,
+    adds_values,
     candidates,
     load_rows,
     quote_found,
@@ -622,3 +623,26 @@ def test_new_evidence_keeps_rows_that_share_its_sentence():
     assert saved["Nashiri was held at secret sites in Thailand."]["sources"] == [
         {"article_id": "a2", "kind": "leak"}
     ]
+
+
+def test_a_same_claim_is_not_rewritten_for_a_number_the_profile_already_has():
+    # The Cole death toll is in another sentence, spelled out: not new detail
+    assert not adds_values(
+        "The bombing killed 17 U.S. sailors in October 2000.",
+        "Nashiri is accused of the October 2000 bombing of the USS Cole.",
+        "### Attack\nIt killed seventeen sailors.^[a1]",
+    )
+    assert adds_values(
+        "The closed hearing was held on Feb. 22.",
+        "The Pentagon released the transcript of a closed hearing.",
+        "### Release\nThe transcript came out in 2013.^[a1]",
+    )
+    # A compound is left as words, not read as "20-5"
+    assert not adds_values("Twenty-five sailors were hurt.", "25 sailors were hurt.")
+    assert not adds_values("Two hundred men were held.", "200 men were held.")
+    assert not adds_values("Thirty one men were held.", "31 men were held.")
+    # "one of the 17" is not a count of one
+    assert not adds_values(
+        "Gunn was one of the 17 Americans killed.",
+        "Gunn was among the 17 sailors killed.",
+    )

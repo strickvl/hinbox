@@ -137,7 +137,9 @@ class TestEntityMergerMergeSmoke:
         )  # arbitrary but consistent
 
         with (
-            patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
+            patch(
+                "src.engine.mergers.create_profile", side_effect=create_profile_stub
+            ) as create_mock,
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
             ),
@@ -155,6 +157,9 @@ class TestEntityMergerMergeSmoke:
                 similarity_threshold=0.8,
                 domain="guantanamo",
             )
+
+        # Prompts say "the person X", not "the peopl X"
+        assert create_mock.call_args.args[0] == "person"
 
         # Assertions: new entity exists with expected fields
         assert "Alice Smith" in entities["people"]
@@ -241,7 +246,9 @@ class TestEntityMergerMergeSmoke:
 
         with (
             patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
-            patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
+            patch(
+                "src.engine.mergers.update_profile", side_effect=update_profile_stub
+            ) as update_mock,
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
             ),
@@ -266,6 +273,8 @@ class TestEntityMergerMergeSmoke:
                 similarity_threshold=0.5,
                 domain="guantanamo",
             )
+
+        assert update_mock.call_args.args[0] == "person"
 
         # Assertions: existing entity updated in place
         assert "Alice Smith" in entities["people"]

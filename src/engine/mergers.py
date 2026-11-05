@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from src.config_loader import DomainConfig
 from src.constants import (
     ENABLE_PROFILE_VERSIONING,
+    ENTITY_SINGULAR,
     MERGE_GRAY_BAND_DELTA,
     MERGE_UNCERTAIN_CONFIDENCE_CUTOFF,
     SIMILARITY_THRESHOLD,
@@ -633,7 +634,7 @@ class EntityMerger:
                         _profile_or_fallback(
                             (existing_entity["profile"], versioned_profile, []),
                             update_profile,
-                            self.entity_type[:-1],
+                            ENTITY_SINGULAR[self.entity_type],
                             self._format_key_for_display(similar_key),
                             existing_entity["profile"],
                             versioned_profile,
@@ -702,7 +703,7 @@ class EntityMerger:
                         _profile_or_fallback(
                             ({}, VersionedProfile(), []),
                             create_profile,
-                            self.entity_type[:-1],
+                            ENTITY_SINGULAR[self.entity_type],
                             self._format_key_for_display(similar_key),
                             article_content,
                             article_id,
@@ -812,7 +813,7 @@ class EntityMerger:
                     _profile_or_fallback(
                         ({}, VersionedProfile(), []),
                         create_profile,
-                        self.entity_type[:-1],
+                        ENTITY_SINGULAR[self.entity_type],
                         self._format_key_for_display(entity_key),
                         article_content,
                         article_id,

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from src.constants import (
     CLOUD_MODEL,
+    EXTRACTION_MAX_TOKENS,
     OLLAMA_MODEL,
 )
 from src.logging_config import get_logger
@@ -203,6 +204,7 @@ def extract_entities_cloud(
             response_model=response_model,
             model=model,
             temperature=temperature,
+            max_tokens=EXTRACTION_MAX_TOKENS,
             metadata={"tags": ["extraction"]},
         )
 
@@ -260,6 +262,7 @@ def extract_entities_local(
             response_model=response_model,
             model=model,
             temperature=temperature,
+            max_tokens=EXTRACTION_MAX_TOKENS,
             metadata={"tags": ["extraction"]},
         )
 

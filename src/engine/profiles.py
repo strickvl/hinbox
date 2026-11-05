@@ -13,14 +13,17 @@ from src.constants import (
     ENABLE_PROFILE_VERSIONING,
     MAX_ITERATIONS,
     OLLAMA_MODEL,
+    PROFILE_CREATE_APPROACH,
     PROFILE_MAX_TOKENS,
     PROFILE_UPDATE_APPROACH,
 )
+from src.engine.profile_create import CREATE_APPROACHES, create_with_checks
 from src.exceptions import (
     ProfileGenerationError,
     ProfileUpdateError,
 )
 from src.logging_config import get_logger, log
+from src.utils.citation_ids import repair_profile_citations
 from src.utils.error_handler import (
     handle_profile_error,
     retry_on_error,
@@ -30,6 +33,7 @@ from src.utils.llm import (
     cloud_generation,
     iterative_improve,
     local_generation,
+    text_generation,
 )
 from src.utils.outcomes import PhaseOutcome
 from src.utils.profiles import extract_profile_text
@@ -86,13 +90,19 @@ def _apply_profile_qc(profile: Optional[Dict], entity_name: str) -> Optional[Dic
     """Run deterministic profile QC and record the result on the profile.
 
     Applies QC's safe fixes (default tags, clamped confidence) and stores
-    ``{"passed", "flags"}`` under ``profile["qc"]``. A failing profile is kept
+    ``{"passed", "flags"}`` under ``profile["qc"]``. A cited article ID one or
+    two typos away from one of the profile's sources is snapped back to it first
+    (``repair_profile_citations``). A failing profile is kept
     as-is; QC only flags it, it never triggers regeneration.
     """
     if not isinstance(profile, dict):
         return profile
+    profile, repaired = repair_profile_citations(profile)
     profile, report = run_profile_qc(profile=profile)
-    profile["qc"] = {"passed": report.passed, "flags": list(report.flags)}
+    flags = list(report.flags) + (["citation_ids_repaired"] if repaired else [])
+    profile["qc"] = {"passed": report.passed, "flags": flags}
+    if repaired:
+        log(f"Fixed {repaired} garbled citation ID(s) in '{entity_name}'", level="info")
     if not report.passed:
         log(
             f"Profile QC failed for '{entity_name}': {', '.join(report.flags)}",
@@ -177,6 +187,7 @@ def generate_profile_with_reflection(
     max_iterations: int = MAX_ITERATIONS,
     domain: str = "guantanamo",
     model: Optional[str] = None,
+    approach: Optional[str] = None,
 ) -> (Dict, list):
     """
     Generate a profile with reflection and improvement.
@@ -203,6 +214,30 @@ def generate_profile_with_reflection(
         },
     ]
 
+    mode = _resolve_mode(model_type, model)
+    approach = approach or PROFILE_CREATE_APPROACH
+    if approach not in CREATE_APPROACHES:
+        raise ValueError(f"Unknown profile create approach {approach!r}")
+    annotate(create_approach=approach)
+    if approach == "check":
+        profile, history = create_with_checks(
+            draft=lambda msgs: _generate_initial_profile_text(msgs, mode, model),
+            write_text=lambda msgs: text_generation(
+                msgs,
+                model=model
+                or (CLOUD_MODEL if mode == GenerationMode.CLOUD else OLLAMA_MODEL),
+                local=mode == GenerationMode.LOCAL,
+                max_tokens=PROFILE_MAX_TOKENS,
+            ),
+            generation_messages=generation_messages,
+            article_id=article_id,
+            entity_type=entity_type,
+        )
+        final_text = json.dumps(profile) if profile else ""
+        return _finish_generated_profile(
+            final_text, history, entity_name, entity_type, article_id
+        )
+
     # Load reflection prompt from config
     reflection_template = config.load_profile_prompt("reflection", prompt_model)
     reflection_prompt = reflection_template.format(
@@ -210,7 +245,6 @@ def generate_profile_with_reflection(
     )
 
     # Generate initial profile text for iterative improvement
-    mode = _resolve_mode(model_type, model)
     initial_text = _generate_initial_profile_text(generation_messages, mode, model)
 
     # Use iterative_improve to refine the profile
@@ -225,11 +259,23 @@ def generate_profile_with_reflection(
         max_tokens=PROFILE_MAX_TOKENS,
     )
 
-    # Extract final result
-    final_text = result.get("text", "{}")
-    history = result.get("reflection_history", [])
+    return _finish_generated_profile(
+        result.get("text", "{}"),
+        result.get("reflection_history", []),
+        entity_name,
+        entity_type,
+        article_id,
+    )
 
-    # Parse the final result
+
+def _finish_generated_profile(
+    final_text: str,
+    history: list,
+    entity_name: str,
+    entity_type: str,
+    article_id: str,
+) -> Tuple[Dict, list]:
+    """Parse the final profile JSON, or return the fallback profile on failure."""
     try:
         if final_text.strip():
             if final_text.strip().startswith("{"):
@@ -273,6 +319,7 @@ def generate_profile(
     model_type: str = "gemini",
     domain: str = "guantanamo",
     model: Optional[str] = None,
+    approach: Optional[str] = None,
 ) -> (Dict, list):
     """
     Generate a profile for an entity based on article text using structured extraction.
@@ -287,6 +334,7 @@ def generate_profile(
         model_type=model_type,
         domain=domain,
         model=model,
+        approach=approach,
     )
     return profile_dict, improvement_history
 
@@ -653,6 +701,7 @@ def create_profile(
     model_type: str = "gemini",
     domain: str = "guantanamo",
     model: Optional[str] = None,
+    approach: Optional[str] = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Create an initial profile for an entity based on article text using structured extraction.
@@ -674,6 +723,7 @@ def create_profile(
             model_type,
             domain,
             model,
+            approach,
         )
 
         # Extract the actual text from nested/parsed fields before logging
