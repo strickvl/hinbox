@@ -248,3 +248,12 @@ def test_short_and_lower_case_months_name_the_same_day():
         "30 captives were hunger strikers on march 25, 2013",
     ):
         assert same_observation_day(side, None, [old])
+
+
+def test_the_with_clause_stops_at_the_next_source():
+    claim = (
+        "Sources disagree on hunger-striker counts, with the article reporting "
+        "that 59 men were on hunger strike, while a March 25, 2013 report "
+        "states that 28 men were on hunger strike"
+    )
+    assert article_side(claim) == ("says", "59 men were on hunger strike", None)

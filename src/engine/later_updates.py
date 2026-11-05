@@ -216,7 +216,9 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     """
     found = None
     if m := _WITH.search(claim):
-        found = (m.group("verb"), claim[m.end() :], None)
+        # The side ends where another source's clause starts
+        nxt = _TAIL.search(claim, m.end())
+        found = (m.group("verb"), claim[m.end() : nxt.start() if nxt else None], None)
     elif tails := [m for i in range(len(claim)) if (m := _TAIL.match(claim, i))]:
         # One per "reports that", the longest, so "a March 4, 2014 report"
         # keeps its whole date
