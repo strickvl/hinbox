@@ -99,6 +99,18 @@ def test_a_dispute_needs_an_old_sentence_with_a_different_value():
     # A name the old sentence doesn't replace isn't a disputed value
     mention = "Sources disagree on what Spath said about Nashiri's hearing.^[a9]"
     assert is_invented_dispute(mention, ["Nashiri's hearing was delayed.^[a1]"])
+    # Different capitalised words that don't stand in for each other
+    trial = ["Judge Pohl scheduled the trial for Dec. 4 at Guantanamo.^[a1]"]
+    vague = (
+        "The sources disagree on the trial date: the profile says Dec. 4, "
+        "while the article says Judge Pohl did not specify one for the trial.^[a9]"
+    )
+    assert is_invented_dispute(vague, trial)
+    ruled = ["Judge Pohl ruled for the defense on the notebook dispute.^[a1]"]
+    denied = (
+        "Sources disagree on the notebook dispute: Judge Pohl denied the request.^[a9]"
+    )
+    assert is_invented_dispute(denied, ruled)
     # A dispute the article reports, without "sources", is just a fact
     assert not is_invented_dispute("The lawyer disagreed with the ruling.^[a9]", known)
 

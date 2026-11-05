@@ -136,12 +136,35 @@ def _negations(sentence: str) -> int:
 
 # Capitalised words in the dispute wording itself, not names
 _SKIP_NAMES = {"Sources", "Source", "Reports", "Another", "The", "This", "However"}
+_SKIP_NAMES |= set("Monday Tuesday Wednesday Thursday Friday Saturday Sunday".split())
 
 
-def _proper_names(text: str) -> set:
-    """Capitalised words that aren't months or the first word."""
-    words = set(_NAME.findall(text))
-    return {w for w in words if not _MONTH.fullmatch(w)}
+# A name right after the same word on both sides: "Judge Spath" in place of
+# "Judge Pohl". Just "each side has a capitalised word the other lacks" kept
+# 48 false disputes in the 60-article Qwen run, e.g. "Dec. 4" against "does
+# not specify", or "Judge Pohl denied" against "ruled for the defense"
+_TITLED = re.compile(r"\b(\w+)\s+([A-Z][a-z]{2,})\b")
+
+
+def _titled(text: str) -> set:
+    return {
+        (w.lower(), name)
+        for w, name in _TITLED.findall(text)
+        if not _MONTH.fullmatch(name) and name not in _SKIP_NAMES
+    }
+
+
+def _swaps_name(claim: str, other: str) -> bool:
+    """Some word is followed by one name in the claim and by another, which
+    the claim never gives, in ``other``."""
+    mine, theirs = _titled(claim), _titled(other)
+    my_names = {n for _, n in mine}
+    their_names = {n for _, n in theirs}
+    return any(
+        w == v and a not in their_names and b not in my_names
+        for w, a in mine
+        for v, b in theirs
+    )
 
 
 def _disputes_value(claim: str, other: str) -> bool:
@@ -173,12 +196,7 @@ def _disputes_value(claim: str, other: str) -> bool:
     # neither gives a year ("18 sailors killed" against "killed 17 sailors")
     if len(shared) < 2:
         return False
-    # A name only counts when it takes the place of one: each side has a
-    # name the other lacks. A claim that just mentions someone new ("Camp 7
-    # guards told the ICRC ...") isn't comparing two values
-    names = _proper_names(claim) - _SKIP_NAMES
-    other_names = _proper_names(other) - _SKIP_NAMES
-    swapped = bool(names - other_names and other_names - names)
+    swapped = _swaps_name(claim, other)
     undated = not years and not o_years
     return swapped or bool(undated and counts - o_counts and o_counts)
 
