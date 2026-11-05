@@ -341,7 +341,7 @@ def test_the_passing_cap_counts_only_new_claims():
         ArticleClaim(
             claim=f"Nashiri new point {n}.", section="## Capture", quote="judge ruled"
         )
-        for n in (1, 2, 3)
+        for n in (1, 2, 3, 4)
     ]
 
     def verdicts(messages):
@@ -364,8 +364,75 @@ def test_the_passing_cap_counts_only_new_claims():
     )
     report = new["fact_report"]
     assert (report["same"], report["new"]) == (1, 2)
-    assert report["dropped_passing"] == ["Nashiri new point 3."]
-    assert "new point 1" in new["text"] and "new point 2" in new["text"]
+    assert report["dropped_passing"] == ["Nashiri new point 3.", "Nashiri new point 4."]
+    assert all(f"new point {n}" in new["text"] for n in (1, 2))
+
+
+def test_news_comes_first_and_background_is_capped():
+    # The cap used to keep the first two new claims, which were often recapped
+    # background, and drop the article's news further down
+    def claim(text: str, news: bool) -> ArticleClaim:
+        return ArticleClaim(
+            claim=text, section="## Capture", quote="judge ruled", news=news
+        )
+
+    claims = [claim(f"Nashiri background {n}.", False) for n in (1, 2, 3)] + [
+        claim("Nashiri asked the judge to recuse himself.", True)
+    ]
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(mainly_about=False, claims=claims),
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    report = new["fact_report"]
+    assert "recuse himself.^[a9]" in new["text"]
+    assert "background 1" in new["text"] and "background 2" not in new["text"]
+    assert report["mainly_about"] is False and report["new"] == 2
+    log = report["claim_log"]
+    assert [c["news"] for c in log] == [True, False, False, False]
+    assert [c.get("dropped", False) for c in log] == [False, False, True, True]
+
+
+def test_an_article_about_the_entity_keeps_one_background_claim():
+    claims = [
+        ArticleClaim(
+            claim=f"Nashiri recap {n}.",
+            section="## Capture",
+            quote="judge ruled",
+            news=False,
+        )
+        for n in (1, 2)
+    ] + [
+        ArticleClaim(
+            claim=f"Nashiri news {n}.", section="## Capture", quote="judge ruled"
+        )
+        for n in (1, 2, 3)
+    ]
+    answers = {
+        "ArticleClaims": lambda m: ArticleClaims(mainly_about=True, claims=claims),
+        "SectionPlacements": lambda m: SectionPlacements(),
+    }
+    generate, _ = _fake(answers)
+    new = update_from_facts(
+        "people",
+        "Nashiri",
+        {"text": PROFILE},
+        ARTICLE,
+        "a9",
+        model="m",
+        generate=generate,
+    )
+    assert all(f"news {n}" in new["text"] for n in (1, 2, 3))
+    assert "recap 1" in new["text"] and "recap 2" not in new["text"]
 
 
 def test_article_subheadings_are_not_copied_in_as_sections():

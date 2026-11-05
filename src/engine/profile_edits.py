@@ -240,11 +240,16 @@ def edit_profile(
     model: Optional[str] = None,
     domain: str = "guantanamo",
     local: Optional[bool] = None,
+    guard: bool = True,
 ) -> Dict[str, Any]:
     """Ask the model for edits and apply them. Raises if the call fails.
 
-    ``local`` defaults to whether ``model`` starts with ``ollama/``.
+    ``local`` defaults to whether ``model`` starts with ``ollama/``. With
+    ``guard``, repeated sentences and invented "sources disagree" sentences
+    are taken out first (``edit_guards.py``).
     """
+    from src.engine.edit_guards import guard_edits
+
     local = (model or "").startswith("ollama/") if local is None else local
     generate = local_generation if local else cloud_generation
     model = model or (OLLAMA_MODEL if local else CLOUD_MODEL)
@@ -264,7 +269,12 @@ def edit_profile(
     )
     if response is None:
         raise RuntimeError("edit call returned nothing")
-    text, report = apply_edits(existing_profile.get("text", ""), response.edits)
+    old_text = existing_profile.get("text", "")
+    edits, guarded = (
+        guard_edits(old_text, response.edits) if guard else (response.edits, {})
+    )
+    text, report = apply_edits(old_text, edits)
+    report["guard"] = guarded
     sources = list(existing_profile.get("sources") or [])
     return {
         **existing_profile,
