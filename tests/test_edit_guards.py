@@ -39,6 +39,17 @@ def test_a_dispute_needs_an_old_sentence_with_a_different_value():
     invented = "Sources disagree on whether guards searched the detainees' Korans.^[a9]"
     assert not is_invented_dispute(real, known)
     assert is_invented_dispute(invented, known)
+    # A planted year sharing a single topic word with the profile is kept
+    khadr = ["Khadr allegedly threw a grenade in a July 2002 firefight.^[a1]"]
+    planted = (
+        "The new article says the incident occurred in July 2001, and the "
+        "sources disagree on the year of the firefight.^[a9]"
+    )
+    assert not is_invented_dispute(planted, khadr)
+    # A count from a later article is a later state, not a dispute
+    strikers = ["In April 2013, 59 prisoners were hunger strikers.^[a1]"]
+    later = "Sources disagree on the number of hunger strikers: 106 in July.^[a9]"
+    assert is_invented_dispute(later, strikers)
     # A dispute the article reports, without "sources", is just a fact
     assert not is_invented_dispute("The lawyer disagreed with the ruling.^[a9]", known)
 

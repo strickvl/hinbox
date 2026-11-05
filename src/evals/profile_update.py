@@ -389,7 +389,9 @@ def make_edit_updater(model: str, domain: str) -> Updater:
             result = make_fact_updater(model, domain)(case)
             result["report"]["fallback"] = "facts"
             return result
-        return {"text": profile["text"], "report": profile.get("edit_report")}
+        # The raw edits too, so a changed guard can be replayed without the model
+        report = {**(profile.get("edit_report") or {}), "edits": profile.get("edits")}
+        return {"text": profile["text"], "report": report}
 
     return update
 

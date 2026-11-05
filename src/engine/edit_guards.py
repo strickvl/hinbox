@@ -12,8 +12,8 @@ here:
   existing sentence, and it gives no year, month or number the profile lacks.
   Dropped.
 - **Invented dispute**: it says sources or reports disagree, but no existing
-  sentence is about the same thing (``same_subject()``) with a value the new
-  sentence doesn't share. Dropped.
+  sentence that shares a topic word gives a different year, or a different
+  month or count for the same year (``_disputes_value()``). Dropped.
 
 ``replace`` edits are left alone: they rewrite one sentence and keep its
 citations. An edit whose sentences are all dropped is removed.
@@ -22,7 +22,7 @@ citations. An edit whose sentences are all dropped is removed.
 import re
 from typing import Any, Dict, List, Tuple
 
-from src.engine.fact_list import _stems, adds_values, same_subject
+from src.engine.fact_list import _stems, _values, adds_values
 from src.engine.profile_edits import ProfileEdit
 from src.evals.profile_cases import _sentences
 
@@ -56,17 +56,39 @@ def is_repeat(sentence: str, known: List[str], profile_text: str) -> bool:
     return False
 
 
+def _disputes_value(claim: str, other: str) -> bool:
+    """``claim`` gives a different year, or a different month or count for
+    the same year, than ``other`` does, and they share a topic word.
+
+    A count that changes between articles (59 hunger strikers, then 100,
+    then 106) or an age a year later is a later state, not a dispute: in the
+    60-article Qwen run those were most of the "sources disagree" sentences
+    a plain "adds a value" test let through. A planted dispute changes one
+    year ("July 2001" against "a July 2002 firefight"), and shares as little
+    as one topic word, so one is enough.
+    """
+    (years, months, counts), (o_years, o_months, o_counts) = (
+        _values(claim),
+        _values(other),
+    )
+    if not _stems(claim) & _stems(other):
+        return False
+    return bool(
+        (years - o_years and o_years)
+        or ((months - o_months and o_months) or (counts - o_counts and o_counts))
+        and years & o_years
+    )
+
+
 def is_invented_dispute(sentence: str, known: List[str]) -> bool:
-    """Says the sources disagree, but no known sentence on the same thing has
-    a value this one adds ("opened in 2003" against "opened in 2002")."""
+    """Says the sources disagree, but no known sentence gives a different year
+    (or a different month or count for the same year) for something it mentions."""
     claim = _claim(sentence)
     if not (_DISPUTE.search(claim) and _SOURCES.search(claim)):
         return False
     # The dispute wording itself says nothing about what is disputed
     topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", claim))
-    return not any(
-        same_subject(topic, _claim(o)) and adds_values(claim, _claim(o)) for o in known
-    )
+    return not any(_disputes_value(topic, _claim(o)) for o in known)
 
 
 def guard_edits(
