@@ -10,7 +10,8 @@ here:
 
 - **Repeat**: every word of it (filler such as "the article states" aside)
   is in one existing sentence, in the same order, it gives no year, month or number that sentence lacks, and
-  it has as many negations ("not", "never") as that sentence.
+  it has as many negations ("not", "never") and the same hedges ("could",
+  "expected", "allegedly") as that sentence.
   Dropped.
 - **Invented dispute**: it says sources or reports disagree, but no existing
   sentence that shares a topic word gives a different year, or a different
@@ -91,10 +92,12 @@ def is_repeat(sentence: str, known: List[str]) -> bool:
     if len(_stems(_claim(sentence))) < MIN_STEMS:
         return False
     negations, names = _negations(sentence), set(_NAME.findall(_claim(sentence)))
+    hedges = _hedges(_claim(sentence))
     for other in known:
         if (
             words <= _words(_claim(other))
             and _negations(other) == negations
+            and _hedges(_claim(other)) == hedges
             # Any capitalised word of the other counts, its first one too
             and names <= set(re.findall(r"\b[A-Z][a-z]{2,}\b", _claim(other)))
             # Against this sentence only: a year the profile gives elsewhere
@@ -138,6 +141,21 @@ _NEGATION = re.compile(r"\b(not|no|never|neither|nor|without|\w+n't)\b", re.I)
 
 def _negations(sentence: str) -> int:
     return len(_NEGATION.findall(_claim(sentence)))
+
+
+# Words that make a fact tentative: "the hearing could resume in 2014" isn't
+# a repeat of "the hearing resumed in 2014" (the 5-letter cut makes "resume"
+# and "resumed" one word), it's the news that it happened
+_HEDGE = re.compile(
+    r"\b(could|may|might|would|will|shall|should|can|cannot|expected|expects?"
+    r"|plans?|planned|intends?|intended|likely|unlikely|possibly|probably"
+    r"|allegedly|reportedly|proposed|scheduled|set to|due to|hopes?|hoped)\b",
+    re.I,
+)
+
+
+def _hedges(text: str) -> List[str]:
+    return sorted(m.lower() for m in _HEDGE.findall(text))
 
 
 # Capitalised words in the dispute wording itself, not names

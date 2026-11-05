@@ -47,6 +47,9 @@ def test_a_restated_sentence_is_a_repeat():
     assert is_repeat(
         "The article states that the appeal was won by Nashiri's lawyers.^[a9]", won
     )
+    # A tentative fact that came true is news
+    could = ["Nashiri's military hearing could resume in 2014.^[a1]"]
+    assert not is_repeat("Nashiri's military hearing resumed in 2014.^[a9]", could)
     # Timing words count
     before = ["The military lawyers consulted Nashiri before the hearing.^[a1]"]
     after = "The military lawyers consulted Nashiri after the hearing.^[a9]"
