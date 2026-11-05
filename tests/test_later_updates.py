@@ -10,6 +10,8 @@ from src.engine.later_updates import (
     as_update,
     dated_apart,
     is_time_varying,
+    own_citations,
+    same_observation_day,
     to_date,
 )
 from src.engine.profile_edits import ProfileEdit
@@ -189,3 +191,22 @@ def test_two_counts_for_the_same_named_day_stay_a_dispute():
         PROFILE, [_add(same_day, anchor=MARCH)], DATES["a17"], DATES
     )
     assert edits[0].text == same_day and not report["later_updates"]
+
+
+def test_a_year_apart_is_not_the_same_day():
+    old = "The trial was scheduled for Sept. 2, 2014.^[m25]"
+    assert not same_observation_day(
+        "it is now scheduled for Sept. 2, 2015", None, [old]
+    )
+    assert same_observation_day("it is now scheduled for Sept. 2", None, [old])
+
+
+def test_the_rewrite_keeps_only_the_article_s_citations():
+    both = (
+        "Sources disagree on the count; while the profile states 28^[m25], the "
+        "article reports that as of April 16, 2013, 59 captives were hunger "
+        "strikers.^[a17]"
+    )
+    edits, _ = guard_edits(PROFILE, [_add(both, anchor=MARCH)], DATES["a17"], DATES)
+    assert edits[0].text.endswith("hunger strikers.^[a17]")
+    assert own_citations("x^[m25]", [MARCH]) == "^[m25]"  # nothing else to keep

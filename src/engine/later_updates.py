@@ -310,12 +310,21 @@ def as_update(
     return f"{text.rstrip('.')}.{unique}"
 
 
-_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})\b")
+_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})\b(?:,?\s+((?:19|20)\d\d)\b)?")
 
 
 def _days(text: str) -> set:
-    """Days the text names ("March 25", "Mar. 25, 2013"), as ("mar", "25")."""
-    return {(m.group(1).lower()[:3], m.group(2)) for m in _DAY.finditer(text)}
+    """Days the text names ("March 25", "Mar. 25, 2013"), as ("mar", "25",
+    "2013"), the year None when not given."""
+    return {
+        (m.group(1).lower()[:3], m.group(2), m.group(3)) for m in _DAY.finditer(text)
+    }
+
+
+def _same_day(a: tuple, b: tuple) -> bool:
+    # Sept. 2, 2014 and Sept. 2, 2015 are a year apart; a day without a year
+    # could be either
+    return a[:2] == b[:2] and (a[2] is None or b[2] is None or a[2] == b[2])
 
 
 def same_observation_day(side: str, dated: Optional[str], olds: Iterable[str]) -> bool:
@@ -323,7 +332,23 @@ def same_observation_day(side: str, dated: Optional[str], olds: Iterable[str]) -
     28 hunger strikers on March 25 in one, 30 on March 25 in the other is a
     real dispute, whenever each article was published."""
     mine = _days(side) | _days(dated or "")
-    return bool(mine) and any(mine & _days(_CITATION.sub("", o)) for o in olds)
+    theirs = {d for o in olds for d in _days(_CITATION.sub("", o))}
+    return any(_same_day(a, b) for a in mine for b in theirs)
+
+
+def own_citations(sentence: str, olds: Iterable[str]) -> str:
+    """The sentence's citations without those of the sentences it disputes,
+    which back the profile's side, not the article's (all of them if that
+    would leave none)."""
+    theirs = {i for o in olds for i in cited_ids(o)}
+    mine = [i for i in dict.fromkeys(_ids_in_order(sentence)) if i not in theirs]
+    if not mine:
+        return "".join(_CITATION.findall(sentence))
+    return "".join(f"^[{i}]" for i in mine)
+
+
+def _ids_in_order(sentence: str) -> List[str]:
+    return [i.strip() for g in _CITED.findall(sentence) for i in g.split(",")]
 
 
 def dated_apart(

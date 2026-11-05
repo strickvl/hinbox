@@ -40,6 +40,7 @@ from src.engine.later_updates import (
     as_update,
     dated_apart,
     is_time_varying,
+    own_citations,
     same_observation_day,
     to_date,
 )
@@ -324,8 +325,7 @@ def later_update(
     verb, side, dated = found
     if same_observation_day(side, dated, olds):
         return None
-    citations = "".join(_CITATION.findall(sentence))
-    return as_update(verb, side, dated, article_date, citations)
+    return as_update(verb, side, dated, article_date, own_citations(sentence, olds))
 
 
 def guard_edits(
