@@ -186,3 +186,13 @@ def test_guard_checks_against_the_profile_after_replacements():
     ]
     kept, report = guard_edits(profile, edits)
     assert [e.text for e in kept][-1] == charge and report["repeats"] == []
+
+
+def test_a_replacement_that_cant_apply_doesnt_hide_an_addition():
+    charge = "The military commission charged Nashiri in 2008.^[a9]"
+    edits = [
+        ProfileEdit(op="replace", anchor="A sentence not in the profile.", text=charge),
+        _add(charge),
+    ]
+    kept, report = guard_edits(PROFILE, edits)
+    assert kept[-1].text == charge and report["repeats"] == []

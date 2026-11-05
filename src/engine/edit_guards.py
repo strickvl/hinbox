@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Tuple
 
 from src.engine.date_disputes import _PUBLISHED
 from src.engine.fact_list import _MONTH, _stems, _values, adds_values
-from src.engine.profile_edits import ProfileEdit
+from src.engine.profile_edits import ProfileEdit, apply_edits
 from src.evals.profile_cases import _sentences
 
 MIN_STEMS = 3  # shorter lines (headings, "Tags:") aren't checked
@@ -246,15 +246,13 @@ def guard_edits(
     text: str, edits: List[ProfileEdit]
 ) -> Tuple[List[ProfileEdit], Dict[str, Any]]:
     """The edits with repeated and invented-dispute sentences taken out."""
-    known = [s for s in _sentences(text) if not s.startswith("#")]
     # Checked against the profile as the replacements leave it: when an edit
     # replaces "captured in 2002 and charged in 2008" with the capture alone
-    # and adds the charge separately, the added charge isn't a repeat
-    for edit in edits:
-        if edit.op == "replace":
-            old = _claim(edit.anchor)
-            known = [k for k in known if not old or old not in _claim(k)]
-            known += [s for s in _sentences(edit.text) if not s.startswith("#")]
+    # and adds the charge separately, the added charge isn't a repeat. The
+    # replacements are applied the way ``apply_edits()`` will apply them, so
+    # one whose anchor isn't found changes nothing here either
+    replaced, _ = apply_edits(text, [e for e in edits if e.op == "replace"])
+    known = [s for s in _sentences(replaced) if not s.startswith("#")]
     report: Dict[str, Any] = {"repeats": [], "disputes": []}
     kept: List[ProfileEdit] = []
     for edit in edits:
