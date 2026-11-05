@@ -24,7 +24,7 @@ import re
 from typing import Any, Dict, List, Tuple
 
 from src.engine.date_disputes import _PUBLISHED
-from src.engine.fact_list import _stems, _values, adds_values
+from src.engine.fact_list import _MONTH, _stems, _values, adds_values
 from src.engine.profile_edits import ProfileEdit
 from src.evals.profile_cases import _sentences
 
@@ -65,7 +65,7 @@ def _claim(sentence: str) -> str:
 _FILLER = set(
     "the a an of in on at to for and or by with as is was were be been being "
     "has had have that this these those from its it his her their they he she "
-    "which who whom also there then than into about after before while "
+    "which who whom also there "
     "article articles report reports reported states stated notes noted "
     "according describes described says said new profile".split()
 )
@@ -115,9 +115,20 @@ def _negations(sentence: str) -> int:
     return len(_NEGATION.findall(_claim(sentence)))
 
 
+# Capitalised words in the dispute wording itself, not names
+_SKIP_NAMES = {"Sources", "Source", "Reports", "Another", "The", "This", "However"}
+
+
+def _proper_names(text: str) -> set:
+    """Capitalised words that aren't months or the first word."""
+    words = set(_NAME.findall(text))
+    return {w for w in words if not _MONTH.fullmatch(w)}
+
+
 def _disputes_value(claim: str, other: str) -> bool:
     """``claim`` gives a different year, or a different month or count for
-    the same year, than ``other`` does, and they share a topic word.
+    the same year, than ``other`` does, and they share a topic word; or,
+    sharing two, another name or another undated count.
 
     A count that changes between articles (59 hunger strikers, then 100,
     then 106) or an age a year later is a later state, not a dispute: in the
@@ -130,12 +141,24 @@ def _disputes_value(claim: str, other: str) -> bool:
         _values(claim),
         _values(other),
     )
-    if not _stems(claim) & _stems(other):
+    shared = _stems(claim) & _stems(other)
+    if not shared:
         return False
-    return bool(
-        (years - o_years and o_years)
-        or ((months - o_months and o_months) or (counts - o_counts and o_counts))
+    if (years - o_years and o_years) or (
+        ((months - o_months and o_months) or (counts - o_counts and o_counts))
         and years & o_years
+    ):
+        return True
+    # On the same thing (two topic words): another name ("Judge Spath
+    # presided" against "Judge Pohl presided"), or another count where
+    # neither gives a year ("18 sailors killed" against "killed 17 sailors")
+    if len(shared) < 2:
+        return False
+    names, other_names = _proper_names(claim), _proper_names(other)
+    undated = not years and not o_years
+    return bool(
+        (names - other_names - _SKIP_NAMES)
+        or (undated and counts - o_counts and o_counts)
     )
 
 

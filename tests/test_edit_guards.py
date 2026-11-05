@@ -47,6 +47,10 @@ def test_a_restated_sentence_is_a_repeat():
     assert is_repeat(
         "The article states that the appeal was won by Nashiri's lawyers.^[a9]", won
     )
+    # Timing words count
+    before = ["The military lawyers consulted Nashiri before the hearing.^[a1]"]
+    after = "The military lawyers consulted Nashiri after the hearing.^[a9]"
+    assert not is_repeat(after, before)
     # Different news about the same camp shares too few words
     assert not is_repeat(
         "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]", known
@@ -77,6 +81,13 @@ def test_a_dispute_needs_an_old_sentence_with_a_different_value():
     # A denial the article reports is news, not the profile comparing sources
     denial = "Nashiri's lawyers contradicted reports that he confessed.^[a9]"
     assert not is_invented_dispute(denial, known)
+    # A different name, or an undated count, on the same thing is kept
+    judge = ["Judge Pohl presided over Nashiri's hearing.^[a1]"]
+    other_judge = "Sources disagree on the presiding judge: Judge Spath presided over Nashiri's hearing.^[a9]"
+    assert not is_invented_dispute(other_judge, judge)
+    sailors = ["The bombing killed 17 sailors.^[a1]"]
+    count = "Sources disagree: this report says the bombing killed 18 sailors.^[a9]"
+    assert not is_invented_dispute(count, sailors)
     # A dispute the article reports, without "sources", is just a fact
     assert not is_invented_dispute("The lawyer disagreed with the ruling.^[a9]", known)
 
