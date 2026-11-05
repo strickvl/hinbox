@@ -267,7 +267,11 @@ def cited_ids(sentence: str) -> set:
     return {i.strip() for g in _CITED.findall(sentence) for i in g.split(",")}
 
 
-_MONTH = r"(?:Jan|Feb|March|April|May|June|July|Aug|Sept?|Oct|Nov|Dec)[a-z]*\.?"
+# Full month names and their short forms ("Mar.", "Sept"), any case
+_MONTH = (
+    r"(?:January|February|March|April|May|June|July|August|September|October"
+    r"|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\b\.?"
+)
 # The side already says when: it starts with a date ("On May 16, 2013, ...",
 # "In February 2014, ..."), or gives one as when the value held ("... as of
 # July 17, 2013", "... in February 2014"). A date it is about ("postponed
@@ -326,7 +330,7 @@ def as_update(
     return f"{text.rstrip('.')}.{unique}"
 
 
-_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})\b(?:,?\s+((?:19|20)\d\d)\b)?")
+_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})\b(?:,?\s+((?:19|20)\d\d)\b)?", re.I)
 
 
 def _days(text: str) -> set:

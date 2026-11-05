@@ -239,3 +239,12 @@ def test_an_anchor_that_isn_t_the_disputed_sentence_is_ignored():
         profile, [_add(APRIL, anchor=lock)], "2013-04-17", dates
     )
     assert edits[0].text == APRIL and not report["later_updates"]
+
+
+def test_short_and_lower_case_months_name_the_same_day():
+    old = "28 captives were hunger strikers on March 25, 2013.^[old]"
+    for side in (
+        "30 captives were hunger strikers on Mar. 25, 2013",
+        "30 captives were hunger strikers on march 25, 2013",
+    ):
+        assert same_observation_day(side, None, [old])
