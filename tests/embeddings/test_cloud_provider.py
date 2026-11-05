@@ -158,6 +158,18 @@ class TestCloudEmbeddingProvider:
 
     @pytest.mark.asyncio
     @patch.dict(os.environ, _JINA_ENV)
+    async def test_call_asks_jina_to_truncate(self, provider):
+        """Over-long input (a hub entity's profile) is truncated, not refused."""
+        mock_create = MagicMock()
+        mock_client = MagicMock()
+        mock_client.embeddings.create = mock_create
+        with patch("src.utils.embeddings.cloud.OpenAI", return_value=mock_client):
+            await provider._call_with_retry(["test"])
+        kwargs = mock_create.call_args[1]
+        assert kwargs["extra_body"] == {"truncate": True}
+
+    @pytest.mark.asyncio
+    @patch.dict(os.environ, _JINA_ENV)
     async def test_call_with_retry_failure_then_success(self, provider):
         """Test retry logic on failure."""
         mock_response = MagicMock()
