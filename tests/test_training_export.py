@@ -168,7 +168,7 @@ def test_eval_edit_updater_calls_land_under_profile_update(spans, monkeypatch):
         "article_text": "a",
         "article_id": "a9",
     }
-    assert pu.make_edit_updater("openai/x", "guantanamo")(case) == "unchanged"
+    assert pu.make_edit_updater("openai/x", "guantanamo")(case)["text"] == "unchanged"
     (row,) = _rows(spans)
     assert row["metadata"]["task"] == "profile.update"
     assert row["metadata"]["entity_name"] == "Vance Spath"

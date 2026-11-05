@@ -368,21 +368,28 @@ def _update_step(case: Dict[str, Any], approach: str) -> Iterator[None]:
 
 
 def make_edit_updater(model: str, domain: str) -> Updater:
-    """Ask for a list of edits and apply them (``src/engine/profile_edits.py``)."""
+    """Ask for a list of edits, check and apply them (``profile_edits.py``,
+    ``edit_guards.py``); a profile too long for the local model goes to the
+    fact list, as in the pipeline."""
     from src.engine.profile_edits import edit_profile
+    from src.utils.ollama_context import PromptTooLongError
 
     def update(case: Dict[str, Any]) -> str:
-        with _update_step(case, "edit"):
-            profile = edit_profile(
-                case["entity_type"],
-                case["entity_name"],
-                case["profile"],
-                case["article_text"],
-                case["article_id"],
-                model=model,
-                domain=domain,
-            )
-        return profile["text"]
+        args = (
+            case["entity_type"],
+            case["entity_name"],
+            case["profile"],
+            case["article_text"],
+            case["article_id"],
+        )
+        try:
+            with _update_step(case, "edit"):
+                profile = edit_profile(*args, model=model, domain=domain)
+        except PromptTooLongError:
+            result = make_fact_updater(model, domain)(case)
+            result["report"]["fallback"] = "facts"
+            return result
+        return {"text": profile["text"], "report": profile.get("edit_report")}
 
     return update
 

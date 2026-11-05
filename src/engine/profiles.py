@@ -533,6 +533,7 @@ def _edit_profile_update(
     logged, not stored). Falls back to the existing profile if the call fails.
     """
     from src.engine.profile_edits import edit_profile
+    from src.utils.ollama_context import PromptTooLongError
 
     local = _resolve_mode(model_type, model) == GenerationMode.LOCAL
     try:
@@ -545,6 +546,22 @@ def _edit_profile_update(
             model=model,
             domain=domain,
             local=local,
+        )
+    except PromptTooLongError:
+        # The edit-list prompt holds the whole profile; the fact-list updater
+        # never sends it, so a profile too long for the local model still
+        # gets updated
+        annotate(edit_fallback="facts")
+        log(f"Profile of {entity_name} too long to edit; using the fact list")
+        return _fact_profile_update(
+            entity_type,
+            entity_name,
+            existing_profile,
+            new_article_text,
+            new_article_id,
+            model_type,
+            domain,
+            model,
         )
     except Exception as e:
         log(

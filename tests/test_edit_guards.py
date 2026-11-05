@@ -1,0 +1,87 @@
+"""Code checks on the edit-list updater's edits (``src/engine/edit_guards.py``)."""
+
+from src.engine.edit_guards import guard_edits, is_invented_dispute, is_repeat
+from src.engine.profile_edits import ProfileEdit
+
+PROFILE = (
+    "# Camp 6\n\n## Background\n\n"
+    "Camp 6 opened in 2006 as a penitentiary-style building.^[a1] "
+    "The camp holds about 120 detainees in communal blocks.^[a2]\n"
+)
+
+
+def _add(text: str, anchor: str = "END") -> ProfileEdit:
+    return ProfileEdit(op="add", anchor=anchor, text=text)
+
+
+def test_a_restated_sentence_is_a_repeat():
+    known = ["Camp 6 opened in 2006 as a penitentiary-style building.^[a1]"]
+    assert is_repeat(
+        "Camp 6 opened in 2006 as a penitentiary building.^[a9]", known, PROFILE
+    )
+    # A new number is new detail, not a repeat
+    assert not is_repeat(
+        "Camp 6 opened in 2006 as a 200-cell penitentiary-style building.^[a9]",
+        known,
+        PROFILE,
+    )
+    # Different news about the same camp shares too few words
+    assert not is_repeat(
+        "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]",
+        known,
+        PROFILE,
+    )
+
+
+def test_a_dispute_needs_an_old_sentence_with_a_different_value():
+    known = ["Camp 6 opened in 2006 as a penitentiary-style building.^[a1]"]
+    real = "Sources disagree: this report says Camp 6 opened in 2007, not 2006.^[a9]"
+    invented = "Sources disagree on whether guards searched the detainees' Korans.^[a9]"
+    assert not is_invented_dispute(real, known)
+    assert is_invented_dispute(invented, known)
+    # A dispute the article reports, without "sources", is just a fact
+    assert not is_invented_dispute("The lawyer disagreed with the ruling.^[a9]", known)
+
+
+def test_guard_drops_repeats_and_keeps_the_new_sentence_in_the_same_edit():
+    edits = [
+        _add(
+            "The camp holds about 120 detainees in communal blocks.^[a9] "
+            "In 2013 the military moved all of them to single cells.^[a9]",
+            anchor="## Background",
+        ),
+        ProfileEdit(op="replace", anchor="x", text="Camp 6 opened in 2006.^[a1]"),
+        _add("Camp 6 opened in 2006 as a penitentiary-style building.^[a9]"),
+    ]
+    kept, report = guard_edits(PROFILE, edits)
+    assert [e.text for e in kept] == [
+        "In 2013 the military moved all of them to single cells.^[a9]",
+        "Camp 6 opened in 2006.^[a1]",
+    ]
+    assert len(report["repeats"]) == 2 and report["disputes"] == []
+
+
+def test_guard_stops_the_same_new_sentence_being_added_twice():
+    sentence = "In 2013 the military moved all Camp 6 detainees to single cells.^[a9]"
+    kept, report = guard_edits(
+        PROFILE, [_add(sentence), _add(sentence, "## Background")]
+    )
+    assert [e.text for e in kept] == [sentence]
+    assert report["repeats"] == [sentence]
+
+
+def test_a_profile_too_long_to_edit_goes_to_the_fact_list(monkeypatch):
+    from src.engine import profiles
+    from src.utils.ollama_context import PromptTooLongError
+
+    def too_long(*args, **kwargs):
+        raise PromptTooLongError("too long")
+
+    monkeypatch.setattr("src.engine.profile_edits.edit_profile", too_long)
+    monkeypatch.setattr(
+        profiles, "_fact_profile_update", lambda *a, **k: ({"text": "facts"}, [])
+    )
+    updated, _ = profiles._edit_profile_update(
+        "people", "Nashiri", {"text": "old"}, "article", "a9", model="ollama/q"
+    )
+    assert updated == {"text": "facts"}
