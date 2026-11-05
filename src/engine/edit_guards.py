@@ -40,6 +40,7 @@ from src.engine.later_updates import (
     as_update,
     dated_apart,
     is_time_varying,
+    same_observation_day,
     to_date,
 )
 from src.engine.profile_edits import ProfileEdit, apply_edits
@@ -321,6 +322,8 @@ def later_update(
     if found is None:
         return None
     verb, side, dated = found
+    if same_observation_day(side, dated, olds):
+        return None
     citations = "".join(_CITATION.findall(sentence))
     return as_update(verb, side, dated, article_date, citations)
 

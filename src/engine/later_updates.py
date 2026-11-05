@@ -32,7 +32,7 @@ would lose the newer value.
 
 import datetime as dt
 import re
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 _CITATION = re.compile(r"\^\[[^\]]*\]")
 _CITED = re.compile(r"\^\[([^\]]+)\]")
@@ -171,6 +171,25 @@ def _subject_date(m: "re.Match[str]") -> Optional[str]:
     return None
 
 
+_CURRENT = re.compile(
+    rf"\b(?:the|this)\s+(?:{_NEWER}\s+)?(?:article|story)\b|\b{_NEWER}\b", re.I
+)
+
+
+def _current_clause(
+    claim: str, clauses: List["re.Match[str]"]
+) -> Optional["re.Match[str]"]:
+    """The clause that gives the new article's side. With one source clause,
+    that one; with several ("the article reports 59, while a March 25 report
+    states 28"), the last one naming "the article" or a newer report, or
+    None when none does, since picking by position could give the old value
+    the new citation."""
+    if len(clauses) == 1:
+        return clauses[0]
+    current = [c for c in clauses if _CURRENT.search(claim[c.start() : c.end()])]
+    return current[-1] if current else None
+
+
 def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     """What the article says, without the profile's side or the dispute
     wording: ("says", "the trial was pushed to Dec. 4", None) or
@@ -184,10 +203,18 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     if m := _WITH.search(claim):
         found = (m.group("verb"), claim[m.end() :], None)
     elif tails := [m for i in range(len(claim)) if (m := _TAIL.match(claim, i))]:
-        # The last "reports that"; of the matches ending there, the longest,
-        # so "a March 4, 2014 report" keeps its whole date
-        m = next(t for t in tails if t.end() == max(t.end() for t in tails))
-        found = (m.group("verb"), claim[m.end() :], _subject_date(m))
+        # One per "reports that", the longest, so "a March 4, 2014 report"
+        # keeps its whole date
+        clauses = [
+            next(t for t in tails if t.end() == end)
+            for end in sorted({t.end() for t in tails})
+        ]
+        m = _current_clause(claim, clauses)
+        if m is None:
+            return None
+        # The side ends where another source's clause starts
+        stop = min((c.start() for c in clauses if c.start() > m.end()), default=None)
+        found = (m.group("verb"), claim[m.end() : stop], _subject_date(m))
     elif m := _LEAD.match(claim):
         side = m.group("side").strip()
         if s := _LEAD_SUBJECT.match(side):
@@ -266,6 +293,22 @@ def as_update(
         text = f"As of {month}, {first} {rest}"
     unique = "".join(dict.fromkeys(_CITATION.findall(citations)))
     return f"{text.rstrip('.')}.{unique}"
+
+
+_DAY = re.compile(rf"\b({_MONTH})\s+(\d{{1,2}})\b")
+
+
+def _days(text: str) -> set:
+    """Days the text names ("March 25", "Mar. 25, 2013"), as ("mar", "25")."""
+    return {(m.group(1).lower()[:3], m.group(2)) for m in _DAY.finditer(text)}
+
+
+def same_observation_day(side: str, dated: Optional[str], olds: Iterable[str]) -> bool:
+    """The article's value and an old sentence are for the same named day:
+    28 hunger strikers on March 25 in one, 30 on March 25 in the other is a
+    real dispute, whenever each article was published."""
+    mine = _days(side) | _days(dated or "")
+    return bool(mine) and any(mine & _days(_CITATION.sub("", o)) for o in olds)
 
 
 def dated_apart(

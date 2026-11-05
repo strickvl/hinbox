@@ -157,3 +157,31 @@ def test_dates_by_article_id():
     assert not dated_apart(dates["a17"], ["Uncited sentence."], dates)
     entity = {"articles": [{"article_id": "m25", "article_published_date": 1}]}
     assert article_dates(entity, "a17", 2) == {"m25": 1, "a17": 2}
+
+
+def test_the_new_article_s_clause_is_picked_not_the_last_one():
+    claim = (
+        "Sources disagree on hunger-striker counts: the article reports that 59 "
+        "men were on hunger strike, while a March 25, 2013 report states that "
+        "28 men were on hunger strike"
+    )
+    assert article_side(claim) == ("says", "59 men were on hunger strike", None)
+    # Two reports and neither is "the article": no way to tell, left alone
+    ambiguous = (
+        "Sources disagree on the count: a March 25, 2013 report states that 28 "
+        "men were on strike, while an April 2, 2013 report states that 59 men "
+        "were on strike"
+    )
+    assert article_side(ambiguous) is None
+
+
+def test_two_counts_for_the_same_named_day_stay_a_dispute():
+    same_day = (
+        "Sources disagree on the number of hunger strikers; while the profile "
+        "states 28, the article reports that on March 25, 2013, 30 captives "
+        "were classified as hunger strikers.^[a17]"
+    )
+    edits, report = guard_edits(
+        PROFILE, [_add(same_day, anchor=MARCH)], DATES["a17"], DATES
+    )
+    assert edits[0].text == same_day and not report["later_updates"]
