@@ -22,6 +22,7 @@ citations. An edit whose sentences are all dropped is removed.
 import re
 from typing import Any, Dict, List, Tuple
 
+from src.engine.date_disputes import _PUBLISHED
 from src.engine.fact_list import _stems, _values, adds_values
 from src.engine.profile_edits import ProfileEdit
 from src.evals.profile_cases import _sentences
@@ -86,9 +87,14 @@ def is_invented_dispute(sentence: str, known: List[str]) -> bool:
     claim = _claim(sentence)
     if not (_DISPUTE.search(claim) and _SOURCES.search(claim)):
         return False
-    # The dispute wording itself says nothing about what is disputed
-    topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", claim))
-    return not any(_disputes_value(topic, _claim(o)) for o in known)
+    # The dispute wording itself says nothing about what is disputed, and a
+    # source's own date ("the August 14, 2009 article describes Khadr as 22")
+    # is when it was written: on dev, Luna's two kept false disputes differed
+    # from the profile only in that year
+    topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", _PUBLISHED.sub(" ", claim)))
+    return not any(
+        _disputes_value(topic, _PUBLISHED.sub(" ", _claim(o))) for o in known
+    )
 
 
 def guard_edits(

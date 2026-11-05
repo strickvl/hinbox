@@ -50,6 +50,10 @@ def test_a_dispute_needs_an_old_sentence_with_a_different_value():
     strikers = ["In April 2013, 59 prisoners were hunger strikers.^[a1]"]
     later = "Sources disagree on the number of hunger strikers: 106 in July.^[a9]"
     assert is_invented_dispute(later, strikers)
+    # The year a source was written isn't a disputed value
+    age = ["In 2010 Khadr was 24 years old.^[a1]"]
+    dated = "The August 14, 2009 article describes Khadr as 22; sources disagree on his age.^[a9]"
+    assert is_invented_dispute(dated, age)
     # A dispute the article reports, without "sources", is just a fact
     assert not is_invented_dispute("The lawyer disagreed with the ruling.^[a9]", known)
 
