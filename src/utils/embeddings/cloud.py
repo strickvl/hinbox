@@ -82,6 +82,10 @@ class CloudEmbeddingProvider(EmbeddingProvider):
             api_key=target.api_key or "not-set",
         )
         instrument_embeddings(client, target)
+        # Jina refuses input over 8194 tokens unless asked to truncate. A hub
+        # entity's profile (e.g. the Guantanamo base) grows past that, and then
+        # every later article that mentions it failed its merge step.
+        extra = {"truncate": True} if target.provider_label == "jina_ai" else {}
 
         for attempt in range(self.config.max_retries):
             try:
@@ -89,7 +93,9 @@ class CloudEmbeddingProvider(EmbeddingProvider):
                     None,
                     in_current_context(
                         lambda: client.embeddings.create(
-                            model=target.api_model, input=texts
+                            model=target.api_model,
+                            input=texts,
+                            **({"extra_body": extra} if extra else {}),
                         )
                     ),
                 )
