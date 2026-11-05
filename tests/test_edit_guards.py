@@ -25,6 +25,10 @@ def test_a_restated_sentence_is_a_repeat():
         known,
         PROFILE,
     )
+    # The opposite ruling isn't a repeat, though its long words are the same
+    ruling = ["The judge ruled that Nashiri could attend the hearing.^[a1]"]
+    opposite = "The judge ruled that Nashiri could not attend the hearing.^[a9]"
+    assert not is_repeat(opposite, ruling, PROFILE)
     # Different news about the same camp shares too few words
     assert not is_repeat(
         "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]",

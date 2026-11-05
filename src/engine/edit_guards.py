@@ -48,13 +48,25 @@ def is_repeat(sentence: str, known: List[str], profile_text: str) -> bool:
     stems = _stems(_claim(sentence))
     if len(stems) < MIN_STEMS:
         return False
+    negations = _negations(sentence)
     for other in known:
         shared = len(stems & _stems(_claim(other))) / len(stems)
-        if shared >= REPEAT_OVERLAP and not adds_values(
-            _claim(sentence), _claim(other), profile_text
+        if (
+            shared >= REPEAT_OVERLAP
+            and _negations(other) == negations
+            and not adds_values(_claim(sentence), _claim(other), profile_text)
         ):
             return True
     return False
+
+
+# Short words the stems leave out, so "could not attend" and "could attend"
+# would otherwise look the same
+_NEGATION = re.compile(r"\b(not|no|never|neither|nor|without|\w+n't)\b", re.I)
+
+
+def _negations(sentence: str) -> int:
+    return len(_NEGATION.findall(_claim(sentence)))
 
 
 def _disputes_value(claim: str, other: str) -> bool:
