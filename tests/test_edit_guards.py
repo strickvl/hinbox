@@ -96,6 +96,9 @@ def test_a_dispute_needs_an_old_sentence_with_a_different_value():
     sailors = ["The bombing killed 17 sailors.^[a1]"]
     count = "Sources disagree: this report says the bombing killed 18 sailors.^[a9]"
     assert not is_invented_dispute(count, sailors)
+    # A name the old sentence doesn't replace isn't a disputed value
+    mention = "Sources disagree on what Spath said about Nashiri's hearing.^[a9]"
+    assert is_invented_dispute(mention, ["Nashiri's hearing was delayed.^[a1]"])
     # A dispute the article reports, without "sources", is just a fact
     assert not is_invented_dispute("The lawyer disagreed with the ruling.^[a9]", known)
 

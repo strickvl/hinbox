@@ -147,7 +147,7 @@ def _proper_names(text: str) -> set:
 def _disputes_value(claim: str, other: str) -> bool:
     """``claim`` gives a different year, or a different month or count for
     the same year, than ``other`` does, and they share a topic word; or,
-    sharing two, another name or another undated count.
+    sharing two, a name in place of another or another undated count.
 
     A count that changes between articles (59 hunger strikers, then 100,
     then 106) or an age a year later is a later state, not a dispute: in the
@@ -173,12 +173,14 @@ def _disputes_value(claim: str, other: str) -> bool:
     # neither gives a year ("18 sailors killed" against "killed 17 sailors")
     if len(shared) < 2:
         return False
-    names, other_names = _proper_names(claim), _proper_names(other)
+    # A name only counts when it takes the place of one: each side has a
+    # name the other lacks. A claim that just mentions someone new ("Camp 7
+    # guards told the ICRC ...") isn't comparing two values
+    names = _proper_names(claim) - _SKIP_NAMES
+    other_names = _proper_names(other) - _SKIP_NAMES
+    swapped = bool(names - other_names and other_names - names)
     undated = not years and not o_years
-    return bool(
-        (names - other_names - _SKIP_NAMES)
-        or (undated and counts - o_counts and o_counts)
-    )
+    return swapped or bool(undated and counts - o_counts and o_counts)
 
 
 def is_invented_dispute(sentence: str, known: List[str]) -> bool:
