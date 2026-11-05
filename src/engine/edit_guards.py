@@ -9,7 +9,8 @@ be checked without a model, so each new sentence of an ``add`` edit is checked
 here:
 
 - **Repeat**: nearly all its content words (``REPEAT_OVERLAP``) are in one
-  existing sentence, and it gives no year, month or number the profile lacks.
+  existing sentence, it gives no year, month or number that sentence lacks, and
+  it has as many negations ("not", "never") as that sentence.
   Dropped.
 - **Invented dispute**: it says sources or reports disagree, but no existing
   sentence that shares a topic word gives a different year, or a different
@@ -43,7 +44,7 @@ def _claim(sentence: str) -> str:
     return _CITATION.sub("", sentence).strip()
 
 
-def is_repeat(sentence: str, known: List[str], profile_text: str) -> bool:
+def is_repeat(sentence: str, known: List[str]) -> bool:
     """Nearly every content word is in one known sentence, and it adds no value."""
     stems = _stems(_claim(sentence))
     if len(stems) < MIN_STEMS:
@@ -54,7 +55,10 @@ def is_repeat(sentence: str, known: List[str], profile_text: str) -> bool:
         if (
             shared >= REPEAT_OVERLAP
             and _negations(other) == negations
-            and not adds_values(_claim(sentence), _claim(other), profile_text)
+            # Against this sentence only: a year the profile gives elsewhere
+            # ("filed an appeal in 2014") still makes "in 2014 the judge
+            # scheduled" a change to "in 2013 the judge scheduled"
+            and not adds_values(_claim(sentence), _claim(other))
         ):
             return True
     return False
@@ -124,7 +128,7 @@ def guard_edits(
         for sentence in _sentences(edit.text):
             if sentence.startswith("#"):
                 continue
-            if is_repeat(sentence, known, text):
+            if is_repeat(sentence, known):
                 report["repeats"].append(sentence[:200])
             elif is_invented_dispute(sentence, known):
                 report["disputes"].append(sentence[:200])

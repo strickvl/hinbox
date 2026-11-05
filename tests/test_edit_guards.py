@@ -16,24 +16,22 @@ def _add(text: str, anchor: str = "END") -> ProfileEdit:
 
 def test_a_restated_sentence_is_a_repeat():
     known = ["Camp 6 opened in 2006 as a penitentiary-style building.^[a1]"]
-    assert is_repeat(
-        "Camp 6 opened in 2006 as a penitentiary building.^[a9]", known, PROFILE
-    )
+    assert is_repeat("Camp 6 opened in 2006 as a penitentiary building.^[a9]", known)
     # A new number is new detail, not a repeat
     assert not is_repeat(
-        "Camp 6 opened in 2006 as a 200-cell penitentiary-style building.^[a9]",
-        known,
-        PROFILE,
+        "Camp 6 opened in 2006 as a 200-cell penitentiary-style building.^[a9]", known
     )
     # The opposite ruling isn't a repeat, though its long words are the same
     ruling = ["The judge ruled that Nashiri could attend the hearing.^[a1]"]
     opposite = "The judge ruled that Nashiri could not attend the hearing.^[a9]"
-    assert not is_repeat(opposite, ruling, PROFILE)
+    assert not is_repeat(opposite, ruling)
+    # A changed year is new, even if the profile gives that year elsewhere
+    hearing = ["In 2013 the military judge scheduled Nashiri's hearing.^[a1]"]
+    moved = "In 2014 the military judge scheduled Nashiri's hearing.^[a9]"
+    assert not is_repeat(moved, hearing)
     # Different news about the same camp shares too few words
     assert not is_repeat(
-        "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]",
-        known,
-        PROFILE,
+        "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]", known
     )
 
 
