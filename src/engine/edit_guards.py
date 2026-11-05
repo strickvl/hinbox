@@ -306,17 +306,20 @@ def later_update(
     otherwise None.
 
     ``profile`` is the profile's own sentences, not ones this update adds
-    (those cite the article, so they share its date). The disputed sentence
-    is the edit's anchor when that is one of them (the prompt asks for the
-    dispute right after it); otherwise every profile sentence it could be
-    disputing (``disputed_sentences()``).
+    (those cite the article, so they share its date). The disputed sentences
+    are the profile sentences giving another value (``disputed_sentences()``),
+    narrowed to the edit's anchor when the anchor is one of them (the prompt
+    asks for the dispute right after it).
     """
     claim = _claim(sentence)
     if not _NARRATOR.search(claim):
         return None
     if article_date is None or not is_time_varying(claim):
         return None
-    olds = [anchor] if anchor in profile else disputed_sentences(sentence, profile)
+    candidates = disputed_sentences(sentence, profile)
+    # The anchor only says where the edit goes; it is the disputed sentence
+    # only when it is one of the sentences giving another value
+    olds = [anchor] if anchor in candidates else candidates
     if not olds or not dated_apart(article_date, olds, dates):
         return None
     found = article_side(claim)

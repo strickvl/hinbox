@@ -210,3 +210,15 @@ def test_the_rewrite_keeps_only_the_article_s_citations():
     edits, _ = guard_edits(PROFILE, [_add(both, anchor=MARCH)], DATES["a17"], DATES)
     assert edits[0].text.endswith("hunger strikers.^[a17]")
     assert own_citations("x^[m25]", [MARCH]) == "^[m25]"  # nothing else to keep
+
+
+def test_an_anchor_that_isn_t_the_disputed_sentence_is_ignored():
+    lock = "The prisoners remained in lockdown.^[lock]"
+    profile = f"## Hunger strike\n\n{MARCH} {lock}\n"
+    # The count's source is from the article's own day; the lockdown
+    # sentence's is older, but it isn't what the edit disputes
+    dates = {**DATES, "m25": "2013-04-17", "lock": "2013-03-24"}
+    edits, report = guard_edits(
+        profile, [_add(APRIL, anchor=lock)], "2013-04-17", dates
+    )
+    assert edits[0].text == APRIL and not report["later_updates"]
