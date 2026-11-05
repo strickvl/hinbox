@@ -50,6 +50,10 @@ def test_a_restated_sentence_is_a_repeat():
     # A tentative fact that came true is news
     could = ["Nashiri's military hearing could resume in 2014.^[a1]"]
     assert not is_repeat("Nashiri's military hearing resumed in 2014.^[a9]", could)
+    # Two words with the same start are different words
+    convinced = ["The military judge convinced Nashiri during the hearing.^[a1]"]
+    convicted = "The military judge convicted Nashiri during the hearing.^[a9]"
+    assert not is_repeat(convicted, convinced)
     # Timing words count
     before = ["The military lawyers consulted Nashiri before the hearing.^[a1]"]
     after = "The military lawyers consulted Nashiri after the hearing.^[a9]"
@@ -196,3 +200,17 @@ def test_a_replacement_that_cant_apply_doesnt_hide_an_addition():
     ]
     kept, report = guard_edits(PROFILE, edits)
     assert kept[-1].text == charge and report["repeats"] == []
+
+
+def test_a_dropped_sentence_is_cut_from_its_own_place():
+    profile = "# Nashiri\n\nNashiri was captured in Dubai.^[a1]\n"
+    text = (
+        "The military judge confirmed that Nashiri was captured in Dubai.^[a9] "
+        "The hearing resumed on Monday.^[a9] Nashiri was captured in Dubai.^[a9]"
+    )
+    kept, report = guard_edits(profile, [_add(text)])
+    assert kept[0].text == (
+        "The military judge confirmed that Nashiri was captured in Dubai.^[a9] "
+        "The hearing resumed on Monday.^[a9]"
+    )
+    assert report["repeats"] == ["Nashiri was captured in Dubai.^[a9]"]

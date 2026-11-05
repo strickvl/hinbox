@@ -73,12 +73,21 @@ _FILLER = set(
 )
 
 
+def _stem(word: str) -> str:
+    """The word without an ending: "detainees"/"detained", "resume"/"resumed"
+    match, "convicted"/"convinced" don't (a 5-letter cut made both "convi")."""
+    for end in ("ing", "ed", "es", "s"):
+        if len(word) > len(end) + 2 and word.endswith(end):
+            word = word[: -len(end)]
+            break
+    return word[:-1] if len(word) > 3 and word.endswith("e") else word
+
+
 def _words(text: str) -> set:
-    """Every word of the sentence but filler, cut to 5 letters ("detainees"
-    and "detained" match). Short words count: "won" and "lost", "Pohl" and
+    """Every word of the sentence but filler, without its ending (``_stem()``). Short words count: "won" and "lost", "Pohl" and
     "Spath" are what separate two otherwise identical sentences."""
     words = re.findall(r"[a-z0-9]+", text.lower())
-    return {w[:5] for w in words if w not in _FILLER}
+    return {_stem(w) for w in words if w not in _FILLER}
 
 
 def is_repeat(sentence: str, known: List[str]) -> bool:
@@ -118,7 +127,7 @@ _LEADING_YEAR = re.compile(r"^\s*(?:in|by|since|during)\s+(?:\w+\s+)?\d{4},?\s+"
 
 def _order(text: str) -> List[str]:
     words = re.findall(r"[a-z0-9]+", _LEADING_YEAR.sub("", text).lower())
-    return [w[:5] for w in words if w not in _FILLER]
+    return [_stem(w) for w in words if w not in _FILLER]
 
 
 def _same_order(claim: str, other: str) -> bool:
@@ -145,7 +154,7 @@ def _negations(sentence: str) -> int:
 
 
 # Words that make a fact tentative: "the hearing could resume in 2014" isn't
-# a repeat of "the hearing resumed in 2014" (the 5-letter cut makes "resume"
+# a repeat of "the hearing resumed in 2014" (the word check makes "resume"
 # and "resumed" one word), it's the news that it happened
 _HEDGE = re.compile(
     r"\b(could|may|might|would|will|shall|should|can|cannot|expected|expects?"
@@ -259,8 +268,13 @@ def guard_edits(
         if edit.op != "add":
             kept.append(edit)
             continue
-        new_text, facts_left = edit.text, 0
+        facts_left, cursor, drop = 0, 0, []
         for sentence in _sentences(edit.text):
+            # Each sentence's own place in the text, so a dropped sentence
+            # that also ends an earlier kept one is cut from the right spot
+            start = edit.text.find(sentence, cursor)
+            span = (start, start + len(sentence)) if start >= 0 else None
+            cursor = span[1] if span else cursor
             if sentence.startswith("#"):
                 continue
             if is_repeat(sentence, known):
@@ -271,7 +285,11 @@ def guard_edits(
                 facts_left += 1
                 known.append(sentence)  # a later edit can't add it again
                 continue
-            new_text = new_text.replace(sentence, "", 1)
+            if span:
+                drop.append(span)
+        new_text = edit.text
+        for start, end in reversed(drop):
+            new_text = new_text[:start] + new_text[end:]
         if new_text == edit.text:
             kept.append(edit)
         elif facts_left:
