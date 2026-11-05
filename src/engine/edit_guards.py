@@ -18,7 +18,8 @@ here:
   month or count for the same year (``_disputes_value()``). Dropped.
 
 ``replace`` edits are left alone: they rewrite one sentence and keep its
-citations. An edit whose sentences are all dropped is removed.
+citations. New sentences are checked against the profile as the
+replacements leave it. An edit whose sentences are all dropped is removed.
 """
 
 import re
@@ -246,6 +247,14 @@ def guard_edits(
 ) -> Tuple[List[ProfileEdit], Dict[str, Any]]:
     """The edits with repeated and invented-dispute sentences taken out."""
     known = [s for s in _sentences(text) if not s.startswith("#")]
+    # Checked against the profile as the replacements leave it: when an edit
+    # replaces "captured in 2002 and charged in 2008" with the capture alone
+    # and adds the charge separately, the added charge isn't a repeat
+    for edit in edits:
+        if edit.op == "replace":
+            old = _claim(edit.anchor)
+            known = [k for k in known if not old or old not in _claim(k)]
+            known += [s for s in _sentences(edit.text) if not s.startswith("#")]
     report: Dict[str, Any] = {"repeats": [], "disputes": []}
     kept: List[ProfileEdit] = []
     for edit in edits:

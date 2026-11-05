@@ -164,3 +164,25 @@ def test_a_profile_too_long_to_edit_goes_to_the_fact_list(monkeypatch):
         "people", "Nashiri", {"text": "old"}, "article", "a9", model="ollama/q"
     )
     assert updated == {"text": "facts"}
+
+
+def test_guard_checks_against_the_profile_after_replacements():
+    profile = (
+        "# Nashiri\n\nNashiri was captured in 2002 and charged by the military "
+        "commission in 2008.^[a1]\n"
+    )
+    anchor = (
+        "Nashiri was captured in 2002 and charged by the military commission "
+        "in 2008.^[a1]"
+    )
+    charge = "Nashiri was charged by the military commission in 2008.^[a9]"
+    edits = [
+        ProfileEdit(
+            op="replace",
+            anchor=anchor,
+            text="Nashiri was captured in Dubai in 2002.^[a1]",
+        ),
+        _add(charge),
+    ]
+    kept, report = guard_edits(profile, edits)
+    assert [e.text for e in kept][-1] == charge and report["repeats"] == []
