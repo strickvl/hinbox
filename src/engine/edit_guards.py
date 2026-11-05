@@ -11,7 +11,8 @@ here:
 - **Repeat**: every word of it (filler such as "the article states" aside)
   is in one existing sentence, in the same order, it gives no year, month or number that sentence lacks, and
   it has as many negations ("not", "never") and the same hedges ("could",
-  "expected", "allegedly") as that sentence.
+  "expected", "allegedly") as that sentence, and that sentence doesn't
+  frame it as someone's claim or denial ("his lawyers denied that ...").
   Dropped.
 - **Invented dispute**: it says sources or reports disagree, but no existing
   sentence that shares a topic word gives a different year, or a different
@@ -65,7 +66,7 @@ def _claim(sentence: str) -> str:
 # Words that carry no fact, and the wrapping models put round a restated one
 # ("The article states that ...")
 _FILLER = set(
-    "the a an of in on at to for and or by with as is was were be been being "
+    "the a an of in on at to for by with as is was were be been being "
     "has had have that this these those from its it his her their they he she "
     "which who whom also there "
     "article articles report reports reported states stated notes noted "
@@ -103,11 +104,13 @@ def is_repeat(sentence: str, known: List[str]) -> bool:
         return False
     negations, names = _negations(sentence), set(_NAME.findall(_claim(sentence)))
     hedges = _hedges(_claim(sentence))
+    framing = _framing(_claim(sentence))
     for other in known:
         if (
             words <= _words(_claim(other))
             and _negations(other) == negations
             and _hedges(_claim(other)) == hedges
+            and _framing(_claim(other)) <= framing
             # Any capitalised word of the other counts, its first one too
             and names <= set(re.findall(r"\b[A-Z][a-z]{2,}\b", _claim(other)))
             # Against this sentence only: a year the profile gives elsewhere
@@ -166,6 +169,22 @@ _HEDGE = re.compile(
 
 def _hedges(text: str) -> List[str]:
     return sorted(m.lower() for m in _HEDGE.findall(text))
+
+
+# Words that put an old sentence's claim in someone's mouth or deny it: "Nashiri
+# confessed" isn't a repeat of "his lawyers denied that Nashiri confessed",
+# though every word of it is there. A new sentence that drops one of these
+# from the old one is kept
+_FRAMING = re.compile(
+    r"\b(den(?:y|ies|ied|ial)|disput\w*|reject\w*|refut\w*|contest\w*|false\w*"
+    r"|claim\w*|alleg\w*|accus\w*|insist\w*|argu\w*|assert\w*|suggest\w*"
+    r"|rumou?r\w*|whether|if)\b",
+    re.I,
+)
+
+
+def _framing(text: str) -> set:
+    return {_stem(m.lower()) for m in _FRAMING.findall(text)}
 
 
 # Capitalised words in the dispute wording itself, not names

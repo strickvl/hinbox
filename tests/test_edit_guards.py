@@ -54,6 +54,13 @@ def test_a_restated_sentence_is_a_repeat():
     convinced = ["The military judge convinced Nashiri during the hearing.^[a1]"]
     convicted = "The military judge convicted Nashiri during the hearing.^[a9]"
     assert not is_repeat(convicted, convinced)
+    # "and" and "or" are different charges
+    either = ["The military commission charged Nashiri with murder or conspiracy.^[a1]"]
+    both = "The military commission charged Nashiri with murder and conspiracy.^[a9]"
+    assert not is_repeat(both, either)
+    # A claim the old sentence reported as denied is news when stated
+    denied = ["His lawyers denied that Nashiri confessed to planning the bombing.^[a1]"]
+    assert not is_repeat("Nashiri confessed to planning the bombing.^[a9]", denied)
     # Timing words count
     before = ["The military lawyers consulted Nashiri before the hearing.^[a1]"]
     after = "The military lawyers consulted Nashiri after the hearing.^[a9]"
