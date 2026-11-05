@@ -9,7 +9,7 @@ be checked without a model, so each new sentence of an ``add`` edit is checked
 here:
 
 - **Repeat**: every word of it (filler such as "the article states" aside)
-  is in one existing sentence, it gives no year, month or number that sentence lacks, and
+  is in one existing sentence, in the same order, it gives no year, month or number that sentence lacks, and
   it has as many negations ("not", "never") as that sentence.
   Dropped.
 - **Invented dispute**: it says sources or reports disagree, but no existing
@@ -101,9 +101,28 @@ def is_repeat(sentence: str, known: List[str]) -> bool:
             # ("filed an appeal in 2014") still makes "in 2014 the judge
             # scheduled" a change to "in 2013 the judge scheduled"
             and not adds_values(_claim(sentence), _claim(other))
+            and _same_order(_claim(sentence), _claim(other))
         ):
             return True
     return False
+
+
+def _order(text: str) -> List[str]:
+    words = re.findall(r"[a-z]+", text.lower())
+    return [w[:5] for w in words if w not in _FILLER]
+
+
+def _same_order(claim: str, other: str) -> bool:
+    """The words come in the same order as in the old sentence, so "Nashiri
+    questioned the judge" isn't a repeat of "the judge questioned Nashiri".
+    Numbers are left out, so a year moved to the front still matches. A
+    passive sentence ("the appeal was won by his lawyers") can't be checked
+    this way and is let through. A repeat with its clauses swapped is kept:
+    a repeat left in costs less than a new fact dropped."""
+    if re.search(r"\b(?:was|were|been|being|is|are)\s+\w+\s+by\b", claim, re.I):
+        return True
+    words, others = _order(claim), iter(_order(other))
+    return all(w in others for w in dict.fromkeys(words))
 
 
 # Short words the stems leave out, so "could not attend" and "could attend"

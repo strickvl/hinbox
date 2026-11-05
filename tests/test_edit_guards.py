@@ -51,6 +51,14 @@ def test_a_restated_sentence_is_a_repeat():
     before = ["The military lawyers consulted Nashiri before the hearing.^[a1]"]
     after = "The military lawyers consulted Nashiri after the hearing.^[a9]"
     assert not is_repeat(after, before)
+    # The same words with the roles swapped are a different fact
+    asked = ["The military judge questioned Nashiri about the hearing.^[a1]"]
+    swapped = "Nashiri questioned the military judge about the hearing.^[a9]"
+    assert not is_repeat(swapped, asked)
+    # A year moved to the front is still a repeat
+    assert is_repeat(
+        "In 2006 Camp 6 opened as a penitentiary-style building.^[a9]", known
+    )
     # Different news about the same camp shares too few words
     assert not is_repeat(
         "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]", known
