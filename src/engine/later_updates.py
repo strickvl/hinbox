@@ -271,18 +271,34 @@ _MONTH = r"(?:Jan|Feb|March|April|May|June|July|Aug|Sept?|Oct|Nov|Dec)[a-z]*\.?"
 # The side already says when: it starts with a date ("On May 16, 2013, ...",
 # "In February 2014, ..."), or gives one as when the value held ("... as of
 # July 17, 2013", "... in February 2014"). A date it is about ("postponed
-# until February 2015") doesn't count
+# until February 2015", "scheduled for December 4, 2014", "to begin in
+# December 2014") doesn't count
 _STARTS_DATED = re.compile(
     rf"^(?:(?:on|in|by|as of|since|during|prior to|before|after)\s+(?:early |late "
     rf"|mid-)?(?:the\s+\w+\s+\d{{4}}\s+\w+|{_MONTH}\s+(?:\d{{1,2}},?\s+)?\d{{4}})"
     rf"|{_MONTH}\s+\d{{1,2}},\s+\d{{4}})",
     re.I,
 )
-_HELD_DATED = re.compile(
-    rf"\bas of\b|\b(?:on|in|by|during)\s+(?:early |late |mid-)?{_MONTH}\s+"
-    rf"(?:\d{{1,2}},?\s+)?\d{{4}}\s*$|\b{_MONTH}\s+\d{{1,2}},\s+\d{{4}}\s*$",
+_AS_OF = re.compile(r"\bas of\b", re.I)
+_ENDS_DATED = re.compile(
+    rf"\b(?:on|in|by|during)\s+(?:early |late |mid-)?{_MONTH}\s+"
+    rf"(?:\d{{1,2}},?\s+)?\d{{4}}\s*$",
     re.I,
 )
+
+_TARGET = re.compile(
+    rf"\b(?:for|to|until|till|begin|start|open|resume|before|after)\s+"
+    rf"(?:at least\s+|no earlier than\s+)?(?:on\s+|in\s+)?(?:early |late |mid-)?"
+    rf"{_MONTH}\s+(?:\d{{1,2}},?\s+)?\d{{4}}\s*$",
+    re.I,
+)
+
+
+def _says_when(side: str) -> bool:
+    """The side already says when its value held."""
+    if _STARTS_DATED.match(side) or _AS_OF.search(side):
+        return True
+    return bool(_ENDS_DATED.search(side)) and not _TARGET.search(side)
 
 
 def as_update(
@@ -300,7 +316,7 @@ def as_update(
     if verb != "says":
         article = "An" if re.match(r"[AEIOU]|8|1[18]\b", month) else "A"
         text = f"{article} {month} report {verb} {side}"
-    elif _STARTS_DATED.match(side) or _HELD_DATED.search(side):
+    elif _says_when(side):
         text = side[0].upper() + side[1:]
     else:
         first, _, rest = side.partition(" ")

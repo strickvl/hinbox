@@ -111,6 +111,23 @@ def test_as_update_dates_the_entry():
     assert as_update("identifies", "Pohl as the judge", None, april, "^[a]") == (
         "An April 2013 report identifies Pohl as the judge.^[a]"
     )
+    # A date the schedule is set for isn't when it was reported
+    march = dt.date(2014, 3, 4)
+    for side in (
+        "the trial was scheduled for December 4, 2014",
+        "the trial was postponed to begin in December 2014",
+    ):
+        assert as_update("says", side, None, march, "^[a]") == (
+            f"As of March 2014, {side}.^[a]"
+        )
+    # ... but a date after it saying when the change was made is
+    for side in (
+        "59 men were on strike on May 16, 2013",
+        "the trial was postponed until at least February 2015 in February 2014",
+    ):
+        assert as_update("says", side, None, april, "^[a]") == (
+            f"{side[0].upper()}{side[1:]}.^[a]"
+        )
 
 
 def test_a_changed_count_from_a_later_article_becomes_a_timeline_entry():
