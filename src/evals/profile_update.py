@@ -40,6 +40,7 @@ wrong reading added and, unless the article itself reports a conflict, no
 "sources disagree" sentence; an unlabelled one only has to cite the article.
 """
 
+import functools
 import hashlib
 import json
 import os
@@ -367,6 +368,31 @@ def _update_step(case: Dict[str, Any], approach: str) -> Iterator[None]:
         yield
 
 
+@functools.lru_cache(maxsize=4)
+def _published_dates(domain: str) -> Dict[str, Any]:
+    """Published date by article id, from the domain's articles Parquet ({}
+    when it isn't there, which turns the later-update rule off)."""
+    import pyarrow.parquet as pq
+
+    from src.config_loader import DomainConfig
+
+    path = DomainConfig(domain).get_data_path()
+    if not os.path.exists(path):
+        return {}
+    table = pq.read_table(path, columns=["id", "published_date"]).to_pydict()
+    return dict(zip(table["id"], table["published_date"]))
+
+
+def case_dates(case: Dict[str, Any], domain: str) -> Dict[str, Any]:
+    """Published dates of the case's article and the profile's sources. A
+    disputed case's article is a copy of a real one with a year changed, so
+    it has that article's date."""
+    dates = _published_dates(domain)
+    ids = list(case["profile"].get("sources") or []) + [case["article_id"]]
+    found = {i: dates.get(i.removesuffix("-disputed")) for i in ids}
+    return {i: d for i, d in found.items() if d is not None}
+
+
 def make_edit_updater(model: str, domain: str) -> Updater:
     """Ask for a list of edits, check and apply them (``profile_edits.py``,
     ``edit_guards.py``); a profile too long for the local model goes to the
@@ -384,7 +410,12 @@ def make_edit_updater(model: str, domain: str) -> Updater:
         )
         try:
             with _update_step(case, "edit"):
-                profile = edit_profile(*args, model=model, domain=domain)
+                profile = edit_profile(
+                    *args,
+                    model=model,
+                    domain=domain,
+                    article_dates=case_dates(case, domain),
+                )
         except PromptTooLongError:
             result = make_fact_updater(model, domain)(case)
             result["report"]["fallback"] = "facts"

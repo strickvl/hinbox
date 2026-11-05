@@ -12,6 +12,7 @@ from src.constants import (
     MERGE_UNCERTAIN_CONFIDENCE_CUTOFF,
     SIMILARITY_THRESHOLD,
 )
+from src.engine.later_updates import article_dates
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
 from src.engine.merge_candidates import (
     find_similar_entity,
@@ -643,6 +644,9 @@ class EntityMerger:
                             model_type,
                             domain,
                             model=task_model("profile", model_type),
+                            article_dates=article_dates(
+                                existing_entity, article_id, article_published_date
+                            ),
                         )
                     )
                     # update_profile hands back the old profile when the model

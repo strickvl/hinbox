@@ -2,7 +2,7 @@ import copy
 import json
 import traceback
 from datetime import UTC, datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -526,11 +526,14 @@ def _edit_profile_update(
     model_type: str = "gemini",
     domain: str = "guantanamo",
     model: Optional[str] = None,
+    article_dates: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict, list]:
     """Update by applying the model's add/replace edits to the existing text.
 
     Keeps the profile's keys as they are (the edit list and its report are
     logged, not stored). Falls back to the existing profile if the call fails.
+    ``article_dates`` (published date by article id) lets the edit guards
+    tell a later update from a dispute.
     """
     from src.engine.profile_edits import edit_profile
     from src.utils.ollama_context import PromptTooLongError
@@ -546,6 +549,7 @@ def _edit_profile_update(
             model=model,
             domain=domain,
             local=local,
+            article_dates=article_dates,
         )
     except PromptTooLongError:
         # The edit-list prompt holds the whole profile; the fact-list updater
@@ -571,6 +575,7 @@ def _edit_profile_update(
         return existing_profile, []
     report = edited["edit_report"]
     annotate(
+        later_updates=len((report.get("guard") or {}).get("later_updates") or []),
         edits_applied=report["applied"],
         edits_appended=report["appended"],
         edits_skipped=len(report["skipped"]),
@@ -657,12 +662,16 @@ def update_profile(
     domain: str = "guantanamo",
     model: Optional[str] = None,
     approach: Optional[str] = None,
+    article_dates: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Update profile and add version if versioning is enabled.
 
     ``approach`` is "edit", "facts" (the fact-list updater) or "rewrite"
-    (default: ``PROFILE_UPDATE_APPROACH``).
+    (default: ``PROFILE_UPDATE_APPROACH``). ``article_dates`` maps article
+    ids (this one and the profile's sources) to published dates; the edit
+    approach uses them to write a changed count or trial date as a later
+    update rather than a dispute.
     Returns (updated_profile, versioned_profile, improvement_history); the
     edit approach has no reflection rounds, so its history is empty.
     """
@@ -677,6 +686,7 @@ def update_profile(
     if approach not in ("edit", "rewrite", "facts"):
         raise ValueError(f"Unknown profile update approach: {approach!r}")
     update = _UPDATERS.get(approach, _update_profile_internal)
+    extra = {"article_dates": article_dates} if approach == "edit" else {}
     updated_profile, history = update(
         entity_type,
         entity_name,
@@ -686,6 +696,7 @@ def update_profile(
         model_type,
         domain,
         model,
+        **extra,
     )
 
     updated_profile = _apply_profile_qc(updated_profile, entity_name)

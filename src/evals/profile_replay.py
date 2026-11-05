@@ -231,6 +231,8 @@ def replay_entity(
                 entity.entity_type, entity.name, text, article["id"], **kwargs
             )
         else:
+            # Every chosen article's date, as the pipeline passes its linked ones
+            dates = {a["id"]: a.get("published_date") for a in chosen}
             profile, versioned, history = update_profile(
                 entity.entity_type,
                 entity.name,
@@ -238,6 +240,7 @@ def replay_entity(
                 versioned,
                 text,
                 article["id"],
+                article_dates=dates,
                 **kwargs,
             )
         _write_json(
