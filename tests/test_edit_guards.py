@@ -29,6 +29,12 @@ def test_a_restated_sentence_is_a_repeat():
     hearing = ["In 2013 the military judge scheduled Nashiri's hearing.^[a1]"]
     moved = "In 2014 the military judge scheduled Nashiri's hearing.^[a9]"
     assert not is_repeat(moved, hearing)
+    # A different person doing the same thing is new
+    pohl = [
+        "Nashiri's military defense lawyer consulted Judge Pohl about the hearing.^[a1]"
+    ]
+    spath = "Nashiri's military defense lawyer consulted Judge Spath about the hearing.^[a9]"
+    assert not is_repeat(spath, pohl)
     # Different news about the same camp shares too few words
     assert not is_repeat(
         "Guards at Camp 6 moved detainees to single cells after a raid.^[a9]", known
@@ -56,6 +62,9 @@ def test_a_dispute_needs_an_old_sentence_with_a_different_value():
     age = ["In 2010 Khadr was 24 years old.^[a1]"]
     dated = "The August 14, 2009 article describes Khadr as 22; sources disagree on his age.^[a9]"
     assert is_invented_dispute(dated, age)
+    # A denial the article reports is news, not the profile comparing sources
+    denial = "Nashiri's lawyers contradicted reports that he confessed.^[a9]"
+    assert not is_invented_dispute(denial, known)
     # A dispute the article reports, without "sources", is just a fact
     assert not is_invented_dispute("The lawyer disagreed with the ruling.^[a9]", known)
 

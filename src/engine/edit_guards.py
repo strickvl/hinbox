@@ -38,6 +38,23 @@ _DISPUTE = re.compile(
     re.I,
 )
 _SOURCES = re.compile(r"\b(sources?|reports?|articles?|accounts?|records?)\b", re.I)
+# Only the profile's own voice comparing sources is checked: "sources
+# disagree", "conflicting reports", "differs from the earlier report". A
+# disagreement the article reports ("his lawyers contradicted reports that he
+# confessed") is news and is never dropped as a dispute
+_SRC = r"(?:sources?|reports?|accounts?|articles?|records?|profile)"
+_NARRATOR = re.compile(
+    rf"\b{_SRC}\s+(?:disagree|differ|conflict|vary|contradict)\w*"
+    r"|\bconflicting (?:accounts|reports|dates|figures|sources)"
+    r"|\bdiscrepanc\w*"
+    rf"|\b(?:differs?|disagrees?|contradicts?|contradicting|inconsistent|conflicts?)"
+    rf"\s+(?:with|from)?\s*(?:the|an?|this)?\s*(?:earlier|previous|prior|other|"
+    rf"another|existing|new)\s+{_SRC}",
+    re.I,
+)
+# Capitalised words after the first: names. "consulted Judge Spath" isn't a
+# repeat of "consulted Judge Pohl", and the stems drop short names
+_NAME = re.compile(r"(?<!^)(?<![.!?]\s)\b[A-Z][a-z]{2,}\b")
 
 
 def _claim(sentence: str) -> str:
@@ -49,12 +66,13 @@ def is_repeat(sentence: str, known: List[str]) -> bool:
     stems = _stems(_claim(sentence))
     if len(stems) < MIN_STEMS:
         return False
-    negations = _negations(sentence)
+    negations, names = _negations(sentence), set(_NAME.findall(_claim(sentence)))
     for other in known:
         shared = len(stems & _stems(_claim(other))) / len(stems)
         if (
             shared >= REPEAT_OVERLAP
             and _negations(other) == negations
+            and names <= set(_NAME.findall(_claim(other)))
             # Against this sentence only: a year the profile gives elsewhere
             # ("filed an appeal in 2014") still makes "in 2014 the judge
             # scheduled" a change to "in 2013 the judge scheduled"
@@ -101,7 +119,7 @@ def is_invented_dispute(sentence: str, known: List[str]) -> bool:
     """Says the sources disagree, but no known sentence gives a different year
     (or a different month or count for the same year) for something it mentions."""
     claim = _claim(sentence)
-    if not (_DISPUTE.search(claim) and _SOURCES.search(claim)):
+    if not _NARRATOR.search(claim):
         return False
     # The dispute wording itself says nothing about what is disputed, and a
     # source's own date ("the August 14, 2009 article describes Khadr as 22")
