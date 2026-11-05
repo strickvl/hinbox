@@ -103,6 +103,7 @@ def update_profile_stub(
     model_type: str = "gemini",
     domain: str = "guantanamo",
     model=None,
+    article_dates=None,
 ):
     """Deterministic update_profile stub that appends a new version to the provided versioned_profile."""
     updated_profile = {
@@ -275,6 +276,10 @@ class TestEntityMergerMergeSmoke:
             )
 
         assert update_mock.call_args.args[0] == "person"
+        # The edit guards get every article's date, so a changed count from a
+        # later article is written as an update, not a dispute
+        dates = update_mock.call_args.kwargs["article_dates"]
+        assert dates["art-002"] == "2025-02-01" and "art-000" in dates
 
         # Assertions: existing entity updated in place
         assert "Alice Smith" in entities["people"]

@@ -17,17 +17,33 @@ here:
 - **Invented dispute**: it says sources or reports disagree, but no existing
   sentence that shares a topic word gives a different year, or a different
   month or count for the same year (``_disputes_value()``). Dropped.
+- **Later update**: it says sources disagree, but about something that
+  changes over time (a hunger-strike count, a trial date, who is judge), and
+  the sentence it disputes cites only articles from other days. Rewritten as
+  the article's own value, dated ("As of April 2013, 59 captives were hunger
+  strikers."), next to the old sentence (``later_update()``,
+  ``later_updates.py``). Needs the articles' published dates.
 
 ``replace`` edits are left alone: they rewrite one sentence and keep its
 citations. New sentences are checked against the profile as the
 replacements leave it. An edit whose sentences are all dropped is removed.
 """
 
+import datetime as dt
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.engine.date_disputes import _PUBLISHED
 from src.engine.fact_list import _MONTH, _stems, _values, adds_values
+from src.engine.later_updates import (
+    article_side,
+    as_update,
+    dated_apart,
+    is_time_varying,
+    own_citations,
+    same_observation_day,
+    to_date,
+)
 from src.engine.profile_edits import ProfileEdit, apply_edits
 from src.evals.profile_cases import _sentences
 
@@ -254,26 +270,82 @@ def _disputes_value(claim: str, other: str) -> bool:
     return swapped or bool(undated and counts - o_counts and o_counts)
 
 
-def is_invented_dispute(sentence: str, known: List[str]) -> bool:
-    """Says the sources disagree, but no known sentence gives a different year
-    (or a different month or count for the same year) for something it mentions."""
+def disputed_sentences(sentence: str, known: List[str]) -> List[str]:
+    """The known sentences a "sources disagree" sentence could be disputing:
+    those giving a different year (or month or count for the same year), or
+    another name, for something it mentions. Empty for any other sentence."""
     claim = _claim(sentence)
     if not _NARRATOR.search(claim):
-        return False
+        return []
     # The dispute wording itself says nothing about what is disputed, and a
     # source's own date ("the August 14, 2009 article describes Khadr as 22")
     # is when it was written: on dev, Luna's two kept false disputes differed
     # from the profile only in that year
     topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", _PUBLISHED.sub(" ", claim)))
-    return not any(
-        _disputes_value(topic, _PUBLISHED.sub(" ", _claim(o))) for o in known
+    return [o for o in known if _disputes_value(topic, _PUBLISHED.sub(" ", _claim(o)))]
+
+
+def is_invented_dispute(sentence: str, known: List[str]) -> bool:
+    """Says the sources disagree, but no known sentence gives a different year
+    (or a different month or count for the same year) for something it mentions."""
+    return bool(_NARRATOR.search(_claim(sentence))) and not disputed_sentences(
+        sentence, known
     )
 
 
+def later_update(
+    sentence: str,
+    profile: List[str],
+    article_date: Optional[dt.date],
+    dates: Dict[str, dt.date],
+    anchor: str = "",
+) -> Optional[str]:
+    """A "sources disagree" sentence rewritten as the article's own value, when
+    it is about something that changes over time and the article is from
+    another date than the sentences it disputes (``later_updates.py``);
+    otherwise None.
+
+    ``profile`` is the profile's own sentences, not ones this update adds
+    (those cite the article, so they share its date). The disputed sentences
+    are the profile sentences giving another value (``disputed_sentences()``),
+    narrowed to the edit's anchor when the anchor is one of them (the prompt
+    asks for the dispute right after it).
+    """
+    claim = _claim(sentence)
+    if not _NARRATOR.search(claim):
+        return None
+    if article_date is None or not is_time_varying(claim):
+        return None
+    candidates = disputed_sentences(sentence, profile)
+    # The anchor only says where the edit goes; it is the disputed sentence
+    # only when it is one of the sentences giving another value
+    olds = [anchor] if anchor in candidates else candidates
+    if not olds or not dated_apart(article_date, olds, dates):
+        return None
+    found = article_side(claim)
+    if found is None:
+        return None
+    verb, side, dated = found
+    if same_observation_day(side, dated, olds):
+        return None
+    return as_update(verb, side, dated, article_date, own_citations(sentence, olds))
+
+
 def guard_edits(
-    text: str, edits: List[ProfileEdit]
+    text: str,
+    edits: List[ProfileEdit],
+    article_date: Any = None,
+    source_dates: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[ProfileEdit], Dict[str, Any]]:
-    """The edits with repeated and invented-dispute sentences taken out."""
+    """The edits with repeated and invented-dispute sentences taken out, and
+    "sources disagree" sentences that are later updates rewritten as one.
+
+    ``article_date`` is the new article's published date and
+    ``source_dates`` the published date of each article the profile cites
+    (by id); without them no sentence is read as a later update.
+    """
+    when = to_date(article_date)
+    dates = {k: d for k, v in (source_dates or {}).items() if (d := to_date(v))}
     # Checked against the profile as the replacements leave it: when an edit
     # replaces "captured in 2002 and charged in 2008" with the capture alone
     # and adds the charge separately, the added charge isn't a repeat. The
@@ -281,13 +353,14 @@ def guard_edits(
     # one whose anchor isn't found changes nothing here either
     replaced, _ = apply_edits(text, [e for e in edits if e.op == "replace"])
     known = [s for s in _sentences(replaced) if not s.startswith("#")]
-    report: Dict[str, Any] = {"repeats": [], "disputes": []}
+    profile = list(known)
+    report: Dict[str, Any] = {"repeats": [], "disputes": [], "later_updates": []}
     kept: List[ProfileEdit] = []
     for edit in edits:
         if edit.op != "add":
             kept.append(edit)
             continue
-        facts_left, cursor, drop = 0, 0, []
+        facts_left, cursor, swaps = 0, 0, []
         for sentence in _sentences(edit.text):
             # Each sentence's own place in the text, so a dropped sentence
             # that also ends an earlier kept one is cut from the right spot
@@ -296,19 +369,24 @@ def guard_edits(
             cursor = span[1] if span else cursor
             if sentence.startswith("#"):
                 continue
+            new = ""
             if is_repeat(sentence, known):
                 report["repeats"].append(sentence[:200])
             elif is_invented_dispute(sentence, known):
                 report["disputes"].append(sentence[:200])
+            elif new := later_update(sentence, profile, when, dates, edit.anchor) or "":
+                report["later_updates"].append([sentence[:200], new[:200]])
+                facts_left += 1
+                known.append(new)
             else:
                 facts_left += 1
                 known.append(sentence)  # a later edit can't add it again
                 continue
             if span:
-                drop.append(span)
+                swaps.append((span, new))
         new_text = edit.text
-        for start, end in reversed(drop):
-            new_text = new_text[:start] + new_text[end:]
+        for (start, end), new in reversed(swaps):
+            new_text = new_text[:start] + new + new_text[end:]
         if new_text == edit.text:
             kept.append(edit)
         elif facts_left:

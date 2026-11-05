@@ -241,12 +241,16 @@ def edit_profile(
     domain: str = "guantanamo",
     local: Optional[bool] = None,
     guard: bool = True,
+    article_dates: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Ask the model for edits and apply them. Raises if the call fails.
 
     ``local`` defaults to whether ``model`` starts with ``ollama/``. With
     ``guard``, repeated sentences and invented "sources disagree" sentences
-    are taken out first (``edit_guards.py``).
+    are taken out first, and a "sources disagree" sentence that is really a
+    later update is rewritten as one (``edit_guards.py``); that needs
+    ``article_dates``, the published date of this article and of the
+    profile's sources, by article id.
     """
     from src.engine.edit_guards import guard_edits
 
@@ -270,8 +274,11 @@ def edit_profile(
     if response is None:
         raise RuntimeError("edit call returned nothing")
     old_text = existing_profile.get("text", "")
+    dates = article_dates or {}
     edits, guarded = (
-        guard_edits(old_text, response.edits) if guard else (response.edits, {})
+        guard_edits(old_text, response.edits, dates.get(article_id), dates)
+        if guard
+        else (response.edits, {})
     )
     text, report = apply_edits(old_text, edits)
     report["guard"] = guarded
