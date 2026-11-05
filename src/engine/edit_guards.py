@@ -107,18 +107,24 @@ def is_repeat(sentence: str, known: List[str]) -> bool:
     return False
 
 
+# A year in front ("In 2006, Camp 6 opened ...") is the same fact as one at
+# the end ("Camp 6 opened in 2006"), so it is left out of the order check
+_LEADING_YEAR = re.compile(r"^\s*(?:in|by|since|during)\s+(?:\w+\s+)?\d{4},?\s+", re.I)
+
+
 def _order(text: str) -> List[str]:
-    words = re.findall(r"[a-z]+", text.lower())
+    words = re.findall(r"[a-z0-9]+", _LEADING_YEAR.sub("", text).lower())
     return [w[:5] for w in words if w not in _FILLER]
 
 
 def _same_order(claim: str, other: str) -> bool:
-    """The words come in the same order as in the old sentence, so "Nashiri
-    questioned the judge" isn't a repeat of "the judge questioned Nashiri".
-    Numbers are left out, so a year moved to the front still matches. A
-    passive sentence ("the appeal was won by his lawyers") can't be checked
-    this way and is let through. A repeat with its clauses swapped is kept:
-    a repeat left in costs less than a new fact dropped."""
+    """The words come in the same order as in the old sentence, numbers
+    included, so "Nashiri questioned the judge" isn't a repeat of "the judge
+    questioned Nashiri", nor "17 in 2013 and 18 in 2014" of "18 in 2013 and
+    17 in 2014". A year moved to the front still matches. A passive sentence
+    ("the appeal was won by his lawyers") can't be checked this way and is
+    let through. A repeat with its clauses swapped is kept: a repeat left in
+    costs less than a new fact dropped."""
     if re.search(r"\b(?:was|were|been|being|is|are)\s+\w+\s+by\b", claim, re.I):
         return True
     words, others = _order(claim), iter(_order(other))

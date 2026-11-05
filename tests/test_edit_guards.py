@@ -55,6 +55,10 @@ def test_a_restated_sentence_is_a_repeat():
     asked = ["The military judge questioned Nashiri about the hearing.^[a1]"]
     swapped = "Nashiri questioned the military judge about the hearing.^[a9]"
     assert not is_repeat(swapped, asked)
+    # The same numbers given to different years are a different fact
+    counts = ["The military released 17 detainees in 2013 and 18 in 2014.^[a1]"]
+    moved_counts = "The military released 18 detainees in 2013 and 17 in 2014.^[a9]"
+    assert not is_repeat(moved_counts, counts)
     # A year moved to the front is still a repeat
     assert is_repeat(
         "In 2006 Camp 6 opened as a penitentiary-style building.^[a9]", known
