@@ -165,20 +165,22 @@ GROUNDING_MAX_CLAIM_CHARS = 600
 # Claims sent in one call. A call for one article can hold claims from many
 # profiles; more than this are split over several calls, so a reply never
 # grows past the output limit.
-GROUNDING_MAX_CLAIMS_PER_CALL = int(os.getenv("HINBOX_GROUNDING_MAX_CLAIMS", "30"))
+GROUNDING_MAX_CLAIMS_PER_CALL = int(os.getenv("HINBOX_GROUNDING_MAX_CLAIMS", "20"))
 GROUNDING_MAX_TOKENS = int(os.getenv("HINBOX_GROUNDING_MAX_TOKENS", "4096"))
 
-_GROUNDING_SYSTEM_PROMPT = """You are a fact-checking assistant verifying whether claims from entity profiles are supported by one source article.
+_GROUNDING_SYSTEM_PROMPT = """You are a strict fact-checker. You check claims from entity profiles against one source article.
 
-Each claim is numbered and names the entity whose profile it comes from; "he", "she", "it" or "they" in a claim refer to that entity.
+Each claim is numbered and names, in brackets, the entity whose profile it comes from; "he", "she", "it" or "they" in a claim refer to that entity.
 
-For each claim, decide:
-- "supported": The source article clearly contains information that supports the claim
-- "partial": The source partially supports the claim but some details are not confirmed
-- "not_supported": The source does not contain information supporting this claim
-- "unclear": The source text is ambiguous or insufficient to determine support
+Check every detail of a claim against the article: names, titles and roles, relationships between people, numbers, dates, places, directions (who did what to whom, from where to where), cause and effect, and who said what. Decide:
+- "supported": every detail of the claim is stated in the article, or follows directly from it
+- "partial": the main fact is in the article, but at least one detail is wrong, missing from the article, or added (an invented cause, a wrong title, a quote given to the wrong person, a vague claim of importance)
+- "not_supported": the article does not state the main fact, or says something different or opposite
+- "unclear": the article is too ambiguous to decide
 
-Return one verdict for every claim: its claim_number, support_level, and a reason of at most 15 words. Do not repeat the claim text."""
+A claim saying that sources disagree ("one report says X; this article says Y") is about this article's side only: judge whether the article says Y.
+
+For each claim, first write the reasoning: quote or name the article passage you compared it with, and say which detail, if any, differs (at most 40 words). Then give the support_level. Return one verdict for every claim, with its claim_number. Do not repeat the claim text."""
 
 _GROUNDING_USER_TEMPLATE = """## SOURCE ARTICLE (ID: {article_id})
 {article_text}
@@ -192,8 +194,8 @@ class ClaimVerdict(BaseModel):
     back, so a reply for 30 claims stays a few hundred tokens."""
 
     claim_number: int
+    reasoning: Optional[str] = None  # before the verdict, so it is written first
     support_level: SupportLevel
-    reasoning: Optional[str] = None
 
 
 @dataclass
@@ -307,7 +309,7 @@ def plan_grounding(
         known = (
             {v.claim[:max_claim_chars]: v for v in earlier_results} if usable else {}
         )
-        article = _squash(article_texts[aid])
+        article = _article_text(article_texts[aid][:max_article_chars])
         plan.results[aid] = [
             _settled(aid, c, known, article, max_claim_chars) for c in items
         ]
@@ -318,7 +320,7 @@ def _settled(
     aid: str,
     claim: Dict[str, str],
     known: Dict[str, ClaimVerification],
-    squashed_article: str,
+    article: str,
     max_claim_chars: int,
 ) -> Optional[ClaimVerification]:
     """A verdict that needs no model call: kept from the last report, or
@@ -326,7 +328,7 @@ def _settled(
     text = claim["claim"][:max_claim_chars]
     if text in known:
         return known[text].model_copy(update={"citation": claim["citation"]})
-    if _is_quote(claim["claim"], squashed_article):
+    if _is_quote(claim["claim"], article):
         why = "Quoted word for word from the article"
         return _verification(aid, claim, SupportLevel.SUPPORTED, why, max_claim_chars)
     return None
@@ -334,23 +336,42 @@ def _settled(
 
 _SPACE = re.compile(r"\s+")
 _QUOTE_MIN_CHARS = 40
+_EDGE = " .;:,!?\"'“”‘’()"
+_SENTENCE_START = re.compile(r"(^|[.!?][\"'”’)]*\s|\n\s*)$")
 
 
 def _squash(text: str) -> str:
-    return _SPACE.sub(" ", text).strip().lower()
+    return _SPACE.sub(" ", text).strip(_EDGE + "\n\t").lower()
 
 
-def _is_quote(claim: str, squashed_article: str) -> bool:
-    """True when the claim is a sentence copied word for word from the article
-    (case and spacing aside), like the "Mentions" sentences of a stub
-    profile. Such a claim needs no model call. Short claims ("He was held")
-    don't count: a few common words can appear anywhere."""
-    text = _squash(claim).rstrip(".;:, ")
-    return len(text) >= _QUOTE_MIN_CHARS and text in squashed_article
+def _article_text(article: str) -> str:
+    """The article with case and runs of spaces evened out (newlines kept, as
+    they end paragraphs)."""
+    return re.sub(r"[ \t]+", " ", article).lower()
+
+
+def _is_quote(claim: str, article: str) -> bool:
+    """True when the claim is a whole sentence (or run of sentences) copied
+    from the article, case and spacing aside, like the "Mentions" sentences
+    of a stub profile. Such a claim needs no model call. It must start where
+    an article sentence starts: "X was released" inside "Officials denied
+    that X was released" is not support. Short claims don't count either."""
+    text = _squash(claim)
+    if len(text) < _QUOTE_MIN_CHARS:
+        return False
+    start = article.find(text)
+    while start != -1:
+        end = start + len(text)
+        if _SENTENCE_START.search(article[:start]) and (
+            end == len(article) or article[end] in _EDGE + "\n"
+        ):
+            return True
+        start = article.find(text, start + 1)
+    return False
 
 
 def _claim_line(n: int, entity_name: str, claim: str) -> str:
-    about = f"({entity_name}) " if entity_name else ""
+    about = f"[{entity_name}] " if entity_name else ""
     return f"{n}. {about}{claim}"
 
 

@@ -479,7 +479,7 @@ class TestGroundingPostprocess:
         assert mock_cloud.call_count == 1
         assert counts["llm_calls"] == 1
         sent = mock_cloud.call_args.kwargs["messages"][1]["content"]
-        assert "(Carol) Carol was detained." in sent
+        assert "[Carol] Carol was detained." in sent
         for n in names:
             grounding = entities["people"][n]["profile_grounding"]
             assert grounding["verified"] == 1

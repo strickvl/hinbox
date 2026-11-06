@@ -325,7 +325,7 @@ class TestBatchedCalls:
         with patch("src.utils.llm.cloud_generation", side_effect=_judge()) as mock:
             judge_pending([plan], {"a1": "Text"})
         sent = mock.call_args.kwargs["messages"][1]["content"]
-        assert "1. (Omar Khadr) He was freed." in sent
+        assert "1. [Omar Khadr] He was freed." in sent
         assert mock.call_args.kwargs["max_tokens"] == GROUNDING_MAX_TOKENS
 
 
@@ -340,6 +340,20 @@ class TestQuotedClaims:
         assert calls == 0
         assert report.verified == 1
         assert report.sources[0].status == "checked"
+
+    def test_part_of_a_sentence_is_not_a_quote(self):
+        article = "Officials denied that Omar Khadr was released from custody in 2012."
+        text = "Omar Khadr was released from custody in 2012.^[a1]"
+        _, calls = _run(text, {"a1": article})
+        assert calls == 1
+
+    def test_quote_past_the_checked_part_of_the_article_goes_to_the_model(self):
+        article = (
+            "x" * 12000 + " The judge, Col. James Pohl, set the hearing for May 2013."
+        )
+        text = "The judge, Col. James Pohl, set the hearing for May 2013.^[a1]"
+        _, calls = _run(text, {"a1": article})
+        assert calls == 1
 
     def test_short_or_changed_claims_still_go_to_the_model(self):
         text = "Lawyers objected.^[a1] Pohl set the hearing for June 2013.^[a1]"
