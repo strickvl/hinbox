@@ -16,7 +16,9 @@ from src.logging_config import log
 from src.utils.grounding import (
     finish_report,
     grounding_is_current,
+    grounding_model,
     judge_pending,
+    judged_by,
     plan_grounding,
 )
 from src.utils.quality_controls import CITATION_RE
@@ -45,7 +47,8 @@ def run_profile_grounding_postprocess(
     supported by source article text. Stores the grounding report on each
     entity as entity["profile_grounding"]. Skips entities whose stored report
     is still current (``grounding_is_current()``: same text, and no failed or
-    newly available source). Otherwise only claims the stored report has no
+    newly available source) and was judged by the same model
+    (``HINBOX_GROUNDING_MODEL`` or the run's default). Otherwise only claims the stored report has no
     verdict for go to the model, grouped by article across profiles. Up to
     ``workers`` calls run at once.
 
@@ -70,6 +73,7 @@ def run_profile_grounding_postprocess(
         "llm_calls": 0,
     }
     jobs: List[Tuple[str, str, Dict[str, Any], str]] = []
+    model = grounding_model(model_type)
 
     for entity_type, entity_dict in entities.items():
         for entity_key, entity_data in entity_dict.items():
@@ -85,8 +89,11 @@ def run_profile_grounding_postprocess(
             # Skip if the stored report still answers for this text and these
             # articles. A report with a failed call or a missing source that is
             # now available is not current, even when the text is unchanged.
+            # A report from another judge model is checked again in full.
             existing = entity_data.get("profile_grounding")
-            if grounding_is_current(existing, profile_text, article_texts):
+            if judged_by(existing, model) and grounding_is_current(
+                existing, profile_text, article_texts
+            ):
                 counts["skipped_unchanged"] += 1
                 continue
             jobs.append((entity_type, entity_key, entity_data, profile_text))
@@ -97,7 +104,9 @@ def run_profile_grounding_postprocess(
         plan_grounding(
             profile_text=profile_text,
             article_texts=article_texts,
-            previous=entity_data.get("profile_grounding"),
+            previous=entity_data.get("profile_grounding")
+            if judged_by(entity_data.get("profile_grounding"), model)
+            else None,
             entity_name=_display_name(entity_key, entity_data),
         )
         for _, entity_key, entity_data, profile_text in jobs
@@ -107,6 +116,7 @@ def run_profile_grounding_postprocess(
     )
     for (entity_type, entity_key, entity_data, _), plan in zip(jobs, plans):
         report = finish_report(plan)
+        report.model = model
         entity_data["profile_grounding"] = report.model_dump(exclude_none=True)
         counts["verified"] += 1
         counts["llm_checks"] += report.checked_articles

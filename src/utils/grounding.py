@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from src.logging_config import get_logger
 from src.utils.quality_controls import CITATION_RE, citation_ids
 from src.utils.step_timing import timed
+from src.utils.task_models import is_local_model, task_model
 
 logger = get_logger("grounding")
 
@@ -75,6 +76,7 @@ class GroundingReport(BaseModel):
     flags: List[str] = Field(default_factory=list)
     verifications: List[ClaimVerification] = Field(default_factory=list)
     sources: List[SourceCheck] = Field(default_factory=list)
+    model: str = ""  # the judge model; a different judge rechecks everything
     checked_articles: int = 0  # model calls made for this report
     reused_articles: int = 0  # articles whose results came from the last report
 
@@ -384,6 +386,17 @@ def _is_quote(claim: str, article: str) -> bool:
     return False
 
 
+def grounding_model(model_type: str) -> str:
+    """The model that judges claims for a run of ``model_type``."""
+    return task_model("grounding", model_type)
+
+
+def judged_by(report: Any, model: str) -> bool:
+    """True when ``report`` was judged by ``model``. Verdicts from another
+    judge (or from before reports named their judge) are not reused."""
+    return isinstance(report, dict) and report.get("model") == model
+
+
 def _claim_line(n: int, entity_name: str, claim: str) -> str:
     about = f"[{entity_name}] " if entity_name else ""
     return f"{n}. {about}{claim}"
@@ -399,7 +412,8 @@ def judge_claims(
 ) -> List[Optional[Tuple[SupportLevel, Optional[str]]]]:
     """One model call: judge ``claims`` (entity name, claim text) against one
     article. Returns a verdict per claim, or None where the reply had none.
-    Raises when the call itself fails."""
+    Raises when the call itself fails. The judge is ``HINBOX_GROUNDING_MODEL``
+    if set, else the run's default model; its prefix picks local or cloud."""
     from src.utils.llm import cloud_generation, local_generation
 
     claims_text = "\n".join(
@@ -416,10 +430,12 @@ def judge_claims(
             ),
         },
     ]
-    generate = local_generation if model_type == "ollama" else cloud_generation
+    model = grounding_model(model_type)
+    generate = local_generation if is_local_model(model) else cloud_generation
     reply = generate(
         messages=messages,
         response_model=List[ClaimVerdict],
+        model=model,
         temperature=0,
         max_tokens=GROUNDING_MAX_TOKENS,
     )
@@ -586,10 +602,11 @@ def verify_profile_grounding(
 
     Never raises — returns a report with flags on any error.
     """
+    model = grounding_model(model_type)
     plan = plan_grounding(
         profile_text=profile_text,
         article_texts=article_texts,
-        previous=previous,
+        previous=previous if judged_by(previous, model) else None,
         entity_name=entity_name,
         max_article_chars=max_article_chars,
         max_claim_chars=max_claim_chars,
@@ -601,7 +618,9 @@ def verify_profile_grounding(
         max_article_chars=max_article_chars,
         max_claim_chars=max_claim_chars,
     )
-    return finish_report(plan, min_grounding_score)
+    report = finish_report(plan, min_grounding_score)
+    report.model = model
+    return report
 
 
 _RETRY_FLAGS = ("verification_error", "llm_count_mismatch")

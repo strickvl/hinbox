@@ -5,6 +5,11 @@ By default every task uses the one model the run is set up for:
 ``HINBOX_<TASK>_MODEL`` (for example ``HINBOX_MATCH_MODEL=ollama/qwen3.6:35b``)
 gives that one task its own model. The model's prefix then decides whether it
 runs locally (``ollama/``) or in the cloud, whatever the run's default is.
+
+A few tasks have their own cloud default (``CLOUD_TASK_DEFAULTS``). Grounding
+uses Claude Haiku 5.5 in cloud runs: on 64 hand-labelled claims it passed 2 of
+42 wrong or partly wrong claims as "supported", where GPT-6 Luna passed 4 and
+local Qwen 17. Local runs keep the local model, so nothing leaves the machine.
 """
 
 import os
@@ -19,7 +24,12 @@ TASKS: Dict[str, str] = {
     "match": "merge check: are two profiles the same entity?",
     "dispute": "second-opinion merge dispute agent",
     "profile": "profile writing, updating and reflection",
+    "grounding": "grounding check: does each cited article support its claims?",
 }
+
+
+# Cloud runs only; needs ANTHROPIC_API_KEY and ``uv sync --extra anthropic``.
+CLOUD_TASK_DEFAULTS: Dict[str, str] = {"grounding": "anthropic/claude-haiku-5-5"}
 
 
 def _env_name(task: str) -> str:
@@ -33,7 +43,9 @@ def task_model(task: str, model_type: str) -> str:
     override = os.getenv(_env_name(task), "").strip()
     if override:
         return override
-    return OLLAMA_MODEL if model_type == "ollama" else CLOUD_MODEL
+    if model_type == "ollama":
+        return OLLAMA_MODEL
+    return CLOUD_TASK_DEFAULTS.get(task, CLOUD_MODEL)
 
 
 def is_local_model(model: str) -> bool:
