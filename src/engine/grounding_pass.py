@@ -1,23 +1,34 @@
 """Profile grounding as a post-processing pass over all changed profiles.
 
-Each profile's check is independent (it reads its own text and the cited
-articles), so the checks run in a thread pool. The LLM concurrency limiters
-in ``src/utils/llm.py`` still cap how many calls are in flight. Results are
-written back to the entity dicts on the calling thread.
+Many profiles cite the same article (one article about a hearing gives a
+judge, two lawyers, a detainee, a court and a camp, each with a profile
+citing it). The pass collects every claim that needs checking, then makes
+one model call per article for all of them, instead of one call per profile
+per article. The calls run in a thread pool; the LLM concurrency limiters in
+``src/utils/llm.py`` still cap how many are in flight. Results are written
+back to the entity dicts on the calling thread.
 """
 
-import contextvars
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple
 
 from src.engine.article_processor import ArticleProcessor
 from src.logging_config import log
 from src.utils.grounding import (
-    GroundingReport,
+    finish_report,
     grounding_is_current,
-    verify_profile_grounding,
+    judge_pending,
+    plan_grounding,
 )
 from src.utils.quality_controls import CITATION_RE
+
+
+def _display_name(entity_key: Any, entity_data: Dict[str, Any]) -> str:
+    """The entity's name (events: title), shown next to each claim so the
+    model knows who "he" or "it" is."""
+    name = entity_data.get("name") or entity_data.get("title")
+    if not name:
+        name = entity_key[0] if isinstance(entity_key, tuple) else entity_key
+    return str(name)
 
 
 def run_profile_grounding_postprocess(
@@ -34,13 +45,14 @@ def run_profile_grounding_postprocess(
     supported by source article text. Stores the grounding report on each
     entity as entity["profile_grounding"]. Skips entities whose stored report
     is still current (``grounding_is_current()``: same text, and no failed or
-    newly available source). Otherwise the stored report goes to the check,
-    which re-asks the model only for articles that need it. Up to
-    ``workers`` profiles are checked at once.
+    newly available source). Otherwise only claims the stored report has no
+    verdict for go to the model, grouped by article across profiles. Up to
+    ``workers`` calls run at once.
 
     Returns summary counts: ``verified`` profiles, ``skipped_unchanged``,
-    ``skipped_no_citations``, plus ``llm_checks`` (article checks sent to the
-    model) and ``reused_checks`` (article checks kept from earlier reports).
+    ``skipped_no_citations``, ``llm_checks`` (profile-article pairs that had
+    claims sent to the model), ``reused_checks`` (pairs kept whole from
+    earlier reports) and ``llm_calls`` (model calls made).
     """
     # Build article_id -> content map from rows
     article_texts: Dict[str, str] = {}
@@ -55,6 +67,7 @@ def run_profile_grounding_postprocess(
         "skipped_no_citations": 0,
         "llm_checks": 0,
         "reused_checks": 0,
+        "llm_calls": 0,
     }
     jobs: List[Tuple[str, str, Dict[str, Any], str]] = []
 
@@ -78,37 +91,32 @@ def run_profile_grounding_postprocess(
                 continue
             jobs.append((entity_type, entity_key, entity_data, profile_text))
 
-    def verify(profile_text: str, previous: Any) -> GroundingReport:
-        return verify_profile_grounding(
+    # Plan every profile first, then ask about each cited article once for
+    # all the profiles that cite it (``judge_pending()``)
+    plans = [
+        plan_grounding(
             profile_text=profile_text,
             article_texts=article_texts,
-            model_type=model_type,
-            previous=previous,
+            previous=entity_data.get("profile_grounding"),
+            entity_name=_display_name(entity_key, entity_data),
         )
-
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        # copy_context() so each check's timing nests under the caller's step
-        futures = [
-            pool.submit(
-                contextvars.copy_context().run,
-                verify,
-                job[3],
-                job[2].get("profile_grounding"),
+        for _, entity_key, entity_data, profile_text in jobs
+    ]
+    counts["llm_calls"] = judge_pending(
+        plans, article_texts, model_type=model_type, workers=workers
+    )
+    for (entity_type, entity_key, entity_data, _), plan in zip(jobs, plans):
+        report = finish_report(plan)
+        entity_data["profile_grounding"] = report.model_dump(exclude_none=True)
+        counts["verified"] += 1
+        counts["llm_checks"] += report.checked_articles
+        counts["reused_checks"] += report.reused_articles
+        if report.grounding_score is not None:
+            log(
+                f"Grounding for {entity_type}/{entity_key}: "
+                f"score={report.grounding_score:.2f}, "
+                f"verified={report.verified}/{report.total_citations}",
+                level="info",
             )
-            for job in jobs
-        ]
-        for (entity_type, entity_key, entity_data, _), future in zip(jobs, futures):
-            report = future.result()
-            entity_data["profile_grounding"] = report.model_dump(exclude_none=True)
-            counts["verified"] += 1
-            counts["llm_checks"] += report.checked_articles
-            counts["reused_checks"] += report.reused_articles
-            if report.grounding_score is not None:
-                log(
-                    f"Grounding for {entity_type}/{entity_key}: "
-                    f"score={report.grounding_score:.2f}, "
-                    f"verified={report.verified}/{report.total_citations}",
-                    level="info",
-                )
 
     return counts
