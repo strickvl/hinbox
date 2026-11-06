@@ -27,7 +27,7 @@ This document helps contributors work effectively in this repository.
     - `non_place_names.py` — nationality words, news outlets, laws and dates that are never locations
     - `name_case.py` — recases ALL CAPS names copied from datelines
     - `quality_controls.py` — extraction QC and profile QC
-    - `grounding.py` — profile grounding verification (rechecks only failed or changed articles)
+    - `grounding.py` — profile grounding verification (one call per article for every profile citing it; rechecks only new claims and failed articles)
     - `processing_status.py` — sidecar JSON tracker for article processing status
     - `outcomes.py` — `PhaseOutcome` structured result objects
     - `llm.py` — SDK/Instructor wrappers with multi-tool-call recovery
