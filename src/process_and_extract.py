@@ -33,6 +33,7 @@ from src.engine import ArticleProcessor, EntityMerger, configure_match_check_mem
 from src.engine.grounding_pass import run_profile_grounding_postprocess
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
+from src.utils.article_window import ordered_window
 from src.utils.cache_utils import sha256_text
 from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
@@ -42,6 +43,7 @@ from src.utils.extraction import configure_extraction_sidecar_cache
 from src.utils.file_ops import write_entities_table
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
+from src.utils.run_summary import log_processing_summary
 from src.utils.step_timing import (
     save_timing_report,
     timed_step,
@@ -229,6 +231,11 @@ def setup_arguments_and_config() -> argparse.Namespace:
         action="store_true",
         help="Display full Rich profile panels during merge (off by default for compact output)",
     )
+    parser.add_argument(
+        "--skip-grounding",
+        action="store_true",
+        help="Don't run the grounding check after merging (the next run checks them)",
+    )
     args = parser.parse_args()
 
     # Configure logger level based on verbosity flag
@@ -375,93 +382,6 @@ def incomplete_reasons(processing_metadata: Dict) -> List[str]:
         for key in processing_metadata
         if key.startswith(("error_", "failed_profiles_"))
     ]
-
-
-def calculate_reflection_statistics(
-    processed_rows: List[Dict], processed_count: int
-) -> Tuple[int, float]:
-    """Calculate reflection statistics from processed articles."""
-    total_reflection_attempts = 0
-    for row in processed_rows:
-        if (
-            "processing_metadata" in row
-            and row["processing_metadata"] is not None
-            and "reflection_summary" in row["processing_metadata"]
-            and row["processing_metadata"]["reflection_summary"] is not None
-        ):
-            total_reflection_attempts += row["processing_metadata"][
-                "reflection_summary"
-            ].get("total_attempts", 0)
-
-    avg_reflections = (
-        total_reflection_attempts / processed_count if processed_count > 0 else 0
-    )
-    return total_reflection_attempts, avg_reflections
-
-
-def log_processing_summary(
-    article_count: int,
-    processed_count: int,
-    skipped_relevance_count: int,
-    skipped_already_processed: int,
-    entities: Dict[str, Dict],
-    processed_rows: List[Dict],
-    skipped_relevance_error: int = 0,
-    skipped_relevance_cached: int = 0,
-    skipped_incomplete: int = 0,
-) -> None:
-    """Log comprehensive processing summary and statistics."""
-    log("\n[bold]Processing complete[/bold]", level="info")
-
-    # Article processing summary
-    log(f"Articles read: {article_count}", level="info")
-    log(f"Articles processed: {processed_count}", level="info")
-    log(f"Articles skipped (relevance): {skipped_relevance_count}", level="info")
-    if skipped_relevance_cached:
-        log(
-            f"Articles skipped (not relevant in an earlier run, unchanged, "
-            f"no LLM call): {skipped_relevance_cached}",
-            level="info",
-        )
-    if skipped_relevance_error:
-        log(
-            f"Articles skipped (relevance check failed, will retry next run): "
-            f"{skipped_relevance_error}",
-            level="warning",
-        )
-    if skipped_incomplete:
-        log(
-            f"Articles left unprocessed (a model call failed, will retry next "
-            f"run): {skipped_incomplete}",
-            level="warning",
-        )
-    log(
-        f"Articles skipped (already processed): {skipped_already_processed}",
-        level="info",
-    )
-
-    # Entity counts
-    log("\nFinal entity counts:", level="info")
-    log(f"• People: {len(entities['people'])}", level="info")
-    log(f"• Organizations: {len(entities['organizations'])}", level="info")
-    log(f"• Locations: {len(entities['locations'])}", level="info")
-    log(f"• Events: {len(entities['events'])}", level="info")
-
-    # Reflection statistics
-    if processed_count > 0:
-        total_reflection_attempts, avg_reflections = calculate_reflection_statistics(
-            processed_rows, processed_count
-        )
-        if total_reflection_attempts > 0:
-            log("\nReflection statistics:", level="info")
-            log(
-                f"• Total reflection attempts: {total_reflection_attempts}",
-                level="info",
-            )
-            log(
-                f"• Average reflection attempts per article: {avg_reflections:.2f}",
-                level="info",
-            )
 
 
 def write_results_and_statistics(
@@ -746,7 +666,8 @@ def process_articles_batch(
 
     Extraction workers run in a thread pool (``extract_workers``).  The main
     thread consumes results **in article order** and is the only writer to
-    ``entities`` / ``status_tracker``.
+    ``entities`` / ``status_tracker``.  At most ``max_buffered_articles``
+    articles are submitted but not yet merged (``ordered_window``).
     """
     from rich.progress import (
         BarColumn,
@@ -772,6 +693,9 @@ def process_articles_batch(
     cc = domain_cfg.get_concurrency_config()
     extract_workers = cc["extract_workers"]
     extract_per_article = cc["extract_per_article"]
+    # Articles submitted for extraction but not yet merged; at least one per
+    # worker, or workers sit idle
+    window = max(cc["max_buffered_articles"], extract_workers)
 
     # Cache config for skip-if-unchanged
     cache_cfg = domain_cfg.get_cache_config()
@@ -801,30 +725,33 @@ def process_articles_batch(
     ) as progress:
         task_id = progress.add_task("Articles", total=active_count)
 
-        # --- Submit extraction work to thread pool ---
+        # --- Submit extraction work, at most `window` articles ahead ---
         # Not a `with` block: its exit would wait for running extractions
         # before an interrupt could save the merged entities.
         pool = ThreadPoolExecutor(max_workers=extract_workers)
-        try:
-            spans = [start_article_span(i, r) for i, r in enumerate(active_rows, 1)]
-            futures = [
-                pool.submit(
-                    run_in_span,
-                    spans[row_index - 1],
-                    extract_single_article_only,
-                    row,
-                    row_index,
-                    processor,
-                    args,
-                    status_snapshot=status_snapshot,
-                    skip_if_unchanged=skip_if_unchanged,
-                    extract_per_article=extract_per_article,
-                )
-                for row_index, row in enumerate(active_rows, 1)
-            ]
 
+        def submit(item: Tuple[int, Dict]) -> Tuple[Any, Any]:
+            row_index, row = item
+            span = start_article_span(row_index, row)
+            future = pool.submit(
+                run_in_span,
+                span,
+                extract_single_article_only,
+                row,
+                row_index,
+                processor,
+                args,
+                status_snapshot=status_snapshot,
+                skip_if_unchanged=skip_if_unchanged,
+                extract_per_article=extract_per_article,
+            )
+            return span, future
+
+        try:
             # --- Consume results in submission (article) order ---
-            for span, future in zip(spans, futures):
+            for span, future in ordered_window(
+                enumerate(active_rows, 1), submit, window
+            ):
                 result = future.result()
                 processed_rows.append(result.row)
                 with article_scope(span, result):
@@ -908,7 +835,8 @@ def main():
     log(
         f"Concurrency: {cc['extract_workers']} workers, "
         f"{cc['extract_per_article']} types/article, "
-        f"{cc['llm_in_flight']} LLM in-flight",
+        f"{cc['llm_in_flight']} cloud / {cc['ollama_in_flight']} local LLM in-flight, "
+        f"{cc['max_buffered_articles']} articles buffered",
         level="info",
     )
 
@@ -947,7 +875,7 @@ def main():
             domain_config=config,
             status_tracker=status_tracker,
         )
-        if counters["processed_count"] > 0:
+        if counters["processed_count"] > 0 and not args.skip_grounding:
             log("\nRunning profile grounding verification...", level="processing")
             with timed_step("grounding_pass"):
                 grounding_counts = run_profile_grounding_postprocess(
