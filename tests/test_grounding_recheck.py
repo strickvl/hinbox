@@ -327,3 +327,21 @@ class TestBatchedCalls:
         sent = mock.call_args.kwargs["messages"][1]["content"]
         assert "1. (Omar Khadr) He was freed." in sent
         assert mock.call_args.kwargs["max_tokens"] == GROUNDING_MAX_TOKENS
+
+
+class TestQuotedClaims:
+    ARTICLE = (
+        "The judge, Col. James Pohl, set the hearing for May 2013. Lawyers objected."
+    )
+
+    def test_sentence_copied_from_article_needs_no_call(self):
+        text = "The judge, Col. James Pohl, set the hearing for May  2013.^[a1]"
+        report, calls = _run(text, {"a1": self.ARTICLE})
+        assert calls == 0
+        assert report.verified == 1
+        assert report.sources[0].status == "checked"
+
+    def test_short_or_changed_claims_still_go_to_the_model(self):
+        text = "Lawyers objected.^[a1] Pohl set the hearing for June 2013.^[a1]"
+        _, calls = _run(text, {"a1": self.ARTICLE})
+        assert calls == 1

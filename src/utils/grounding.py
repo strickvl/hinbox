@@ -307,15 +307,46 @@ def plan_grounding(
         known = (
             {v.claim[:max_claim_chars]: v for v in earlier_results} if usable else {}
         )
+        article = _squash(article_texts[aid])
         plan.results[aid] = [
-            known[c["claim"][:max_claim_chars]].model_copy(
-                update={"citation": c["citation"]}
-            )
-            if c["claim"][:max_claim_chars] in known
-            else None
-            for c in items
+            _settled(aid, c, known, article, max_claim_chars) for c in items
         ]
     return plan
+
+
+def _settled(
+    aid: str,
+    claim: Dict[str, str],
+    known: Dict[str, ClaimVerification],
+    squashed_article: str,
+    max_claim_chars: int,
+) -> Optional[ClaimVerification]:
+    """A verdict that needs no model call: kept from the last report, or
+    "supported" for a sentence quoted from the article. None otherwise."""
+    text = claim["claim"][:max_claim_chars]
+    if text in known:
+        return known[text].model_copy(update={"citation": claim["citation"]})
+    if _is_quote(claim["claim"], squashed_article):
+        why = "Quoted word for word from the article"
+        return _verification(aid, claim, SupportLevel.SUPPORTED, why, max_claim_chars)
+    return None
+
+
+_SPACE = re.compile(r"\s+")
+_QUOTE_MIN_CHARS = 40
+
+
+def _squash(text: str) -> str:
+    return _SPACE.sub(" ", text).strip().lower()
+
+
+def _is_quote(claim: str, squashed_article: str) -> bool:
+    """True when the claim is a sentence copied word for word from the article
+    (case and spacing aside), like the "Mentions" sentences of a stub
+    profile. Such a claim needs no model call. Short claims ("He was held")
+    don't count: a few common words can appear anywhere."""
+    text = _squash(claim).rstrip(".;:, ")
+    return len(text) >= _QUOTE_MIN_CHARS and text in squashed_article
 
 
 def _claim_line(n: int, entity_name: str, claim: str) -> str:
