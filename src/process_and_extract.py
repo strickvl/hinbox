@@ -231,6 +231,11 @@ def setup_arguments_and_config() -> argparse.Namespace:
         action="store_true",
         help="Display full Rich profile panels during merge (off by default for compact output)",
     )
+    parser.add_argument(
+        "--skip-grounding",
+        action="store_true",
+        help="Don't run the grounding check after merging (the next run checks them)",
+    )
     args = parser.parse_args()
 
     # Configure logger level based on verbosity flag
@@ -870,7 +875,7 @@ def main():
             domain_config=config,
             status_tracker=status_tracker,
         )
-        if counters["processed_count"] > 0:
+        if counters["processed_count"] > 0 and not args.skip_grounding:
             log("\nRunning profile grounding verification...", level="processing")
             with timed_step("grounding_pass"):
                 grounding_counts = run_profile_grounding_postprocess(

@@ -21,7 +21,13 @@ It then runs the real pipeline (``src.process_and_extract``, ``--local
 
 ``--set key=value`` overrides a concurrency setting for the run through
 ``HINBOX_<KEY>`` (e.g. ``extract_workers``, ``ollama_in_flight``,
-``max_buffered_articles``). Each pass writes ``run.log``; the run writes
+``max_buffered_articles``). ``--no-grounding`` skips the grounding pass (the
+window only changes the stage before it; ``article s`` is the time up to
+grounding either way). ``--seed-from <label>`` runs only a cached pass, seeded
+from that run's fresh pass. Before each pass the model server must answer, and
+a pass where more than ``--max-failed-share`` (5%) of model calls fail marks
+the run INVALID and exits 1, so a sequence stops instead of recording junk.
+Each pass writes ``run.log``; the run writes
 ``<out>/<label>/summary.json`` and ``summary.md`` with the commit, models,
 context size, concurrency, what the model server reports about itself, the
 timings, and quality counts that need no model (``scripts/audit_entities.py``:
@@ -148,6 +154,20 @@ def seed_cached_pass(fresh_dir: str, cached_dir: str) -> None:
         json.dump(keep, f, indent=2)
 
 
+def check_server(api_url: str) -> None:
+    """Stop before a pass if the model server doesn't answer.
+
+    On 2026-11-06 beast's server went away mid-run; the passes after it each
+    took 40 s with every call failing, and their rows looked like results.
+    """
+    base = api_url.rstrip("/").removesuffix("/v1")
+    if (
+        _get_json(f"{base}/v1/models") is None
+        and _get_json(f"{base}/api/version") is None
+    ):
+        raise SystemExit(f"model server at {api_url} is not answering; stopping")
+
+
 def run_pass(
     out_dir: str, articles: str, limit: int, env: Dict[str, str], extra: List[str]
 ) -> float:
@@ -226,9 +246,12 @@ def pass_quality(out_dir: str, corpus: List[str]) -> Dict[str, Any]:
 def summarise_pass(name: str, out_dir: str, seconds: float, ids: List[str]) -> Dict:
     timing = latest_timing(out_dir)
     top = {k: v for k, v in timing["steps"].items() if "/" not in k}
+    grounding = top.get("grounding_pass", {}).get("seconds", 0.0)
     return {
         "pass": name,
         "wall_seconds": round(seconds, 1),
+        # Relevance + extraction + merging + profiles: what the window changes
+        "article_stage_seconds": round(timing["wall_seconds"] - grounding, 1),
         "pipeline_wall_seconds": timing["wall_seconds"],
         "articles_merged": timing["articles"],
         "seconds_per_merged_article": timing["wall_seconds_per_article"],
@@ -259,6 +282,8 @@ def run(args: argparse.Namespace) -> None:
     if os.path.exists(label_dir):
         raise SystemExit(f"{label_dir} exists; pick another --label")
     extra = (["--local"] if args.local else []) + ["--relevance-check"]
+    extra += ["--skip-grounding"] if not args.grounding else []
+    api_url = os.getenv("OLLAMA_API_URL", "http://localhost:11434/v1")
     summary: Dict[str, Any] = {
         "label": args.label,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -269,31 +294,42 @@ def run(args: argparse.Namespace) -> None:
         "pipeline_args": extra,
         "env": settings_env(),
         "models": model_settings(args.local),
-        "server": server_info(os.getenv("OLLAMA_API_URL", "http://localhost:11434/v1"))
-        if args.local
-        else {},
+        "server": server_info(api_url) if args.local else {},
         "passes": [],
     }
     fresh, cached = os.path.join(label_dir, "fresh"), os.path.join(label_dir, "cached")
-    for name, out_dir in (("fresh", fresh), ("cached", cached))[
-        : 2 if args.cached else 1
-    ]:
+    passes = [("fresh", fresh), ("cached", cached)][: 2 if args.cached else 1]
+    if args.seed_from:  # only a cached pass, seeded from another run's fresh pass
+        fresh = os.path.join(args.out, args.seed_from, "fresh")
+        passes = [("cached", cached)]
+    failed_share = 0.0
+    for name, out_dir in passes:
+        if args.local:
+            check_server(api_url)
         os.makedirs(out_dir)
         if name == "cached":
             seed_cached_pass(fresh, cached)
         seconds = run_pass(out_dir, articles, len(ids), env, extra)
         summary["passes"].append(summarise_pass(name, out_dir, seconds, ids))
-        print(f"{name}: {seconds:.0f}s", flush=True)
+        llm = summary["passes"][-1]["llm"]
+        failed_share = llm["failed"] / max(llm["calls"], 1)
+        print(f"{name}: {seconds:.0f}s, {failed_share:.0%} of calls failed", flush=True)
+        if failed_share > args.max_failed_share:
+            summary["invalid"] = f"{name}: {failed_share:.0%} of model calls failed"
+            break
     with open(os.path.join(label_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2, default=str)
     table = render([summary])
     with open(os.path.join(label_dir, "summary.md"), "w") as f:
         f.write(table)
     print(table)
+    if summary.get("invalid"):
+        raise SystemExit(f"run not valid ({summary['invalid']}); stopping")
 
 
 COLUMNS = [
     ("wall s", lambda p: p["wall_seconds"]),
+    ("article s", lambda p: p.get("article_stage_seconds")),
     ("s/article", lambda p: p["seconds_per_merged_article"]),
     ("merged", lambda p: p["articles_merged"]),
     ("LLM calls", lambda p: p["llm"]["calls"]),
@@ -316,7 +352,8 @@ def render(summaries: List[Dict[str, Any]]) -> str:
     for s in summaries:
         over = ", ".join(f"{k}={v}" for k, v in s["overrides"].items()) or "-"
         for p in s["passes"]:
-            cells = [s["label"], p["pass"], s["git"]["commit"][:7], over]
+            label = s["label"] + (" (INVALID)" if s.get("invalid") else "")
+            cells = [label, p["pass"], s["git"]["commit"][:7], over]
             cells += [str(fn(p)) for _, fn in COLUMNS]
             lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
@@ -346,6 +383,22 @@ def main() -> None:
     r.add_argument("--set", action="append", default=[], help="key=value")
     r.add_argument("--cloud", dest="local", action="store_false")
     r.add_argument("--no-cached", dest="cached", action="store_false")
+    r.add_argument(
+        "--no-grounding",
+        dest="grounding",
+        action="store_false",
+        help="skip the grounding pass (the window only changes the article stage)",
+    )
+    r.add_argument(
+        "--seed-from",
+        help="run only a cached pass, seeded from <out>/<this label>/fresh",
+    )
+    r.add_argument(
+        "--max-failed-share",
+        type=float,
+        default=0.05,
+        help="stop (exit 1) when more than this share of model calls fail",
+    )
     c = sub.add_parser("compare")
     c.add_argument("--out", required=True)
     args = parser.parse_args()

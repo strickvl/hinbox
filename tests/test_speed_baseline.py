@@ -102,3 +102,35 @@ def test_latest_timing_ignores_partial(tmp_path):
     (tdir / "run-20261105-110000.json").write_text('{"wall_seconds": 2}')
     assert sb.latest_timing(str(tmp_path)) == {"wall_seconds": 2}
     assert os.path.exists(tdir / "partial.json")
+
+
+def test_dead_server_stops_the_run():
+    import pytest
+
+    with pytest.raises(SystemExit, match="not answering"):
+        sb.check_server("http://127.0.0.1:9/v1")
+
+
+def test_invalid_run_is_marked_in_the_table():
+    p = {
+        "pass": "fresh",
+        "wall_seconds": 40.0,
+        "article_stage_seconds": 40.0,
+        "seconds_per_merged_article": 0,
+        "articles_merged": 0,
+        "llm": {"calls": 60, "failed": 60, "wait_seconds": 0},
+        "quality": {
+            "entities": {},
+            "articles": {},
+            "audit_totals": {},
+            "grounding": {"mean_score": None},
+        },
+    }
+    s = {
+        "label": "w8",
+        "git": {"commit": "abc"},
+        "overrides": {},
+        "passes": [p],
+        "invalid": "fresh: 100% of model calls failed",
+    }
+    assert "w8 (INVALID)" in sb.render([s])
