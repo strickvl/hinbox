@@ -11,13 +11,13 @@ These tests verify:
 from typing import Dict, List
 from unittest.mock import patch
 
-from src.constants import CLOUD_MODEL
 from src.utils.grounding import (
     ClaimVerdict,
     ClaimVerification,
     GroundingReport,
     SupportLevel,
     _extract_cited_claims,
+    grounding_model,
     verify_profile_grounding,
 )
 
@@ -363,7 +363,7 @@ class TestGroundingPostprocess:
                         "profile_text_hash": text_hash,
                         "total_citations": 1,
                         "grounding_score": 1.0,
-                        "model": CLOUD_MODEL,
+                        "model": grounding_model("gemini"),
                     },
                 }
             },
@@ -529,7 +529,7 @@ class TestGroundingJudgeModel:
                 profile_text=text, article_texts=articles, previous=stored
             )
             assert cloud.call_count == 1
-            stored["model"] = CLOUD_MODEL
+            stored["model"] = grounding_model("gemini")
             verify_profile_grounding(
                 profile_text=text, article_texts=articles, previous=stored
             )

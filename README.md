@@ -108,6 +108,9 @@ just frontend
    # Create a .env file (auto-loaded by just):
    # The default cloud model is openai/gpt-6-luna:
    echo 'OPENAI_API_KEY=your-openai-api-key' > .env
+   # Cloud runs check profile grounding with Claude Haiku 5.5
+   # (also run `uv sync --extra anthropic`):
+   echo 'ANTHROPIC_API_KEY=your-anthropic-api-key' >> .env
    # Optional for local processing:
    echo 'OLLAMA_API_URL=http://localhost:11434/v1' >> .env
    ```
@@ -137,6 +140,8 @@ just frontend
    # Give one task its own model; the rest keep the default above. Tasks:
    # RELEVANCE, EXTRACTION, MATCH, DISPUTE, PROFILE, GROUNDING. The prefix decides where
    # it runs (ollama/ = local). A --local run refuses cloud task models.
+   # Cloud runs check grounding with anthropic/claude-haiku-5-5 by default
+   # (needs ANTHROPIC_API_KEY); set HINBOX_GROUNDING_MODEL to use another.
    echo 'HINBOX_MATCH_MODEL=ollama/qwen3.6:35b' >> .env
    echo 'HINBOX_PROFILE_MODEL=openai/gpt-6-luna' >> .env
 

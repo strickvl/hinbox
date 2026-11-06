@@ -60,3 +60,9 @@ def test_local_run_refuses_cloud_grounding_judge(monkeypatch):
     monkeypatch.setenv("HINBOX_GROUNDING_MODEL", "anthropic/claude-haiku-5-5")
     with pytest.raises(ValueError, match="HINBOX_GROUNDING_MODEL"):
         check_task_models("ollama")
+
+
+def test_grounding_defaults_to_haiku_in_cloud_runs_only():
+    assert task_model("grounding", "gemini") == "anthropic/claude-haiku-5-5"
+    assert task_model("grounding", "ollama") == OLLAMA_MODEL
+    assert check_task_models("ollama")["grounding"] == OLLAMA_MODEL
