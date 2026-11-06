@@ -8,10 +8,15 @@ that article's text. The report keeps, per article, whether the check worked
 failed, whose text became available, or whose claims changed.
 """
 
+import contextvars
 import hashlib
+import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -157,29 +162,341 @@ def _previous_results(
 # Article text sent to the grounding check (and hashed to spot changes)
 GROUNDING_MAX_ARTICLE_CHARS = 12000
 GROUNDING_MAX_CLAIM_CHARS = 600
+# Claims sent in one call. A call for one article can hold claims from many
+# profiles; more than this are split over several calls, so a reply never
+# grows past the output limit.
+GROUNDING_MAX_CLAIMS_PER_CALL = int(os.getenv("HINBOX_GROUNDING_MAX_CLAIMS", "30"))
+GROUNDING_MAX_TOKENS = int(os.getenv("HINBOX_GROUNDING_MAX_TOKENS", "4096"))
 
-_GROUNDING_SYSTEM_PROMPT = """You are a fact-checking assistant verifying whether claims in an entity profile are supported by source article text.
+_GROUNDING_SYSTEM_PROMPT = """You are a fact-checking assistant verifying whether claims from entity profiles are supported by one source article.
 
-For each claim-citation pair, determine:
+Each claim is numbered and names the entity whose profile it comes from; "he", "she", "it" or "they" in a claim refer to that entity.
+
+For each claim, decide:
 - "supported": The source article clearly contains information that supports the claim
 - "partial": The source partially supports the claim but some details are not confirmed
 - "not_supported": The source does not contain information supporting this claim
 - "unclear": The source text is ambiguous or insufficient to determine support
 
-You MUST return a verification for every claim provided, in the same order."""
+Return one verdict for every claim: its claim_number, support_level, and a reason of at most 15 words. Do not repeat the claim text."""
 
-_GROUNDING_USER_TEMPLATE = """Verify whether the following claims are supported by the source article.
-
-## SOURCE ARTICLE (ID: {article_id})
+_GROUNDING_USER_TEMPLATE = """## SOURCE ARTICLE (ID: {article_id})
 {article_text}
 
 ## CLAIMS TO VERIFY
-{claims_text}
+{claims_text}"""
 
-For each claim, provide: article_id, citation, claim, support_level, and brief reasoning."""
+
+class ClaimVerdict(BaseModel):
+    """The model's verdict on one numbered claim. It doesn't copy the claim
+    back, so a reply for 30 claims stays a few hundred tokens."""
+
+    claim_number: int
+    support_level: SupportLevel
+    reasoning: Optional[str] = None
+
+
+@dataclass
+class GroundingPlan:
+    """One profile's claims, with the verdicts already known (reused from the
+    last report, or "missing source") filled in and the rest left as None
+    until ``judge_pending()`` asks the model."""
+
+    profile_text: str
+    entity_name: str
+    claims: List[Dict[str, str]]
+    by_article: Dict[str, List[Dict[str, str]]]
+    results: Dict[str, List[Optional[ClaimVerification]]]
+    sources: Dict[str, SourceCheck]
+    failed: Set[str] = field(default_factory=set)  # article IDs with a failed call
+    asked: Set[str] = field(default_factory=set)  # article IDs sent to the model
+    flags: List[str] = field(default_factory=list)
+    reused_articles: int = 0
+
+    def pending(self) -> List[Tuple[str, int]]:
+        """(article_id, claim index) of every claim still to judge."""
+        return [
+            (aid, i)
+            for aid, results in self.results.items()
+            for i, r in enumerate(results)
+            if r is None
+        ]
+
+
+def _verification(
+    aid: str, claim: Dict[str, str], level: SupportLevel, why: Optional[str], cap: int
+) -> ClaimVerification:
+    return ClaimVerification(
+        article_id=aid,
+        citation=claim["citation"],
+        claim=claim["claim"][:cap],
+        support_level=level,
+        reasoning=why,
+    )
+
+
+def plan_grounding(
+    *,
+    profile_text: str,
+    article_texts: Dict[str, str],
+    previous: Optional[Dict[str, Any]] = None,
+    entity_name: str = "",
+    max_article_chars: int = GROUNDING_MAX_ARTICLE_CHARS,
+    max_claim_chars: int = GROUNDING_MAX_CLAIM_CHARS,
+) -> GroundingPlan:
+    """Work out which of a profile's claims need the model.
+
+    Say a profile citing a1 and a2 was checked last run, and an update has
+    since added one sentence citing a2. a1's claims are unchanged, so all its
+    verdicts are kept. a2 has one new claim: the old a2 claims keep their
+    verdicts (same article text, same claim text) and only the new one is
+    left pending. A claim is reused only from an article whose earlier check
+    succeeded with the same article text.
+    """
+    claims = _extract_cited_claims(profile_text)
+    by_article: Dict[str, List[Dict[str, str]]] = {}
+    for c in claims:
+        by_article.setdefault(c["article_id"], []).append(c)
+    plan = GroundingPlan(
+        profile_text=profile_text,
+        entity_name=entity_name,
+        claims=claims,
+        by_article=by_article,
+        results={},
+        sources={},
+    )
+    previous_sources, previous_by_article = _previous_results(previous)
+
+    for aid, items in by_article.items():
+        claims_hash = _claims_hash(items, max_claim_chars)
+        if not (article_texts.get(aid) or "").strip():
+            plan.results[aid] = [
+                _verification(
+                    aid,
+                    c,
+                    SupportLevel.MISSING_SOURCE,
+                    "Source article not available for verification",
+                    max_claim_chars,
+                )
+                for c in items
+            ]
+            plan.sources[aid] = SourceCheck(
+                article_id=aid, status="missing", claims_hash=claims_hash
+            )
+            continue
+
+        text_hash = _sha(article_texts[aid][:max_article_chars])
+        plan.sources[aid] = SourceCheck(
+            article_id=aid,
+            status="checked",
+            text_hash=text_hash,
+            claims_hash=claims_hash,
+        )
+        earlier = previous_sources.get(aid)
+        earlier_results = previous_by_article.get(aid, [])
+        usable = (
+            earlier is not None
+            and earlier.status == "checked"
+            and earlier.text_hash == text_hash
+        )
+        if usable and earlier.claims_hash == claims_hash:
+            if len(earlier_results) == len(items):
+                plan.results[aid] = list(earlier_results)
+                plan.reused_articles += 1
+                continue
+        known = (
+            {v.claim[:max_claim_chars]: v for v in earlier_results} if usable else {}
+        )
+        plan.results[aid] = [
+            known[c["claim"][:max_claim_chars]].model_copy(
+                update={"citation": c["citation"]}
+            )
+            if c["claim"][:max_claim_chars] in known
+            else None
+            for c in items
+        ]
+    return plan
+
+
+def _claim_line(n: int, entity_name: str, claim: str) -> str:
+    about = f"({entity_name}) " if entity_name else ""
+    return f"{n}. {about}{claim}"
 
 
 @timed("grounding")
+def judge_claims(
+    *,
+    article_id: str,
+    article_text: str,
+    claims: List[Tuple[str, str]],
+    model_type: str,
+) -> List[Optional[Tuple[SupportLevel, Optional[str]]]]:
+    """One model call: judge ``claims`` (entity name, claim text) against one
+    article. Returns a verdict per claim, or None where the reply had none.
+    Raises when the call itself fails."""
+    from src.utils.llm import cloud_generation, local_generation
+
+    claims_text = "\n".join(
+        _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
+    )
+    messages = [
+        {"role": "system", "content": _GROUNDING_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": _GROUNDING_USER_TEMPLATE.format(
+                article_id=article_id,
+                article_text=article_text,
+                claims_text=claims_text,
+            ),
+        },
+    ]
+    generate = local_generation if model_type == "ollama" else cloud_generation
+    reply = generate(
+        messages=messages,
+        response_model=List[ClaimVerdict],
+        temperature=0,
+        max_tokens=GROUNDING_MAX_TOKENS,
+    )
+    out: List[Optional[Tuple[SupportLevel, Optional[str]]]] = [None] * len(claims)
+    numbers = [getattr(v, "claim_number", None) for v in reply]
+    by_number = len(set(numbers)) == len(numbers) and all(
+        isinstance(n, int) and 1 <= n <= len(claims) for n in numbers
+    )
+    for pos, v in enumerate(reply):
+        i = v.claim_number - 1 if by_number else pos
+        if i < len(claims):
+            out[i] = (v.support_level, v.reasoning)
+    return out
+
+
+def _record_verdicts(
+    batch: List[Tuple[GroundingPlan, str, int]],
+    verdicts: List[Optional[Tuple[SupportLevel, Optional[str]]]],
+    error: Optional[str],
+    max_claim_chars: int,
+) -> None:
+    """Write one call's verdicts into the plans it came from. A claim with no
+    verdict (failed call, or the reply skipped it) is "unclear" and its
+    article is marked failed, so the next run asks again."""
+    for (plan, aid, i), verdict in zip(batch, verdicts):
+        plan.asked.add(aid)
+        claim = plan.by_article[aid][i]
+        if verdict is None:
+            why = error or "LLM did not return verification for this claim"
+            flag = "verification_error" if error else "llm_count_mismatch"
+            level = SupportLevel.UNCLEAR
+            plan.failed.add(aid)
+            if flag not in plan.flags:
+                plan.flags.append(flag)
+        else:
+            level, why = verdict
+        plan.results[aid][i] = _verification(aid, claim, level, why, max_claim_chars)
+
+
+_results_lock = threading.Lock()
+
+
+def judge_pending(
+    plans: List[GroundingPlan],
+    article_texts: Dict[str, str],
+    model_type: str = "gemini",
+    workers: int = 1,
+    max_article_chars: int = GROUNDING_MAX_ARTICLE_CHARS,
+    max_claim_chars: int = GROUNDING_MAX_CLAIM_CHARS,
+    max_claims_per_call: int = GROUNDING_MAX_CLAIMS_PER_CALL,
+) -> int:
+    """Ask the model about every pending claim in ``plans``, one call per
+    article (split when an article has more than ``max_claims_per_call``
+    claims), however many profiles cite it. Fills in the plans and returns
+    the number of calls made.
+
+    Before, 25 profiles citing the same article meant 25 calls, each sending
+    the whole article again. Now they share one or two calls.
+    """
+    by_article: Dict[str, List[Tuple[GroundingPlan, str, int]]] = {}
+    for plan in plans:
+        for aid, i in plan.pending():
+            by_article.setdefault(aid, []).append((plan, aid, i))
+    batches = [
+        (aid, items[start : start + max_claims_per_call])
+        for aid, items in by_article.items()
+        for start in range(0, len(items), max(1, max_claims_per_call))
+    ]
+
+    def run(aid: str, batch: List[Tuple[GroundingPlan, str, int]]) -> None:
+        claims = [
+            (plan.entity_name, plan.by_article[a][i]["claim"][:max_claim_chars])
+            for plan, a, i in batch
+        ]
+        try:
+            verdicts = judge_claims(
+                article_id=aid,
+                article_text=article_texts[aid][:max_article_chars],
+                claims=claims,
+                model_type=model_type,
+            )
+            error = None
+        except Exception as e:
+            logger.error(f"Grounding verification failed for article {aid}: {e}")
+            verdicts = [None] * len(batch)
+            error = f"Verification error: {e}"
+        with _results_lock:
+            _record_verdicts(batch, verdicts, error, max_claim_chars)
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futures = [
+            pool.submit(contextvars.copy_context().run, run, aid, batch)
+            for aid, batch in batches
+        ]
+        for f in futures:
+            f.result()
+    return len(batches)
+
+
+def finish_report(
+    plan: GroundingPlan, min_grounding_score: float = 0.7
+) -> GroundingReport:
+    """Build the stored report from a plan whose claims are all judged."""
+    report = GroundingReport(profile_text_hash=_sha(plan.profile_text))
+    report.total_citations = len(plan.claims)
+    if not plan.claims:
+        report.flags.append("no_citations")
+        return report
+    report.flags.extend(plan.flags)
+    verifications: List[ClaimVerification] = []
+    for aid, results in plan.results.items():
+        verifications.extend(r for r in results if r is not None)
+        source = plan.sources[aid]
+        if aid in plan.failed:
+            source = source.model_copy(update={"status": "error"})
+        report.sources.append(source)
+    report.reused_articles = plan.reused_articles
+    report.checked_articles = len(plan.asked)
+    report.verifications = verifications
+    report.verified = sum(
+        1
+        for v in verifications
+        if v.support_level in (SupportLevel.SUPPORTED, SupportLevel.PARTIAL)
+    )
+    report.unverified = sum(
+        1
+        for v in verifications
+        if v.support_level in (SupportLevel.NOT_SUPPORTED, SupportLevel.UNCLEAR)
+    )
+    report.missing_source = sum(
+        1 for v in verifications if v.support_level == SupportLevel.MISSING_SOURCE
+    )
+    report.grounding_score = report.verified / report.total_citations
+    if report.missing_source > 0:
+        report.flags.append("missing_sources")
+    if any(v.support_level == SupportLevel.NOT_SUPPORTED for v in verifications):
+        report.flags.append("unsupported_claims")
+    if report.grounding_score < min_grounding_score:
+        report.flags.append("low_grounding_score")
+        report.passed = False
+    return report
+
+
 def verify_profile_grounding(
     *,
     profile_text: str,
@@ -189,176 +506,36 @@ def verify_profile_grounding(
     max_claim_chars: int = GROUNDING_MAX_CLAIM_CHARS,
     min_grounding_score: float = 0.7,
     previous: Optional[Dict[str, Any]] = None,
+    entity_name: str = "",
 ) -> GroundingReport:
-    """Verify that profile claims are supported by their cited sources.
+    """Verify that one profile's claims are supported by their cited sources.
 
-    Extracts citations from profile text, groups them by article, and uses
-    an LLM call per article to verify each claim. Returns a GroundingReport
-    with per-claim details and summary statistics.
-
-    ``previous`` is the report stored from an earlier check of this entity.
-    An article whose earlier check succeeded, with the same article text and
-    the same claims sent, keeps its earlier results without a model call.
-    Articles that failed, were missing, or whose claims changed are checked
-    again, so the model is called at most once per such article.
+    ``previous`` is the report stored from an earlier check of this entity:
+    verdicts for claims it already judged against the same article text are
+    kept, and only new or changed claims (and articles whose check failed or
+    that were missing) go to the model, one call per article. The grounding
+    pass checks many profiles at once with ``plan_grounding()`` and
+    ``judge_pending()`` instead, so profiles citing the same article share
+    calls.
 
     Never raises — returns a report with flags on any error.
     """
-    from src.utils.llm import cloud_generation, local_generation
-
-    report = GroundingReport(profile_text_hash=_sha(profile_text))
-
-    cited_claims = _extract_cited_claims(profile_text)
-    report.total_citations = len(cited_claims)
-
-    if not cited_claims:
-        report.flags.append("no_citations")
-        report.grounding_score = None
-        return report
-
-    previous_sources, previous_by_article = _previous_results(previous)
-
-    # Group claims by article, keeping first-seen article order
-    by_article: Dict[str, List[Dict[str, str]]] = {}
-    for claim_item in cited_claims:
-        by_article.setdefault(claim_item["article_id"], []).append(claim_item)
-
-    def fallback(aid: str, claim_item: Dict[str, str], level: SupportLevel, why: str):
-        return ClaimVerification(
-            article_id=aid,
-            citation=claim_item["citation"],
-            claim=claim_item["claim"][:max_claim_chars],
-            support_level=level,
-            reasoning=why,
-        )
-
-    all_verifications: List[ClaimVerification] = []
-
-    for aid, claims_for_article in by_article.items():
-        claims_hash = _claims_hash(claims_for_article, max_claim_chars)
-        if aid not in article_texts or not article_texts[aid].strip():
-            all_verifications.extend(
-                fallback(
-                    aid,
-                    c,
-                    SupportLevel.MISSING_SOURCE,
-                    "Source article not available for verification",
-                )
-                for c in claims_for_article
-            )
-            report.sources.append(
-                SourceCheck(article_id=aid, status="missing", claims_hash=claims_hash)
-            )
-            continue
-
-        source_text = article_texts[aid][:max_article_chars]
-        text_hash = _sha(source_text)
-        earlier = previous_sources.get(aid)
-        earlier_results = previous_by_article.get(aid, [])
-        if (
-            earlier is not None
-            and earlier.status == "checked"
-            and earlier.text_hash == text_hash
-            and earlier.claims_hash == claims_hash
-            and len(earlier_results) == len(claims_for_article)
-        ):
-            all_verifications.extend(earlier_results)
-            report.sources.append(earlier)
-            report.reused_articles += 1
-            continue
-
-        claims_text = "\n".join(
-            f"{i + 1}. Citation: {c['citation']} | Claim: {c['claim'][:max_claim_chars]}"
-            for i, c in enumerate(claims_for_article)
-        )
-        user_content = _GROUNDING_USER_TEMPLATE.format(
-            article_id=aid,
-            article_text=source_text,
-            claims_text=claims_text,
-        )
-        messages = [
-            {"role": "system", "content": _GROUNDING_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ]
-
-        status = "checked"
-        report.checked_articles += 1
-        try:
-            generate = local_generation if model_type == "ollama" else cloud_generation
-            verifications_list = generate(
-                messages=messages,
-                response_model=List[ClaimVerification],
-                temperature=0,
-            )
-
-            # Match returned verifications to input claims by position. The
-            # model's own copy of the ID, citation and claim is replaced by
-            # what was sent, so a later run can find these results again.
-            for i, claim_item in enumerate(claims_for_article):
-                if i < len(verifications_list):
-                    v = verifications_list[i]
-                    all_verifications.append(
-                        fallback(aid, claim_item, v.support_level, v.reasoning)
-                    )
-                else:
-                    all_verifications.append(
-                        fallback(
-                            aid,
-                            claim_item,
-                            SupportLevel.UNCLEAR,
-                            "LLM did not return verification for this claim",
-                        )
-                    )
-
-            if len(verifications_list) != len(claims_for_article):
-                report.flags.append("llm_count_mismatch")
-            if len(verifications_list) < len(claims_for_article):
-                status = "error"  # some claims were never judged: retry them
-
-        except Exception as e:
-            logger.error(f"Grounding verification failed for article {aid}: {e}")
-            all_verifications.extend(
-                fallback(aid, c, SupportLevel.UNCLEAR, f"Verification error: {str(e)}")
-                for c in claims_for_article
-            )
-            report.flags.append("verification_error")
-            status = "error"
-
-        report.sources.append(
-            SourceCheck(
-                article_id=aid,
-                status=status,
-                text_hash=text_hash,
-                claims_hash=claims_hash,
-            )
-        )
-
-    # Compute summary statistics
-    report.verifications = all_verifications
-    report.verified = sum(
-        1
-        for v in all_verifications
-        if v.support_level in (SupportLevel.SUPPORTED, SupportLevel.PARTIAL)
+    plan = plan_grounding(
+        profile_text=profile_text,
+        article_texts=article_texts,
+        previous=previous,
+        entity_name=entity_name,
+        max_article_chars=max_article_chars,
+        max_claim_chars=max_claim_chars,
     )
-    report.unverified = sum(
-        1
-        for v in all_verifications
-        if v.support_level in (SupportLevel.NOT_SUPPORTED, SupportLevel.UNCLEAR)
+    judge_pending(
+        [plan],
+        article_texts,
+        model_type=model_type,
+        max_article_chars=max_article_chars,
+        max_claim_chars=max_claim_chars,
     )
-    report.missing_source = sum(
-        1 for v in all_verifications if v.support_level == SupportLevel.MISSING_SOURCE
-    )
-    report.grounding_score = report.verified / report.total_citations
-
-    if report.missing_source > 0:
-        report.flags.append("missing_sources")
-    if any(v.support_level == SupportLevel.NOT_SUPPORTED for v in all_verifications):
-        report.flags.append("unsupported_claims")
-    if report.grounding_score < min_grounding_score:
-        report.flags.append("low_grounding_score")
-        report.passed = False
-
-    return report
+    return finish_report(plan, min_grounding_score)
 
 
 _RETRY_FLAGS = ("verification_error", "llm_count_mismatch")

@@ -11,10 +11,15 @@ from typing import Dict, List
 from unittest.mock import patch
 
 from src.utils.grounding import (
+    GROUNDING_MAX_TOKENS,
+    ClaimVerdict,
     ClaimVerification,
     SupportLevel,
     _extract_cited_claims,
+    finish_report,
     grounding_is_current,
+    judge_pending,
+    plan_grounding,
     verify_profile_grounding,
 )
 from src.utils.quality_controls import run_profile_qc
@@ -24,10 +29,9 @@ def _judge(level: SupportLevel = SupportLevel.SUPPORTED):
     """A fake model: one verdict per claim sent, with a wrong article ID
     (the code must not trust the model's copy of it)."""
 
-    def fake(*, messages, response_model, temperature):
-        claims = [
-            ln for ln in messages[1]["content"].splitlines() if ". Citation: " in ln
-        ]
+    def fake(*, messages, response_model, temperature, **kw):
+        sent = messages[1]["content"].split("## CLAIMS TO VERIFY")[1]
+        claims = [ln for ln in sent.splitlines() if ln[:1].isdigit()]
         return [
             ClaimVerification(
                 article_id="model-typo", citation="?", claim="?", support_level=level
@@ -105,7 +109,7 @@ class TestReuseEarlierResults:
         assert report.verifications[0].claim == "First claim."
 
     def test_failed_article_is_retried_alone(self):
-        def a2_fails(*, messages, response_model, temperature):
+        def a2_fails(*, messages, response_model, temperature, **kw):
             if "ID: a2" in messages[1]["content"]:
                 raise RuntimeError("timeout")
             return _judge()(
@@ -123,7 +127,7 @@ class TestReuseEarlierResults:
         assert "verification_error" not in second.flags
 
     def test_short_reply_is_retried(self):
-        def one_short(*, messages, response_model, temperature):
+        def one_short(*, messages, response_model, temperature, **kw):
             return []
 
         first, _ = _run(self.TEXT, self.ARTICLES, side_effect=one_short)
@@ -217,6 +221,7 @@ class TestGroundingIsCurrent:
         stored = report.model_dump()
         assert grounding_is_current(stored, text, self.ARTICLES)
         stored["sources"][1]["claims_hash"] = "hash-of-old-claims"
+        stored["verifications"][1]["claim"] = ". Freed in 2016"
         assert not grounding_is_current(stored, text, self.ARTICLES)
         _, calls = _run(text, self.ARTICLES, previous=stored)
         assert calls == 1
@@ -249,3 +254,76 @@ class TestGroundingIsCurrent:
         assert grounding_is_current(stored, self.TEXT, self.ARTICLES)
         _, calls = _run(self.TEXT, self.ARTICLES, previous=stored)
         assert calls == 0
+
+
+class TestOnlyNewClaimsGoToTheModel:
+    """An update adds one sentence citing a1. Before, every a1 claim went back
+    to the model; now only the new one does."""
+
+    ARTICLES = {"a1": "Article one text", "a2": "Article two text"}
+    TEXT = "First claim.^[a1] Second claim.^[a2]"
+
+    def test_added_claim_is_sent_alone(self):
+        first, _ = _run(self.TEXT, self.ARTICLES)
+        edited = self.TEXT + " Third claim.^[a1]"
+        with patch("src.utils.llm.cloud_generation", side_effect=_judge()) as mock:
+            second = verify_profile_grounding(
+                profile_text=edited,
+                article_texts=self.ARTICLES,
+                previous=first.model_dump(),
+            )
+        assert mock.call_count == 1
+        sent = mock.call_args.kwargs["messages"][1]["content"]
+        assert "Third claim." in sent and "First claim." not in sent
+        assert second.verified == 3
+        assert [s.status for s in second.sources] == ["checked", "checked"]
+        assert grounding_is_current(second.model_dump(), edited, self.ARTICLES)
+
+    def test_claims_from_a_failed_check_are_not_reused(self):
+        first, _ = _run(self.TEXT, self.ARTICLES, side_effect=RuntimeError("down"))
+        _, calls = _run(self.TEXT + " More.^[a1]", self.ARTICLES, first.model_dump())
+        assert calls == 2
+
+
+class TestBatchedCalls:
+    TEXT = "One.^[a1] Two.^[a1] Three.^[a1] Four.^[a1] Five.^[a1]"
+
+    def test_many_claims_are_split_over_calls(self):
+        plan = plan_grounding(profile_text=self.TEXT, article_texts={"a1": "Text"})
+        with patch("src.utils.llm.cloud_generation", side_effect=_judge()) as mock:
+            calls = judge_pending([plan], {"a1": "Text"}, max_claims_per_call=2)
+        assert calls == mock.call_count == 3
+        assert finish_report(plan).verified == 5
+
+    def test_verdicts_matched_by_claim_number(self):
+        def reversed_reply(*, messages, **kw):
+            return [
+                ClaimVerdict(claim_number=2, support_level=SupportLevel.NOT_SUPPORTED),
+                ClaimVerdict(claim_number=1, support_level=SupportLevel.SUPPORTED),
+            ]
+
+        report, _ = _run("Held.^[a1] Freed.^[a1]", {"a1": "Text"}, None, reversed_reply)
+        levels = [v.support_level for v in report.verifications]
+        assert levels == [SupportLevel.SUPPORTED, SupportLevel.NOT_SUPPORTED]
+
+    def test_skipped_claim_marks_article_for_retry(self):
+        def one_verdict(**kw):
+            return [ClaimVerdict(claim_number=2, support_level=SupportLevel.SUPPORTED)]
+
+        report, _ = _run("Held.^[a1] Freed.^[a1]", {"a1": "Text"}, None, one_verdict)
+        assert report.verifications[0].support_level == SupportLevel.UNCLEAR
+        assert report.verifications[1].support_level == SupportLevel.SUPPORTED
+        assert report.sources[0].status == "error"
+        assert "llm_count_mismatch" in report.flags
+
+    def test_entity_name_is_shown_with_each_claim(self):
+        plan = plan_grounding(
+            profile_text="He was freed.^[a1]",
+            article_texts={"a1": "Text"},
+            entity_name="Omar Khadr",
+        )
+        with patch("src.utils.llm.cloud_generation", side_effect=_judge()) as mock:
+            judge_pending([plan], {"a1": "Text"})
+        sent = mock.call_args.kwargs["messages"][1]["content"]
+        assert "1. (Omar Khadr) He was freed." in sent
+        assert mock.call_args.kwargs["max_tokens"] == GROUNDING_MAX_TOKENS

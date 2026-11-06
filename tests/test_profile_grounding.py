@@ -12,6 +12,7 @@ from typing import Dict, List
 from unittest.mock import patch
 
 from src.utils.grounding import (
+    ClaimVerdict,
     ClaimVerification,
     GroundingReport,
     SupportLevel,
@@ -282,6 +283,16 @@ class TestVerifyProfileGrounding:
 # ── Batch post-processing integration tests ──
 
 
+def _numbered_verdicts(*, messages, response_model, temperature, **kw):
+    """A fake model: "supported" for every numbered claim line it was sent."""
+    lines = messages[1]["content"].split("## CLAIMS TO VERIFY")[1].splitlines()
+    numbers = [int(ln.split(".")[0]) for ln in lines if ln[:1].isdigit()]
+    return [
+        ClaimVerdict(claim_number=n, support_level=SupportLevel.SUPPORTED)
+        for n in numbers
+    ]
+
+
 class TestGroundingPostprocess:
     def test_adds_grounding_to_entity(self):
         """Post-processing should add profile_grounding to entities with citations."""
@@ -303,13 +314,6 @@ class TestGroundingPostprocess:
             {"id": "art-1", "clean_text": "Source article about Alice being detained."}
         ]
 
-        mock_report = GroundingReport(
-            profile_text_hash="abc123",
-            total_citations=1,
-            verified=1,
-            grounding_score=1.0,
-        )
-
         with (
             patch.object(ArticleProcessor, "__init__", lambda self, **kw: None),
             patch.object(
@@ -324,8 +328,7 @@ class TestGroundingPostprocess:
                 },
             ),
             patch(
-                "src.engine.grounding_pass.verify_profile_grounding",
-                return_value=mock_report,
+                "src.utils.llm.cloud_generation", side_effect=_numbered_verdicts
             ) as mock_verify,
         ):
             processor = ArticleProcessor.__new__(ArticleProcessor)
@@ -381,9 +384,7 @@ class TestGroundingPostprocess:
                     "content": "Source.",
                 },
             ),
-            patch(
-                "src.engine.grounding_pass.verify_profile_grounding",
-            ) as mock_verify,
+            patch("src.utils.llm.cloud_generation") as mock_verify,
         ):
             processor = ArticleProcessor.__new__(ArticleProcessor)
             counts = run_profile_grounding_postprocess(
@@ -428,9 +429,7 @@ class TestGroundingPostprocess:
                     "content": "",
                 },
             ),
-            patch(
-                "src.engine.grounding_pass.verify_profile_grounding",
-            ) as mock_verify,
+            patch("src.utils.llm.cloud_generation") as mock_verify,
         ):
             processor = ArticleProcessor.__new__(ArticleProcessor)
             counts = run_profile_grounding_postprocess(
@@ -456,11 +455,6 @@ class TestGroundingPostprocess:
             }
         }
 
-        def fake_verify(*, profile_text, article_texts, model_type, previous):
-            return GroundingReport(
-                profile_text_hash=profile_text, total_citations=1, verified=1
-            )
-
         with (
             patch.object(ArticleProcessor, "__init__", lambda self, **kw: None),
             patch.object(
@@ -469,9 +463,8 @@ class TestGroundingPostprocess:
                 return_value={"id": "art-1", "content": "Source."},
             ),
             patch(
-                "src.engine.grounding_pass.verify_profile_grounding",
-                side_effect=fake_verify,
-            ),
+                "src.utils.llm.cloud_generation", side_effect=_numbered_verdicts
+            ) as mock_cloud,
         ):
             counts = run_profile_grounding_postprocess(
                 entities=entities,
@@ -482,6 +475,12 @@ class TestGroundingPostprocess:
             )
 
         assert counts["verified"] == 5
+        # all five profiles cite art-1, so one call judges all their claims
+        assert mock_cloud.call_count == 1
+        assert counts["llm_calls"] == 1
+        sent = mock_cloud.call_args.kwargs["messages"][1]["content"]
+        assert "(Carol) Carol was detained." in sent
         for n in names:
             grounding = entities["people"][n]["profile_grounding"]
-            assert grounding["profile_text_hash"] == f"{n} was detained.^[art-1]"
+            assert grounding["verified"] == 1
+            assert grounding["verifications"][0]["claim"] == f"{n} was detained."
