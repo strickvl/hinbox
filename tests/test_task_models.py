@@ -54,3 +54,9 @@ def test_processor_routes_relevance_by_the_task_model_prefix(monkeypatch):
         outcome = processor.check_relevance("text", "art-1")
     assert outcome.value is True
     assert local_check.call_args.kwargs["model"] == "ollama/qwen3.6:35b"
+
+
+def test_local_run_refuses_cloud_grounding_judge(monkeypatch):
+    monkeypatch.setenv("HINBOX_GROUNDING_MODEL", "anthropic/claude-haiku-5-5")
+    with pytest.raises(ValueError, match="HINBOX_GROUNDING_MODEL"):
+        check_task_models("ollama")

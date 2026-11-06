@@ -135,7 +135,7 @@ just frontend
    echo 'HINBOX_CLOUD_MODEL=anthropic/claude-haiku-5-5' >> .env
 
    # Give one task its own model; the rest keep the default above. Tasks:
-   # RELEVANCE, EXTRACTION, MATCH, DISPUTE, PROFILE. The prefix decides where
+   # RELEVANCE, EXTRACTION, MATCH, DISPUTE, PROFILE, GROUNDING. The prefix decides where
    # it runs (ollama/ = local). A --local run refuses cloud task models.
    echo 'HINBOX_MATCH_MODEL=ollama/qwen3.6:35b' >> .env
    echo 'HINBOX_PROFILE_MODEL=openai/gpt-6-luna' >> .env

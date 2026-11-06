@@ -12,7 +12,8 @@ The number to watch is "newly accepted": claims the stored report called
 not_supported or unclear that are now supported or partial.
 
     uv run python -m scripts.grounding_bench run --entities <dir> \\
-        --articles <articles.parquet> --out <file.json> --local
+        --articles <articles.parquet> --out <file.json> --local \\
+        [--model ollama/<judge> | --model anthropic/<judge>]
     uv run python -m scripts.grounding_bench compare <file.json>
 
 Outputs hold claim text from profiles: keep them off GitHub.
@@ -48,6 +49,10 @@ def _verdict_rows(entities: Dict[str, Dict], field: str = "profile_grounding"):
 
 
 def run(args: argparse.Namespace) -> None:
+    import os
+
+    if args.model:
+        os.environ["HINBOX_GROUNDING_MODEL"] = args.model
     from src.engine.article_processor import ArticleProcessor
     from src.engine.grounding_pass import run_profile_grounding_postprocess
     from src.process_and_extract import load_existing_entities
@@ -77,7 +82,10 @@ def run(args: argparse.Namespace) -> None:
         for data in table.values()
         for f in (data.get("profile_grounding") or {}).get("flags") or []
     )
+    from src.utils.grounding import grounding_model
+
     out = {
+        "model": grounding_model("ollama" if args.local else "gemini"),
         "seconds": round(seconds, 1),
         "counts": counts,
         "flags": dict(flags),
@@ -86,7 +94,11 @@ def run(args: argparse.Namespace) -> None:
     }
     with open(args.out, "w") as f:
         json.dump(out, f, indent=1)
-    print(json.dumps({k: out[k] for k in ("seconds", "counts", "flags")}, indent=1))
+    print(
+        json.dumps(
+            {k: out[k] for k in ("model", "seconds", "counts", "flags")}, indent=1
+        )
+    )
 
 
 def _key(r: Dict[str, Any]) -> Tuple[str, str, str]:
@@ -137,6 +149,9 @@ def main() -> None:
     r.add_argument("--articles", required=True, help="articles Parquet file")
     r.add_argument("--out", required=True, help="JSON file to write")
     r.add_argument("--local", action="store_true", help="use the local model")
+    r.add_argument(
+        "--model", help="judge model (sets HINBOX_GROUNDING_MODEL for this run)"
+    )
     r.add_argument("--workers", type=int, default=8, help="calls submitted at once")
     r.add_argument("--in-flight", type=int, default=4, help="model calls in flight")
     r.set_defaults(fn=run)

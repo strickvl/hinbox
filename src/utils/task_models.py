@@ -19,6 +19,7 @@ TASKS: Dict[str, str] = {
     "match": "merge check: are two profiles the same entity?",
     "dispute": "second-opinion merge dispute agent",
     "profile": "profile writing, updating and reflection",
+    "grounding": "grounding check: does each cited article support its claims?",
 }
 
 

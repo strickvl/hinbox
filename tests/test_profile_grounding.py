@@ -11,6 +11,7 @@ These tests verify:
 from typing import Dict, List
 from unittest.mock import patch
 
+from src.constants import CLOUD_MODEL
 from src.utils.grounding import (
     ClaimVerdict,
     ClaimVerification,
@@ -362,6 +363,7 @@ class TestGroundingPostprocess:
                         "profile_text_hash": text_hash,
                         "total_citations": 1,
                         "grounding_score": 1.0,
+                        "model": CLOUD_MODEL,
                     },
                 }
             },
@@ -484,3 +486,51 @@ class TestGroundingPostprocess:
             grounding = entities["people"][n]["profile_grounding"]
             assert grounding["verified"] == 1
             assert grounding["verifications"][0]["claim"] == f"{n} was detained."
+
+
+# ── judge model (HINBOX_GROUNDING_MODEL) ──
+
+
+class TestGroundingJudgeModel:
+    def _verdict(self):
+        return [ClaimVerdict(claim_number=1, reasoning="r", support_level="supported")]
+
+    def test_override_routes_by_prefix_and_is_recorded(self, monkeypatch):
+        """A local judge in a cloud run goes to local_generation with that model,
+        and the report names its judge."""
+        monkeypatch.setenv("HINBOX_GROUNDING_MODEL", "ollama/judge")
+        with (
+            patch("src.utils.llm.cloud_generation") as cloud,
+            patch(
+                "src.utils.llm.local_generation", return_value=self._verdict()
+            ) as local,
+        ):
+            report = verify_profile_grounding(
+                profile_text="A fact.^[a1]",
+                article_texts={"a1": "A fact."},
+                model_type="gemini",
+            )
+        cloud.assert_not_called()
+        assert local.call_args.kwargs["model"] == "ollama/judge"
+        assert report.model == "ollama/judge"
+
+    def test_other_judges_verdicts_are_not_reused(self, monkeypatch):
+        monkeypatch.delenv("HINBOX_GROUNDING_MODEL", raising=False)
+        text = "A fact.^[a1]"
+        articles = {"a1": "Some other words entirely."}
+        with patch("src.utils.llm.cloud_generation", return_value=self._verdict()):
+            first = verify_profile_grounding(profile_text=text, article_texts=articles)
+        stored = first.model_dump()
+        stored["model"] = "anthropic/old-judge"
+        with patch(
+            "src.utils.llm.cloud_generation", return_value=self._verdict()
+        ) as cloud:
+            verify_profile_grounding(
+                profile_text=text, article_texts=articles, previous=stored
+            )
+            assert cloud.call_count == 1
+            stored["model"] = CLOUD_MODEL
+            verify_profile_grounding(
+                profile_text=text, article_texts=articles, previous=stored
+            )
+            assert cloud.call_count == 1
