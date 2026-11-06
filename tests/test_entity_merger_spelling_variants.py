@@ -30,7 +30,9 @@ def _merge(entity_type, incoming, entities, is_match):
 
     with (
         patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
-        patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
+        patch(
+            "src.engine.profile_stubs.update_profile", side_effect=update_profile_stub
+        ),
         patch(
             "src.engine.mergers.get_embedding_manager",
             # Far from the stored vectors: only the name-variant route finds them

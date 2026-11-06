@@ -25,7 +25,8 @@ from src.engine.merge_dispute_agent import (
     run_merge_dispute_agent,
 )
 from src.engine.merge_evidence import batch_embed_texts, build_evidence_text
-from src.engine.profiles import VersionedProfile, create_profile, update_profile
+from src.engine.profile_stubs import first_profile, update_or_fill
+from src.engine.profiles import VersionedProfile, create_profile
 from src.logging_config import (
     DecisionKind,
     display_markdown,
@@ -390,8 +391,13 @@ class EntityMerger:
         similarity_threshold: Optional[float] = None,
         domain: str = "guantanamo",
         domain_config: Optional[DomainConfig] = None,
+        article_texts: Optional[Dict[str, str]] = None,
     ) -> MergeStats:
-        """Merge extracted entities with existing entities database."""
+        """Merge extracted entities with existing entities database.
+
+        ``article_texts`` (content by article ID) lets a stub profile be
+        written in full from its first article when a second one merges in.
+        """
         stats = MergeStats()
         embedding_manager = get_embedding_manager(domain=domain)
 
@@ -634,7 +640,7 @@ class EntityMerger:
                     updated_profile, versioned_profile, reflection_history = (
                         _profile_or_fallback(
                             (existing_entity["profile"], versioned_profile, []),
-                            update_profile,
+                            update_or_fill,
                             ENTITY_SINGULAR[self.entity_type],
                             self._format_key_for_display(similar_key),
                             existing_entity["profile"],
@@ -643,6 +649,7 @@ class EntityMerger:
                             article_id,
                             model_type,
                             domain,
+                            article_texts=article_texts,
                             model=task_model("profile", model_type),
                             article_dates=article_dates(
                                 existing_entity, article_id, article_published_date
@@ -800,7 +807,8 @@ class EntityMerger:
                     entities[self.entity_type][similar_key] = existing_entity
 
             else:
-                # --- CREATE PATH (expensive profile generation happens here) ---
+                # --- CREATE PATH: a stub profile, or a model-written one with
+                # HINBOX_PROFILE_STUBS=off (src/engine/profile_stubs.py) ---
                 # Never overwrite an existing entity that shares this key (e.g.
                 # an exact-name entity whose similarity was below threshold).
                 if entity_key in entities[self.entity_type]:
@@ -816,14 +824,17 @@ class EntityMerger:
                 proposed_profile, proposed_versioned_profile, reflection_history = (
                     _profile_or_fallback(
                         ({}, VersionedProfile(), []),
-                        create_profile,
-                        ENTITY_SINGULAR[self.entity_type],
-                        self._format_key_for_display(entity_key),
+                        first_profile,
+                        self.entity_type,
+                        entity_key,
+                        entity_dict,
                         article_content,
                         article_id,
                         model_type,
                         domain,
+                        alternative_field=self.alternative_field,
                         model=task_model("profile", model_type),
+                        create=create_profile,
                     )
                 )
 
@@ -980,20 +991,3 @@ class EntityMerger:
             base_entity["tags"] = entity_dict.get("tags", [])
 
         return base_entity
-
-
-# Convenience creators (unchanged behavior)
-def create_people_merger() -> EntityMerger:
-    return EntityMerger("people")
-
-
-def create_organizations_merger() -> EntityMerger:
-    return EntityMerger("organizations")
-
-
-def create_locations_merger() -> EntityMerger:
-    return EntityMerger("locations")
-
-
-def create_events_merger() -> EntityMerger:
-    return EntityMerger("events")
