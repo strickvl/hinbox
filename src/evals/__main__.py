@@ -28,6 +28,7 @@ from src.evals.datasets import (
     filter_split,
     load_merge_items,
     load_relevance_items,
+    stub_existing_profiles,
 )
 from src.evals.profile_create import run_profile_create
 from src.evals.profile_update import (
@@ -223,6 +224,13 @@ def main() -> None:
     parser.add_argument(
         "--limit", type=int, default=None, help="score only the first N items"
     )
+    parser.add_argument(
+        "--existing-profile",
+        choices=("saved", "stub"),
+        default="saved",
+        help="merge: compare against the saved profile, or the stub profile a "
+        "once-mentioned entity now has (src/engine/profile_stubs.py)",
+    )
     parser.add_argument("--workers", type=int, default=4, help="parallel model calls")
     parser.add_argument("--eval-dir", default=None, help="default: {output_dir}/eval")
     parser.add_argument(
@@ -333,6 +341,11 @@ def main() -> None:
         parser.error(f"Gold file missing: {e.filename}")
     if not items:
         parser.error(f"No labelled {dataset} items found in {eval_dir}")
+    approach = "pipeline"
+    if args.task == "merge" and args.existing_profile == "stub":
+        items, swapped = stub_existing_profiles(items, domain_cfg.get_data_path())
+        console.print(f"Existing profiles swapped for stubs: {swapped}/{len(items)}")
+        approach = "pipeline-stub"
 
     configure_llm_concurrency(
         cloud_in_flight=args.workers, local_in_flight=args.workers
@@ -345,7 +358,7 @@ def main() -> None:
         task=args.task,
         model=args.model,
         split=args.split,
-        approach="pipeline",
+        approach=approach,
         dataset=dataset,
     )
     summary["prompt"] = _prompt_file(domain_cfg, args.task, args.model)

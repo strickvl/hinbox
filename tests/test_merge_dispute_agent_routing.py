@@ -212,7 +212,10 @@ class TestDisputeAgentRouting:
 
         with (
             patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
-            patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
+            patch(
+                "src.engine.profile_stubs.update_profile",
+                side_effect=update_profile_stub,
+            ),
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
             ),
@@ -408,7 +411,10 @@ class TestRejectedMatchCreatesEntity:
         )
         patches = [
             patch("src.engine.mergers.create_profile", create_mock),
-            patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
+            patch(
+                "src.engine.profile_stubs.update_profile",
+                side_effect=update_profile_stub,
+            ),
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
             ),
@@ -442,7 +448,8 @@ class TestRejectedMatchCreatesEntity:
                 p.stop()
         return stats, create_mock
 
-    def test_confident_rejection_creates_new_entity(self):
+    def test_confident_rejection_creates_new_entity(self, monkeypatch):
+        monkeypatch.setenv("HINBOX_PROFILE_STUBS", "off")
         """Match check says 'different' with high confidence → create, don't drop."""
         entities = make_empty_entities()
         entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")

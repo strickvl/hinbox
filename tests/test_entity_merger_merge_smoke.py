@@ -123,7 +123,8 @@ def update_profile_stub(
 class TestEntityMergerMergeSmoke:
     """Smoke tests verifying creation and update behaviors for people entities."""
 
-    def test_creation_path_people_versioning(self):
+    def test_creation_path_people_versioning(self, monkeypatch):
+        monkeypatch.setenv("HINBOX_PROFILE_STUBS", "off")
         """Creating a new person should populate core fields and write to the in-memory database."""
         entities = make_empty_entities()
 
@@ -248,7 +249,8 @@ class TestEntityMergerMergeSmoke:
         with (
             patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
             patch(
-                "src.engine.mergers.update_profile", side_effect=update_profile_stub
+                "src.engine.profile_stubs.update_profile",
+                side_effect=update_profile_stub,
             ) as update_mock,
             patch(
                 "src.engine.mergers.get_embedding_manager", return_value=stub_manager
@@ -345,7 +347,8 @@ def _merge(entities, **patches):
             patch("src.engine.mergers.cloud_model_check_match", return_value=match)
         )
         for name, kwargs in patches.items():
-            stack.enter_context(patch(f"src.engine.mergers.{name}", **kwargs))
+            module = "profile_stubs" if name == "update_profile" else "mergers"
+            stack.enter_context(patch(f"src.engine.{module}.{name}", **kwargs))
         return EntityMerger("people").merge_entities(
             [{"name": "Alice Smith"}],
             entities,
@@ -379,7 +382,8 @@ class TestFailedProfileCalls:
         assert alice["profile"]["text"] == "Alice Smith is a lawyer."
         assert alice["profile_versions"]["current_version"] == 1
 
-    def test_failed_create_is_counted(self):
+    def test_failed_create_is_counted(self, monkeypatch):
+        monkeypatch.setenv("HINBOX_PROFILE_STUBS", "off")
         entities = make_empty_entities()
         stats = _merge(entities, create_profile={"side_effect": TimeoutError("ollama")})
 

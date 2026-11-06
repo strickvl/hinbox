@@ -13,6 +13,7 @@ This document helps contributors work effectively in this repository.
     - `match_checker.py` — LLM-based match verification
     - `merge_dispute_agent.py` — second-stage arbitration for gray-band entity matches
     - `profiles.py` — `VersionedProfile` history management
+    - `profile_stubs.py` — stub profiles (the article's own cited sentences, no model call) for entities seen in one article; the full profile is written when a second article merges in (`HINBOX_PROFILE_STUBS=off` turns stubs off)
     - `relevance.py` — domain-specific relevance filtering
   - `process_and_extract.py` — CLI pipeline entry point; parallel producer/consumer with `ThreadPoolExecutor` workers and a single-threaded merge actor
   - `dynamic_models.py` — Pydantic models generated from domain configs

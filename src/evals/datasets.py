@@ -193,3 +193,42 @@ def load_merge_items(eval_dir: str, merge_set: str = "v2") -> List[EvalItem]:
             )
         )
     return items
+
+
+def stub_existing_profiles(
+    items: List[EvalItem], articles_path: Optional[str]
+) -> Tuple[List[EvalItem], int]:
+    """Swap each existing profile for the stub the pipeline would hold.
+
+    A once-mentioned entity now keeps a stub (its article's sentences that
+    name it, ``src/engine/profile_stubs.py``) instead of a model-written
+    profile, so the merge check compares new entities against that. The stub
+    is built from the first article the saved profile cites; items whose
+    article isn't in ``articles_path`` keep the saved profile. Returns the
+    items and how many were swapped.
+    """
+    from src.engine.profile_create import CITATION_RE
+    from src.engine.profile_stubs import build_stub_profile
+    from src.utils.quality_controls import citation_ids
+
+    texts = _load_article_texts(articles_path)
+    out, swapped = [], 0
+    for item in items:
+        inputs = dict(item.inputs)
+        cited = [
+            i
+            for m in CITATION_RE.findall(inputs.get("existing_profile_text", ""))
+            for i in citation_ids(m)
+        ]
+        if cited and texts.get(cited[0]):
+            stub = build_stub_profile(
+                inputs["entity_type"],
+                inputs["existing_name"],
+                {},
+                texts[cited[0]],
+                cited[0],
+            )
+            inputs["existing_profile_text"] = stub["text"]
+            swapped += 1
+        out.append(EvalItem(item.item_id, item.label, inputs, item.split))
+    return out, swapped

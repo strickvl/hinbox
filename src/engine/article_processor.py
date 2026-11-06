@@ -85,6 +85,9 @@ class ArticleProcessor:
         self.extraction_model = task_model("extraction", self.model_type)
         self.logger = logger
         self._relevance_fingerprint: Optional[str] = None
+        # Content by article ID, so a stub profile can be written in full
+        # from its first article when a second one mentions the entity
+        self.article_texts: Dict[str, str] = {}
 
     def relevance_fingerprint(self) -> str:
         """Hash of the model and relevance prompt that produce a verdict.

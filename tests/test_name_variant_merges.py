@@ -164,7 +164,9 @@ def test_rejected_best_candidate_falls_back_to_name_variant():
 
     with (
         patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
-        patch("src.engine.mergers.update_profile", side_effect=update_profile_stub),
+        patch(
+            "src.engine.profile_stubs.update_profile", side_effect=update_profile_stub
+        ),
         patch(
             "src.engine.mergers.get_embedding_manager",
             return_value=StubEmbeddingManager(vec=[1.0, 0, 0]),

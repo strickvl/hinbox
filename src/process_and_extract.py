@@ -336,6 +336,7 @@ def merge_all_entities(
                     model_type,
                     domain=processor.domain,
                     domain_config=domain_cfg,
+                    article_texts=processor.article_texts,
                 )
             merge_duration = (datetime.now() - merge_start).total_seconds()
             log(
@@ -862,6 +863,9 @@ def main():
     rows = load_and_validate_articles(args.articles_path)
     if not rows:
         return
+    for i, row in enumerate(rows, 1):  # numbered as process_articles_batch does
+        info = processor.prepare_article_info(row, i)
+        processor.article_texts[info["id"]] = info["content"]
 
     # Process articles, then check grounding. Ctrl+C in either keeps the
     # articles merged so far (grounding is left for the next run)
