@@ -311,7 +311,8 @@ def plan_grounding(
         )
         article = _article_text(article_texts[aid][:max_article_chars])
         plan.results[aid] = [
-            _settled(aid, c, known, article, max_claim_chars) for c in items
+            _settled(aid, c, known, article, entity_name, max_claim_chars)
+            for c in items
         ]
     return plan
 
@@ -321,6 +322,7 @@ def _settled(
     claim: Dict[str, str],
     known: Dict[str, ClaimVerification],
     article: str,
+    entity_name: str,
     max_claim_chars: int,
 ) -> Optional[ClaimVerification]:
     """A verdict that needs no model call: kept from the last report, or
@@ -328,7 +330,9 @@ def _settled(
     text = claim["claim"][:max_claim_chars]
     if text in known:
         return known[text].model_copy(update={"citation": claim["citation"]})
-    if _is_quote(claim["claim"], article):
+    if _names_entity(claim["claim"], entity_name) and _is_quote(
+        claim["claim"], article
+    ):
         why = "Quoted word for word from the article"
         return _verification(aid, claim, SupportLevel.SUPPORTED, why, max_claim_chars)
     return None
@@ -348,6 +352,16 @@ def _article_text(article: str) -> str:
     """The article with case and runs of spaces evened out (newlines kept, as
     they end paragraphs)."""
     return re.sub(r"[ \t]+", " ", article).lower()
+
+
+def _names_entity(claim: str, entity_name: str) -> bool:
+    """True when the claim names the entity (any word of 4+ letters from its
+    name). A copied sentence that says only "He was transferred…" may be
+    about someone else in the article, so it goes to the model."""
+    words = set(re.findall(r"\w+", claim.lower()))
+    return any(
+        w in words for w in re.findall(r"\w+", entity_name.lower()) if len(w) >= 4
+    )
 
 
 def _is_quote(claim: str, article: str) -> bool:

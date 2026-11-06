@@ -334,9 +334,16 @@ class TestQuotedClaims:
         "The judge, Col. James Pohl, set the hearing for May 2013. Lawyers objected."
     )
 
+    def _quoted(self, text: str, article: str, name: str = "James Pohl"):
+        with patch("src.utils.llm.cloud_generation", side_effect=_judge()) as mock:
+            report = verify_profile_grounding(
+                profile_text=text, article_texts={"a1": article}, entity_name=name
+            )
+        return report, mock.call_count
+
     def test_sentence_copied_from_article_needs_no_call(self):
         text = "The judge, Col. James Pohl, set the hearing for May  2013.^[a1]"
-        report, calls = _run(text, {"a1": self.ARTICLE})
+        report, calls = self._quoted(text, self.ARTICLE)
         assert calls == 0
         assert report.verified == 1
         assert report.sources[0].status == "checked"
@@ -344,7 +351,7 @@ class TestQuotedClaims:
     def test_part_of_a_sentence_is_not_a_quote(self):
         article = "Officials denied that Omar Khadr was released from custody in 2012."
         text = "Omar Khadr was released from custody in 2012.^[a1]"
-        _, calls = _run(text, {"a1": article})
+        _, calls = self._quoted(text, article, "Omar Khadr")
         assert calls == 1
 
     def test_quote_past_the_checked_part_of_the_article_goes_to_the_model(self):
@@ -352,7 +359,13 @@ class TestQuotedClaims:
             "x" * 12000 + " The judge, Col. James Pohl, set the hearing for May 2013."
         )
         text = "The judge, Col. James Pohl, set the hearing for May 2013.^[a1]"
-        _, calls = _run(text, {"a1": article})
+        _, calls = self._quoted(text, article)
+        assert calls == 1
+
+    def test_quote_that_does_not_name_the_entity_goes_to_the_model(self):
+        article = "Ahmed was arrested in Afghanistan. He was transferred to Guantanamo Bay in 2002."
+        text = "He was transferred to Guantanamo Bay in 2002.^[a1]"
+        _, calls = self._quoted(text, article, "Omar Khadr")
         assert calls == 1
 
     def test_short_or_changed_claims_still_go_to_the_model(self):
