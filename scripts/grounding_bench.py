@@ -41,6 +41,7 @@ def _verdict_rows(entities: Dict[str, Dict], field: str = "profile_grounding"):
                         "article_id": v.get("article_id"),
                         "claim": v.get("claim"),
                         "level": v.get("support_level"),
+                        "reasoning": v.get("reasoning"),
                     }
                 )
     return rows
