@@ -343,3 +343,69 @@ def test_rewrite_update_keeps_the_reorganised_marker(monkeypatch):
         "New article.", "a5", approach="rewrite",
     )  # fmt: skip
     assert updated["reorganised"] == "refused"
+
+
+# KSM's replay: his capture and waterboarding sat inside paragraphs that
+# began with other things, so moved whole they went under Background/Health
+MIXED_PARAS = [
+    "He was born in Kuwait in 1964.^[a0] He was captured in Rawalpindi in 2003.^[a1]",
+    "He grew up in Kuwait.^[a0]",
+    "He was moved to Guantánamo in 2006.^[a2]",
+    "He was charged in 2008.^[a2] He was arraigned in June 2008.^[a2]",
+    "A plea deal was signed in July 2024.^[a3]",
+    "He has a heart condition.^[a4] The CIA waterboarded him 183 times.^[a1]",
+]
+MIXED = f"{OPENING}\n\n### Background\n\n" + "\n\n".join(MIXED_PARAS) + "\n"
+# Pieces: 1 born, 2 captured, 3 grew up, 4 moved, 5 charged, 6 arraigned,
+# 7 plea, 8 heart, 9 waterboarded
+MIXED_REPLY = SectionSplit(subsections=[
+    SubSection(heading="Background", paragraphs=[1, 3]),
+    SubSection(heading="Capture and CIA custody", paragraphs=[2, 9]),
+    SubSection(heading="Detention at Guantánamo", paragraphs=[4]),
+    SubSection(heading="Military commission or legal case", paragraphs=[5, 6, 7]),
+    SubSection(heading="Health and treatment", paragraphs=[8]),
+])  # fmt: skip
+
+
+def test_a_sentence_can_leave_a_mixed_paragraph_for_its_heading():
+    out, report, seen = _run(MIXED_REPLY, MIXED)
+    assert report["status"] == "done" and report["pieces_mode"] == "sentences"
+    assert report["pieces"] == 9 and report["paragraphs"] == 6
+    assert report["paragraphs_divided"] == 2
+    capture = out.split("### Capture and CIA custody\n\n")[1].split("\n\n###")[0]
+    assert capture == (
+        "He was captured in Rawalpindi in 2003.^[a1]\n\n"
+        "The CIA waterboarded him 183 times.^[a1]"
+    )
+    # Pieces of one paragraph that stay together are one paragraph again
+    assert "He was charged in 2008.^[a2] He was arraigned in June 2008.^[a2]" in out
+    assert _sentences(out) == _sentences(MIXED)
+    user = seen[0][1]["content"]
+    assert "[1] He was born in Kuwait in 1964.^[a0] [2] He was captured" in user
+    assert "Pieces of one paragraph usually go together" in seen[0][0]["content"]
+
+
+def test_paragraph_pieces_bring_back_the_old_numbering(monkeypatch):
+    monkeypatch.setenv("HINBOX_REORGANISE_PIECES", "paragraphs")
+    whole = SectionSplit(subsections=[
+        SubSection(heading="Background", paragraphs=[1, 2]),
+        SubSection(heading="Detention at Guantánamo", paragraphs=[3]),
+        SubSection(heading="Military commission or legal case", paragraphs=[4, 5]),
+        SubSection(heading="Health and treatment", paragraphs=[6]),
+    ])  # fmt: skip
+    out, report, seen = _run(whole, MIXED)
+    assert report["pieces"] == 6 and report["paragraphs_divided"] == 0
+    assert "Capture and CIA custody" not in out.split("\n\n", 1)[1]
+    assert "Pieces of one paragraph" not in seen[0][0]["content"]
+    assert _sentences(out) == _sentences(MIXED)
+
+
+def test_a_heading_marked_not_in_the_profile_yet_still_names_the_starter():
+    from src.engine.section_routing import starter_anchor
+
+    for anchor in (
+        "### Health and treatment (not in the profile yet)",
+        "Health and treatment (not in the profile yet)",
+        "### Health and treatment: physical and mental health",
+    ):
+        assert starter_anchor(anchor, STARTER) == "Health and treatment"

@@ -48,7 +48,8 @@ section's own text, before any of its sub-headings). When a section has sub-head
 sub-heading or a sentence under it that fits. A heading marked "not in the \
 profile yet" can be an anchor too: code adds the heading in its place. Use \
 it for a fact that belongs there rather than putting it under another \
-heading. Use END only for a fact that fits none of the headings.
+heading, even when a sentence on a related point already sits under that \
+other heading. Use END only for a fact that fits none of the headings.
 
 This only decides where a new fact goes, not whether to add one: the rules \
 above on what to add still hold, so an article with nothing new about \

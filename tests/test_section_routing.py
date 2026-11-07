@@ -158,3 +158,13 @@ def test_two_bare_adds_on_a_missing_heading_both_go_under_it():
     assert "\n### Detention at Guantánamo\n" in out
     assert out.index("### Detention at Guantánamo") < out.index("He fasted.")
     assert out.index("He fasted.") < out.index("### Military commission")
+
+
+def test_an_add_on_a_heading_copied_with_its_mark_creates_it():
+    anchor = "### Detention at Guantánamo (not in the profile yet)"
+    out, report = apply_edits(TEXT, [_add(anchor)], STARTER)
+    assert report["new_headings"] == ["Detention at Guantánamo"]
+    assert "(not in the profile yet)" not in out
+    assert out.index("### Detention at Guantánamo") < out.index(
+        "### Military commission"
+    )

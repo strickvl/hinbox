@@ -150,7 +150,7 @@ def _ends_cited(text: str) -> bool:
     return bool(_CITED_END.search(text))
 
 
-def _units(own: str) -> Tuple[List[str], str]:
+def _units(own: str, max_chars: int = PARAGRAPH_CHARS) -> Tuple[List[str], str]:
     """The pieces of a section's own text that the model numbers and code moves.
 
     A piece is a paragraph or list item; one over ``PARAGRAPH_CHARS`` is cut
@@ -165,16 +165,28 @@ def _units(own: str) -> Tuple[List[str], str]:
     down the profile, so it is not numbered and stays at the section's end.
     The first piece stays first too (sub-sections go in the order of their
     first piece), so text before the section's first citation keeps its claim.
+
+    ``max_chars`` 0 cuts a paragraph after every cited sentence (the
+    reorganise, ``unit_spans()``).
     """
+    units, tail, _ = unit_spans(own, max_chars)
+    return units, tail
+
+
+def unit_spans(
+    own: str, max_chars: int = PARAGRAPH_CHARS
+) -> Tuple[List[str], str, List[Tuple[int, int]]]:
+    """``_units()`` plus, per piece, the first and last paragraph it comes
+    from, so code can put two pieces of one paragraph back together."""
     pieces: List[Tuple[int, str]] = []  # (paragraph number, text)
     for index, block in enumerate(_blocks(own)):
         text = "\n".join(block)
-        if len(text) <= PARAGRAPH_CHARS:
+        if len(text) <= max_chars:
             pieces.append((index, text))
             continue
         run: List[str] = []
         for sentence in _SENTENCE_GAP.split(text):
-            too_long = len(" ".join(run + [sentence])) > PARAGRAPH_CHARS
+            too_long = len(" ".join(run + [sentence])) > max_chars
             if run and too_long and _ends_cited(run[-1]):
                 pieces.append((index, " ".join(run)))
                 run = []
@@ -182,15 +194,20 @@ def _units(own: str) -> Tuple[List[str], str]:
         if run:
             pieces.append((index, " ".join(run)))
     units: List[str] = []
+    spans: List[Tuple[int, int]] = []
     open_unit, last = False, -1
     for index, text in pieces:
         if open_unit:
             units[-1] += (" " if index == last else "\n\n") + text
+            spans[-1] = (spans[-1][0], index)
         else:
             units.append(text)
+            spans.append((index, index))
         open_unit, last = not _ends_cited(text), index
     tail = units.pop() if open_unit and units else ""
-    return units, tail
+    if tail:
+        spans.pop()
+    return units, tail, spans
 
 
 def long_sections(

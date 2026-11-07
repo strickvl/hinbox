@@ -56,6 +56,7 @@ from src.engine.section_split import (
     _sentences,
     _units,
     make_asker,
+    unit_spans,
 )
 from src.logging_config import get_logger
 
@@ -75,25 +76,59 @@ _COMMON = _FILLER | set("and or at guantanamo guantánamo other".split())
 INSTRUCTIONS = """You organise a profile of the {entity_type} "{entity_name}", \
 built from news articles.
 
-The profile has grown long. Below are its paragraphs, numbered. Put each one \
+The profile has grown long. Below are its {pieces_intro}. Put each one \
 under one of these headings, so that a reader can find a topic quickly:
 
 {starter}
 
 Rules:
-- Put every paragraph number under exactly one heading.
-- Choose by what the paragraph mainly tells about {entity_name}, using what \
+- Put every {piece} number under exactly one heading.{piece_rule}
+- Choose by what the {piece} mainly tells about {entity_name}, using what \
 each heading is for. A court ruling, order or hearing goes under the legal \
 heading even when it concerns detention or health; a general heading such as \
 Background or Overview is only for who or what {entity_name} is and their \
-history, not for paragraphs that fit nowhere else.
+history, not for {piece}s that fit nowhere else.
 - Use the headings above, spelled exactly as given: the heading name only, \
-without the description after the colon. Leave out a heading no paragraph \
+without the description after the colon. Leave out a heading no {piece} \
 belongs under.
-- Only if a paragraph fits none of them, you may add up to {max_new} new \
+- Only if a {piece} fits none of them, you may add up to {max_new} new \
 headings of 2 to 6 plain words. A new heading must not share a word with \
 another heading.
-- You don't write or change any profile text; code moves the paragraphs."""
+- You don't write or change any profile text; code moves the {piece}s."""
+
+PIECES_ENV = "HINBOX_REORGANISE_PIECES"  # "sentences" (default) or "paragraphs"
+_PIECE_WORDING = {
+    "paragraphs": {"pieces_intro": "paragraphs, numbered", "piece": "paragraph",
+                   "piece_rule": ""},
+    "sentences": {
+        "pieces_intro": "paragraphs, each cut into numbered pieces (a cited \
+sentence, or a few sentences ending at one citation)",
+        "piece": "piece",
+        "piece_rule": "\n- Pieces of one paragraph usually go together. Put a \
+piece under another heading than the rest of its paragraph only when it is \
+mainly about that heading's topic: a sentence about an arrest inside a \
+paragraph about someone's origins goes under the heading for the arrest.",
+    },
+}  # fmt: skip
+
+
+def pieces_mode() -> str:
+    """How finely the reorganise numbers the text: ``sentences`` (a paragraph
+    is cut after each cited sentence) unless ``HINBOX_REORGANISE_PIECES`` is
+    ``paragraphs``. In a replay, KSM's capture in Rawalpindi, the black sites
+    and the waterboarding were five sentences inside three paragraphs that
+    began with other things (who he is, where he was held, the Pearl
+    confession); moved as whole paragraphs, they went under Background,
+    Detention and Health, no "Capture and CIA custody" section was made, and
+    every later capture fact was anchored next to them."""
+    value = os.getenv(PIECES_ENV, "sentences").strip().lower()
+    return "paragraphs" if value == "paragraphs" else "sentences"
+
+
+def piece_chars() -> int:
+    from src.engine.section_split import PARAGRAPH_CHARS
+
+    return PARAGRAPH_CHARS if pieces_mode() == "paragraphs" else 0
 
 
 def reorganise_enabled(entity_type: Optional[str] = None) -> bool:
@@ -159,22 +194,34 @@ def _opening_and_body(text: str) -> Tuple[str, str]:
     return opening, body.strip()
 
 
+def _joined(spans: List[Tuple[int, int]], a: int, b: int) -> bool:
+    """Whether pieces ``a`` and ``b`` (0-based, ``b`` right after ``a``) are
+    two parts of one paragraph."""
+    return b == a + 1 and spans[a][1] == spans[b][0]
+
+
 def messages(
     units: List[str],
     starter: List[str],
     entity_type: str,
     entity_name: str,
     notes: Optional[Dict[str, str]] = None,
+    spans: Optional[List[Tuple[int, int]]] = None,
 ) -> List[Dict[str, str]]:
     notes = notes or {}
     listed = [f"- {h}" + (f": {notes[h]}" if notes.get(h) else "") for h in starter]
+    mode = "sentences" if spans is not None else "paragraphs"
     system = INSTRUCTIONS.format(
         entity_type=entity_type,
         entity_name=entity_name,
         starter="\n".join(listed),
         max_new=MAX_NEW_HEADINGS,
+        **_PIECE_WORDING[mode],
     )
-    numbered = "\n\n".join(f"[{n}] {u}" for n, u in enumerate(units, 1))
+    numbered = ""
+    for n, unit in enumerate(units):
+        gap = " " if n and spans and _joined(spans, n - 1, n) else "\n\n"
+        numbered += (gap if n else "") + f"[{n + 1}] {unit}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": f"Paragraphs:\n\n{numbered}"},
@@ -184,11 +231,15 @@ def messages(
 def _starter_for(heading: str, starter: List[str]) -> Optional[str]:
     """The starter heading a reply means: "military commission or legal case",
     or one copied back with its note ("Overview: what the organization is").
-    Longest first, so "Role at Guantánamo" isn't read as "Role"."""
+    Longest first, so "Role at Guantánamo" isn't read as "Role". The
+    routing note's mark, "Health and treatment (not in the profile yet)",
+    counts too: in a replay the edit model copied it, the anchor went
+    unrecognised, and al Nashiri's PTSD diagnosis went to the profile's end."""
     low = heading.lower()
     for h in sorted(starter, key=len, reverse=True):
         name = _clean_heading(h).lower()
-        if low == name or (low.startswith(name) and low[len(name)] in ":(-–—"):
+        rest = low[len(name) :].lstrip()
+        if low == name or (low.startswith(name) and rest[:1] in tuple(":(-–—")):
             return h
     return None
 
@@ -251,12 +302,17 @@ def reorganise_text(
     if len(text) <= limit or not starter:
         return text, {"status": "skipped", "reason": "short or no starter headings"}
     opening, body = _opening_and_body(text)
-    units, tail = _units(body)
-    report: Dict[str, Any] = {"chars": len(text), "paragraphs": len(units)}
-    if len(units) < MIN_PARAGRAPHS:
+    units, tail, spans = unit_spans(body, piece_chars())
+    paragraphs = len({p for span in spans for p in span})
+    report: Dict[str, Any] = {
+        "chars": len(text), "paragraphs": paragraphs, "pieces": len(units),
+        "pieces_mode": pieces_mode(),
+    }  # fmt: skip
+    if paragraphs < MIN_PARAGRAPHS:
         return text, {**report, "status": "skipped", "reason": "few paragraphs"}
+    shown = spans if pieces_mode() == "sentences" else None
     try:
-        reply = ask(messages(units, starter, entity_type, entity_name, notes))
+        reply = ask(messages(units, starter, entity_type, entity_name, notes, shown))
     except Exception as e:  # keep the profile as it is; try again next update
         logger.warning(f"Reorganise call failed for {entity_name}: {e}")
         return text, {
@@ -270,9 +326,17 @@ def reorganise_text(
     levels = [level for _, level, _ in _headings(text.splitlines())]
     marks = "#" * (min(levels) if levels else DEFAULT_LEVEL)
     out = [opening] if opening else []
+    home: Dict[int, set] = {}  # paragraph -> headings its pieces went under
     for heading, numbers in plan:
         out.append(f"{marks} {heading}")
-        out += [units[n - 1] for n in numbers]
+        for k, n in enumerate(numbers):
+            for p in spans[n - 1]:
+                home.setdefault(p, set()).add(heading)
+            # Pieces of one paragraph that stay together are one paragraph again
+            if k and _joined(spans, numbers[k - 1] - 1, n - 1):
+                out[-1] += " " + units[n - 1]
+            else:
+                out.append(units[n - 1])
     new_text = "\n\n".join(out + ([tail] if tail else [])).strip() + "\n"
     if _sentences(new_text) != _sentences(text):
         return text, {**report, "status": "refused", "reason": "sentences changed"}
@@ -280,6 +344,7 @@ def reorganise_text(
         **report,
         "status": "done",
         "sections": [[h, ns] for h, ns in plan],
+        "paragraphs_divided": sum(len(h) > 1 for h in home.values()),
     }
 
 
