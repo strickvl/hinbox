@@ -651,6 +651,27 @@ _UPDATERS = {
 }
 
 
+def _split_sections(
+    profile: Dict,
+    entity_type: str,
+    entity_name: str,
+    model_type: str,
+    model: Optional[str],
+) -> Dict:
+    """Split over-long sections into sub-sections when ``HINBOX_SECTION_SPLIT``
+    is on (``section_split.py``); the update's model answers."""
+    from src.engine.section_split import split_enabled, split_profile
+
+    if not split_enabled() or not profile:
+        return profile
+    local = _resolve_mode(model_type, model) == GenerationMode.LOCAL
+    split, reports = split_profile(
+        profile, entity_type, entity_name, _prompt_model(model_type, model), local
+    )
+    annotate(section_splits=[f"{r['section']}: {r['status']}" for r in reports] or None)
+    return split
+
+
 @timed("profile.update")
 def update_profile(
     entity_type: str,
@@ -698,6 +719,9 @@ def update_profile(
         domain,
         model,
         **extra,
+    )
+    updated_profile = _split_sections(
+        updated_profile, entity_type, entity_name, model_type, model
     )
 
     updated_profile = _apply_profile_qc(updated_profile, entity_name)
