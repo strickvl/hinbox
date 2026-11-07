@@ -43,11 +43,11 @@ def is_hub(domain: str, entity_type: str, kind: Optional[str]) -> bool:
     """True when entities of this type and kind are linked, not updated."""
     if not kind or not link_only_enabled():
         return False
-    from src.config_loader import DomainConfig
+    from src.config_loader import get_domain_config
 
     # Older tables hold some types as enum reprs ("LocationType.COUNTRY")
     kind = str(kind).rsplit(".", 1)[-1].lower()
-    return kind in link_only_types(DomainConfig(domain).load_config(), entity_type)
+    return kind in link_only_types(get_domain_config(domain).load_config(), entity_type)
 
 
 def link_article(profile: Dict[str, Any], article_id: str) -> Dict[str, Any]:
