@@ -231,6 +231,37 @@ def _messages(
     ]
 
 
+def _dispute_asker(generate: Any, model: str, entity_type: str, entity_name: str):
+    """The model call ``guard_edits()`` makes to check "sources disagree"
+    sentences (``dispute_check.py``), or None when the check is off."""
+    from src.engine.dispute_check import (
+        DisputeVerdicts,
+        dispute_check_enabled,
+    )
+    from src.utils.step_timing import timed_step
+
+    if not dispute_check_enabled():
+        return None
+
+    def ask(instructions: str, items: str) -> DisputeVerdicts:
+        system = instructions.format(entity_type=entity_type, entity_name=entity_name)
+        with timed_step("profile.dispute_check"):
+            response = generate(
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": items},
+                ],
+                response_model=DisputeVerdicts,
+                model=model,
+                max_tokens=4096,
+            )
+        if response is None:
+            raise RuntimeError("dispute check returned nothing")
+        return response
+
+    return ask
+
+
 def edit_profile(
     entity_type: str,
     entity_name: str,
@@ -276,7 +307,13 @@ def edit_profile(
     old_text = existing_profile.get("text", "")
     dates = article_dates or {}
     edits, guarded = (
-        guard_edits(old_text, response.edits, dates.get(article_id), dates)
+        guard_edits(
+            old_text,
+            response.edits,
+            dates.get(article_id),
+            dates,
+            ask=_dispute_asker(generate, model, entity_type, entity_name),
+        )
         if guard
         else (response.edits, {})
     )

@@ -70,6 +70,11 @@ _TYPE_SPECIFIC_RULES: Dict[str, str] = {
 - **Different people with similar names:** Two people can share a family
   name or partial name. Always check roles, nationalities, and context
   before confirming a match.
+- **Surname only:** News stories often name a well-known person by surname
+  alone ("Rubio" for "Marco Rubio"). When the new evidence names the person
+  only by surname and a NOTE says the existing person is the only one in the
+  database with that surname, set is_match=true unless the context points to
+  someone else (a different role, country or time).
 """,
     "events": """
 ## Event-Specific Rules (MUST follow)
