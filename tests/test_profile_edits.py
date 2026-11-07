@@ -217,3 +217,31 @@ def test_local_models_get_the_local_prompt(monkeypatch):
     assert "(local models)" in seen["system"] and "{" not in seen["system"]
     pe.edit_profile("person", "N", {"text": TEXT}, "x", "a9", model="openai/x")
     assert "(local models)" not in seen["system"]
+
+
+DATES = {"a1": "2019-03-01", "a2": "2021-06-19", "a3": "2012-01-05", "a9": "2015-05-02"}
+
+
+def test_date_note_lists_cited_sources_and_flags_newer_ones():
+    note = pe.date_note(TEXT, "a9", DATES)
+    assert note.startswith("The new article was published on 2 May 2015.")
+    assert "2 of the profile's sources are newer" in note
+    assert "- ^[a2]: 19 June 2021" in note and "- ^[a3]: 5 January 2012" in note
+
+
+def test_date_note_without_newer_sources_or_dates():
+    assert "newer" not in pe.date_note(TEXT, "a9", {**DATES, "a9": "2022-01-01"})
+    assert pe.date_note(TEXT, "a9", {"a1": "2019-03-01"}) == ""
+    assert pe.date_note(TEXT, "a9", None) == ""
+
+
+def test_edit_prompt_has_dates_only_when_switched_on(monkeypatch):
+    def user(value):
+        monkeypatch.setenv(pe.PROFILE_DATES_ENV, value)
+        messages = pe._messages(
+            "person", "N", TEXT, "x", "a9", "guantanamo", article_dates=DATES
+        )
+        return messages[1]["content"]
+
+    assert "published on 2 May 2015" in user("on")
+    assert "published on" not in user("off")

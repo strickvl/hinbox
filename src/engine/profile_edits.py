@@ -19,6 +19,7 @@ unplaced ``add`` goes to the end, an unplaced ``replace`` is skipped.
 """
 
 import json
+import os
 import re
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -210,6 +211,65 @@ def apply_edits(text: str, edits: List[ProfileEdit]) -> Tuple[str, Dict[str, Any
     return text, report
 
 
+# Off by default until the eval shows the dates help (see ``date_note()``)
+PROFILE_DATES_ENV = "HINBOX_PROFILE_DATES"
+
+
+def profile_dates_enabled() -> bool:
+    return os.getenv(PROFILE_DATES_ENV, "off").strip().lower() in (
+        "1",
+        "on",
+        "true",
+        "plain",
+    )
+
+
+def _day(when: Any) -> str:
+    return f"{when.day} {when:%B %Y}"
+
+
+def date_note(
+    shown: str,
+    article_id: str,
+    article_dates: Optional[Dict[str, Any]],
+    advice: bool = True,
+) -> str:
+    """Tell the model when the new article and each cited source came out.
+
+    Runs don't process articles in date order, so an article from 2019 can
+    reach a profile already built from 2021 reporting. Without dates the
+    model read the older article's state of affairs as a contradiction and
+    wrote "a later report gives ... instead". Empty when the new article's
+    date is unknown.
+    """
+    from src.engine.later_updates import to_date
+
+    dates = {k: to_date(v) for k, v in (article_dates or {}).items()}
+    when = dates.get(article_id)
+    if when is None:
+        return ""
+    cited = [i for i in dict.fromkeys(_ids(shown)) if dates.get(i)]
+    lines = [f"- ^[{i}]: {_day(dates[i])}" for i in cited]
+    newer = [i for i in cited if dates[i] > when]
+    note = (
+        f"The new article was published on {_day(when)}. Articles don't "
+        "arrive in date order"
+        + (
+            f", and {len(newer)} of the profile's sources are newer than this "
+            "one. Where the article gives an older state of something a newer "
+            "source has updated (a count, a status, a date not yet set), that "
+            "is earlier history, not a disagreement: don't list it in "
+            "`disagreements` and never call this article a later report"
+            if newer and advice
+            else ""
+        )
+        + "."
+    )
+    if lines:
+        note += " The profile's cited sources were published:\n" + "\n".join(lines)
+    return f"{note}\n\n"
+
+
 def _messages(
     entity_type: str,
     entity_name: str,
@@ -219,6 +279,7 @@ def _messages(
     domain: str,
     model: Optional[str] = None,
     view_chars: Optional[int] = None,
+    article_dates: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, str]]:
     from src.config_loader import DomainConfig
 
@@ -230,8 +291,14 @@ def _messages(
     )
     budget = PROFILE_VIEW_CHARS if view_chars is None else view_chars
     shown = profile_view(profile_text, article_text, budget)
+    mode = os.getenv(PROFILE_DATES_ENV, "off").strip().lower()
+    dated = (
+        date_note(shown, article_id, article_dates, advice=mode != "plain")
+        if profile_dates_enabled()
+        else ""
+    )
     user = (
-        f"{trimmed_note(profile_text, shown)}"
+        f"{trimmed_note(profile_text, shown)}{dated}"
         f"Existing profile:\n----------------\n{shown}\n\n"
         f"New article (ID: {article_id}):\n----------------\n{article_text}"
     )
@@ -307,6 +374,7 @@ def edit_profile(
             article_id,
             domain,
             model,
+            article_dates=article_dates,
         ),
         response_model=ProfileEditList,
         model=model,
