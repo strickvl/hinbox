@@ -41,7 +41,7 @@ from src.utils.embeddings.similarity import (
 )
 from src.utils.extraction import configure_extraction_sidecar_cache
 from src.utils.file_ops import write_entities_table
-from src.utils.letters_page import split_letters
+from src.utils.letters_page import split_letters, stored_letters_text
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
 from src.utils.run_summary import log_processing_summary
@@ -876,7 +876,9 @@ def main():
         return
     for i, row in enumerate(rows, 1):  # numbered as process_articles_batch does
         info = processor.prepare_article_info(row, i)
-        processor.article_texts[info["id"]] = info["content"]
+        processor.article_texts[info["id"]] = stored_letters_text(
+            info["content"], status_tracker.get_metadata(info["id"])
+        )
 
     # Process articles, then check grounding. Ctrl+C in either keeps the
     # articles merged so far (grounding is left for the next run)

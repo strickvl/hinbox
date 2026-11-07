@@ -5,6 +5,7 @@ These tests verify:
   over several lines (name, group, place) and bullet separators
 - News text, bylines with "and" and pages with fewer than 3 letters are not
   treated as letters pages
+- A later run rebuilds the kept letters from the stored relevance outcome
 - On a letters page only the relevant letters reach extraction, and the
   trimmed text is what profiles and stubs see; no relevant letter means
   "not relevant"; a failed check on one letter fails the page
@@ -15,7 +16,11 @@ from unittest.mock import MagicMock, patch
 
 from src.engine import ArticleProcessor
 from src.process_and_extract import extract_single_article_only
-from src.utils.letters_page import signature_name, split_letters
+from src.utils.letters_page import (
+    signature_name,
+    split_letters,
+    stored_letters_text,
+)
 from src.utils.outcomes import PhaseOutcome
 
 # Made-up letters in the layout of a Miami Herald letters page
@@ -157,3 +162,20 @@ class TestLettersPageRelevance:
         result, _, check, extract = _run(article, _about_guantanamo)
         assert check.call_count == 1
         assert extract.call_args.args[0] == article
+
+
+class TestStoredLettersText:
+    def test_later_run_rebuilds_the_kept_letters(self):
+        result, processor, _, _ = _run(PAGE, _about_guantanamo)
+        metadata = result.processing_metadata
+        assert (
+            stored_letters_text(PAGE, metadata)
+            == (processor.article_texts["letters-1"])
+        )
+
+    def test_changed_or_ordinary_text_is_left_alone(self):
+        result, _, _, _ = _run(PAGE, _about_guantanamo)
+        changed = PAGE.replace("Kendall", "Doral")
+        assert stored_letters_text(changed, result.processing_metadata) == changed
+        assert stored_letters_text(PAGE, None) == PAGE
+        assert stored_letters_text(PAGE, {"content_hash": "x"}) == PAGE

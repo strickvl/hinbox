@@ -14,7 +14,9 @@ local and cloud models.
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from src.utils.cache_utils import sha256_text
 
 # A page needs this many signed letters before it is treated as a letters
 # page; two "Name, Place" lines also turn up as bylines in news stories
@@ -153,3 +155,23 @@ def split_letters(text: str) -> List[Letter]:
 
 def join_letters(letters: List[Letter]) -> str:
     return "\n\n".join(letter.text for letter in letters)
+
+
+def stored_letters_text(content: str, metadata: Optional[Dict[str, Any]]) -> str:
+    """The kept letters of an already-processed letters page, else ``content``.
+
+    A run stores which letters passed the relevance check (``kept_letters``
+    in the relevance outcome's meta). A later run rebuilds the article text
+    from those, so a stub first seen on the page is written in full from
+    the same letters it was extracted from, not the whole page. Nothing is
+    rebuilt if the article text changed since.
+    """
+    metadata = metadata or {}
+    relevance = (metadata.get("phase_outcomes") or {}).get("relevance") or {}
+    kept = (relevance.get("meta") or {}).get("kept_letters")
+    if kept is None or metadata.get("content_hash") != sha256_text(content or ""):
+        return content
+    letters = split_letters(content)
+    if not letters or max(kept, default=-1) >= len(letters):
+        return content
+    return join_letters([letters[i] for i in kept])

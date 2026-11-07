@@ -175,18 +175,23 @@ class ArticleProcessor:
         of being extracted with a letter missing.
         """
         kept: List[Letter] = []
+        kept_index: List[int] = []
         dropped: List[str] = []
-        for letter in letters:
+        for i, letter in enumerate(letters):
             outcome = self.check_relevance(letter.text, article_id)
             if not outcome.success:
                 return outcome
             if outcome.value:
                 kept.append(letter)
+                kept_index.append(i)
             else:
                 dropped.append(letter.signer or "(unsigned)")
         meta = {
             "letters_page": True,
             "letters": len(letters),
+            # Positions of the kept letters, so a later run can rebuild the
+            # same text (stored_letters_text())
+            "kept_letters": kept_index,
             "kept_signers": [letter.signer or "(unsigned)" for letter in kept],
             "dropped_signers": dropped,
         }
