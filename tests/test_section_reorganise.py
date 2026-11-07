@@ -226,12 +226,20 @@ def test_update_profile_reorganises_then_splits_when_on(monkeypatch):
     )  # fmt: skip
     assert "### Capture and CIA custody" in out["text"]
     assert out["reorganised"] == "done" and len(seen) == 1
-    monkeypatch.delenv("HINBOX_SECTION_REORGANISE")
+    monkeypatch.setenv("HINBOX_SECTION_REORGANISE", "off")
     out, _, _ = profiles.update_profile(
         "person", "KSM", {"text": "old", "sources": ["a0"]},
         profiles.VersionedProfile(), "article", "a1", approach="edit",
     )  # fmt: skip
-    assert out["text"] == TEXT  # off by default
+    assert out["text"] == TEXT
+    # By default only people are reorganised
+    monkeypatch.delenv("HINBOX_SECTION_REORGANISE")
+    out, _, _ = profiles.update_profile(
+        "event", "9/11 trial", {"text": "old", "sources": ["a0"]},
+        profiles.VersionedProfile(), "article", "a1", approach="edit",
+    )  # fmt: skip
+    assert out["text"] == TEXT and "reorganised" not in out
+    assert section_reorganise.reorganise_enabled("people")
 
 
 def test_reorganised_claims_keep_their_grounding_verdicts():

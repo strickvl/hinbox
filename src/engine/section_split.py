@@ -31,8 +31,18 @@ reworded or lose its citation. The worst a bad answer can do is put a
 paragraph under the wrong sub-heading. Sentences keep their grounding verdicts
 too: a claim is compared without heading lines (``_claim_key()``).
 
-``HINBOX_SECTION_SPLIT=on`` turns this on (off by default until a replay eval
-shows it helps).
+Once a profile has its starter headings (``section_reorganise.py``), a
+sub-section the split made can grow long in turn: in a 40-article replay al
+Nashiri's "#### Legal Mail and Prison Conditions" reached 8,542 characters.
+With ``resplit``, such a sub-section (one level under a top-level heading) is
+split the same way, but into headings at its own level that take its place
+beside its sibling sub-sections, so the outline never goes deeper than one
+level under a starter heading. A parent keeps at most ``MAX_SIBLINGS``
+sub-sections.
+
+``HINBOX_SECTION_SPLIT`` sets which tables this runs for: ``people`` by
+default (on the dev eval events and organizations scored lower once
+reorganised), ``on`` for every table, ``off``, or a comma list.
 """
 
 import os
@@ -52,6 +62,7 @@ MIN_PARAGRAPHS = 6
 PARAGRAPH_CHARS = 1500
 MAX_LEVEL = 5  # "#####"; a section at that level is not split again
 MIN_GROUPS, MAX_GROUPS = 2, 6
+MAX_SIBLINGS = 8  # sub-sections under one heading, after a re-split
 MAX_HEADING_WORDS, MAX_HEADING_CHARS = 8, 70
 
 _HEADING_LINE = re.compile(r"^(#{1,6})\s+(\S.*)$")
@@ -73,7 +84,7 @@ INSTRUCTIONS = """You organise one section of a profile of the {entity_type} \
 "{entity_name}", built from news articles.
 
 The section "{heading}" has grown long. Below are its paragraphs, numbered. \
-Group them under 2 to 5 sub-headings so that a reader can find a topic quickly.
+Group them under 2 to 5 {grouping} so that a reader can find a topic quickly.
 
 Rules:
 - Put every paragraph number under exactly one sub-heading.
@@ -81,13 +92,32 @@ Rules:
 apart. Group by topic; a period in brackets is fine, as in \
 "Plea negotiations (2017–2024)".
 - A sub-heading is 2 to 6 plain words: no "#", no citations, no quotes.
-- Don't repeat the section's own heading, or any heading the profile \
-already has: {other_headings}.
+- Don't repeat {repeat_rule}: {other_headings}.
 - You don't write or change any profile text; code moves the paragraphs."""
 
 
-def split_enabled() -> bool:
-    return os.getenv(SPLIT_ENV, "off").strip().lower() in ("on", "1", "true")
+DEFAULT_TABLES = "people"  # on the dev eval, events and organizations scored lower
+
+
+def tables_enabled(env: str, entity_type: Optional[str] = None) -> bool:
+    """Whether the step named by ``env`` runs for ``entity_type``: ``off``,
+    ``on`` (every table) or a comma list of tables, default ``people``.
+    With no ``entity_type``, whether it runs for any table."""
+    from src.engine.hub_profiles import _PLURAL
+
+    value = os.getenv(env, DEFAULT_TABLES).strip().lower()
+    if value in ("off", "0", "false", ""):
+        return False
+    if value in ("on", "1", "true", "all"):
+        return True
+    if entity_type is None:
+        return True
+    tables = {t.strip() for t in value.split(",")}
+    return _PLURAL.get(entity_type, entity_type) in tables
+
+
+def split_enabled(entity_type: Optional[str] = None) -> bool:
+    return tables_enabled(SPLIT_ENV, entity_type)
 
 
 def _norm(text: str) -> str:
@@ -163,28 +193,53 @@ def _units(own: str) -> Tuple[List[str], str]:
     return units, tail
 
 
-def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Top-level sections (no higher heading above them) whose own text (up to
-    the next heading of any level) is long enough to split: ``{"line", "level", "heading", "start", "end", "units"}``,
-    with ``start``/``end`` the line range of the own text."""
+def long_sections(
+    text: str, min_chars: Optional[int] = None, resplit: bool = False
+) -> List[Dict[str, Any]]:
+    """Sections whose own text (up to the next heading of any level) is long
+    enough to split: ``{"line", "level", "heading", "start", "end", "units",
+    "tail", "parent"}``, with ``start``/``end`` the line range the split
+    replaces. A top-level section (no higher heading above it) is split one
+    level down; ``parent`` is None. With ``resplit``, a sub-section one level
+    under a top-level heading is split too, into headings at its own level
+    that replace its heading line (``start`` is that line); ``parent`` is the
+    top-level heading."""
     limit = SPLIT_CHARS if min_chars is None else min_chars
     lines = text.splitlines()
     heads = _headings(lines)
+    top = min((lv for _, lv, _ in heads), default=0)
     found = []
     for k, (i, level, title) in enumerate(heads):
         end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
         own = "\n".join(lines[i + 1 : end]).strip()
-        # A section under a higher heading is never split: in a replay of
-        # al Nashiri's articles a sub-section the split had made was split
-        # again, down to "#####" leaves of 292 characters
-        nested = any(lv < level for _, lv, _ in heads[:k])
-        if nested or level >= MAX_LEVEL or len(own) <= limit:
+        if level >= MAX_LEVEL or len(own) <= limit:
             continue
+        above = [h for h in heads[:k] if h[1] < level]
+        parent = above[-1] if above else None
+        rest = heads[k + 1 :]
+        stop = next((j for j, h in enumerate(rest) if h[1] <= level), len(rest))
+        children = sum(h[1] == level + 1 for h in rest[:stop])
+        if parent:
+            # A sub-section is never split deeper: in a replay of al Nashiri's
+            # articles a sub-section the split had made was split again, down
+            # to "#####" leaves of 292 characters. Re-split as siblings only
+            # under a top-level heading, and only up to MAX_SIBLINGS of them
+            if not resplit or parent[1] != top or level != top + 1:
+                continue
+            p = heads.index(parent)
+            rest = heads[p + 1 :]
+            stop = next((j for j, h in enumerate(rest) if h[1] <= top), len(rest))
+            siblings = [h for h in rest[:stop] if h[1] == level]
+            if len(siblings) + MIN_GROUPS - 1 > MAX_SIBLINGS:
+                continue
         units, tail = _units(own)
         if len(units) >= MIN_PARAGRAPHS:
             found.append(
-                {"line": i, "level": level, "heading": title, "start": i + 1,
-                 "end": end, "units": units, "tail": tail}
+                {"line": i, "level": level, "heading": title,
+                 "start": i if parent else i + 1, "end": end, "units": units,
+                 "tail": tail, "parent": parent[2] if parent else None,
+                 "siblings": len(siblings) if parent else 0,
+                 "children": children}
             )  # fmt: skip
     return found
 
@@ -192,10 +247,22 @@ def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, 
 def messages(
     section: Dict[str, Any], entity_type: str, entity_name: str, other: List[str]
 ) -> List[Dict[str, str]]:
+    parent = section.get("parent")
     system = INSTRUCTIONS.format(
         entity_type=entity_type,
         entity_name=entity_name,
         heading=section["heading"],
+        grouping=(
+            f'headings that replace it, beside the other sub-sections of "{parent}"'
+            if parent
+            else "sub-headings"
+        ),
+        repeat_rule=(
+            "any other heading the profile has (one of yours may keep the name "
+            f'"{section["heading"]}")'
+            if parent
+            else "the section's own heading, or any heading the profile already has"
+        ),
         other_headings="; ".join(f'"{h}"' for h in other) or "none",
     )
     numbered = "\n\n".join(f"[{n}] {u}" for n, u in enumerate(section["units"], 1))
@@ -222,7 +289,7 @@ def _heading_problem(heading: str, taken: List[str]) -> Optional[str]:
 
 
 def plan_groups(
-    reply: SectionSplit, count: int, taken: List[str]
+    reply: SectionSplit, count: int, taken: List[str], max_groups: int = MAX_GROUPS
 ) -> Tuple[Optional[List[Tuple[str, List[int]]]], str]:
     """Sub-headings and their paragraph numbers (1-based), in the order they
     go, or None and why the reply was refused. ``taken`` holds the profile's
@@ -251,7 +318,7 @@ def plan_groups(
             placed[n] = placed[near]
             groups[placed[n]][1].append(n)
     kept = [(h, sorted(ns)) for h, ns in groups if ns]
-    if not MIN_GROUPS <= len(kept) <= MAX_GROUPS:
+    if not MIN_GROUPS <= len(kept) <= max_groups:
         return None, f"{len(kept)} sub-sections"
     return sorted(kept, key=lambda g: g[1][0]), ""
 
@@ -273,16 +340,23 @@ def split_long_sections(
     entity_name: str,
     ask: Ask,
     min_chars: Optional[int] = None,
+    resplit: bool = False,
 ) -> Tuple[str, List[Dict[str, Any]]]:
-    """Split each long section once. Returns the new text and one report per
-    long section (``status``: ``split``, ``refused`` or ``failed``)."""
-    sections = long_sections(text, min_chars)
+    """Split each long section once (``resplit``: sub-sections too, see
+    ``long_sections()``). Returns the new text and one report per long
+    section (``status``: ``split``, ``refused`` or ``failed``)."""
+    sections = long_sections(text, min_chars, resplit)
     if not sections:
         return text, []
     lines = text.splitlines()
     taken = [title for _, _, title in _headings(lines)]
     reports: List[Dict[str, Any]] = []
-    # Bottom up, so earlier line numbers stay right
+    # Sub-sections each accepted split added, by parent heading: two re-splits
+    # under one parent, or a parent's own text split beside its sub-sections,
+    # share the MAX_SIBLINGS room
+    added: Dict[str, int] = {}
+    # Bottom up, so earlier line numbers stay right (a parent comes after its
+    # sub-sections)
     for section in reversed(sections):
         report: Dict[str, Any] = {
             "section": section["heading"],
@@ -290,27 +364,44 @@ def split_long_sections(
             "paragraphs": len(section["units"]),
         }
         reports.insert(0, report)
+        sibling = section.get("parent") is not None
         other = [t for t in taken if t != section["heading"]]
+        # A re-split replaces the heading, so one new heading may keep its name
+        if sibling:
+            room = (
+                MAX_SIBLINGS - section["siblings"] - added.get(section["parent"], 0) + 1
+            )
+        else:
+            room = MAX_SIBLINGS - section["children"] - added.get(section["heading"], 0)
+        if room < MIN_GROUPS:
+            report.update(status="refused", reason=f"over {MAX_SIBLINGS} sub-sections")
+            continue
         try:
             reply = ask(messages(section, entity_type, entity_name, other))
         except Exception as e:  # keep the section as it is
             logger.warning(f"Section split call failed for {entity_name}: {e}")
             report.update(status="failed", reason=f"{type(e).__name__}: {e}")
             continue
-        plan, why = plan_groups(reply, len(section["units"]), taken)
+        plan, why = plan_groups(
+            reply, len(section["units"]), other if sibling else taken,
+            min(MAX_GROUPS, room),
+        )  # fmt: skip
         if plan is None:
             report.update(status="refused", reason=why)
             continue
+        level = section["level"] - 1 if sibling else section["level"]
         new_lines = (
             lines[: section["start"]]
-            + _render(section["level"], section["units"], plan, section["tail"])
+            + _render(level, section["units"], plan, section["tail"])
             + lines[section["end"] :]
         )
         if _sentences("\n".join(new_lines)) != _sentences("\n".join(lines)):
             report.update(status="refused", reason="sentences changed")
             continue
         lines = new_lines
-        taken += [h for h, _ in plan]
+        owner = section["parent"] if sibling else section["heading"]
+        added[owner] = added.get(owner, 0) + len(plan) - (1 if sibling else 0)
+        taken = (other if sibling else taken) + [h for h, _ in plan]
         report.update(status="split", subsections=[[h, ns] for h, ns in plan])
     new_text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip() + "\n"
     if not any(r["status"] == "split" for r in reports):
@@ -358,9 +449,13 @@ def split_profile(
         logger.info(f"No section split for {entity_name}: it has saved fact rows")
         return profile, []
     text = str(profile.get("text") or "")
+    # Only a profile with starter headings has a known outline: top-level
+    # starter headings, their sub-sections one level down
+    resplit = profile.get("reorganised") == "done"
     new_text, reports = split_long_sections(
-        text, entity_type, entity_name, ask or make_asker(model, local)
-    )
+        text, entity_type, entity_name, ask or make_asker(model, local),
+        resplit=resplit,
+    )  # fmt: skip
     for r in reports:
         level = "info" if r["status"] == "split" else "warning"
         getattr(logger, level)(

@@ -415,6 +415,7 @@ def make_edit_updater(model: str, domain: str) -> Updater:
                     model=model,
                     domain=domain,
                     article_dates=case_dates(case, domain),
+                    kind=case.get("entity_kind") or None,
                 )
         except PromptTooLongError:
             result = make_fact_updater(model, domain)(case)

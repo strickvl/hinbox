@@ -151,14 +151,28 @@ def _find(text: str, anchor: str) -> Optional[Tuple[int, int]]:
     return (match.start(), match.end()) if match else None
 
 
-def _section_end(text: str, heading: str) -> Optional[int]:
+def _heading_or_missing(text: str, anchor: str) -> bool:
+    """True when ``anchor`` isn't in ``text`` or is found only on a heading
+    line: a second add on a bare "Detention at Guantánamo", after the first
+    created that heading, would otherwise be put inside the heading line."""
+    span = _find(text, anchor)
+    if span is None:
+        return True
+    line_start = text.rfind("\n", 0, span[0]) + 1
+    return text[line_start:].startswith("#")
+
+
+def _section_end(text: str, heading: str, own: bool = False) -> Optional[int]:
     """Index where the section under ``heading`` ends, or None if absent.
 
     The heading is found by its words, whatever its level: models write
     "## Legal proceedings" for a profile's "### Legal proceedings". The
     section runs to the next heading of the same or a higher level, so its
     sub-sections ("#### Plea negotiations" under "### Legal proceedings")
-    belong to it and an add goes after them, not before.
+    belong to it and an add goes after them, not before. With ``own``, it
+    ends at its first sub-heading instead: in a reorganised profile an add
+    on the parent heading went to the end of its last sub-section, and in a
+    replay KSM's "#### Combatant status" collected his courtroom outbursts.
     """
     words = heading.strip().lstrip("#").strip()
     if not words:
@@ -168,13 +182,22 @@ def _section_end(text: str, heading: str) -> Optional[int]:
     )
     if not match:
         return None
-    level = len(match.group(1))
+    level = 6 if own else len(match.group(1))
     following = re.search(rf"^#{{1,{level}}} ", text[match.end() :], re.MULTILINE)
     return match.end() + following.start() if following else len(text)
 
 
-def apply_edits(text: str, edits: List[ProfileEdit]) -> Tuple[str, Dict[str, Any]]:
-    """Apply ``edits`` to ``text`` in order. Returns (new_text, report)."""
+def apply_edits(
+    text: str, edits: List[ProfileEdit], starter: Optional[List[str]] = None
+) -> Tuple[str, Dict[str, Any]]:
+    """Apply ``edits`` to ``text`` in order. Returns (new_text, report).
+
+    ``starter``: the starter headings of a reorganised profile. An ``add``
+    anchored on one of them (with or without "#", or copied with its note)
+    goes at the end of that section, and creates the heading in its place
+    when the profile lacks it (``section_routing.py``)."""
+    from src.engine.section_routing import insert_missing_heading, starter_anchor
+
     report: Dict[str, Any] = {"applied": 0, "appended": 0, "skipped": []}
     # Several adds after one sentence go in list order: each one goes after
     # the text the previous one inserted there, not straight after the anchor
@@ -202,8 +225,18 @@ def apply_edits(text: str, edits: List[ProfileEdit]) -> Tuple[str, Dict[str, Any
             report["applied"] += 1
             continue
 
+        name = starter_anchor(anchor, starter) if starter and anchor != END else None
+        if name and (anchor.startswith("#") or _heading_or_missing(text, anchor)):
+            if _section_end(text, name) is None:
+                placed = insert_missing_heading(text, name, addition, starter or [])
+                if placed is not None:
+                    text = placed
+                    report["applied"] += 1
+                    report.setdefault("new_headings", []).append(name)
+                    continue
+            anchor = f"# {name}"
         if anchor.startswith("#"):
-            at = _section_end(text, anchor)
+            at = _section_end(text, anchor, own=bool(starter))
             if at is not None:
                 head, tail = text[:at].rstrip("\n"), text[at:].lstrip("\n")
                 text = f"{head}\n{addition}\n" + (f"\n{tail}" if tail else "")
@@ -232,14 +265,18 @@ def _messages(
     domain: str,
     model: Optional[str] = None,
     view_chars: Optional[int] = None,
+    routing: str = "",
 ) -> List[Dict[str, str]]:
     from src.config_loader import DomainConfig
 
     # Local models get profile_edit.local.md (GEPA-tuned on Qwen3.6), cloud
     # models profile_edit.cloud.md; the local one made cloud models skip facts
     template = DomainConfig(domain).load_profile_prompt("edit", model)
-    instructions = template.format(
-        entity_type=entity_type, entity_name=entity_name, article_id=article_id
+    instructions = (
+        template.format(
+            entity_type=entity_type, entity_name=entity_name, article_id=article_id
+        )
+        + routing
     )
     budget = PROFILE_VIEW_CHARS if view_chars is None else view_chars
     shown = profile_view(profile_text, article_text, budget)
@@ -296,6 +333,7 @@ def edit_profile(
     local: Optional[bool] = None,
     guard: bool = True,
     article_dates: Optional[Dict[str, Any]] = None,
+    kind: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Ask the model for edits and apply them. Raises if the call fails.
 
@@ -304,13 +342,19 @@ def edit_profile(
     are taken out first, and a "sources disagree" sentence that is really a
     later update is rewritten as one (``edit_guards.py``); that needs
     ``article_dates``, the published date of this article and of the
-    profile's sources, by article id.
+    profile's sources, by article id. ``kind`` (the entity's ``type``) picks
+    the starter headings a reorganised profile's new facts are routed to
+    (``section_routing.py``).
     """
     from src.engine.edit_guards import guard_edits
+    from src.engine.section_routing import routing_note, routing_sections
 
     local = (model or "").startswith("ollama/") if local is None else local
     generate = local_generation if local else cloud_generation
     model = model or (OLLAMA_MODEL if local else CLOUD_MODEL)
+    sections = routing_sections(existing_profile, entity_type, kind, domain)
+    text_now = existing_profile.get("text", "")
+    routing = routing_note(*sections, entity_name, text_now) if sections else ""
     response = generate(
         messages=_messages(
             entity_type,
@@ -320,6 +364,7 @@ def edit_profile(
             article_id,
             domain,
             model,
+            routing=routing,
         ),
         response_model=ProfileEditList,
         model=model,
@@ -340,7 +385,8 @@ def edit_profile(
         if guard
         else (response.edits, {})
     )
-    text, report = apply_edits(old_text, edits)
+    text, report = apply_edits(old_text, edits, sections[0] if sections else None)
+    report["routed"] = bool(sections)
     report["guard"] = guarded
     report["profile_chars_shown"] = len(
         profile_view(old_text, article_text, PROFILE_VIEW_CHARS)
