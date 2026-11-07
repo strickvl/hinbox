@@ -26,6 +26,9 @@ def test_is_hub_reads_domain_config(monkeypatch):
     assert not is_hub("guantanamo", "person", "country")
     assert not is_hub("guantanamo", "location", None)
     assert is_hub("guantanamo", "location", "LocationType.COUNTRY")
+    assert is_hub("guantanamo", "organization", "media")
+    assert is_hub("guantanamo", "organizations", "OrganizationType.MEDIA")
+    assert not is_hub("guantanamo", "organization", "government")
     monkeypatch.setenv("HINBOX_HUB_LINK_ONLY", "off")
     assert not is_hub("guantanamo", "location", "country")
 

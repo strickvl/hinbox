@@ -112,8 +112,12 @@ profiles:
   # text (src/engine/hub_profiles.py). Meant for hubs named in passing by most
   # articles. Keys are entity tables, values are their `type` values.
   # HINBOX_HUB_LINK_ONLY=off turns it off.
+  # News outlets too: their profiles fill up with the stories they ran
+  # ("McClatchy obtained a memo..."), which belong to the entities the
+  # stories are about.
   link_only:
     locations: [country, region]
+    organizations: [media]
 
 # Processing configuration
 processing:

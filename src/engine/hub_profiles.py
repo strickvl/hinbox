@@ -10,6 +10,11 @@ all 1,620 articles only about 5 of 30 sampled sentences said anything about
 the country itself ("the U.S. Navy base in southeast Cuba", "off Aden,
 Yemen"), and the United States list would have reached ~370,000 characters.
 
+News outlets have the same problem from the other side: McClatchy is named
+in the articles it wrote, so its profile became a list of its stories
+("McClatchy obtained a memo...", 11,428 characters from 31 articles), and only
+about 6 of 40 sampled outlet sentences said anything about the outlet itself.
+
 So for an entity whose type is listed under ``profiles.link_only`` in the
 domain config, a later article makes no model call and changes no text. The
 article is still linked to the entity (``articles``), counted in the
