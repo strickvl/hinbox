@@ -60,6 +60,34 @@ def test_mention_sentences_full_name_first_then_surname():
     ]
 
 
+def test_mention_sentences_skips_surname_when_a_relative_shares_it():
+    text = (
+        "Marine Col. Keith Parrella called a recess. Parrella was airlifted "
+        "from the base.\n\n“He needs surgery,” Jennifer Parrella said."
+    )
+    assert mention_sentences(text, "people", ["Jennifer Parrella"]) == [
+        "“He needs surgery,” Jennifer Parrella said."
+    ]
+    # A rank or a sentence ending before the surname is not another person
+    text = "Lawyers spoke in Kenya.\n\nWiltsie argued. Attorney Ronald Wiltsie sat."
+    assert mention_sentences(text, "people", ["Ronald Wiltsie"]) == [
+        "Wiltsie argued.",
+        "Attorney Ronald Wiltsie sat.",
+    ]
+
+
+def test_mention_sentences_ignores_aliases_broader_than_the_name():
+    text = "Christo changed Miami forever. Monica Harvey, Miami Shores"
+    names = ["Miami Shores", "Miami"]
+    assert mention_sentences(text, "locations", names) == [
+        "Monica Harvey, Miami Shores"
+    ]
+    # An alias with words of its own still counts
+    text = "The Central Intelligence Agency declined. The CIA said nothing."
+    names = ["Central Intelligence Agency", "CIA"]
+    assert len(mention_sentences(text, "organizations", names)) == 2
+
+
 def test_mention_sentences_matches_whole_words_only():
     text = "The Pentagon spoke. Pentagonal shapes are odd."
     assert mention_sentences(text, "organizations", ["Pentagon"]) == [

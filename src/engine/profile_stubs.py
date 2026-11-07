@@ -91,6 +91,53 @@ def _pattern(needle: str) -> "re.Pattern[str]":
     return re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)", re.I)
 
 
+def _words(name: str) -> List[str]:
+    return re.findall(r"[\w’']+", name.lower())
+
+
+def _broader_than(alias: str, name: str) -> bool:
+    """True when every word of ``alias`` is in ``name`` and ``name`` has more.
+
+    Such an alias names something bigger: "Miami" for "Miami Shores", "AECOM"
+    for "AECOM Tishman", "U.S. District Court" for one district's court. Its
+    sentences are about that bigger thing, so they don't go in the stub.
+    """
+    alias_words, name_words = set(_words(alias)), set(_words(name))
+    return bool(alias_words) and alias_words < name_words
+
+
+# Capitalized words that can stand right before a surname without being
+# another first name: ranks, offices and sentence openers.
+_NOT_FIRST_NAMES = _ABBREVIATIONS | {
+    "judge", "president", "secretary", "senator", "justice", "attorney",
+    "prosecutor", "chief", "director", "ambassador", "professor", "prof",
+    "marine", "army", "navy", "air", "general", "colonel", "captain",
+    "commander", "admiral", "lieutenant", "sergeant", "major", "private",
+    "officer", "agent", "the", "a", "an", "and", "but", "when", "while",
+    "after", "before", "then", "said", "says", "by", "of", "for", "to", "as",
+}  # fmt: skip
+
+
+def _surname_shared(article_text: str, name: str, surname: str) -> bool:
+    """True when the article also names someone else with ``surname``.
+
+    "Marine Col. Keith Parrella" in an article about Jennifer Parrella: the
+    word before the surname is a first name that isn't one of hers, so
+    sentences with only "Parrella" may be about him.
+    """
+    own = set(_words(name))
+    # A first name has no full stop after it, and sits on the surname's line:
+    # "Kenya.\n\nWiltsie" is two sentences, not a "Kenya Wiltsie"
+    before = re.compile(
+        rf"\b([A-Z][\w’'-]*)[ \t]+(?:[A-Z]\.[ \t]+)?{re.escape(surname)}\b"
+    )
+    for match in before.finditer(article_text or ""):
+        word = match.group(1).lower()
+        if word not in own and word not in _NOT_FIRST_NAMES:
+            return True
+    return False
+
+
 def mention_sentences(
     article_text: str,
     entity_type: str,
@@ -100,13 +147,18 @@ def mention_sentences(
     """Up to ``limit`` article sentences naming the entity, in article order.
 
     Sentences with the full name (or an alias) come first; sentences with
-    only a person's surname fill any remaining places.
+    only a person's surname fill any remaining places. An alias made only of
+    words from the name ("Miami" for "Miami Shores") is not searched for, and
+    the surname is not used when the article names another person with it.
     """
     names = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
     if not names:
         return []
+    names = names[:1] + [n for n in names[1:] if not _broader_than(n, names[0])]
     full = [_pattern(n) for n in names]
     surname = _surname(entity_type, names[0])
+    if surname and _surname_shared(article_text, names[0], surname):
+        surname = None
     short = [_pattern(surname)] if surname else []
     sentences = [
         s for s in split_sentences(article_text) if len(s) <= MAX_SENTENCE_CHARS
