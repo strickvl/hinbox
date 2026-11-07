@@ -355,15 +355,51 @@ def plan_grounding(
                 plan.results[aid] = list(earlier_results)
                 plan.reused_articles += 1
                 continue
-        known = (
-            {v.claim[:max_claim_chars]: v for v in earlier_results} if usable else {}
-        )
+        known = {_claim_key(v.claim): v for v in earlier_results} if usable else {}
         article = _article_text(article_texts[aid][:max_article_chars])
         plan.results[aid] = [
             _settled(aid, c, known, article, entity_name, max_claim_chars)
             for c in items
         ]
     return plan
+
+
+_HEADING_LINES = re.compile(r"^[ \t]*#+[^\n]*$", re.MULTILINE)
+
+
+def _claim_key(claim: str) -> str:
+    """The claim without heading lines and runs of spaces.
+
+    A claim keeps its verdict when a section is split and a sub-heading
+    lands in front of it ("#### Plea negotiations\n\nKSM's lawyers
+    said...^[a1]"): the sentence, and so what the article has to support,
+    hasn't changed.
+    """
+    return _SPACE.sub(" ", _HEADING_LINES.sub("", claim)).strip()
+
+
+def _earlier_verdict(
+    claim: str, known: Dict[str, ClaimVerification], max_claim_chars: int
+) -> Optional[ClaimVerification]:
+    """The stored verdict on this same claim, if any.
+
+    The judge sees a claim's first ``max_claim_chars`` characters, and that is
+    what was stored. The verdict is reused when the stored text, heading lines
+    and spacing aside, equals what the judge would see now. When this claim is
+    cut, the stored text may also run past it (a sub-heading put in front
+    pushed some words past the cut): the old judge then saw every word the new
+    one would. Anything else, such as a heading removed so the new cut reaches
+    words the old judge never saw, is judged again.
+    """
+    visible = _claim_key(claim[:max_claim_chars])
+    if visible in known:
+        return known[visible]
+    if len(claim) <= max_claim_chars:
+        return None
+    for old_key, verdict in known.items():
+        if old_key.startswith(visible):
+            return verdict
+    return None
 
 
 def _settled(
@@ -376,9 +412,9 @@ def _settled(
 ) -> Optional[ClaimVerification]:
     """A verdict that needs no model call: kept from the last report, or
     "supported" for a sentence quoted from the article. None otherwise."""
-    text = claim["claim"][:max_claim_chars]
-    if text in known:
-        return known[text].model_copy(update={"citation": claim["citation"]})
+    earlier = _earlier_verdict(claim["claim"], known, max_claim_chars)
+    if earlier is not None:
+        return earlier.model_copy(update={"citation": claim["citation"]})
     body = _HEADINGS.sub("", claim["claim"])
     if _names_entity(body, entity_name) and _is_quote(body, article):
         why = "Quoted word for word from the article"
