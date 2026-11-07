@@ -151,6 +151,76 @@ def _find(text: str, anchor: str) -> Optional[Tuple[int, int]]:
     return (match.start(), match.end()) if match else None
 
 
+def _known_headings(text: str, addition: str) -> Tuple[str, Optional[str]]:
+    """``addition`` without the heading lines it opens with that the profile
+    already has, and the last of them. In a local replay an ``add`` on END
+    began "## Military commission or legal case" and, appended as it was,
+    gave KSM's profile a second legal section at the end."""
+    lines = addition.splitlines()
+    target = None
+    while lines and (not lines[0].strip() or lines[0].lstrip().startswith("#")):
+        line = lines[0].strip()
+        if line and _section_end(text, line) is None:
+            break  # a heading the profile lacks: kept as the model wrote it
+        target = line or target
+        lines.pop(0)
+    if target:
+        # A sub-heading after it goes one level under the profile's own level
+        # for that heading, whatever level the model wrote them at
+        words = re.escape(target.lstrip("#").strip())
+        real = re.search(rf"^(#{{1,6}})[ \t]+{words}[ \t]*$", text, re.MULTILINE)
+        shift = len(real.group(1)) - (len(target) - len(target.lstrip("#")))
+        lines = [_shift_heading(line, shift) for line in lines]
+    return "\n".join(lines).strip(), target
+
+
+def _shift_heading(line: str, shift: int) -> str:
+    match = re.match(r"^(#{1,6})([ \t]+\S.*)$", line.strip())
+    if not match or not shift:
+        return line
+    return "#" * min(6, max(1, len(match.group(1)) + shift)) + match.group(2)
+
+
+_HEADING_LINE = re.compile(r"^#{1,6}[ \t]+\S")
+
+
+def _unknown_heading(
+    text: str, addition: str, starter: Optional[List[str]], report: Dict[str, Any]
+) -> str:
+    """``addition`` with heading lines the profile lacks: in a profile with
+    starter headings every heading line is dropped and its text kept (the
+    outline is the starter list), else they are kept but the highest is put
+    no higher than the profile's top level, the rest shifted with it so a
+    sub-heading stays under its parent. A local model's "## Legal
+    Proceedings" on END, in a "###" profile, became the only top-level
+    heading that code saw."""
+    lines = addition.splitlines()
+    heads = [i for i, line in enumerate(lines) if _HEADING_LINE.match(line.strip())]
+    if not heads:
+        return addition
+    if starter:
+        report.setdefault("dropped_headings", []).extend(
+            lines[i].strip() for i in heads
+        )
+        kept = [line for i, line in enumerate(lines) if i not in heads]
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    levels = [len(m.group(1)) for m in re.finditer(r"^(#{1,6})[ \t]", text, re.M)]
+    top = min(len(lines[i].strip()) - len(lines[i].strip().lstrip("#")) for i in heads)
+    shift = max(0, min(levels) - top) if levels else 0
+    return "\n".join(_shift_heading(line, shift) for line in lines)
+
+
+def _anchor_heading(text: str, anchor: str) -> Optional[str]:
+    """The heading line ``anchor`` is found on, when it is found on one."""
+    span = _find(text, anchor)
+    if span is None:
+        return None
+    start = text.rfind("\n", 0, span[0]) + 1
+    end = text.find("\n", span[1])
+    line = text[start : end if end >= 0 else len(text)].strip()
+    return line if line.startswith("#") else None
+
+
 def _heading_or_missing(text: str, anchor: str) -> bool:
     """True when ``anchor`` isn't in ``text`` or is found only on a heading
     line: a second add on a bare "Detention at Guantánamo", after the first
@@ -204,12 +274,22 @@ def apply_edits(
     last_added: Dict[str, str] = {}
     for edit in edits:
         addition = edit.text.strip()
+        anchor = edit.anchor.strip()
+        if edit.op == "add":
+            addition, known = _known_headings(text, addition)
+            if known and (anchor in ("", END) or _find(text, anchor) is None):
+                anchor = known
+            if any(_HEADING_LINE.match(x.strip()) for x in addition.splitlines()):
+                # Even a missing starter heading written into the text is
+                # dropped: in a local replay "## Release or transfer" opened a
+                # fact about KSM's trial venue, the heading was made at the
+                # end of the profile, and 56 later trial sentences landed in it
+                addition = _unknown_heading(text, addition, starter, report)
         if not addition:
             report["skipped"].append(
                 {"op": edit.op, "anchor": edit.anchor, "why": "empty"}
             )
             continue
-        anchor = edit.anchor.strip()
         if edit.op == "replace":
             span = _find(text, anchor) if anchor and anchor != END else None
             if span is None:
@@ -235,6 +315,10 @@ def apply_edits(
                     report.setdefault("new_headings", []).append(name)
                     continue
             anchor = f"# {name}"
+        if not anchor.startswith("#") and anchor != END:
+            # A heading's words without "#" ("Nashiri Proceedings") are that
+            # heading: as a sentence anchor the add was glued onto its line
+            anchor = _anchor_heading(text, anchor) or anchor
         if anchor.startswith("#"):
             at = _section_end(text, anchor, own=bool(starter))
             if at is not None:

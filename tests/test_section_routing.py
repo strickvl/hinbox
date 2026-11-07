@@ -158,3 +158,72 @@ def test_two_bare_adds_on_a_missing_heading_both_go_under_it():
     assert "\n### Detention at Guantánamo\n" in out
     assert out.index("### Detention at Guantánamo") < out.index("He fasted.")
     assert out.index("He fasted.") < out.index("### Military commission")
+
+
+def test_an_add_on_a_heading_copied_with_its_mark_creates_it():
+    anchor = "### Detention at Guantánamo (not in the profile yet)"
+    out, report = apply_edits(TEXT, [_add(anchor)], STARTER)
+    assert report["new_headings"] == ["Detention at Guantánamo"]
+    assert "(not in the profile yet)" not in out
+    assert out.index("### Detention at Guantánamo") < out.index(
+        "### Military commission"
+    )
+
+
+def test_an_end_add_opening_with_an_existing_heading_goes_into_that_section():
+    # Local replay: Qwen added on END "## Military commission or legal case\n\n
+    # ### Hearing procedures ..." and KSM got a second legal section at the end
+    add = ProfileEdit(op="add", anchor="END", text=(
+        "## Military commission or legal case\n\n### Video testimony\n\n" + NEW
+    ))  # fmt: skip
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert out.count("Military commission or legal case") == 1
+    # A sub-heading of its own is dropped: code, not the model, makes them
+    assert "Video testimony" not in out and report["appended"] == 0
+    assert out.index("### Military commission") < out.index(NEW)
+    assert out.index(NEW) < out.index("#### Capital charges")
+    # Without starter headings it is kept, at the level under the section
+    flat, _ = apply_edits(TEXT, [add])
+    assert "\n#### Video testimony\n" in flat
+
+
+def test_an_end_add_opening_with_a_missing_starter_heading_does_not_create_it():
+    # Local replay: Qwen wrote "## Release or transfer" over a fact about
+    # KSM's trial venue; only an anchor on the heading may create it
+    add = ProfileEdit(op="add", anchor="END", text="## Detention at Guantánamo\n" + NEW)
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert "Detention at Guantánamo" not in out and NEW in out
+    assert report["dropped_headings"] == ["## Detention at Guantánamo"]
+
+
+def test_a_bare_sub_heading_anchor_is_not_glued_onto_the_heading_line():
+    # Luna replay: anchor "Nashiri Proceedings" (no "#") gave the heading
+    # "#### Nashiri Proceedings Pohl assigned himself ..."
+    for starter in (STARTER, None):
+        out, _ = apply_edits(TEXT, [_add("Capital charges")], starter)
+        assert "\n#### Capital charges\n" in out
+        assert out.index("He faces the death penalty") < out.index(NEW)
+        assert out.index(NEW) < out.index("### Legal mail")
+
+
+def test_an_end_add_opening_with_an_unknown_heading():
+    add = ProfileEdit(op="add", anchor="END", text="## Legal Proceedings\n" + NEW)
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert "Legal Proceedings" not in out and NEW in out
+    assert report["dropped_headings"] == ["## Legal Proceedings"]
+    flat, _ = apply_edits(TEXT, [add])
+    assert "\n### Legal Proceedings\n" in flat and "\n## Legal" not in flat
+
+
+def test_every_new_heading_line_in_an_add_is_dropped_or_shifted_together():
+    # Codex review: only the first heading line was dropped or shifted, so
+    # "### Also unwanted" became a top-level section of a "###" profile,
+    # and a flat add's child heading became its parent's sibling
+    text = "## Unwanted\n### Also unwanted\n" + NEW
+    add = ProfileEdit(op="add", anchor="END", text=text)
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert "Unwanted" not in out and "unwanted" not in out and NEW in out
+    assert report["dropped_headings"] == ["## Unwanted", "### Also unwanted"]
+    child = "## New topic\nParent fact.^[a2]\n### Detail\n" + NEW
+    flat, _ = apply_edits(TEXT, [ProfileEdit(op="add", anchor="END", text=child)])
+    assert "\n### New topic\nParent fact.^[a2]\n#### Detail\n" in flat

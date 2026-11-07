@@ -136,9 +136,8 @@ profiles:
         - Release or transfer: review board decisions, release, repatriation and resettlement
       default:
         - Background: who they are and their career before the events covered
-        - Role: the posts they hold or held and what they are responsible for
+        - Role: the posts and appointments they hold or held, from appointment to retirement, not the decisions or actions taken in them
         - Cases and decisions: rulings, orders, actions and decisions they took, cases they worked on
-        - Public statements: what they themselves said in public, in testimony or in interviews
     organizations:
       default:
         - Overview: what the organization is, its structure and its leaders

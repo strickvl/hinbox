@@ -45,6 +45,7 @@ default (on the dev eval events and organizations scored lower once
 reorganised), ``on`` for every table, ``off``, or a comma list.
 """
 
+import json
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -63,6 +64,8 @@ PARAGRAPH_CHARS = 1500
 MAX_LEVEL = 5  # "#####"; a section at that level is not split again
 MIN_GROUPS, MAX_GROUPS = 2, 6
 MAX_SIBLINGS = 8  # sub-sections under one heading, after a re-split
+RETRY_GROWTH = 1.25  # a refused split is asked again once its section grows 25%
+REFUSED_KEY = "split_refused_json"  # heading -> chars, as a JSON string
 MAX_HEADING_WORDS, MAX_HEADING_CHARS = 8, 70
 
 _HEADING_LINE = re.compile(r"^(#{1,6})\s+(\S.*)$")
@@ -127,10 +130,12 @@ def _norm(text: str) -> str:
 def _sentences(text: str) -> List[str]:
     """The text's sentences, heading lines and spacing aside, sorted. Each
     paragraph or list item is split on its own, so moving one can't join its
-    last sentence to the next one's first."""
+    last sentence to the next one's first. So is each line that ends a
+    sentence, as the reorganise numbers them: "al Nashiri was transferred."
+    on its own line, moved, is still that sentence."""
     out: List[str] = []
-    for block in _blocks(text):
-        joined = " ".join(" ".join(block).split())
+    for para in _paragraphs(text, by_line=True):
+        joined = " ".join(para.split())
         if joined and not _HEADING_LINE.match(joined):
             out += [s for s in _SENTENCE_GAP.split(joined) if s]
     return sorted(out)
@@ -150,7 +155,7 @@ def _ends_cited(text: str) -> bool:
     return bool(_CITED_END.search(text))
 
 
-def _units(own: str) -> Tuple[List[str], str]:
+def _units(own: str, max_chars: int = PARAGRAPH_CHARS) -> Tuple[List[str], str]:
     """The pieces of a section's own text that the model numbers and code moves.
 
     A piece is a paragraph or list item; one over ``PARAGRAPH_CHARS`` is cut
@@ -165,16 +170,51 @@ def _units(own: str) -> Tuple[List[str], str]:
     down the profile, so it is not numbered and stays at the section's end.
     The first piece stays first too (sub-sections go in the order of their
     first piece), so text before the section's first citation keeps its claim.
+
+    ``max_chars`` 0 cuts a paragraph after every cited sentence (the
+    reorganise, ``unit_spans()``).
     """
+    units, tail, _ = unit_spans(own, max_chars)
+    return units, tail
+
+
+_LINE_END = re.compile(r"(?:[.!?][\"”’)]*|\^\[[^\]]*\][.,;:!?\"”’)]*)$")
+
+
+def _paragraphs(own: str, by_line: bool) -> List[str]:
+    """Blank-line blocks, or with ``by_line`` each line that ends a sentence
+    (with the lines before it that don't): model-written profiles often put a
+    single newline between paragraphs, so a whole section is one block."""
+    out: List[str] = []
+    for block in _blocks(own):
+        if not by_line:
+            out.append("\n".join(block))
+            continue
+        group: List[str] = []
+        for line in block:
+            group.append(line)
+            if _LINE_END.search(line.strip()):
+                out.append("\n".join(group))
+                group = []
+        if group:
+            out.append("\n".join(group))
+    return out
+
+
+def unit_spans(
+    own: str, max_chars: int = PARAGRAPH_CHARS, by_line: bool = False
+) -> Tuple[List[str], str, List[Tuple[int, int]]]:
+    """``_units()`` plus, per piece, the first and last paragraph it comes
+    from, so code can put two pieces of one paragraph back together
+    (``by_line``: a paragraph is a line, see ``_paragraphs()``)."""
     pieces: List[Tuple[int, str]] = []  # (paragraph number, text)
-    for index, block in enumerate(_blocks(own)):
-        text = "\n".join(block)
-        if len(text) <= PARAGRAPH_CHARS:
+    for index, text in enumerate(_paragraphs(own, by_line)):
+        if len(text) <= max_chars:
             pieces.append((index, text))
             continue
         run: List[str] = []
         for sentence in _SENTENCE_GAP.split(text):
-            too_long = len(" ".join(run + [sentence])) > PARAGRAPH_CHARS
+            too_long = len(" ".join(run + [sentence])) > max_chars
             if run and too_long and _ends_cited(run[-1]):
                 pieces.append((index, " ".join(run)))
                 run = []
@@ -182,15 +222,20 @@ def _units(own: str) -> Tuple[List[str], str]:
         if run:
             pieces.append((index, " ".join(run)))
     units: List[str] = []
+    spans: List[Tuple[int, int]] = []
     open_unit, last = False, -1
     for index, text in pieces:
         if open_unit:
             units[-1] += (" " if index == last else "\n\n") + text
+            spans[-1] = (spans[-1][0], index)
         else:
             units.append(text)
+            spans.append((index, index))
         open_unit, last = not _ends_cited(text), index
     tail = units.pop() if open_unit and units else ""
-    return units, tail
+    if tail:
+        spans.pop()
+    return units, tail, spans
 
 
 def long_sections(
@@ -341,10 +386,16 @@ def split_long_sections(
     ask: Ask,
     min_chars: Optional[int] = None,
     resplit: bool = False,
+    refused: Optional[Dict[str, int]] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """Split each long section once (``resplit``: sub-sections too, see
     ``long_sections()``). Returns the new text and one report per long
-    section (``status``: ``split``, ``refused`` or ``failed``)."""
+    section (``status``: ``split``, ``refused``, ``failed`` or ``waiting``).
+
+    ``refused``: heading -> size of a section whose split was refused on an
+    earlier update; it is asked again only once it has grown by
+    ``RETRY_GROWTH``. In a local replay al Nashiri's "November 2011
+    arraignment" was asked and refused at 9 updates in a row, the same way."""
     sections = long_sections(text, min_chars, resplit)
     if not sections:
         return text, []
@@ -365,6 +416,10 @@ def split_long_sections(
         }
         reports.insert(0, report)
         sibling = section.get("parent") is not None
+        before = (refused or {}).get(section["heading"])
+        if before and report["chars"] < before * RETRY_GROWTH:
+            report.update(status="waiting", reason=f"refused at {before} chars")
+            continue
         other = [t for t in taken if t != section["heading"]]
         # A re-split replaces the heading, so one new heading may keep its name
         if sibling:
@@ -452,9 +507,10 @@ def split_profile(
     # Only a profile with starter headings has a known outline: top-level
     # starter headings, their sub-sections one level down
     resplit = profile.get("reorganised") == "done"
+    refused = json.loads(profile.get(REFUSED_KEY) or "{}")
     new_text, reports = split_long_sections(
         text, entity_type, entity_name, ask or make_asker(model, local),
-        resplit=resplit,
+        resplit=resplit, refused=refused,
     )  # fmt: skip
     for r in reports:
         level = "info" if r["status"] == "split" else "warning"
@@ -462,6 +518,13 @@ def split_profile(
             f"Section split for {entity_name} ({r['section']}): {r['status']} "
             f"{r.get('reason') or [h for h, _ in r.get('subsections', [])]}"
         )
+    for r in reports:
+        if r["status"] == "refused":
+            refused[r["section"]] = r["chars"]
+        elif r["status"] == "split":
+            refused.pop(r["section"], None)
+    if refused != json.loads(profile.get(REFUSED_KEY) or "{}"):
+        profile = {**profile, REFUSED_KEY: json.dumps(refused, ensure_ascii=False)}
     if new_text == text:
         return profile, reports
     return {**profile, "text": new_text}, reports

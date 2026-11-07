@@ -125,10 +125,9 @@ def _reorg(args: argparse.Namespace, etype: str, kind: Any) -> Any:
 
 
 def _reorg_units(text: str) -> List[str]:
-    from src.engine.section_reorganise import _opening_and_body
-    from src.engine.section_split import _units
+    from src.engine.section_reorganise import _opening_and_body, numbered_pieces
 
-    return _units(_opening_and_body(text)[1])[0]
+    return numbered_pieces(_opening_and_body(text)[1])[0]
 
 
 def _review(

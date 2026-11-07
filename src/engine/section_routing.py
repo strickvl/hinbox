@@ -40,15 +40,18 @@ This profile is organised under these headings, each for one kind of fact:
 {listed}
 
 Put each new fact in the section it belongs in, by what it mainly tells \
-about {entity_name}. A court ruling, order, motion or hearing goes under the \
-legal heading even when it is about detention, clothing, mail or health. \
+about {entity_name}. What happens in or around a court case (a ruling, \
+order, motion, hearing, lawyers' argument, testimony or evidence request) goes \
+under the legal heading even when it is about detention, CIA custody, torture, \
+clothing, mail or health. \
 Anchor the `add` on a sentence in that section, or on \
 the section's heading copied exactly (the text then goes at the end of the \
 section's own text, before any of its sub-headings). When a section has sub-headings (one more "#"), anchor on the \
 sub-heading or a sentence under it that fits. A heading marked "not in the \
 profile yet" can be an anchor too: code adds the heading in its place. Use \
 it for a fact that belongs there rather than putting it under another \
-heading. Use END only for a fact that fits none of the headings.
+heading, even when a sentence on a related point already sits under that \
+other heading. Use END only for a fact that fits none of the headings.
 
 This only decides where a new fact goes, not whether to add one: the rules \
 above on what to add still hold, so an article with nothing new about \
