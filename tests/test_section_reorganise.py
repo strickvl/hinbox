@@ -464,3 +464,15 @@ def test_a_refused_reorganise_is_asked_again_once_the_profile_grows(monkeypatch)
     done, report = reorganise_profile(grown, *args, ask=_asker(GOOD, seen))
     assert len(seen) == 2 and done["reorganised"] == "done"
     assert "reorganise_refused_chars" not in done
+
+
+def test_the_bench_numbers_pieces_as_the_reorganise_does():
+    # Codex review: the bench split lowercase or digit-led lines as one piece,
+    # so its review file paired headings with the wrong text
+    from scripts.section_split_bench import _reorg_units
+
+    text = (
+        "### Notes\n\nHe was captured.^[a1]\nal Nashiri was transferred.^[a2]\n"
+        "2003 was the year.^[a3]\n"
+    )
+    assert len(_reorg_units(text)) == 3

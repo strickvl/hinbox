@@ -293,6 +293,12 @@ def plan_sections(
     return [(h, kept[h]) for h in order], ""
 
 
+def numbered_pieces(body: str) -> Tuple[List[str], str, List[Tuple[int, int]]]:
+    """The pieces the model is shown for ``body``, its uncited tail and each
+    piece's paragraph span: one place for the reorganise and the bench."""
+    return unit_spans(body, piece_chars(), by_line=pieces_mode() == "sentences")
+
+
 def reorganise_text(
     text: str,
     entity_type: str,
@@ -309,7 +315,7 @@ def reorganise_text(
         return text, {"status": "skipped", "reason": "short or no starter headings"}
     opening, body = _opening_and_body(text)
     sentences = pieces_mode() == "sentences"
-    units, tail, spans = unit_spans(body, piece_chars(), by_line=sentences)
+    units, tail, spans = numbered_pieces(body)
     # Whether to reorganise at all is decided as before, on whole paragraphs
     paragraphs = len(_units(body)[0])
     report: Dict[str, Any] = {
