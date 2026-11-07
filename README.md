@@ -234,6 +234,20 @@ A prompt that suits one model can hurt another: the profile-edit prompt tuned fo
 
 This covers relevance, the four extraction prompts and the profile prompts; the merge check builds its prompt in code. Add a variant only when `just eval show --grid` shows it beating the default for that model by 3 or more cases. For example, over the 245 profile-update cases (train, dev and test together), `profile_edit.cloud.md` passes 225 on Luna and 215 on Haiku, against 213 and 191 for the plain `profile_edit.md`: the plain prompt turns passing mentions into 3 to 5 sentences.
 
+### Choosing a grounding judge
+After merging, the grounding pass asks a model whether each cited article really says what the profile claims. The judge matters: on 64 hand-labelled hard claims from 30 Guantánamo articles, here is how often each one called a wrong or partly wrong claim fully "supported", and how long the pass took:
+
+| Judge | Matches the hand label | Bad claims passed (of 42) | Time for 30 articles |
+|---|---|---|---|
+| `anthropic/claude-haiku-5-5` (cloud default) | 38 of 64 | 2 | ~3 min |
+| `openai/gpt-6-luna` | 31 | 4 | ~3.5 min |
+| Qwen3.6 local, `HINBOX_GROUNDING_REASONING_EFFORT=high` | ~35 | 11 | ~67 min |
+| Qwen3.6 local (default, no thinking) | 25 | 19 | ~12 min |
+
+- **Cloud runs**, which already send article text to a provider, use Claude Haiku 5.5 as the judge by default, whatever `HINBOX_CLOUD_MODEL` is. It is clearly the best option, so keep an `ANTHROPIC_API_KEY` in `.env` (and `uv sync --extra anthropic`). Set `HINBOX_GROUNDING_MODEL` to use another judge.
+- **Local runs** (`--local`) are for working with no internet connection at all, for data privacy: nothing leaves the machine, so a cloud judge is never an option there (a `--local` run with a cloud `HINBOX_GROUNDING_MODEL` stops at startup). For a better local judge, add `HINBOX_GROUNDING_REASONING_EFFORT=high`: only the grounding judge thinks (extraction, merging and profiles don't), with up to `HINBOX_GROUNDING_THINKING_MAX_TOKENS` (default 16384) tokens of reasoning per call. It makes grounding about 5.6x slower, so it suits a final pass over finished data more than everyday runs.
+- Switching the judge (or its thinking setting) makes the next run check every stored report again, because each report records which judge produced it.
+
 ### Evaluating Models
 The scoreboard grades any model on your hand-labelled answer keys, so you can compare cloud, frontier and local models (or later, optimized prompts) on equal terms.
 ```bash
