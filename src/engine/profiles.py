@@ -672,13 +672,13 @@ def _split_sections(
     if not profile:
         return profile
     local = _resolve_mode(model_type, model) == GenerationMode.LOCAL
-    if reorganise_enabled():
+    if reorganise_enabled(entity_type):
         profile, report = reorganise_profile(
             profile, entity_type, entity_name, kind, domain,
             _prompt_model(model_type, model), local,
         )  # fmt: skip
         annotate(section_reorganise=report and report["status"])
-    if not split_enabled():
+    if not split_enabled(entity_type):
         return profile
     split, reports = split_profile(
         profile, entity_type, entity_name, _prompt_model(model_type, model), local

@@ -197,11 +197,18 @@ def test_split_profile_keeps_other_keys(monkeypatch):
     assert out["text"] != TEXT and profile["text"] == TEXT
 
 
-def test_split_is_off_by_default(monkeypatch):
+def test_split_is_on_for_people_only_by_default(monkeypatch):
     monkeypatch.delenv("HINBOX_SECTION_SPLIT", raising=False)
-    assert not section_split.split_enabled()
+    assert section_split.split_enabled("people")
+    assert section_split.split_enabled("person")
+    assert not section_split.split_enabled("events")
     monkeypatch.setenv("HINBOX_SECTION_SPLIT", "on")
-    assert section_split.split_enabled()
+    assert section_split.split_enabled("events")
+    monkeypatch.setenv("HINBOX_SECTION_SPLIT", "people, organizations")
+    assert section_split.split_enabled("organization")
+    assert not section_split.split_enabled("location")
+    monkeypatch.setenv("HINBOX_SECTION_SPLIT", "off")
+    assert not section_split.split_enabled("people")
 
 
 def test_update_profile_splits_after_the_edit_when_on(monkeypatch):

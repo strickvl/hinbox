@@ -36,8 +36,10 @@ it is tried once per entity; a failed call (no answer, prompt too long) is
 tried again on the next update. The section split
 (``section_split.py``) then runs as before on any section still too long.
 
-``HINBOX_SECTION_REORGANISE=on`` turns this on (off by default until a replay
-eval shows it helps).
+``HINBOX_SECTION_REORGANISE`` sets which tables this runs for: ``people`` by
+default, ``on`` for every table, ``off``, or a comma list
+(``section_split.tables_enabled()``). Over 8 Luna dev runs reorganised
+person profiles passed 87/96 against 42/48 flat; events 75/96 against 43/48.
 """
 
 import os
@@ -94,8 +96,11 @@ another heading.
 - You don't write or change any profile text; code moves the paragraphs."""
 
 
-def reorganise_enabled() -> bool:
-    return os.getenv(REORGANISE_ENV, "off").strip().lower() in ("on", "1", "true")
+def reorganise_enabled(entity_type: Optional[str] = None) -> bool:
+    """On for people by default (``section_split.tables_enabled()``)."""
+    from src.engine.section_split import tables_enabled
+
+    return tables_enabled(REORGANISE_ENV, entity_type)
 
 
 def _starter_entries(

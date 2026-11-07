@@ -40,8 +40,9 @@ beside its sibling sub-sections, so the outline never goes deeper than one
 level under a starter heading. A parent keeps at most ``MAX_SIBLINGS``
 sub-sections.
 
-``HINBOX_SECTION_SPLIT=on`` turns this on (off by default until a replay eval
-shows it helps).
+``HINBOX_SECTION_SPLIT`` sets which tables this runs for: ``people`` by
+default (on the dev eval events and organizations scored lower once
+reorganised), ``on`` for every table, ``off``, or a comma list.
 """
 
 import os
@@ -95,8 +96,28 @@ apart. Group by topic; a period in brackets is fine, as in \
 - You don't write or change any profile text; code moves the paragraphs."""
 
 
-def split_enabled() -> bool:
-    return os.getenv(SPLIT_ENV, "off").strip().lower() in ("on", "1", "true")
+DEFAULT_TABLES = "people"  # on the dev eval, events and organizations scored lower
+
+
+def tables_enabled(env: str, entity_type: Optional[str] = None) -> bool:
+    """Whether the step named by ``env`` runs for ``entity_type``: ``off``,
+    ``on`` (every table) or a comma list of tables, default ``people``.
+    With no ``entity_type``, whether it runs for any table."""
+    from src.engine.hub_profiles import _PLURAL
+
+    value = os.getenv(env, DEFAULT_TABLES).strip().lower()
+    if value in ("off", "0", "false", ""):
+        return False
+    if value in ("on", "1", "true", "all"):
+        return True
+    if entity_type is None:
+        return True
+    tables = {t.strip() for t in value.split(",")}
+    return _PLURAL.get(entity_type, entity_type) in tables
+
+
+def split_enabled(entity_type: Optional[str] = None) -> bool:
+    return tables_enabled(SPLIT_ENV, entity_type)
 
 
 def _norm(text: str) -> str:
