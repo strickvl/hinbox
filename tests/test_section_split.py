@@ -297,3 +297,12 @@ def test_profiles_with_fact_rows_are_not_split(monkeypatch):
         profile, "person", "KSM", "m", False, ask=_asker(GOOD, [])
     )
     assert out is profile and reports == []
+
+
+def test_bench_baseline_needs_no_model_whatever_the_judge(monkeypatch):
+    from scripts.section_split_bench import regrounded
+
+    monkeypatch.setenv("HINBOX_GROUNDING_MODEL", "ollama/some-local-judge")
+    out, _, _ = _split(GOOD)
+    articles = {f"a{i}": PARAS[0] for i in range(6)}
+    assert regrounded(TEXT, out, articles, "KSM") == 0
