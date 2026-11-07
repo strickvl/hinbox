@@ -12,12 +12,17 @@ profiles (hubs left out, since they are never updated) and writes:
 
 ``cases`` splits the old profile of every profile-update eval case and writes
 a copy of the eval folder with those profiles, so the profile-update eval can
-score sectioned against flat profiles on the same cases:
+score sectioned against flat profiles on the same cases.
+
+``--reorganise`` first gives every profile over ``--reorganise-chars``
+(default 8000) its kind's starter headings (``section_reorganise.py``), then
+splits what is still too long, as the pipeline does with both steps on. The
+review then lists each new section and the start of every paragraph under it:
 
     uv run python -m scripts.section_split_bench sections --entities <dir> \\
         --articles <articles.parquet> --model <m> --out <dir> [--min-chars 6000]
     uv run python -m scripts.section_split_bench cases --eval-dir <eval> \\
-        --model <m> --out <dir> [--min-chars 3000]
+        --model <m> --out <dir> [--min-chars 3000] [--reorganise]
     just eval profile-update --model <m> --split dev --eval-dir <dir>/eval
 
 Outputs hold profile text: keep them off GitHub.
@@ -81,11 +86,46 @@ def regrounded(before: str, after: str, articles: Dict[str, str], name: str) -> 
 
 
 def _split_one(
-    text: str, etype: str, name: str, ask: Any, min_chars: int
-) -> Tuple[str, List[Dict[str, Any]]]:
+    text: str, etype: str, name: str, ask: Any, min_chars: int, reorg: Any = None
+) -> Tuple[str, List[Dict[str, Any]], str]:
+    """Split ``text``; with ``reorg`` = (starter headings, asker, min chars),
+    reorganise it first. Returns the new text, the reports (the reorganise
+    one first, ``section`` "*") and the text the split started from."""
+    from src.engine.section_reorganise import reorganise_text
     from src.engine.section_split import split_long_sections
 
-    return split_long_sections(text, etype, name, ask, min_chars=min_chars)
+    first: List[Dict[str, Any]] = []
+    if reorg:
+        starter, reorg_ask, reorg_chars, *notes = reorg
+        text, report = reorganise_text(
+            text, etype, name, starter, reorg_ask, min_chars=reorg_chars,
+            notes=notes[0] if notes else None,
+        )  # fmt: skip
+        if report["status"] != "skipped":
+            first = [{"section": "*", **report}]
+    new_text, reports = split_long_sections(text, etype, name, ask, min_chars=min_chars)
+    return new_text, first + reports, text
+
+
+def _reorg(args: argparse.Namespace, etype: str, kind: Any) -> Any:
+    if not args.reorganise:
+        return None
+    from src.config_loader import get_domain_config
+    from src.engine.section_reorganise import starter_headings, starter_notes
+    from src.engine.section_split import make_asker
+
+    config = get_domain_config(args.domain).load_config()
+    local = args.model.startswith("ollama/")
+    ask = make_asker(args.model, local, step="profile.section_reorganise")
+    notes = starter_notes(config, etype, kind)
+    return starter_headings(config, etype, kind), ask, args.reorganise_chars, notes
+
+
+def _reorg_units(text: str) -> List[str]:
+    from src.engine.section_reorganise import _opening_and_body
+    from src.engine.section_split import _units
+
+    return _units(_opening_and_body(text)[1])[0]
 
 
 def _review(
@@ -97,7 +137,7 @@ def _review(
             f"### {r['section']}: {r['status']} ({r['paragraphs']} paragraphs, "
             f"{r['chars']} chars)" + (f": {r['reason']}" if r.get("reason") else "")
         )
-        for heading, numbers in r.get("subsections") or []:
+        for heading, numbers in r.get("subsections") or r.get("sections") or []:
             lines.append(f"- **{heading}**")
             for n in numbers:
                 start = " ".join(units[r["section"]][n - 1].split())[:110]
@@ -118,6 +158,10 @@ def sections(args: argparse.Namespace) -> None:
         str(r["id"]): r.get("content") or ""
         for r in pq.read_table(args.articles, columns=["id", "content"]).to_pylist()
     }
+    kinds: Dict[str, str] = {}
+    if args.kinds:  # older people tables don't store a type
+        with open(args.kinds, encoding="utf-8") as f:
+            kinds = json.load(f)
     jobs = []
     for etype, table in entities.items():
         for data in table.values():
@@ -125,31 +169,43 @@ def sections(args: argparse.Namespace) -> None:
             name = data.get("name") or data.get("title") or ""
             if is_hub(args.domain, etype, data.get("type")):
                 continue
-            if long_sections(text, args.min_chars):
-                jobs.append((etype, name, text))
+            long = args.reorganise and len(text) > args.reorganise_chars
+            if long or long_sections(text, args.min_chars):
+                kind = data.get("type") or data.get("event_type")
+                jobs.append((etype, name, text, kinds.get(f"{etype}/{name}", kind)))
     jobs.sort(key=lambda j: -len(j[2]))
     jobs = jobs[: args.limit] if args.limit else jobs
     ask = _asker(args.model)
 
     def one(job):
-        etype, name, text = job
-        units = {s["heading"]: s["units"] for s in long_sections(text, args.min_chars)}
-        new_text, reports = _split_one(text, etype, name, ask, args.min_chars)
+        etype, name, text, kind = job
+        reorg = _reorg(args, etype, kind)
+        units = {"*": _reorg_units(text)} if reorg else {}
+        new_text, reports, mid = _split_one(
+            text, etype, name, ask, args.min_chars, reorg
+        )
+        units |= {s["heading"]: s["units"] for s in long_sections(mid, args.min_chars)}
         return {
             "entity": f"{etype}/{name}",
             "chars": len(text),
             "reports": reports,
             "sentences_kept": _sentences(new_text) == _sentences(text),
-            "regrounded": regrounded(text, new_text, articles, name),
+            "texts": (text, new_text, name),
             "review": _review(name, etype, reports, units),
         }
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(one, jobs))
+    # After the pool: the fake judge patch would catch other threads' real calls
+    for r in results:
+        before, after, name = r.pop("texts")
+        r["regrounded"] = regrounded(before, after, articles, name)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "review.md"), "w") as f:
         f.write(
-            f"# Section split review ({args.model}, over {args.min_chars} chars)\n\n"
+            f"# Section split review ({args.model}, over {args.min_chars} chars"
+            + (f", reorganised over {args.reorganise_chars}" if args.reorganise else "")
+            + ")\n\n"
         )
         f.write("\n".join(r["review"] for r in results))
     status = Counter(rep["status"] for r in results for rep in r["reports"])
@@ -159,6 +215,7 @@ def sections(args: argparse.Namespace) -> None:
     summary = {
         "model": args.model,
         "min_chars": args.min_chars,
+        "reorganise_chars": args.reorganise and args.reorganise_chars,
         "profiles": len(results),
         "sections": dict(status),
         "refusals": dict(reasons),
@@ -190,12 +247,14 @@ def cases(args: argparse.Namespace) -> None:
     for row in rows:  # cases share snapshots; split each text once
         profile = row["profile"]
         texts.setdefault(
-            profile.get("text") or "", (row["entity_type"], row["entity_name"])
+            profile.get("text") or "",
+            (row["entity_type"], row["entity_name"], _case_kind(row)),
         )
 
     def one(item):
-        text, (etype, name) = item
-        new_text, reports = _split_one(text, etype, name, ask, args.min_chars)
+        text, (etype, name, kind) = item
+        reorg = _reorg(args, etype, kind)
+        new_text, reports, _ = _split_one(text, etype, name, ask, args.min_chars, reorg)
         return text, new_text, reports
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
@@ -216,6 +275,7 @@ def cases(args: argparse.Namespace) -> None:
     summary = {
         "model": args.model,
         "min_chars": args.min_chars,
+        "reorganise_chars": args.reorganise and args.reorganise_chars,
         "cases": len(rows),
         "cases_changed": changed,
         "profiles": len(texts),
@@ -229,13 +289,23 @@ def cases(args: argparse.Namespace) -> None:
     print(json.dumps(summary, indent=1))
 
 
+def _case_kind(row: Dict[str, Any]) -> str:
+    """A case's entity kind; older cases lack it, so look the name up."""
+    from src.evals.profile_replay import DEFAULT_ENTITIES
+
+    kinds = {e.name: e.kind for e in DEFAULT_ENTITIES}
+    return row.get("entity_kind") or kinds.get(row["entity_name"], "")
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     s = sub.add_parser("sections", help="split a finished run's long sections")
     s.add_argument("--entities", required=True, help="folder with people.parquet")
     s.add_argument("--articles", required=True, help="articles Parquet file")
-    s.add_argument("--domain", default="guantanamo")
+    s.add_argument(
+        "--kinds", help='JSON {"people/<name>": "detainee"} for tables without a type'
+    )
     s.add_argument("--limit", type=int, default=0, help="longest N profiles only")
     c = sub.add_parser("cases", help="split the profile-update eval cases")
     c.add_argument(
@@ -246,6 +316,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         p.add_argument("--out", required=True)
         p.add_argument("--min-chars", type=int, default=default)
         p.add_argument("--workers", type=int, default=4)
+        p.add_argument("--domain", default="guantanamo")
+        p.add_argument("--reorganise", action="store_true")
+        p.add_argument("--reorganise-chars", type=int, default=8000)
     args = parser.parse_args(argv)
     {"sections": sections, "cases": cases}[args.command](args)
 

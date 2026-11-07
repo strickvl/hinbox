@@ -613,6 +613,10 @@ class EntityMerger:
                     existing_entity = candidate_entity
 
                 existing_entity.setdefault("articles", [])
+                if self.entity_type == "people" and not existing_entity.get("type"):
+                    existing_entity["type"] = entity_dict.get(
+                        "type", ""
+                    )  # older tables
                 article_exists = any(
                     a.get("article_id") == article_id
                     for a in existing_entity["articles"]
@@ -980,6 +984,7 @@ class EntityMerger:
 
         if self.entity_type == "people":
             base_entity["name"] = entity_key
+            base_entity["type"] = entity_dict.get("type", "")  # picks starter headings
         elif self.entity_type in ("organizations", "locations"):
             base_entity["name"] = entity_key[0]
             base_entity["type"] = entity_key[1]

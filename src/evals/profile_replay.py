@@ -49,15 +49,16 @@ class ReplayEntity:
     name: str
     entity_type: str  # person / organization / location / event (singular)
     terms: Tuple[str, ...]
+    kind: str = ""  # the entity's `type` ("detainee"); picks starter headings
 
 
 # Well-covered entities across the four types. Article counts are from the
 # Miami Herald corpus (1,620 articles); "substantive" = a term appears 2+ times.
 DEFAULT_ENTITIES: Tuple[ReplayEntity, ...] = (
-    ReplayEntity("Abd al Rahim al Nashiri", "person", ("Nashiri",)),
+    ReplayEntity("Abd al Rahim al Nashiri", "person", ("Nashiri",), "detainee"),
     ReplayEntity("James Pohl", "person", ("Pohl",)),
     ReplayEntity("Vance Spath", "person", ("Spath",)),
-    ReplayEntity("Abu Zubaydah", "person", ("Abu Zubaydah", "Zubaydah")),
+    ReplayEntity("Abu Zubaydah", "person", ("Abu Zubaydah", "Zubaydah"), "detainee"),
     ReplayEntity(
         "International Committee of the Red Cross",
         "organization",
@@ -71,8 +72,8 @@ DEFAULT_ENTITIES: Tuple[ReplayEntity, ...] = (
     # Added 2026-11-01 so dev and test hold 6 entities each, not 2: with 28
     # cases a split, one case was 3.5 points and no prompt could be told apart
     ReplayEntity("Mark Martins", "person", ("Mark Martins", "Gen. Martins", "Martins")),
-    ReplayEntity("Omar Khadr", "person", ("Khadr",)),
-    ReplayEntity("Ramzi bin al Shibh", "person", ("bin al Shibh",)),
+    ReplayEntity("Omar Khadr", "person", ("Khadr",), "detainee"),
+    ReplayEntity("Ramzi bin al Shibh", "person", ("bin al Shibh",), "detainee"),
     ReplayEntity(
         "American Civil Liberties Union",
         "organization",
@@ -90,14 +91,18 @@ DEFAULT_ENTITIES: Tuple[ReplayEntity, ...] = (
 
 
 def parse_entity_spec(spec: str) -> ReplayEntity:
-    """Parse ``"Name|type|term1,term2"`` from the command line."""
+    """Parse ``"Name|type|term1,term2[|kind]"`` from the command line."""
     parts = spec.split("|")
-    if len(parts) != 3:
+    if len(parts) not in (3, 4):
         raise argparse.ArgumentTypeError(
-            f"--entity must look like 'Name|type|term1,term2', got {spec!r}"
+            f"--entity must look like 'Name|type|term1,term2[|kind]', got {spec!r}"
         )
-    name, entity_type, terms = (p.strip() for p in parts)
-    return ReplayEntity(name, entity_type, tuple(t.strip() for t in terms.split(",")))
+    name, entity_type, terms, kind = [p.strip() for p in parts] + [""] * (
+        4 - len(parts)
+    )
+    return ReplayEntity(
+        name, entity_type, tuple(t.strip() for t in terms.split(",")), kind
+    )
 
 
 def count_mentions(text: str, terms: Tuple[str, ...]) -> int:
@@ -241,6 +246,7 @@ def replay_entity(
                 text,
                 article["id"],
                 article_dates=dates,
+                kind=entity.kind or None,
                 **kwargs,
             )
         _write_json(

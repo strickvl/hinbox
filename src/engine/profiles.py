@@ -657,14 +657,27 @@ def _split_sections(
     entity_name: str,
     model_type: str,
     model: Optional[str],
+    kind: Optional[str] = None,
+    domain: str = "guantanamo",
 ) -> Dict:
-    """Split over-long sections into sub-sections when ``HINBOX_SECTION_SPLIT``
-    is on (``section_split.py``); the update's model answers."""
+    """Give a long profile its kind's starter headings once when
+    ``HINBOX_SECTION_REORGANISE`` is on (``section_reorganise.py``), then split
+    over-long sections into sub-sections when ``HINBOX_SECTION_SPLIT`` is on
+    (``section_split.py``); the update's model answers both."""
+    from src.engine.section_reorganise import reorganise_enabled, reorganise_profile
     from src.engine.section_split import split_enabled, split_profile
 
-    if not split_enabled() or not profile:
+    if not profile:
         return profile
     local = _resolve_mode(model_type, model) == GenerationMode.LOCAL
+    if reorganise_enabled():
+        profile, report = reorganise_profile(
+            profile, entity_type, entity_name, kind, domain,
+            _prompt_model(model_type, model), local,
+        )  # fmt: skip
+        annotate(section_reorganise=report and report["status"])
+    if not split_enabled():
+        return profile
     split, reports = split_profile(
         profile, entity_type, entity_name, _prompt_model(model_type, model), local
     )
@@ -685,6 +698,7 @@ def update_profile(
     model: Optional[str] = None,
     approach: Optional[str] = None,
     article_dates: Optional[Dict[str, Any]] = None,
+    kind: Optional[str] = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """
     Update profile and add version if versioning is enabled.
@@ -693,7 +707,8 @@ def update_profile(
     (default: ``PROFILE_UPDATE_APPROACH``). ``article_dates`` maps article
     ids (this one and the profile's sources) to published dates; the edit
     approach uses them to write a changed count or trial date as a later
-    update rather than a dispute.
+    update rather than a dispute. ``kind`` is the entity's ``type``
+    ("detainee"), which picks its starter headings.
     Returns (updated_profile, versioned_profile, improvement_history); the
     edit approach has no reflection rounds, so its history is empty.
     """
@@ -720,8 +735,12 @@ def update_profile(
         model,
         **extra,
     )
+    # The rewrite and fact-list updaters build a new dict: keep the marker
+    # that stops a second reorganise
+    if existing_profile.get("reorganised") and updated_profile:
+        updated_profile.setdefault("reorganised", existing_profile["reorganised"])
     updated_profile = _split_sections(
-        updated_profile, entity_type, entity_name, model_type, model
+        updated_profile, entity_type, entity_name, model_type, model, kind, domain
     )
 
     updated_profile = _apply_profile_qc(updated_profile, entity_name)

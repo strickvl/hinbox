@@ -119,6 +119,45 @@ profiles:
     locations: [country, region]
     organizations: [media]
 
+  # Headings a long profile is reorganised under, once, when it passes
+  # HINBOX_SECTION_REORGANISE_CHARS (8000) with HINBOX_SECTION_REORGANISE=on
+  # (src/engine/section_reorganise.py). Keys are entity tables, then `type`
+  # values (`event_type` for events) or `default`; each heading says what it
+  # is for, which the model is shown. The model may add up to 2 headings for topics none
+  # of these fit; code refuses one that shares a word with another heading.
+  starter_headings:
+    people:
+      detainee:
+        - Background: origin, life and activities before capture
+        - Capture and CIA custody: arrest, rendition, CIA black sites and interrogation
+        - Detention at Guantánamo: transfer to Guantánamo, camps, daily life and conditions there
+        - Military commission or legal case: charges, hearings, rulings, plea talks, lawyers and habeas cases
+        - Health and treatment: physical and mental health, medical care, hunger strikes, effects of torture
+        - Release or transfer: review board decisions, release, repatriation and resettlement
+      default:
+        - Background: who they are and their career before the events covered
+        - Role: the posts they hold or held and what they are responsible for
+        - Cases and decisions: rulings, orders, actions and decisions they took, cases they worked on
+        - Public statements: what they themselves said in public, in testimony or in interviews
+    organizations:
+      default:
+        - Overview: what the organization is, its structure and its leaders
+        - Role at Guantánamo: its part in running, guarding, staffing or overseeing detention
+        - Actions and decisions: what it did or decided, such as orders, programs, policies and budgets
+        - Legal challenges: lawsuits, court rulings and legal cases involving it
+    events:
+      default:
+        - What happened: the event itself, when and where
+        - People involved: who took part and what each did
+        - Reactions: what officials, lawyers, groups and others said about it
+        - Aftermath: what followed, such as rulings, inquiries and changes
+    locations:
+      default:
+        - Overview: what and where the place is, and its history
+        - Operations and conditions: how it is run and what it is like there (staff, detainee numbers, facilities)
+        - Notable events: things that happened there, such as incidents, visits, protests and disasters
+        - Legal and policy decisions: court rulings, laws and government decisions about the place
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction

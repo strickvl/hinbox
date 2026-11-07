@@ -306,3 +306,12 @@ def test_bench_baseline_needs_no_model_whatever_the_judge(monkeypatch):
     out, _, _ = _split(GOOD)
     articles = {f"a{i}": PARAS[0] for i in range(6)}
     assert regrounded(TEXT, out, articles, "KSM") == 0
+
+
+def test_a_section_made_by_a_split_is_not_split_again():
+    nested = "### Legal proceedings\n\n#### Pretrial hearings\n\n" + "\n\n".join(PARAS)
+    assert long_sections(nested, min_chars=200) == []
+    top = "### Pretrial hearings\n\n" + "\n\n".join(PARAS)
+    assert [s["heading"] for s in long_sections(top, min_chars=200)] == [
+        "Pretrial hearings"
+    ]

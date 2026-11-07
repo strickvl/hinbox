@@ -117,6 +117,7 @@ def update_profile_stub(
     domain="guantanamo",
     model=None,
     article_dates=None,
+    kind=None,
 ):
     updated_profile = {
         "text": f"Updated profile for {entity_name} from {new_article_id}",

@@ -164,8 +164,8 @@ def _units(own: str) -> Tuple[List[str], str]:
 
 
 def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Sections whose own text (up to the next heading of any level) is long
-    enough to split: ``{"line", "level", "heading", "start", "end", "units"}``,
+    """Top-level sections (no higher heading above them) whose own text (up to
+    the next heading of any level) is long enough to split: ``{"line", "level", "heading", "start", "end", "units"}``,
     with ``start``/``end`` the line range of the own text."""
     limit = SPLIT_CHARS if min_chars is None else min_chars
     lines = text.splitlines()
@@ -174,7 +174,11 @@ def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, 
     for k, (i, level, title) in enumerate(heads):
         end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
         own = "\n".join(lines[i + 1 : end]).strip()
-        if level >= MAX_LEVEL or len(own) <= limit:
+        # A section under a higher heading is never split: in a replay of
+        # al Nashiri's articles a sub-section the split had made was split
+        # again, down to "#####" leaves of 292 characters
+        nested = any(lv < level for _, lv, _ in heads[:k])
+        if nested or level >= MAX_LEVEL or len(own) <= limit:
             continue
         units, tail = _units(own)
         if len(units) >= MIN_PARAGRAPHS:
@@ -318,7 +322,7 @@ def split_long_sections(
     return new_text, reports
 
 
-def make_asker(model: str, local: bool) -> Ask:
+def make_asker(model: str, local: bool, step: str = "profile.section_split") -> Ask:
     """The split call on ``model``, through the same clients as profile updates."""
     from src.utils.llm import cloud_generation, local_generation
     from src.utils.step_timing import timed_step
@@ -326,7 +330,7 @@ def make_asker(model: str, local: bool) -> Ask:
     generate = local_generation if local else cloud_generation
 
     def ask(msgs: List[Dict[str, str]]) -> SectionSplit:
-        with timed_step("profile.section_split"):
+        with timed_step(step):
             reply = generate(
                 messages=msgs, response_model=SectionSplit, model=model, max_tokens=2048
             )
