@@ -302,15 +302,17 @@ def reorganise_text(
     if len(text) <= limit or not starter:
         return text, {"status": "skipped", "reason": "short or no starter headings"}
     opening, body = _opening_and_body(text)
-    units, tail, spans = unit_spans(body, piece_chars())
-    paragraphs = len({p for span in spans for p in span})
+    sentences = pieces_mode() == "sentences"
+    units, tail, spans = unit_spans(body, piece_chars(), by_line=sentences)
+    # Whether to reorganise at all is decided as before, on whole paragraphs
+    paragraphs = len(_units(body)[0])
     report: Dict[str, Any] = {
         "chars": len(text), "paragraphs": paragraphs, "pieces": len(units),
         "pieces_mode": pieces_mode(),
     }  # fmt: skip
     if paragraphs < MIN_PARAGRAPHS:
         return text, {**report, "status": "skipped", "reason": "few paragraphs"}
-    shown = spans if pieces_mode() == "sentences" else None
+    shown = spans if sentences else None
     try:
         reply = ask(messages(units, starter, entity_type, entity_name, notes, shown))
     except Exception as e:  # keep the profile as it is; try again next update

@@ -173,14 +173,37 @@ def _units(own: str, max_chars: int = PARAGRAPH_CHARS) -> Tuple[List[str], str]:
     return units, tail
 
 
+_LINE_END = re.compile(r"(?:[.!?][\"”’)]*|\^\[[^\]]*\][.,;:!?\"”’)]*)$")
+
+
+def _paragraphs(own: str, by_line: bool) -> List[str]:
+    """Blank-line blocks, or with ``by_line`` each line that ends a sentence
+    (with the lines before it that don't): model-written profiles often put a
+    single newline between paragraphs, so a whole section is one block."""
+    out: List[str] = []
+    for block in _blocks(own):
+        if not by_line:
+            out.append("\n".join(block))
+            continue
+        group: List[str] = []
+        for line in block:
+            group.append(line)
+            if _LINE_END.search(line.strip()):
+                out.append("\n".join(group))
+                group = []
+        if group:
+            out.append("\n".join(group))
+    return out
+
+
 def unit_spans(
-    own: str, max_chars: int = PARAGRAPH_CHARS
+    own: str, max_chars: int = PARAGRAPH_CHARS, by_line: bool = False
 ) -> Tuple[List[str], str, List[Tuple[int, int]]]:
     """``_units()`` plus, per piece, the first and last paragraph it comes
-    from, so code can put two pieces of one paragraph back together."""
+    from, so code can put two pieces of one paragraph back together
+    (``by_line``: a paragraph is a line, see ``_paragraphs()``)."""
     pieces: List[Tuple[int, str]] = []  # (paragraph number, text)
-    for index, block in enumerate(_blocks(own)):
-        text = "\n".join(block)
+    for index, text in enumerate(_paragraphs(own, by_line)):
         if len(text) <= max_chars:
             pieces.append((index, text))
             continue

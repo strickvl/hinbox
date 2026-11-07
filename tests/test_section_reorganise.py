@@ -409,3 +409,31 @@ def test_a_heading_marked_not_in_the_profile_yet_still_names_the_starter():
         "### Health and treatment: physical and mental health",
     ):
         assert starter_anchor(anchor, STARTER) == "Health and treatment"
+
+
+def test_single_newline_paragraphs_are_paragraphs_too(monkeypatch):
+    # r8: model-written profiles put one newline between paragraphs, so each
+    # section was one blank-line block; the reorganise must still see lines
+    monkeypatch.setattr(section_reorganise, "MIN_PARAGRAPHS", 2)
+    text = (
+        f"{OPENING}\n\n### Background\n" + "\n".join(MIXED_PARAS[:3])
+        + "\n\n### Legal Proceedings\n" + "\n".join(MIXED_PARAS[3:]) + "\n"
+    )  # fmt: skip
+    out, report, seen = _run(MIXED_REPLY, text)
+    assert report["status"] == "done" and report["pieces"] == 9
+    assert report["paragraphs_divided"] == 2
+    assert "He was charged in 2008.^[a2] He was arraigned in June 2008.^[a2]" in out
+    assert "\n\n[3] He grew up in Kuwait." in seen[0][1]["content"]
+    assert _sentences(out) == _sentences(text)
+
+
+def test_a_sentence_wrapped_over_two_lines_stays_one_piece():
+    from src.engine.section_split import unit_spans
+
+    own = "He was captured in\nRawalpindi in 2003.^[a1]\nHe was moved.^[a2]"
+    units, tail, spans = unit_spans(own, 0, by_line=True)
+    assert units == [
+        "He was captured in\nRawalpindi in 2003.^[a1]",
+        "He was moved.^[a2]",
+    ]
+    assert spans == [(0, 0), (1, 1)] and tail == ""
