@@ -41,6 +41,7 @@ from src.utils.embeddings.similarity import (
 )
 from src.utils.extraction import configure_extraction_sidecar_cache
 from src.utils.file_ops import write_entities_table
+from src.utils.letters_page import split_letters
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
 from src.utils.run_summary import log_processing_summary
@@ -512,7 +513,14 @@ def extract_single_article_only(
                 **{**empty.__dict__, "skip_reason": "not_relevant_cached"}
             )
 
-        rel_outcome = processor.check_relevance(article_info["content"], article_id)
+        # A letters-to-the-editor page is checked letter by letter, and only
+        # the relevant letters are extracted, so signers and names from
+        # off-topic letters don't become entities
+        letters = split_letters(article_info["content"])
+        if letters:
+            rel_outcome = processor.check_letters_relevance(letters, article_id)
+        else:
+            rel_outcome = processor.check_relevance(article_info["content"], article_id)
         processing_metadata.setdefault("phase_outcomes", {})
         processing_metadata["phase_outcomes"]["relevance"] = (
             rel_outcome.to_metadata_dict()
@@ -539,6 +547,9 @@ def extract_single_article_only(
             return ArticleExtractionResult(
                 **{**empty.__dict__, "skip_reason": "not_relevant"}
             )
+        if letters:
+            article_info["content"] = rel_outcome.value
+            processor.article_texts[article_id] = rel_outcome.value
 
     # Extract all entity types (potentially parallel within this article)
     with timed_step("extraction"):
