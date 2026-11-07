@@ -337,12 +337,18 @@ def test_rewrite_update_keeps_the_reorganised_marker(monkeypatch):
         return {"text": TEXT, "sources": ["a0", "a1", "a2", "a3", "a4"]}, []
 
     monkeypatch.setattr(profiles, "_update_profile_internal", rewrite)
-    existing = {"text": TEXT, "sources": ["a0"], "reorganised": "refused"}
+    existing = {
+        "text": TEXT, "sources": ["a0"], "reorganised": "refused",
+        "reorganise_refused_chars": len(TEXT), "split_refused_json": '{"Legal": 7000}',
+    }  # fmt: skip
     updated, _, _ = profiles.update_profile(
         "people", "Khalid Sheik Mohammed", existing, VersionedProfile(),
         "New article.", "a5", approach="rewrite",
     )  # fmt: skip
     assert updated["reorganised"] == "refused"
+    # The sizes the refused steps wait on survive too (else they're re-asked)
+    assert updated["reorganise_refused_chars"] == len(TEXT)
+    assert updated["split_refused_json"] == '{"Legal": 7000}'
 
 
 # KSM's replay: his capture and waterboarding sat inside paragraphs that
