@@ -4,7 +4,8 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from src.constants import CLOUD_MODEL, OLLAMA_MODEL
+from src.constants import CLOUD_MODEL, MATCH_PROFILE_CHARS, OLLAMA_MODEL
+from src.engine.profile_view import profile_view
 from src.logging_config import get_logger, log
 from src.utils.cache_utils import LRUCache, sha256_text
 from src.utils.llm import cloud_generation, local_generation, text_generation
@@ -290,8 +291,20 @@ def _check_match(
     entity_type: str,
     model: str,
 ) -> MatchCheckResult:
-    """Ask the sectioned prompt; fall back to the structured prompt if unparseable."""
+    """Ask the sectioned prompt; fall back to the structured prompt if unparseable.
+
+    A long existing profile is cut to ``MATCH_PROFILE_CHARS`` around what the
+    new evidence is about (``profile_view()``).
+    """
     annotate(entity_type=entity_type, new_name=new_name, existing_name=existing_name)
+    full_chars = len(existing_profile_text)
+    existing_profile_text = profile_view(
+        existing_profile_text, new_profile_text, MATCH_PROFILE_CHARS
+    )
+    if len(existing_profile_text) != full_chars:
+        annotate(
+            profile_chars=full_chars, profile_chars_shown=len(existing_profile_text)
+        )
     if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
         memo_key = _match_memo_key(
             backend=backend,

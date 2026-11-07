@@ -13,6 +13,7 @@ This document helps contributors work effectively in this repository.
     - `match_checker.py` — LLM-based match verification
     - `merge_dispute_agent.py` — second-stage arbitration for gray-band entity matches
     - `profiles.py` — `VersionedProfile` history management
+    - `profile_view.py` — the shortened copy of a long (hub) profile that the edit updater (`HINBOX_PROFILE_VIEW_CHARS`, default 16000) and the match check (`HINBOX_MATCH_PROFILE_CHARS`, default 8000) send: opening, headings (up to a third of the budget), and the passages closest to the article; edits still apply to the full stored text
     - `profile_stubs.py` — stub profiles (the article's own cited sentences, no model call) for entities seen in one article; the full profile is written when a second article merges in (`HINBOX_PROFILE_STUBS=off` turns stubs off)
     - `relevance.py` — domain-specific relevance filtering
   - `process_and_extract.py` — CLI pipeline entry point; parallel producer/consumer with `ThreadPoolExecutor` workers and a single-threaded merge actor
