@@ -181,21 +181,33 @@ def _shift_heading(line: str, shift: int) -> str:
     return "#" * min(6, max(1, len(match.group(1)) + shift)) + match.group(2)
 
 
+_HEADING_LINE = re.compile(r"^#{1,6}[ \t]+\S")
+
+
 def _unknown_heading(
     text: str, addition: str, starter: Optional[List[str]], report: Dict[str, Any]
 ) -> str:
-    """``addition`` opening with a heading the profile lacks: in a profile with
-    starter headings the heading line is dropped (the outline is the starter
-    list), else it is kept but never above the profile's top level. A local
-    model's "## Legal Proceedings" on END, in a "###" profile, became the
-    only top-level heading that code saw."""
-    first, _, rest = addition.partition("\n")
+    """``addition`` with heading lines the profile lacks: in a profile with
+    starter headings every heading line is dropped and its text kept (the
+    outline is the starter list), else they are kept but the highest is put
+    no higher than the profile's top level, the rest shifted with it so a
+    sub-heading stays under its parent. A local model's "## Legal
+    Proceedings" on END, in a "###" profile, became the only top-level
+    heading that code saw."""
+    lines = addition.splitlines()
+    heads = [i for i, line in enumerate(lines) if _HEADING_LINE.match(line.strip())]
+    if not heads:
+        return addition
     if starter:
-        report.setdefault("dropped_headings", []).append(first.strip())
-        return rest.strip()
+        report.setdefault("dropped_headings", []).extend(
+            lines[i].strip() for i in heads
+        )
+        kept = [line for i, line in enumerate(lines) if i not in heads]
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
     levels = [len(m.group(1)) for m in re.finditer(r"^(#{1,6})[ \t]", text, re.M)]
-    shift = max(0, min(levels) - (len(first) - len(first.lstrip("#")))) if levels else 0
-    return _shift_heading(first, shift) + ("\n" + rest if rest else "")
+    top = min(len(lines[i].strip()) - len(lines[i].strip().lstrip("#")) for i in heads)
+    shift = max(0, min(levels) - top) if levels else 0
+    return "\n".join(_shift_heading(line, shift) for line in lines)
 
 
 def _anchor_heading(text: str, anchor: str) -> Optional[str]:
@@ -267,7 +279,7 @@ def apply_edits(
             addition, known = _known_headings(text, addition)
             if known and (anchor in ("", END) or _find(text, anchor) is None):
                 anchor = known
-            if addition.lstrip().startswith("#"):
+            if any(_HEADING_LINE.match(x.strip()) for x in addition.splitlines()):
                 # Even a missing starter heading written into the text is
                 # dropped: in a local replay "## Release or transfer" opened a
                 # fact about KSM's trial venue, the heading was made at the

@@ -213,3 +213,17 @@ def test_an_end_add_opening_with_an_unknown_heading():
     assert report["dropped_headings"] == ["## Legal Proceedings"]
     flat, _ = apply_edits(TEXT, [add])
     assert "\n### Legal Proceedings\n" in flat and "\n## Legal" not in flat
+
+
+def test_every_new_heading_line_in_an_add_is_dropped_or_shifted_together():
+    # Codex review: only the first heading line was dropped or shifted, so
+    # "### Also unwanted" became a top-level section of a "###" profile,
+    # and a flat add's child heading became its parent's sibling
+    text = "## Unwanted\n### Also unwanted\n" + NEW
+    add = ProfileEdit(op="add", anchor="END", text=text)
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert "Unwanted" not in out and "unwanted" not in out and NEW in out
+    assert report["dropped_headings"] == ["## Unwanted", "### Also unwanted"]
+    child = "## New topic\nParent fact.^[a2]\n### Detail\n" + NEW
+    flat, _ = apply_edits(TEXT, [ProfileEdit(op="add", anchor="END", text=child)])
+    assert "\n### New topic\nParent fact.^[a2]\n#### Detail\n" in flat
