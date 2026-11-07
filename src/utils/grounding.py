@@ -343,9 +343,8 @@ def _settled(
     text = claim["claim"][:max_claim_chars]
     if text in known:
         return known[text].model_copy(update={"citation": claim["citation"]})
-    if _names_entity(claim["claim"], entity_name) and _is_quote(
-        claim["claim"], article
-    ):
+    body = _HEADINGS.sub("", claim["claim"])
+    if _names_entity(body, entity_name) and _is_quote(body, article):
         why = "Quoted word for word from the article"
         return _verification(aid, claim, SupportLevel.SUPPORTED, why, max_claim_chars)
     return None
@@ -355,6 +354,16 @@ _SPACE = re.compile(r"\s+")
 _QUOTE_MIN_CHARS = 40
 _EDGE = " .;:,!?\"'“”‘’()"
 _SENTENCE_START = re.compile(r"(^|[.!?][\"'”’)]*\s|\n\s*)$")
+_OPENING_QUOTES = "\"'“‘"
+# Where the claim stops, the article's sentence must stop too: closing
+# punctuation with a full stop, ! or ? in it, then a space, a line break or
+# the end. '"Khadr was released in 2012" is false, officials said.' does not
+# support "Khadr was released in 2012." The comma in "Khadr was released,
+# officials said" doesn't end the sentence either.
+_SENTENCE_END = re.compile(r"[\"'”’)]*(?:[.!?][\"'”’)]*(?:\s|$)|\s*\n|$)")
+# Markdown heading lines at the start of a claim: the first sentence under a
+# heading is cut from the profile with the heading on it ("### Mentions\n\n…")
+_HEADINGS = re.compile(r"^(?:\s*#+[^\n]*\n)+\s*")
 
 
 def _squash(text: str) -> str:
@@ -386,14 +395,16 @@ def _is_quote(claim: str, article: str) -> bool:
     text = _squash(claim)
     if len(text) < _QUOTE_MIN_CHARS:
         return False
-    start = article.find(text)
-    while start != -1:
-        end = start + len(text)
-        if _SENTENCE_START.search(article[:start]) and (
-            end == len(article) or article[end] in _EDGE + "\n"
-        ):
+    # A space in the claim matches any run of spaces or newlines, so a
+    # sentence the article wraps over two lines still counts
+    pattern = re.compile(r"\s+".join(re.escape(w) for w in text.split(" ")))
+    for found in pattern.finditer(article):
+        start, end = found.span()
+        # An opening quote mark before the claim is part of the sentence:
+        # '"We will appeal," he said.' starts at the quote mark
+        before = article[:start].rstrip(_OPENING_QUOTES)
+        if _SENTENCE_START.search(before) and _SENTENCE_END.match(article, end):
             return True
-        start = article.find(text, start + 1)
     return False
 
 
