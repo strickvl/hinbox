@@ -140,7 +140,8 @@ def audit_history(texts: List[str]) -> Dict[str, Any]:
 def audit_citations(
     row: Dict[str, Any], corpus_ids: Optional[Set[str]]
 ) -> Dict[str, Any]:
-    text = (row.get("profile") or {}).get("text") or ""
+    profile = row.get("profile") or {}
+    text = profile.get("text") or ""
     linked = {a.get("article_id") for a in row.get("articles") or []}
     ids = cited(text)
     bad = [i for i in ids if i not in linked]
@@ -149,7 +150,10 @@ def audit_citations(
         "not_linked": bad,
         "malformed": [i for i in bad if not UUID.match(i)],
         "in_corpus": [i for i in bad if corpus_ids and i in corpus_ids],
-        "never_cited": sorted(linked - set(ids)),
+        # A frozen hub's later articles are linked on purpose, not forgotten
+        "never_cited": sorted(
+            linked - set(ids) - set(profile.get("linked_only") or [])
+        ),
     }
 
 

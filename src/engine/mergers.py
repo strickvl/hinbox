@@ -660,6 +660,7 @@ class EntityMerger:
                             article_dates=article_dates(
                                 existing_entity, article_id, article_published_date
                             ),
+                            entity=existing_entity,
                         )
                     )
                     # update_profile hands back the old profile when the model

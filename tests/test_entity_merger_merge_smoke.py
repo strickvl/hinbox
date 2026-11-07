@@ -10,7 +10,9 @@ These tests:
 
 from contextlib import ExitStack
 from typing import Any, Dict, List
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.engine import EntityMerger, MatchCheckResult, VersionedProfile
 
@@ -462,3 +464,62 @@ def test_long_profile_is_embedded_shortened_but_stored_whole(monkeypatch):
     embedded = manager.batches[-1][0]  # the last batch is the profile embedding
     assert len(embedded) <= 500 < len(long_text)
     assert embedded.startswith("Alice Smith is a lawyer.^[art-001]")
+
+
+# ── Frozen hubs (src/engine/hub_profiles.py) ──
+
+HUB_ART1 = "The United States held 166 men at Guantanamo in 2013, officials said."
+HUB_ART2 = "Lawyers met on Monday. The United States moved two men to Oman."
+
+
+def _merge_hub(entities: Dict, aid: str, content: str, kind: str, create, update):
+    match = MatchCheckResult(is_match=True, confidence=0.95, reason="same")
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "src.engine.mergers.get_embedding_manager",
+                return_value=StubEmbeddingManager(vec=[0.42, 0.58, 0.0]),
+            )
+        )
+        stack.enter_context(
+            patch("src.engine.mergers.cloud_model_check_match", return_value=match)
+        )
+        stack.enter_context(patch("src.engine.mergers.create_profile", create))
+        stack.enter_context(patch("src.engine.profile_stubs.create_profile", create))
+        stack.enter_context(patch("src.engine.profile_stubs.update_profile", update))
+        return EntityMerger("locations").merge_entities(
+            [{"name": "United States", "type": kind}],
+            entities,
+            article_id=aid,
+            article_title="T",
+            article_url="u",
+            article_published_date="2025-02-01",
+            article_content=content,
+            extraction_timestamp="2025-02-02T00:00:00Z",
+            model_type="gemini",
+            similarity_threshold=0.5,
+            domain="guantanamo",
+            article_texts={"a1": HUB_ART1, "a2": HUB_ART2},
+        )
+
+
+@pytest.mark.parametrize("kind, hub", [("country", True), ("city", False)])
+def test_second_article_for_a_hub_is_linked_without_model_calls(monkeypatch, kind, hub):
+    monkeypatch.delenv("HINBOX_PROFILE_STUBS", raising=False)
+    monkeypatch.delenv("HINBOX_HUB_LINK_ONLY", raising=False)
+    create = MagicMock(side_effect=create_profile_stub)
+    update = MagicMock(side_effect=update_profile_stub)
+    entities = make_empty_entities()
+    _merge_hub(entities, "a1", HUB_ART1, kind, create, update)
+    first_text = entities["locations"][("United States", kind)]["profile"]["text"]
+    stats = _merge_hub(entities, "a2", HUB_ART2, kind, create, update)
+    us = entities["locations"][("United States", kind)]
+    assert stats.merged == 1 and stats.failed_profiles == 0
+    assert [a["article_id"] for a in us["articles"]] == ["a1", "a2"]
+    assert us["profile"]["sources"] == ["a1", "a2"]
+    if hub:
+        assert create.call_count == 0 and update.call_count == 0
+        assert us["profile"]["text"] == first_text
+        assert us["profile"]["linked_only"] == ["a2"]
+    else:
+        assert create.call_count == 1 and update.call_count == 1

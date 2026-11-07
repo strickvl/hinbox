@@ -340,11 +340,21 @@ def update_or_fill(
     article_texts: Optional[Dict[str, str]] = None,
     model: Optional[str] = None,
     article_dates: Optional[Dict[str, Any]] = None,
+    entity: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict, VersionedProfile, list]:
     """``update_profile()``, writing the real profile first if this is a stub.
 
     ``entity_type`` is singular ("person"), as ``update_profile`` takes it.
+    When ``entity`` (the stored entity dict) is of a kind listed under
+    ``profiles.link_only`` in the domain config (countries, regions), no
+    model call is made and the text is left as it is: the article is only
+    linked (``hub_profiles.py``), stub or not.
     """
+    from src.engine.hub_profiles import is_hub, link_article
+
+    if entity is not None and is_hub(domain, entity_type, entity.get("type")):
+        log(f"Linked article to hub '{entity_name}' without a profile update")
+        return link_article(profile, article_id), versioned_profile, []
     history: list = []
     if is_stub(profile):
         log(f"Writing full profile for '{entity_name}' (second article)", level="info")
