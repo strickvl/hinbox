@@ -613,6 +613,10 @@ class EntityMerger:
                     existing_entity = candidate_entity
 
                 existing_entity.setdefault("articles", [])
+                if self.entity_type == "people" and not existing_entity.get("type"):
+                    existing_entity["type"] = entity_dict.get(
+                        "type", ""
+                    )  # older tables
                 article_exists = any(
                     a.get("article_id") == article_id
                     for a in existing_entity["articles"]

@@ -339,7 +339,7 @@ def _existing_alice():
     }
 
 
-def _merge(entities, **patches):
+def _merge(entities, incoming=None, **patches):
     match = MatchCheckResult(is_match=True, confidence=0.95, reason="same")
     manager = StubEmbeddingManager(vec=[0.42, 0.58, 0.0])
     with ExitStack() as stack:
@@ -353,7 +353,7 @@ def _merge(entities, **patches):
             module = "profile_stubs" if name == "update_profile" else "mergers"
             stack.enter_context(patch(f"src.engine.{module}.{name}", **kwargs))
         return EntityMerger("people").merge_entities(
-            [{"name": "Alice Smith"}],
+            incoming or [{"name": "Alice Smith"}],
             entities,
             article_id="art-002",
             article_title="T",
@@ -392,6 +392,28 @@ class TestFailedProfileCalls:
 
         assert entities["people"] == {}
         assert stats.failed_profiles == 1
+
+
+def test_merge_backfills_type_of_an_older_typeless_person():
+    """People tables written before people stored `type` get it on the next merge,
+    so the update can pick the detainee starter headings."""
+    entities = make_empty_entities()
+    entities["people"]["Alice Smith"] = _existing_alice()
+    seen = {}
+
+    def update(_t, _n, existing, versioned, *args, **kwargs):
+        seen["kind"] = kwargs.get("kind")
+        versioned.add_version(existing, trigger_article_id="art-002")
+        return (
+            {**existing, "text": "Alice Smith is a detainee.^[art-002]"},
+            versioned,
+            [],
+        )
+
+    _merge(entities, [{"name": "Alice Smith", "type": "detainee"}],
+           update_profile={"side_effect": update})  # fmt: skip
+    assert entities["people"]["Alice Smith"]["type"] == "detainee"
+    assert seen["kind"] == "detainee"
 
 
 class TestMatchCheckResultSchema:

@@ -735,6 +735,10 @@ def update_profile(
         model,
         **extra,
     )
+    # The rewrite and fact-list updaters build a new dict: keep the marker
+    # that stops a second reorganise
+    if existing_profile.get("reorganised") and updated_profile:
+        updated_profile.setdefault("reorganised", existing_profile["reorganised"])
     updated_profile = _split_sections(
         updated_profile, entity_type, entity_name, model_type, model, kind, domain
     )

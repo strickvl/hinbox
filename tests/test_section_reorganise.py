@@ -318,3 +318,20 @@ def test_a_heading_copied_back_with_its_note_means_the_starter():
     )
     out, report, _ = _run(reply)
     assert report["status"] == "done" and "### Background\n" in out
+
+
+def test_rewrite_update_keeps_the_reorganised_marker(monkeypatch):
+    """The rewrite updater returns a new dict; the marker must survive it."""
+    from src.engine import profiles
+    from src.engine.profiles import VersionedProfile
+
+    def rewrite(*args, **kwargs):
+        return {"text": TEXT, "sources": ["a0", "a1", "a2", "a3", "a4"]}, []
+
+    monkeypatch.setattr(profiles, "_update_profile_internal", rewrite)
+    existing = {"text": TEXT, "sources": ["a0"], "reorganised": "refused"}
+    updated, _, _ = profiles.update_profile(
+        "people", "Khalid Sheik Mohammed", existing, VersionedProfile(),
+        "New article.", "a5", approach="rewrite",
+    )  # fmt: skip
+    assert updated["reorganised"] == "refused"
