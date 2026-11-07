@@ -31,6 +31,16 @@ from src.engine.merge_dispute_agent import (
 # ── Test helpers (mirrors test_entity_merger_merge_smoke.py) ──
 
 
+def _first_only(candidate):
+    """A ``next_candidate`` stand-in: ``candidate`` first, then nothing left."""
+
+    def pick(*args, **kwargs):
+        rejected = args[6] if len(args) > 6 else kwargs.get("rejected", [])
+        return (None, None) if rejected else candidate
+
+    return pick
+
+
 class StubEmbeddingResult:
     def __init__(
         self,
@@ -228,10 +238,9 @@ class TestDisputeAgentRouting:
                 side_effect=always_return_match_result,
             ),
             patch("src.engine.mergers.run_merge_dispute_agent", dispute_mock),
-            patch.object(
-                merger,
-                "find_similar_entity",
-                return_value=("Alice Smith", similarity_score),
+            patch(
+                "src.engine.mergers.next_candidate",
+                side_effect=_first_only(("Alice Smith", similarity_score)),
             ),
         ):
             merger.merge_entities(
@@ -422,7 +431,9 @@ class TestRejectedMatchCreatesEntity:
                 "src.engine.mergers.cloud_model_check_match",
                 return_value=match_result,
             ),
-            patch.object(merger, "find_similar_entity", return_value=candidate),
+            patch(
+                "src.engine.mergers.next_candidate", side_effect=_first_only(candidate)
+            ),
         ]
         if dispute_patch is not None:
             patches.append(dispute_patch)
