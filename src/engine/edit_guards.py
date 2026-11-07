@@ -341,6 +341,23 @@ def later_update(
     return as_update(verb, side, dated, article_date, own_citations(sentence, olds))
 
 
+def paragraph_citations(text: str) -> Dict[str, str]:
+    """Each uncited sentence with the citations of the next cited sentence in
+    its paragraph appended: profiles cite once per paragraph, so the dispute
+    check can see when "... killed 2,976 people." was reported."""
+    out: Dict[str, str] = {}
+    for paragraph in re.split(r"\n\s*\n", text):
+        pending: List[str] = []
+        for sentence in _sentences(paragraph):
+            if _CITATION.search(sentence):
+                cites = "".join(_CITATION.findall(sentence))
+                out.update({p: f"{p}{cites}" for p in pending})
+                pending = []
+            elif not sentence.startswith("#"):
+                pending.append(sentence)
+    return out
+
+
 def _disputed_olds(sentence: str, profile: List[str], anchor: str) -> List[str]:
     """The profile sentences a kept "sources disagree" sentence disputes.
 
@@ -383,6 +400,7 @@ def guard_edits(
     known = [s for s in _sentences(replaced) if not s.startswith("#")]
     profile = list(known)
     report: Dict[str, Any] = {"repeats": [], "disputes": [], "later_updates": []}
+    cited = paragraph_citations(replaced) if ask else {}
     # Per edit: (span, new text) swaps and how many facts stay
     swaps: List[List[Tuple[Tuple[int, int], str]]] = []
     facts_left: List[int] = []
@@ -414,7 +432,10 @@ def guard_edits(
                 facts_left[n] += 1
                 known.append(sentence)  # a later edit can't add it again
                 if ask and span and _NARRATOR.search(_claim(sentence)):
-                    olds = _disputed_olds(sentence, profile, edit.anchor)
+                    olds = [
+                        cited.get(o, o)
+                        for o in _disputed_olds(sentence, profile, edit.anchor)
+                    ]
                     pending.append(
                         {"edit": n, "span": span, "sentence": sentence, "olds": olds}
                     )

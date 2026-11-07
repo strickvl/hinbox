@@ -144,3 +144,14 @@ def test_the_disputed_sentence_is_found_inside_a_paragraph_anchor():
 def test_instead_wording_counts_as_a_dispute():
     assert _NARRATOR.search("The October 2010 article dates the attack to 2001 instead")
     assert not _NARRATOR.search("A Senate report recommended Colorado instead")
+
+
+def test_an_uncited_sentence_borrows_its_paragraphs_citation():
+    from src.engine.edit_guards import paragraph_citations
+
+    text = "## Role\n\nThe attacks killed 2,976 people. No more is said.^[fb]\n\nAlone."
+    cited = paragraph_citations(text)
+    assert cited["The attacks killed 2,976 people."] == (
+        "The attacks killed 2,976 people.^[fb]"
+    )
+    assert "Alone." not in cited
