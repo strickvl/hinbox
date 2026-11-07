@@ -66,13 +66,14 @@ citation). Put each piece under one of these headings:
 Rules:
 - Put every piece number under exactly one heading.
 - {opening}: only for pieces that say who {entity_name} is (identity, \
-nationality, the main role or charge they are known for). Piece 1 always \
-stays there.
+nationality, age, the main role or charge they are known for). Piece 1 \
+always stays there.
 - Every other piece goes under the heading for what it mainly tells about \
 {entity_name}, using what each heading is for. What happens in or around a \
-court case (a ruling, order, motion, hearing, lawyers' argument, testimony \
-or evidence request) goes under the legal heading even when it is about \
-detention, CIA custody, torture or health.
+court case (a ruling, order, motion, hearing, lawyers' argument, testimony, \
+evidence request, or what {entity_name} wears or says in the courtroom) goes \
+under the legal heading even when it is about detention, CIA custody, \
+torture, clothing or health.
 - Use the headings above, spelled exactly as given: the heading name only, \
 without the description after the colon. Don't make up headings.
 - You don't write or change any profile text; code moves the pieces."""
