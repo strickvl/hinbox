@@ -40,12 +40,15 @@ This profile is organised under these headings, each for one kind of fact:
 {listed}
 
 Put each new fact in the section it belongs in, by what it mainly tells \
-about {entity_name}. Anchor the `add` on a sentence in that section, or on \
+about {entity_name}. A court ruling, order, motion or hearing goes under the \
+legal heading even when it is about detention, clothing, mail or health. \
+Anchor the `add` on a sentence in that section, or on \
 the section's heading copied exactly (the text then goes at the end of the \
 section). When a section has sub-headings (one more "#"), anchor on the \
-sub-heading or a sentence under it that fits. A heading from the list that \
-the profile doesn't have yet can be an anchor too: code adds the heading in \
-its place. Use END only for a fact that fits none of the headings.
+sub-heading or a sentence under it that fits. A heading marked "not in the \
+profile yet" can be an anchor too: code adds the heading in its place. Use \
+it for a fact that belongs there rather than putting it under another \
+heading. Use END only for a fact that fits none of the headings.
 
 This only decides where a new fact goes, not whether to add one: the rules \
 above on what to add still hold, so an article with nothing new about \
@@ -74,10 +77,17 @@ def routing_sections(
     return starter, starter_notes(config, entity_type, kind)
 
 
-def routing_note(starter: List[str], notes: Dict[str, str], entity_name: str) -> str:
-    """The block added to the edit model's instructions."""
+def routing_note(
+    starter: List[str], notes: Dict[str, str], entity_name: str, text: str = ""
+) -> str:
+    """The block added to the edit model's instructions; a heading ``text``
+    lacks is marked "not in the profile yet"."""
+    present = {_clean_heading(t).lower() for _, _, t in _headings(text.splitlines())}
     listed = "\n".join(
-        f"- {h}" + (f": {notes[h]}" if notes.get(h) else "") for h in starter
+        f"- {h}"
+        + (f": {notes[h]}" if notes.get(h) else "")
+        + ("" if h.lower() in present else " (not in the profile yet)")
+        for h in starter
     )
     return ROUTING_NOTE.format(listed=listed, entity_name=entity_name)
 

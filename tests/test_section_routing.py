@@ -103,9 +103,16 @@ def test_routing_is_only_for_reorganised_profiles():
     )
 
 
+def test_routing_note_marks_headings_the_profile_lacks():
+    note = routing_note(STARTER, {}, "al Nashiri", TEXT)
+    assert "- Background\n" in note
+    assert "- Detention at Guantánamo (not in the profile yet)" in note
+    assert "legal heading even when it is about detention" in note
+
+
 def test_routing_note_lists_headings_with_what_they_are_for():
     note = routing_note(
-        STARTER[:2], {"Background": "life before capture"}, "al Nashiri"
+        STARTER[:2], {"Background": "life before capture"}, "al Nashiri", TEXT
     )
     assert "- Background: life before capture\n- Capture and CIA custody" in note
     assert "al Nashiri" in note

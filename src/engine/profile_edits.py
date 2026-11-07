@@ -339,7 +339,8 @@ def edit_profile(
     generate = local_generation if local else cloud_generation
     model = model or (OLLAMA_MODEL if local else CLOUD_MODEL)
     sections = routing_sections(existing_profile, entity_type, kind, domain)
-    routing = routing_note(*sections, entity_name) if sections else ""
+    text_now = existing_profile.get("text", "")
+    routing = routing_note(*sections, entity_name, text_now) if sections else ""
     response = generate(
         messages=_messages(
             entity_type,
