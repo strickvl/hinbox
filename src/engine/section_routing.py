@@ -23,10 +23,13 @@ Code still applies every edit word for word (``profile_edits.apply_edits``);
 this only changes where an ``add`` lands.
 """
 
+import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.engine.section_split import _clean_heading, _headings
+
+ROUTING_ENV = "HINBOX_SECTION_ROUTING"  # "off": no note, adds placed as before
 
 ROUTING_NOTE = """
 
@@ -42,7 +45,11 @@ the section's heading copied exactly (the text then goes at the end of the \
 section). When a section has sub-headings (one more "#"), anchor on the \
 sub-heading or a sentence under it that fits. A heading from the list that \
 the profile doesn't have yet can be an anchor too: code adds the heading in \
-its place. Use END only for a fact that fits none of the headings."""
+its place. Use END only for a fact that fits none of the headings.
+
+This only decides where a new fact goes, not whether to add one: the rules \
+above on what to add still hold, so an article with nothing new about \
+{entity_name} still gets no edits."""
 
 
 def routing_sections(
@@ -57,6 +64,8 @@ def routing_sections(
     )
 
     if profile.get(MARK_KEY) != "done":
+        return None
+    if os.getenv(ROUTING_ENV, "on").strip().lower() in ("off", "0", "false"):
         return None
     config = get_domain_config(domain).load_config()
     starter = starter_headings(config, entity_type, kind)

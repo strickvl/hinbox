@@ -83,6 +83,12 @@ def test_without_starter_headings_nothing_changes():
     assert insert_missing_heading(TEXT, "Prison life", NEW, STARTER) is None
 
 
+def test_routing_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv("HINBOX_SECTION_ROUTING", "off")
+    done = {"text": TEXT, "reorganised": "done"}
+    assert routing_sections(done, "people", "detainee", "guantanamo") is None
+
+
 def test_routing_is_only_for_reorganised_profiles():
     assert routing_sections({"text": TEXT}, "people", "detainee", "guantanamo") is None
     starter, notes = routing_sections(
