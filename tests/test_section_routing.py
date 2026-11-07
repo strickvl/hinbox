@@ -187,18 +187,13 @@ def test_an_end_add_opening_with_an_existing_heading_goes_into_that_section():
     assert "\n#### Video testimony\n" in flat
 
 
-def test_an_end_add_opening_with_a_missing_starter_heading_creates_it():
+def test_an_end_add_opening_with_a_missing_starter_heading_does_not_create_it():
+    # Local replay: Qwen wrote "## Release or transfer" over a fact about
+    # KSM's trial venue; only an anchor on the heading may create it
     add = ProfileEdit(op="add", anchor="END", text="## Detention at Guantánamo\n" + NEW)
     out, report = apply_edits(TEXT, [add], STARTER)
-    assert report["new_headings"] == ["Detention at Guantánamo"]
-    assert (
-        "\n### Detention at Guantánamo\n" in out
-        and "## Detention" not in out.replace("### Detention", "")
-    )
-    assert out.index("### Background") < out.index("### Detention at Guantánamo")
-    assert out.index("### Detention at Guantánamo") < out.index(
-        "### Military commission"
-    )
+    assert "Detention at Guantánamo" not in out and NEW in out
+    assert report["dropped_headings"] == ["## Detention at Guantánamo"]
 
 
 def test_a_bare_sub_heading_anchor_is_not_glued_onto_the_heading_line():

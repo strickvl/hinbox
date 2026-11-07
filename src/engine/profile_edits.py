@@ -267,13 +267,11 @@ def apply_edits(
             addition, known = _known_headings(text, addition)
             if known and (anchor in ("", END) or _find(text, anchor) is None):
                 anchor = known
-            first = addition.split("\n", 1)
-            name = starter_anchor(first[0], starter) if starter else None
-            if name and first[0].lstrip().startswith("#") and anchor in ("", END):
-                # A missing starter heading written into the text: created in
-                # its place, at the profile's level, like an anchor on it
-                addition, anchor = (first[1] if len(first) > 1 else "").strip(), name
-            elif first[0].lstrip().startswith("#"):
+            if addition.lstrip().startswith("#"):
+                # Even a missing starter heading written into the text is
+                # dropped: in a local replay "## Release or transfer" opened a
+                # fact about KSM's trial venue, the heading was made at the
+                # end of the profile, and 56 later trial sentences landed in it
                 addition = _unknown_heading(text, addition, starter, report)
         if not addition:
             report["skipped"].append(
