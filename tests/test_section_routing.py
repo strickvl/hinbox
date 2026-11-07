@@ -168,3 +168,30 @@ def test_an_add_on_a_heading_copied_with_its_mark_creates_it():
     assert out.index("### Detention at Guantánamo") < out.index(
         "### Military commission"
     )
+
+
+def test_an_end_add_opening_with_an_existing_heading_goes_into_that_section():
+    # Local replay: Qwen added on END "## Military commission or legal case\n\n
+    # ### Hearing procedures ..." and KSM got a second legal section at the end
+    add = ProfileEdit(op="add", anchor="END", text=(
+        "## Military commission or legal case\n\n### Video testimony\n\n" + NEW
+    ))  # fmt: skip
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert out.count("Military commission or legal case") == 1
+    assert "\n#### Video testimony\n" in out and report["appended"] == 0
+    assert out.index("### Military commission") < out.index("#### Video testimony")
+    assert out.index(NEW) < out.index("#### Capital charges")
+
+
+def test_an_end_add_opening_with_a_missing_starter_heading_creates_it():
+    add = ProfileEdit(op="add", anchor="END", text="## Detention at Guantánamo\n" + NEW)
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert report["new_headings"] == ["Detention at Guantánamo"]
+    assert (
+        "\n### Detention at Guantánamo\n" in out
+        and "## Detention" not in out.replace("### Detention", "")
+    )
+    assert out.index("### Background") < out.index("### Detention at Guantánamo")
+    assert out.index("### Detention at Guantánamo") < out.index(
+        "### Military commission"
+    )

@@ -151,6 +151,36 @@ def _find(text: str, anchor: str) -> Optional[Tuple[int, int]]:
     return (match.start(), match.end()) if match else None
 
 
+def _known_headings(text: str, addition: str) -> Tuple[str, Optional[str]]:
+    """``addition`` without the heading lines it opens with that the profile
+    already has, and the last of them. In a local replay an ``add`` on END
+    began "## Military commission or legal case" and, appended as it was,
+    gave KSM's profile a second legal section at the end."""
+    lines = addition.splitlines()
+    target = None
+    while lines and (not lines[0].strip() or lines[0].lstrip().startswith("#")):
+        line = lines[0].strip()
+        if line and _section_end(text, line) is None:
+            break  # a heading the profile lacks: kept as the model wrote it
+        target = line or target
+        lines.pop(0)
+    if target:
+        # A sub-heading after it goes one level under the profile's own level
+        # for that heading, whatever level the model wrote them at
+        words = re.escape(target.lstrip("#").strip())
+        real = re.search(rf"^(#{{1,6}})[ \t]+{words}[ \t]*$", text, re.MULTILINE)
+        shift = len(real.group(1)) - (len(target) - len(target.lstrip("#")))
+        lines = [_shift_heading(line, shift) for line in lines]
+    return "\n".join(lines).strip(), target
+
+
+def _shift_heading(line: str, shift: int) -> str:
+    match = re.match(r"^(#{1,6})([ \t]+\S.*)$", line.strip())
+    if not match or not shift:
+        return line
+    return "#" * min(6, max(1, len(match.group(1)) + shift)) + match.group(2)
+
+
 def _heading_or_missing(text: str, anchor: str) -> bool:
     """True when ``anchor`` isn't in ``text`` or is found only on a heading
     line: a second add on a bare "Detention at Guantánamo", after the first
@@ -204,12 +234,22 @@ def apply_edits(
     last_added: Dict[str, str] = {}
     for edit in edits:
         addition = edit.text.strip()
+        anchor = edit.anchor.strip()
+        if edit.op == "add":
+            addition, known = _known_headings(text, addition)
+            if known and (anchor in ("", END) or _find(text, anchor) is None):
+                anchor = known
+            first = addition.split("\n", 1)
+            name = starter_anchor(first[0], starter) if starter else None
+            if name and first[0].lstrip().startswith("#") and anchor in ("", END):
+                # A missing starter heading written into the text: created in
+                # its place, at the profile's level, like an anchor on it
+                addition, anchor = (first[1] if len(first) > 1 else "").strip(), name
         if not addition:
             report["skipped"].append(
                 {"op": edit.op, "anchor": edit.anchor, "why": "empty"}
             )
             continue
-        anchor = edit.anchor.strip()
         if edit.op == "replace":
             span = _find(text, anchor) if anchor and anchor != END else None
             if span is None:

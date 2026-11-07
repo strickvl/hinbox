@@ -5,6 +5,7 @@ charges to the 2024 plea deal. The model is asked only which paragraphs go
 under which sub-heading; code moves them word for word.
 """
 
+import json
 from typing import Any, Dict, List
 
 import pytest
@@ -433,3 +434,31 @@ def test_a_parent_split_counts_its_existing_sub_sections(monkeypatch):
         parent, "person", "KSM", _asker(GOOD, []), min_chars=200
     )
     assert reports[0]["status"] == "refused" and out == parent
+
+
+def test_a_refused_split_waits_until_its_section_grows(monkeypatch):
+    monkeypatch.setattr(section_split, "SPLIT_CHARS", 200)
+    clash = SectionSplit(subsections=[
+        SubSection(heading="Background", paragraphs=[1, 2, 3, 4]),
+        SubSection(heading="Hearings", paragraphs=[5, 6, 7, 8]),
+    ])  # fmt: skip
+    seen: List[List[Dict[str, str]]] = []
+    profile, reports = section_split.split_profile(
+        {"text": TEXT}, "person", "KSM", "m", False, ask=_asker(clash, seen)
+    )
+    assert reports[0]["status"] == "refused" and len(seen) == 1
+    stored = json.loads(profile[section_split.REFUSED_KEY])
+    assert list(stored.values()) == [reports[0]["chars"]]
+    again, reports = section_split.split_profile(
+        profile, "person", "KSM", "m", False, ask=_asker(GOOD, seen)
+    )
+    assert reports[0]["status"] == "waiting" and len(seen) == 1
+    grown = {
+        **again,
+        "text": TEXT.replace(PARAS[7], PARAS[7] + " " + " ".join([PARAS[6]] * 3)),
+    }
+    done, reports = section_split.split_profile(
+        grown, "person", "KSM", "m", False, ask=_asker(GOOD, seen)
+    )
+    assert reports[0]["status"] == "split" and len(seen) == 2
+    assert done[section_split.REFUSED_KEY] == "{}"

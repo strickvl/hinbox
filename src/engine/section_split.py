@@ -45,6 +45,7 @@ default (on the dev eval events and organizations scored lower once
 reorganised), ``on`` for every table, ``off``, or a comma list.
 """
 
+import json
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -63,6 +64,8 @@ PARAGRAPH_CHARS = 1500
 MAX_LEVEL = 5  # "#####"; a section at that level is not split again
 MIN_GROUPS, MAX_GROUPS = 2, 6
 MAX_SIBLINGS = 8  # sub-sections under one heading, after a re-split
+RETRY_GROWTH = 1.25  # a refused split is asked again once its section grows 25%
+REFUSED_KEY = "split_refused_json"  # heading -> chars, as a JSON string
 MAX_HEADING_WORDS, MAX_HEADING_CHARS = 8, 70
 
 _HEADING_LINE = re.compile(r"^(#{1,6})\s+(\S.*)$")
@@ -381,10 +384,16 @@ def split_long_sections(
     ask: Ask,
     min_chars: Optional[int] = None,
     resplit: bool = False,
+    refused: Optional[Dict[str, int]] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """Split each long section once (``resplit``: sub-sections too, see
     ``long_sections()``). Returns the new text and one report per long
-    section (``status``: ``split``, ``refused`` or ``failed``)."""
+    section (``status``: ``split``, ``refused``, ``failed`` or ``waiting``).
+
+    ``refused``: heading -> size of a section whose split was refused on an
+    earlier update; it is asked again only once it has grown by
+    ``RETRY_GROWTH``. In a local replay al Nashiri's "November 2011
+    arraignment" was asked and refused at 9 updates in a row, the same way."""
     sections = long_sections(text, min_chars, resplit)
     if not sections:
         return text, []
@@ -405,6 +414,10 @@ def split_long_sections(
         }
         reports.insert(0, report)
         sibling = section.get("parent") is not None
+        before = (refused or {}).get(section["heading"])
+        if before and report["chars"] < before * RETRY_GROWTH:
+            report.update(status="waiting", reason=f"refused at {before} chars")
+            continue
         other = [t for t in taken if t != section["heading"]]
         # A re-split replaces the heading, so one new heading may keep its name
         if sibling:
@@ -492,9 +505,10 @@ def split_profile(
     # Only a profile with starter headings has a known outline: top-level
     # starter headings, their sub-sections one level down
     resplit = profile.get("reorganised") == "done"
+    refused = json.loads(profile.get(REFUSED_KEY) or "{}")
     new_text, reports = split_long_sections(
         text, entity_type, entity_name, ask or make_asker(model, local),
-        resplit=resplit,
+        resplit=resplit, refused=refused,
     )  # fmt: skip
     for r in reports:
         level = "info" if r["status"] == "split" else "warning"
@@ -502,6 +516,13 @@ def split_profile(
             f"Section split for {entity_name} ({r['section']}): {r['status']} "
             f"{r.get('reason') or [h for h, _ in r.get('subsections', [])]}"
         )
+    for r in reports:
+        if r["status"] == "refused":
+            refused[r["section"]] = r["chars"]
+        elif r["status"] == "split":
+            refused.pop(r["section"], None)
+    if refused != json.loads(profile.get(REFUSED_KEY) or "{}"):
+        profile = {**profile, REFUSED_KEY: json.dumps(refused, ensure_ascii=False)}
     if new_text == text:
         return profile, reports
     return {**profile, "text": new_text}, reports
