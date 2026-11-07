@@ -24,7 +24,13 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
-from src.constants import CLOUD_MODEL, OLLAMA_MODEL, PROFILE_MAX_TOKENS
+from src.constants import (
+    CLOUD_MODEL,
+    OLLAMA_MODEL,
+    PROFILE_MAX_TOKENS,
+    PROFILE_VIEW_CHARS,
+)
+from src.engine.profile_view import profile_view, trimmed_note
 from src.utils.llm import cloud_generation, local_generation
 
 END = "END"
@@ -212,6 +218,7 @@ def _messages(
     article_id: str,
     domain: str,
     model: Optional[str] = None,
+    view_chars: Optional[int] = None,
 ) -> List[Dict[str, str]]:
     from src.config_loader import DomainConfig
 
@@ -221,14 +228,48 @@ def _messages(
     instructions = template.format(
         entity_type=entity_type, entity_name=entity_name, article_id=article_id
     )
+    budget = PROFILE_VIEW_CHARS if view_chars is None else view_chars
+    shown = profile_view(profile_text, article_text, budget)
     user = (
-        f"Existing profile:\n----------------\n{profile_text}\n\n"
+        f"{trimmed_note(profile_text, shown)}"
+        f"Existing profile:\n----------------\n{shown}\n\n"
         f"New article (ID: {article_id}):\n----------------\n{article_text}"
     )
     return [
         {"role": "system", "content": instructions},
         {"role": "user", "content": user},
     ]
+
+
+def _dispute_asker(generate: Any, model: str, entity_type: str, entity_name: str):
+    """The model call ``guard_edits()`` makes to check "sources disagree"
+    sentences (``dispute_check.py``), or None when the check is off."""
+    from src.engine.dispute_check import (
+        DisputeVerdicts,
+        dispute_check_enabled,
+    )
+    from src.utils.step_timing import timed_step
+
+    if not dispute_check_enabled():
+        return None
+
+    def ask(instructions: str, items: str) -> DisputeVerdicts:
+        system = instructions.format(entity_type=entity_type, entity_name=entity_name)
+        with timed_step("profile.dispute_check"):
+            response = generate(
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": items},
+                ],
+                response_model=DisputeVerdicts,
+                model=model,
+                max_tokens=4096,
+            )
+        if response is None:
+            raise RuntimeError("dispute check returned nothing")
+        return response
+
+    return ask
 
 
 def edit_profile(
@@ -276,12 +317,21 @@ def edit_profile(
     old_text = existing_profile.get("text", "")
     dates = article_dates or {}
     edits, guarded = (
-        guard_edits(old_text, response.edits, dates.get(article_id), dates)
+        guard_edits(
+            old_text,
+            response.edits,
+            dates.get(article_id),
+            dates,
+            ask=_dispute_asker(generate, model, entity_type, entity_name),
+        )
         if guard
         else (response.edits, {})
     )
     text, report = apply_edits(old_text, edits)
     report["guard"] = guarded
+    report["profile_chars_shown"] = len(
+        profile_view(old_text, article_text, PROFILE_VIEW_CHARS)
+    )
     sources = list(existing_profile.get("sources") or [])
     return {
         **existing_profile,

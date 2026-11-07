@@ -707,3 +707,37 @@ class TestRunMergeDisputeAgentUnit:
         assert record["candidate_key"] == "Alice S."
         assert record["article_id"] == "art-99"
         assert record["dispute_decision"]["action"] == "defer"
+
+
+def test_dispute_agent_sends_a_shortened_long_profile(monkeypatch):
+    from src.engine import merge_dispute_agent
+
+    monkeypatch.setattr(merge_dispute_agent, "MATCH_PROFILE_CHARS", 600)
+    long_text = "Opening about the United States.^[a]\n\n" + "\n\n".join(
+        f"## Part {i}\n\nRoutine filler sentence number {i}.^[a]" for i in range(60)
+    )
+    sent = {}
+
+    def fake_generation(messages, **kwargs):
+        sent["user"] = messages[-1]["content"]
+        return MergeDisputeDecision(
+            action=MergeDisputeAction.MERGE, confidence=0.9, reason="same"
+        )
+
+    with patch.object(merge_dispute_agent, "cloud_generation", fake_generation):
+        run_merge_dispute_agent(
+            entity_type="locations",
+            new_name="U.S.",
+            existing_name="United States",
+            new_profile_text="Evidence about the United States",
+            existing_profile_text=long_text,
+            similarity_score=0.76,
+            similarity_threshold=0.75,
+            match_is_match=True,
+            match_confidence=0.55,
+            match_reason="uncertain",
+            model_type="gemini",
+        )
+    assert "Opening about the United States" in sent["user"]
+    assert "not shown" in sent["user"]
+    assert long_text not in sent["user"]

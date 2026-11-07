@@ -14,6 +14,9 @@ from typing import Any, Dict, List, Tuple
 from src.engine.article_processor import ArticleProcessor
 from src.logging_config import log
 from src.utils.grounding import (
+    COUNTED_LEVELS,
+    claim_counts,
+    describe_claim_counts,
     finish_report,
     grounding_is_current,
     grounding_judge,
@@ -55,7 +58,12 @@ def run_profile_grounding_postprocess(
     Returns summary counts: ``verified`` profiles, ``skipped_unchanged``,
     ``skipped_no_citations``, ``llm_checks`` (profile-article pairs that had
     claims sent to the model), ``reused_checks`` (pairs kept whole from
-    earlier reports) and ``llm_calls`` (model calls made).
+    earlier reports) and ``llm_calls`` (model calls made). It also counts
+    claims per verdict over every stored report after the pass, checked
+    this run or not (``supported``, ``partial``, ``not_supported``,
+    ``unclear``, ``missing_source``, ``claims``), and
+    ``profiles_with_problems``: profiles with any claim that isn't plainly
+    supported. A mean grounding score near 1 can hide dozens of these.
     """
     # Build article_id -> content map from rows
     article_texts: Dict[str, str] = {}
@@ -124,9 +132,27 @@ def run_profile_grounding_postprocess(
         if report.grounding_score is not None:
             log(
                 f"Grounding for {entity_type}/{entity_key}: "
-                f"score={report.grounding_score:.2f}, "
-                f"verified={report.verified}/{report.total_citations}",
+                f"score={report.grounding_score:.2f} "
+                f"({describe_claim_counts(claim_counts(report))})",
                 level="info",
             )
 
+    counts.update(stored_claim_totals(entities))
     return counts
+
+
+def stored_claim_totals(entities: Dict[str, Dict]) -> Dict[str, int]:
+    """Claims per verdict summed over every entity's stored grounding report."""
+    totals = {k: 0 for k in COUNTED_LEVELS}
+    problems = 0
+    for entity_dict in entities.values():
+        for entity_data in entity_dict.values():
+            per = claim_counts(entity_data.get("profile_grounding"))
+            for k, n in per.items():
+                totals[k] += n
+            problems += any(n for k, n in per.items() if k != "supported")
+    return {
+        **totals,
+        "claims": sum(totals.values()),
+        "profiles_with_problems": problems,
+    }

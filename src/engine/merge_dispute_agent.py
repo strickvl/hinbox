@@ -17,6 +17,8 @@ from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
 
+from src.constants import MATCH_PROFILE_CHARS
+from src.engine.profile_view import profile_view
 from src.logging_config import log
 from src.utils.llm import cloud_generation, local_generation
 from src.utils.step_timing import timed
@@ -123,7 +125,10 @@ def run_merge_dispute_agent(
         new_name=new_name,
         new_profile_text=new_profile_text,
         existing_name=existing_name,
-        existing_profile_text=existing_profile_text,
+        # a hub profile is cut around the new evidence, as in the match check
+        existing_profile_text=profile_view(
+            existing_profile_text, new_profile_text, MATCH_PROFILE_CHARS
+        ),
     )
 
     messages = [

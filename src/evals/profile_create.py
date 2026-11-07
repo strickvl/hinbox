@@ -163,6 +163,7 @@ def _grounding(text: str, article_id: str, article: str) -> Dict[str, Any]:
         "claims": len(levels),
         "not_supported": levels.count("not_supported"),
         "partial": levels.count("partial"),
+        "unclear": levels.count("unclear"),
         "unsupported_claims": [
             v.claim[:300]
             for v in report.verifications
@@ -288,6 +289,7 @@ def summarize_creates(records: List[Dict[str, Any]], approach: str) -> Dict[str,
         out["claims_checked"] = sum(x["claims"] for x in g)
         out["not_supported"] = sum(x["not_supported"] for x in g)
         out["partial"] = sum(x["partial"] for x in g)
+        out["unclear"] = sum(x.get("unclear", 0) for x in g)
         scores = [x["grounding_score"] for x in g if x["grounding_score"] is not None]
         out["mean_grounding"] = round(sum(scores) / len(scores), 3) if scores else None
     if c:

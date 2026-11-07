@@ -55,6 +55,13 @@ EXTRACTION_MAX_TOKENS = int(os.getenv("HINBOX_EXTRACTION_MAX_TOKENS", "8192"))
 # reflect/regenerate rounds. On the profile-update eval, edit scored 0.89 vs
 # 0.29 on Luna and ran ~10x faster (2.2s vs 21s per update).
 PROFILE_UPDATE_APPROACH = os.getenv("HINBOX_PROFILE_UPDATE_APPROACH", "edit").strip()
+# A hub profile ("United States", ~50k characters from 83 articles) was sent
+# whole on every update and every merge check against it. Over these sizes
+# the model sees a shortened copy instead (src/engine/profile_view.py: the
+# opening, the headings, and the parts closest to the new article); the
+# stored profile keeps everything. 0 turns the shortening off.
+PROFILE_VIEW_CHARS = int(os.getenv("HINBOX_PROFILE_VIEW_CHARS", "16000"))
+MATCH_PROFILE_CHARS = int(os.getenv("HINBOX_MATCH_PROFILE_CHARS", "8000"))
 # How create_profile() writes a first profile. "check" (default): one draft,
 # code fixes, at most one repair call (src/engine/profile_create.py). "reflect":
 # a draft, then up to 3 rounds of a model reviewer (which never sees the

@@ -18,6 +18,7 @@ from src.engine.merge_candidates import (
     find_similar_entity,
     name_variant_candidate,
     pick_canonical_key,
+    surname_note,
 )
 from src.engine.merge_dispute_agent import (
     REVIEW_QUEUE_FILENAME,
@@ -26,6 +27,7 @@ from src.engine.merge_dispute_agent import (
 )
 from src.engine.merge_evidence import batch_embed_texts, build_evidence_text
 from src.engine.profile_stubs import first_profile, update_or_fill
+from src.engine.profile_view import embedding_text
 from src.engine.profiles import VersionedProfile, create_profile
 from src.logging_config import (
     DecisionKind,
@@ -258,7 +260,11 @@ class EntityMerger:
                 level="debug",
             )
 
-        # Match check: pass evidence_text as new_profile_text
+        # Match check: pass evidence_text as new_profile_text ("Rubio" also
+        # says whether "Marco Rubio" is the only person with that surname)
+        evidence_text += surname_note(
+            self.entity_type, new_display, similar_display, entities
+        )
         match_model = task_model("match", model_type)
         check_match = (
             local_model_check_match
@@ -895,7 +901,7 @@ class EntityMerger:
         # ── Phase 4: Batch-embed all profile texts ──
         # ── Phase 5: Commit profile embedding mutations ──
         if pending_profiles:
-            profile_texts = [p.profile_text for p in pending_profiles]
+            profile_texts = [embedding_text(p.profile_text) for p in pending_profiles]
             prof_vecs, prof_model, prof_dim, prof_fp = batch_embed_texts(
                 embedding_manager, profile_texts, embed_batch_size, "embed.profile"
             )

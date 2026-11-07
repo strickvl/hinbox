@@ -413,3 +413,52 @@ class TestMatchCheckResultSchema:
             MatchCheckResult(is_match=True, confidence=1.5, reason="test")
         with pytest.raises(ValidationError):
             MatchCheckResult(is_match=True, confidence=-0.1, reason="test")
+
+
+def test_long_profile_is_embedded_shortened_but_stored_whole(monkeypatch):
+    """A hub profile over the budget: the embedder gets the view, storage the full text."""
+    from src.engine import profile_view
+
+    monkeypatch.setenv("HINBOX_PROFILE_STUBS", "off")
+    monkeypatch.setattr(profile_view, "PROFILE_VIEW_CHARS", 500)
+    long_text = "Alice Smith is a lawyer.^[art-001]\n\n" + "\n\n".join(
+        f"## Part {i}\n\nRoutine filler sentence number {i} about cases.^[art-001]"
+        for i in range(40)
+    )
+
+    def long_create(*args, **kwargs):
+        profile, vp, history = create_profile_stub(*args, **kwargs)
+        return {**profile, "text": long_text}, vp, history
+
+    class RecordingManager(StubEmbeddingManager):
+        def __init__(self):
+            super().__init__()
+            self.batches: List[List[str]] = []
+
+        def embed_batch_result_sync(self, texts):
+            self.batches.append(list(texts))
+            return super().embed_batch_result_sync(texts)
+
+    manager = RecordingManager()
+    entities = make_empty_entities()
+    with (
+        patch("src.engine.mergers.create_profile", side_effect=long_create),
+        patch("src.engine.mergers.get_embedding_manager", return_value=manager),
+    ):
+        EntityMerger("people").merge_entities(
+            [{"name": "Alice Smith"}],
+            entities,
+            article_id="art-001",
+            article_title="First",
+            article_url="http://example.com/1",
+            article_published_date="2025-01-01",
+            article_content="Article about Alice Smith",
+            extraction_timestamp="2025-01-02T00:00:00Z",
+            model_type="gemini",
+            similarity_threshold=0.8,
+            domain="guantanamo",
+        )
+    assert entities["people"]["Alice Smith"]["profile"]["text"] == long_text
+    embedded = manager.batches[-1][0]  # the last batch is the profile embedding
+    assert len(embedded) <= 500 < len(long_text)
+    assert embedded.startswith("Alice Smith is a lawyer.^[art-001]")
