@@ -379,7 +379,7 @@ def _settled(
     text = claim["claim"][:max_claim_chars]
     if text in known:
         return known[text].model_copy(update={"citation": claim["citation"]})
-    body = MENTION_LINE_PREFIX.sub("", _HEADINGS.sub("", claim["claim"]))
+    body = _HEADINGS.sub("", claim["claim"])
     if _names_entity(body, entity_name) and _is_quote(body, article):
         why = "Quoted word for word from the article"
         return _verification(aid, claim, SupportLevel.SUPPORTED, why, max_claim_chars)
@@ -400,9 +400,6 @@ _SENTENCE_END = re.compile(r"[\"'”’)]*(?:[.!?][\"'”’)]*(?:\s|$)|\s*\n|$)
 # Markdown heading lines at the start of a claim: the first sentence under a
 # heading is cut from the profile with the heading on it ("### Mentions\n\n…")
 _HEADINGS = re.compile(r"^(?:\s*#+[^\n]*\n)+\s*")
-# The date in front of a hub's mention line ("- 2013-03-19: The United
-# States ...", ``src/engine/hub_mentions.py``): the rest is the copied sentence
-MENTION_LINE_PREFIX = re.compile(r"^\s*-\s+(?:\d{4}-\d{2}-\d{2}|undated):\s+")
 
 
 def _squash(text: str) -> str:
