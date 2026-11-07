@@ -164,8 +164,8 @@ def _units(own: str) -> Tuple[List[str], str]:
 
 
 def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, Any]]:
-    """Sections whose own text (up to the next heading of any level) is long
-    enough to split: ``{"line", "level", "heading", "start", "end", "units"}``,
+    """Top-level sections (no higher heading above them) whose own text (up to
+    the next heading of any level) is long enough to split: ``{"line", "level", "heading", "start", "end", "units"}``,
     with ``start``/``end`` the line range of the own text."""
     limit = SPLIT_CHARS if min_chars is None else min_chars
     lines = text.splitlines()
@@ -174,7 +174,11 @@ def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, 
     for k, (i, level, title) in enumerate(heads):
         end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
         own = "\n".join(lines[i + 1 : end]).strip()
-        if level >= MAX_LEVEL or len(own) <= limit:
+        # A section under a higher heading is never split: in a replay of
+        # al Nashiri's articles a sub-section the split had made was split
+        # again, down to "#####" leaves of 292 characters
+        nested = any(lv < level for _, lv, _ in heads[:k])
+        if nested or level >= MAX_LEVEL or len(own) <= limit:
             continue
         units, tail = _units(own)
         if len(units) >= MIN_PARAGRAPHS:

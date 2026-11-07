@@ -16,9 +16,11 @@ after an update, it is reorganised once:
 2. Code numbers the profile's paragraphs with ``section_split._units()``, so
    a piece always ends at a citation and every cited claim keeps its text.
    Text before the first heading stays on top as the opening when it ends at
-   a citation. The old heading lines are dropped.
+   a citation and is short (``OPENING_CHARS``). The old heading lines are
+   dropped.
 3. One model call is shown the numbered paragraphs and the starter headings
-   and answers only with headings and paragraph numbers. It may add a heading
+   (each with what it is for, from the config) and answers only with
+   headings and paragraph numbers. It may add a heading
    for a topic no starter heading fits ("Civil lawsuits"), but code refuses
    the whole answer when a new heading shares a word with another heading
    ("Legal proceedings" beside "Military commission or legal case"), so one
@@ -61,6 +63,7 @@ REORGANISE_ENV = "HINBOX_SECTION_REORGANISE"
 REORGANISE_CHARS = int(os.getenv("HINBOX_SECTION_REORGANISE_CHARS", "8000"))
 MARK_KEY = "reorganised"
 MIN_PARAGRAPHS = 6
+OPENING_CHARS = 1500  # a longer opening is numbered with the rest
 MAX_NEW_HEADINGS = 2
 DEFAULT_LEVEL = 3
 
@@ -77,6 +80,11 @@ under one of these headings, so that a reader can find a topic quickly:
 
 Rules:
 - Put every paragraph number under exactly one heading.
+- Choose by what the paragraph mainly tells about {entity_name}, using what \
+each heading is for. A court ruling, order or hearing goes under the legal \
+heading even when it concerns detention or health; a general heading such as \
+Background or Overview is only for who or what {entity_name} is and their \
+history, not for paragraphs that fit nowhere else.
 - Use the headings above, spelled exactly as given. Leave out a heading no \
 paragraph belongs under.
 - Only if a paragraph fits none of them, you may add up to {max_new} new \
@@ -89,18 +97,36 @@ def reorganise_enabled() -> bool:
     return os.getenv(REORGANISE_ENV, "off").strip().lower() in ("on", "1", "true")
 
 
-def starter_headings(
+def _starter_entries(
     config: Dict[str, Any], entity_type: str, kind: Optional[str]
-) -> List[str]:
-    """The starter headings for an entity type (plural or singular) and kind,
-    from ``profiles.starter_headings``; ``default`` when the kind has none."""
+) -> List[Tuple[str, str]]:
     from src.engine.hub_profiles import _PLURAL
 
     table = _PLURAL.get(entity_type, entity_type)
     lists = ((config.get("profiles") or {}).get("starter_headings") or {}).get(table)
     lists = lists or {}
     kind = str(kind or "").rsplit(".", 1)[-1].lower()
-    return [str(h) for h in lists.get(kind) or lists.get("default") or []]
+    entries = []
+    for item in lists.get(kind) or lists.get("default") or []:
+        # "- Background: origin and life before capture" is a one-key dict
+        pairs = item.items() if isinstance(item, dict) else [(item, "")]
+        entries += [(str(h), str(note or "")) for h, note in pairs]
+    return entries
+
+
+def starter_headings(
+    config: Dict[str, Any], entity_type: str, kind: Optional[str]
+) -> List[str]:
+    """The starter headings for an entity type (plural or singular) and kind,
+    from ``profiles.starter_headings``; ``default`` when the kind has none."""
+    return [h for h, _ in _starter_entries(config, entity_type, kind)]
+
+
+def starter_notes(
+    config: Dict[str, Any], entity_type: str, kind: Optional[str]
+) -> Dict[str, str]:
+    """What each starter heading is for, as the config describes it."""
+    return {h: n for h, n in _starter_entries(config, entity_type, kind) if n}
 
 
 def _key_words(heading: str) -> set:
@@ -115,7 +141,10 @@ def _opening_and_body(text: str) -> Tuple[str, str]:
     heads = _headings(lines)
     first = heads[0][0] if heads else 0
     opening = "\n".join(lines[:first]).strip()
-    if opening and _units(opening)[1]:  # ends uncited: number it with the rest
+    # Number it with the rest when it ends uncited (its last claim would change)
+    # or is long: Trump's 7,588 characters above his first heading were most
+    # of his profile
+    if opening and (_units(opening)[1] or len(opening) > OPENING_CHARS):
         first, opening = 0, ""
     skip = {i for i, _, _ in heads}
     body = "\n".join(
@@ -125,12 +154,18 @@ def _opening_and_body(text: str) -> Tuple[str, str]:
 
 
 def messages(
-    units: List[str], starter: List[str], entity_type: str, entity_name: str
+    units: List[str],
+    starter: List[str],
+    entity_type: str,
+    entity_name: str,
+    notes: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, str]]:
+    notes = notes or {}
+    listed = [f"- {h}" + (f": {notes[h]}" if notes.get(h) else "") for h in starter]
     system = INSTRUCTIONS.format(
         entity_type=entity_type,
         entity_name=entity_name,
-        starter="\n".join(f"- {h}" for h in starter),
+        starter="\n".join(listed),
         max_new=MAX_NEW_HEADINGS,
     )
     numbered = "\n\n".join(f"[{n}] {u}" for n, u in enumerate(units, 1))
@@ -191,6 +226,7 @@ def reorganise_text(
     starter: List[str],
     ask: Ask,
     min_chars: Optional[int] = None,
+    notes: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """The reorganised text and a report (``status``: ``skipped``, ``done``,
     ``refused`` or ``failed``). The text comes back unchanged unless done."""
@@ -203,7 +239,7 @@ def reorganise_text(
     if len(units) < MIN_PARAGRAPHS:
         return text, {**report, "status": "skipped", "reason": "few paragraphs"}
     try:
-        reply = ask(messages(units, starter, entity_type, entity_name))
+        reply = ask(messages(units, starter, entity_type, entity_name, notes))
     except Exception as e:  # keep the profile as it is; try again next update
         logger.warning(f"Reorganise call failed for {entity_name}: {e}")
         return text, {
@@ -254,8 +290,11 @@ def reorganise_profile(
         return profile, None
     config = get_domain_config(domain).load_config()
     starter = starter_headings(config, entity_type, kind)
+    notes = starter_notes(config, entity_type, kind)
     asker = ask or make_asker(model, local, step="profile.section_reorganise")
-    new_text, report = reorganise_text(text, entity_type, entity_name, starter, asker)
+    new_text, report = reorganise_text(
+        text, entity_type, entity_name, starter, asker, notes=notes
+    )
     level = "info" if report["status"] == "done" else "warning"
     getattr(logger, level)(
         f"Reorganise for {entity_name}: {report['status']} "

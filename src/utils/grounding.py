@@ -147,8 +147,11 @@ def _extract_cited_claims(profile_text: str) -> List[Dict[str, str]]:
         # fact^[a2]" leaves ". Next fact" here: drop that leading punctuation.
         # A span with no letters or digits at all ("fact^[a1].^[a2]") is not
         # a claim, so it reuses the previous one.
-        claim_text = _LEADING_PUNCT.sub("", profile_text[last_end : match.start()])
-        claim_text = claim_text.strip()
+        # Heading lines carry no fact and change when a profile is
+        # reorganised; with them, a moved paragraph over the claim cap would
+        # show the judge a different stretch of text and lose its verdict
+        span = _HEADING_LINES.sub("", profile_text[last_end : match.start()])
+        claim_text = _LEADING_PUNCT.sub("", span.strip()).strip()
         if not _HAS_WORD.search(claim_text):
             claim_text = last_claim  # reuse last non-empty claim for adjacent citations
 

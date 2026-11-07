@@ -980,6 +980,7 @@ class EntityMerger:
 
         if self.entity_type == "people":
             base_entity["name"] = entity_key
+            base_entity["type"] = entity_dict.get("type", "")  # picks starter headings
         elif self.entity_type in ("organizations", "locations"):
             base_entity["name"] = entity_key[0]
             base_entity["type"] = entity_key[1]

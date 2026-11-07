@@ -257,3 +257,37 @@ def test_replay_entity_spec_takes_a_kind():
     spec = pr.parse_entity_spec("Khalid Sheikh Mohammed|person|KSM,Mohammed|detainee")
     assert spec.kind == "detainee" and spec.terms == ("KSM", "Mohammed")
     assert pr.parse_entity_spec("Camp X|location|Camp X").kind == ""
+
+
+def test_a_long_opening_is_numbered_with_the_rest():
+    long_opening = " ".join(f"Trump said thing {i}.^[a{i % 5}]" for i in range(80))
+    text = long_opening + "\n\n### Background\n\n" + "\n\n".join(PARAS)
+    _, _, seen = _run(GOOD, text)
+    assert "[1] Trump said thing 0." in seen[0][1]["content"]
+
+
+def test_the_model_is_told_what_each_heading_is_for():
+    seen: List[Any] = []
+    notes = {"Background": "origin and life before capture"}
+    reorganise_text(
+        TEXT, "person", "KSM", STARTER, _asker(GOOD, seen), min_chars=100, notes=notes
+    )
+    assert "- Background: origin and life before capture" in seen[0][0]["content"]
+    from src.config_loader import get_domain_config
+    from src.engine.section_reorganise import starter_notes
+
+    real = get_domain_config("guantanamo").load_config()
+    assert (
+        "rendition"
+        in starter_notes(real, "person", "detainee")["Capture and CIA custody"]
+    )
+
+
+def test_moved_long_claims_keep_verdicts_under_a_shorter_heading():
+    from scripts.section_split_bench import regrounded
+
+    long_para = " ".join(["The CIA ran sites in Thailand and Poland."] * 18) + "^[a1]"
+    before = "### Leadership allegations and secrecy\n\n" + long_para + "\n"
+    after = "### Overview\n\n" + long_para + "\n"
+    assert len(long_para) > 600
+    assert regrounded(before, after, {"a1": "Article."}, "CIA") == 0

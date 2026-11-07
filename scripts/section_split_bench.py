@@ -96,10 +96,11 @@ def _split_one(
 
     first: List[Dict[str, Any]] = []
     if reorg:
-        starter, reorg_ask, reorg_chars = reorg
+        starter, reorg_ask, reorg_chars, *notes = reorg
         text, report = reorganise_text(
-            text, etype, name, starter, reorg_ask, min_chars=reorg_chars
-        )
+            text, etype, name, starter, reorg_ask, min_chars=reorg_chars,
+            notes=notes[0] if notes else None,
+        )  # fmt: skip
         if report["status"] != "skipped":
             first = [{"section": "*", **report}]
     new_text, reports = split_long_sections(text, etype, name, ask, min_chars=min_chars)
@@ -110,13 +111,14 @@ def _reorg(args: argparse.Namespace, etype: str, kind: Any) -> Any:
     if not args.reorganise:
         return None
     from src.config_loader import get_domain_config
-    from src.engine.section_reorganise import starter_headings
+    from src.engine.section_reorganise import starter_headings, starter_notes
     from src.engine.section_split import make_asker
 
     config = get_domain_config(args.domain).load_config()
     local = args.model.startswith("ollama/")
     ask = make_asker(args.model, local, step="profile.section_reorganise")
-    return starter_headings(config, etype, kind), ask, args.reorganise_chars
+    notes = starter_notes(config, etype, kind)
+    return starter_headings(config, etype, kind), ask, args.reorganise_chars, notes
 
 
 def _reorg_units(text: str) -> List[str]:
@@ -156,6 +158,10 @@ def sections(args: argparse.Namespace) -> None:
         str(r["id"]): r.get("content") or ""
         for r in pq.read_table(args.articles, columns=["id", "content"]).to_pylist()
     }
+    kinds: Dict[str, str] = {}
+    if args.kinds:  # older people tables don't store a type
+        with open(args.kinds, encoding="utf-8") as f:
+            kinds = json.load(f)
     jobs = []
     for etype, table in entities.items():
         for data in table.values():
@@ -165,7 +171,8 @@ def sections(args: argparse.Namespace) -> None:
                 continue
             long = args.reorganise and len(text) > args.reorganise_chars
             if long or long_sections(text, args.min_chars):
-                jobs.append((etype, name, text, data.get("type")))
+                kind = data.get("type") or data.get("event_type")
+                jobs.append((etype, name, text, kinds.get(f"{etype}/{name}", kind)))
     jobs.sort(key=lambda j: -len(j[2]))
     jobs = jobs[: args.limit] if args.limit else jobs
     ask = _asker(args.model)
@@ -183,12 +190,16 @@ def sections(args: argparse.Namespace) -> None:
             "chars": len(text),
             "reports": reports,
             "sentences_kept": _sentences(new_text) == _sentences(text),
-            "regrounded": regrounded(text, new_text, articles, name),
+            "texts": (text, new_text, name),
             "review": _review(name, etype, reports, units),
         }
 
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(one, jobs))
+    # After the pool: the fake judge patch would catch other threads' real calls
+    for r in results:
+        before, after, name = r.pop("texts")
+        r["regrounded"] = regrounded(before, after, articles, name)
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "review.md"), "w") as f:
         f.write(
@@ -292,6 +303,9 @@ def main(argv: Optional[List[str]] = None) -> None:
     s = sub.add_parser("sections", help="split a finished run's long sections")
     s.add_argument("--entities", required=True, help="folder with people.parquet")
     s.add_argument("--articles", required=True, help="articles Parquet file")
+    s.add_argument(
+        "--kinds", help='JSON {"people/<name>": "detainee"} for tables without a type'
+    )
     s.add_argument("--limit", type=int, default=0, help="longest N profiles only")
     c = sub.add_parser("cases", help="split the profile-update eval cases")
     c.add_argument(
