@@ -103,7 +103,10 @@ def _split_one(
         )  # fmt: skip
         if report["status"] != "skipped":
             first = [{"section": "*", **report}]
-    new_text, reports = split_long_sections(text, etype, name, ask, min_chars=min_chars)
+    resplit = bool(first) and first[0]["status"] == "done"
+    new_text, reports = split_long_sections(
+        text, etype, name, ask, min_chars=min_chars, resplit=resplit
+    )
     return new_text, first + reports, text
 
 
@@ -264,9 +267,14 @@ def cases(args: argparse.Namespace) -> None:
     changed = 0
     with open(os.path.join(out_dir, "profile_update_cases.jsonl"), "w") as f:
         for row in rows:
-            new_text, _ = done[row["profile"].get("text") or ""]
+            new_text, reports = done[row["profile"].get("text") or ""]
             changed += new_text != (row["profile"].get("text") or "")
-            row = {**row, "profile": {**row["profile"], "text": new_text}}
+            profile = {**row["profile"], "text": new_text}
+            # Marked like the pipeline does, so the eval's edit call routes
+            # new facts to the starter headings (``section_routing.py``)
+            if any(r["section"] == "*" and r["status"] == "done" for r in reports):
+                profile["reorganised"] = "done"
+            row = {**row, "profile": profile, "entity_kind": _case_kind(row)}
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
     for name in ("profile_update_reviews.jsonl", "claim_labels.jsonl"):
         if os.path.exists(os.path.join(args.eval_dir, name)):

@@ -527,6 +527,7 @@ def _edit_profile_update(
     domain: str = "guantanamo",
     model: Optional[str] = None,
     article_dates: Optional[Dict[str, Any]] = None,
+    kind: Optional[str] = None,
 ) -> Tuple[Dict, list]:
     """Update by applying the model's add/replace edits to the existing text.
 
@@ -550,6 +551,7 @@ def _edit_profile_update(
             domain=domain,
             local=local,
             article_dates=article_dates,
+            kind=kind,
         )
     except PromptTooLongError:
         # The edit-list prompt holds the whole profile; the fact-list updater
@@ -723,7 +725,7 @@ def update_profile(
     if approach not in ("edit", "rewrite", "facts"):
         raise ValueError(f"Unknown profile update approach: {approach!r}")
     update = _UPDATERS.get(approach, _update_profile_internal)
-    extra = {"article_dates": article_dates} if approach == "edit" else {}
+    extra = {"article_dates": article_dates, "kind": kind} if approach == "edit" else {}
     updated_profile, history = update(
         entity_type,
         entity_name,

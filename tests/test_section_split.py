@@ -315,3 +315,76 @@ def test_a_section_made_by_a_split_is_not_split_again():
     assert [s["heading"] for s in long_sections(top, min_chars=200)] == [
         "Pretrial hearings"
     ]
+
+
+# A reorganised profile: the long sub-section "Legal proceedings" under the
+# starter heading grows again and is re-split beside its sibling
+NESTED = (
+    "### Background\n\nKSM was born in Kuwait.^[a0]\n\n"
+    "### Military commission or legal case\n\n"
+    "#### Arraignment\n\nHe was arraigned in June 2008.^[a1]\n\n"
+    "#### Legal proceedings\n\n" + "\n\n".join(PARAS) + "\n\n"
+    "### Health and treatment\n\nHe has a heart condition.^[a3]\n"
+)
+
+
+def test_a_grown_sub_section_is_re_split_beside_its_siblings():
+    seen: List[List[Dict[str, str]]] = []
+    out, reports = split_long_sections(
+        NESTED, "person", "KSM", _asker(GOOD, seen), min_chars=200, resplit=True
+    )
+    assert reports[0]["status"] == "split"
+    assert "#### Legal proceedings" not in out  # replaced, not nested under
+    assert "#####" not in out
+    for heading in ("Charges and arraignment", "Pretrial hearings"):
+        assert f"\n#### {heading}\n" in out
+    # Siblings stay under their parent, before the next starter heading
+    assert out.index("#### Arraignment") < out.index("#### Charges and arraignment")
+    assert out.index("#### Plea negotiations") < out.index("### Health and treatment")
+    assert section_split._sentences(out) == section_split._sentences(NESTED)
+    system = seen[0][0]["content"]
+    assert (
+        "beside the other sub-sections of" in system and "may keep the name" in system
+    )
+
+
+def test_a_re_split_may_keep_the_old_name_but_not_a_sibling_one():
+    keep = SectionSplit(subsections=[
+        SubSection(heading="Legal proceedings", paragraphs=[1, 2, 3, 4, 5]),
+        SubSection(heading="Plea negotiations", paragraphs=[6, 7, 8]),
+    ])  # fmt: skip
+    out, reports = split_long_sections(
+        NESTED, "person", "KSM", _asker(keep, []), min_chars=200, resplit=True
+    )
+    assert reports[0]["status"] == "split" and out.count("#### Legal proceedings") == 1
+    clash = SectionSplit(subsections=[
+        SubSection(heading="Arraignment", paragraphs=[1, 2, 3]),
+        SubSection(heading="Plea negotiations", paragraphs=[4, 5, 6, 7, 8]),
+    ])  # fmt: skip
+    out, reports = split_long_sections(
+        NESTED, "person", "KSM", _asker(clash, []), min_chars=200, resplit=True
+    )
+    assert reports[0]["status"] == "refused" and out == NESTED
+
+
+def test_re_split_needs_resplit_and_stops_at_the_sibling_cap(monkeypatch):
+    assert long_sections(NESTED, min_chars=200) == []
+    found = long_sections(NESTED, min_chars=200, resplit=True)
+    assert [(s["heading"], s["parent"]) for s in found] == [
+        ("Legal proceedings", "Military commission or legal case")
+    ]
+    monkeypatch.setattr(section_split, "MAX_SIBLINGS", 2)
+    assert long_sections(NESTED, min_chars=200, resplit=True) == []
+
+
+def test_split_profile_re_splits_only_reorganised_profiles(monkeypatch):
+    monkeypatch.setattr(section_split, "SPLIT_CHARS", 200)
+    flat, _ = section_split.split_profile(
+        {"text": NESTED}, "person", "KSM", "m", False, ask=_asker(GOOD, [])
+    )
+    assert flat["text"] == NESTED
+    done, _ = section_split.split_profile(
+        {"text": NESTED, "reorganised": "done"}, "person", "KSM", "m", False,
+        ask=_asker(GOOD, []),
+    )  # fmt: skip
+    assert "#### Pretrial hearings" in done["text"]
