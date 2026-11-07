@@ -138,7 +138,6 @@ profiles:
         - Background: who they are and their career before the events covered
         - Role: the posts they hold or held and what they are responsible for
         - Cases and decisions: rulings, orders, actions and decisions they took, cases they worked on
-        - Public statements: their own words outside the cases they handle (speeches, interviews, testimony to Congress, letters), not what others said and not remarks from the bench
     organizations:
       default:
         - Overview: what the organization is, its structure and its leaders
