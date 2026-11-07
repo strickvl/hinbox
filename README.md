@@ -244,8 +244,8 @@ After merging, the grounding pass asks a model whether each cited article really
 | Qwen3.6 local, `HINBOX_GROUNDING_REASONING_EFFORT=high` | ~35 | 11 | ~67 min |
 | Qwen3.6 local (default, no thinking) | 25 | 19 | ~12 min |
 
-- **Cloud runs** use Claude Haiku 5.5 as the judge by default, whatever `HINBOX_CLOUD_MODEL` is. It is clearly the best option, so keep an `ANTHROPIC_API_KEY` in `.env` (and `uv sync --extra anthropic`). Set `HINBOX_GROUNDING_MODEL` to use another judge.
-- **Local runs** (`--local`) always keep a local judge. For a better one, add `HINBOX_GROUNDING_REASONING_EFFORT=high`: only the grounding judge thinks (extraction, merging and profiles don't), with up to `HINBOX_GROUNDING_THINKING_MAX_TOKENS` (default 16384) tokens of reasoning per call. It makes grounding about 5.6x slower, so it suits a final pass over finished data more than everyday runs.
+- **Cloud runs**, which already send article text to a provider, use Claude Haiku 5.5 as the judge by default, whatever `HINBOX_CLOUD_MODEL` is. It is clearly the best option, so keep an `ANTHROPIC_API_KEY` in `.env` (and `uv sync --extra anthropic`). Set `HINBOX_GROUNDING_MODEL` to use another judge.
+- **Local runs** (`--local`) are for working with no internet connection at all, for data privacy: nothing leaves the machine, so a cloud judge is never an option there (a `--local` run with a cloud `HINBOX_GROUNDING_MODEL` stops at startup). For a better local judge, add `HINBOX_GROUNDING_REASONING_EFFORT=high`: only the grounding judge thinks (extraction, merging and profiles don't), with up to `HINBOX_GROUNDING_THINKING_MAX_TOKENS` (default 16384) tokens of reasoning per call. It makes grounding about 5.6x slower, so it suits a final pass over finished data more than everyday runs.
 - Switching the judge (or its thinking setting) makes the next run check every stored report again, because each report records which judge produced it.
 
 ### Evaluating Models
