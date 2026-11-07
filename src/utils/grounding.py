@@ -383,16 +383,21 @@ def _earlier_verdict(
 ) -> Optional[ClaimVerification]:
     """The stored verdict on this same claim, if any.
 
-    Stored claims were cut at ``max_claim_chars``, which is all the judge saw.
-    A stored claim that wasn't cut must equal this one, heading lines and
-    spacing aside. A cut one only shows its start, so this claim must start
-    with it, as before this comparison ignored headings (``claim[:cap]``).
+    The judge sees a claim's first ``max_claim_chars`` characters, and that is
+    what was stored. The verdict is reused when the stored text, heading lines
+    and spacing aside, equals what the judge would see now. When this claim is
+    cut, the stored text may also run past it (a sub-heading put in front
+    pushed some words past the cut): the old judge then saw every word the new
+    one would. Anything else, such as a heading removed so the new cut reaches
+    words the old judge never saw, is judged again.
     """
-    key = _claim_key(claim)
-    if key in known:
-        return known[key]
+    visible = _claim_key(claim[:max_claim_chars])
+    if visible in known:
+        return known[visible]
+    if len(claim) <= max_claim_chars:
+        return None
     for old_key, verdict in known.items():
-        if len(verdict.claim) >= max_claim_chars and key.startswith(old_key):
+        if old_key.startswith(visible):
             return verdict
     return None
 

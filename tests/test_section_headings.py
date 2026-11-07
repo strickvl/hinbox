@@ -93,8 +93,22 @@ def test_a_stored_claim_cut_at_the_cap_matches_by_its_start():
     full = "y " * 400 + "End."
     stored = full[:600]
     known = {_claim_key(stored): _verdict(stored)}
+    assert _earlier_verdict(full, known, 600) is not None
     assert _earlier_verdict("#### Part 1\n\n" + full, known, 600) is not None
     assert _earlier_verdict("z" + full, known, 600) is None
+
+
+def test_removing_a_heading_that_brings_changed_words_into_view_is_rechecked():
+    # The old claim's heading pushed "released in 2012" past the 600-character
+    # cut, so the judge never saw the year. Without the heading the whole new
+    # claim fits, year changed: the old verdict says nothing about it.
+    body = "The detention continued. " * 23
+    old = "### Legal proceedings\n\n" + body + "He was released in 2012."
+    new = body + "He was released in 2016."
+    stored = old[:600]
+    known = {_claim_key(stored): _verdict(stored)}
+    assert _earlier_verdict(new, known, 600) is None
+    assert _earlier_verdict(new + " " + "w " * 100, known, 600) is None
 
 
 ARTICLES: Dict[str, str] = {
