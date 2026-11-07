@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import threading
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -73,6 +74,12 @@ class GroundingReport(BaseModel):
     verified: int = 0
     unverified: int = 0
     missing_source: int = 0
+    # Claims per verdict. The score counts "partial" as a pass and "unclear"
+    # as a fail, so these are shown beside it (``claim_counts()``)
+    supported: int = 0
+    partial: int = 0
+    not_supported: int = 0
+    unclear: int = 0
     grounding_score: Optional[float] = None
     passed: bool = True
     flags: List[str] = Field(default_factory=list)
@@ -81,6 +88,35 @@ class GroundingReport(BaseModel):
     model: str = ""  # the judge model; a different judge rechecks everything
     checked_articles: int = 0  # model calls made for this report
     reused_articles: int = 0  # articles whose results came from the last report
+
+
+COUNTED_LEVELS = ("supported", "partial", "not_supported", "unclear", "missing_source")
+
+
+def claim_counts(report: Any) -> Dict[str, int]:
+    """Claims per verdict in a report (a ``GroundingReport`` or its stored
+    dict), counted from its verifications so older stored reports without
+    the count fields give the same numbers."""
+    if report is None:
+        return {k: 0 for k in COUNTED_LEVELS}
+    if isinstance(report, GroundingReport):
+        report = report.model_dump()
+    counts = Counter(
+        getattr(v.get("support_level"), "value", v.get("support_level"))
+        for v in report.get("verifications") or []
+    )
+    return {k: counts.get(k, 0) for k in COUNTED_LEVELS}
+
+
+def describe_claim_counts(counts: Dict[str, int]) -> str:
+    """'2 not supported, 5 partial, 1 unclear, 0 missing source of 40 claims':
+    the claims a high score can hide."""
+    total = sum(counts.get(k, 0) for k in COUNTED_LEVELS)
+    parts = [
+        f"{counts.get(k, 0)} {k.replace('_', ' ')}"
+        for k in ("not_supported", "partial", "unclear", "missing_source")
+    ]
+    return ", ".join(parts) + f" of {total} claims"
 
 
 _LEADING_PUNCT = re.compile(r"^[\s.,;:!?)\]]+")
@@ -607,6 +643,9 @@ def finish_report(
     report.missing_source = sum(
         1 for v in verifications if v.support_level == SupportLevel.MISSING_SOURCE
     )
+    for level, n in claim_counts(report).items():
+        if level != "missing_source":
+            setattr(report, level, n)
     report.grounding_score = report.verified / report.total_citations
     if report.missing_source > 0:
         report.flags.append("missing_sources")

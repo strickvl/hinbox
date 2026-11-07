@@ -66,6 +66,10 @@ def test_pass_quality_counts_outcomes_entities_and_grounding(tmp_path):
         "mean_score": 0.5,
         "verified": 1,
         "citations": 2,
+        "not_supported": 0,
+        "partial": 0,
+        "unclear": 0,
+        "missing_source": 0,
     }
 
 

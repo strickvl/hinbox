@@ -575,6 +575,7 @@ def _edit_profile_update(
         return existing_profile, []
     report = edited["edit_report"]
     annotate(
+        profile_chars_shown=report.get("profile_chars_shown"),
         later_updates=len((report.get("guard") or {}).get("later_updates") or []),
         edits_applied=report["applied"],
         edits_appended=report["appended"],
