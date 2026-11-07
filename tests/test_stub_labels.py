@@ -50,9 +50,17 @@ def test_people_and_events_are_unchanged():
     ]
 
 
-def test_organization_label_sentence_demoted():
-    picked = mention_sentences(ARTICLE, "organizations", ["Pentagon"], limit=1)
+def test_place_officials_sentence_demoted():
+    picked = mention_sentences(ARTICLE, "locations", ["Pentagon"], limit=1)
     assert picked == ["The Pentagon said it would review the ruling."]
+
+
+def test_an_organizations_own_spokesman_is_a_real_mention():
+    sentence = "A State Department spokesman declined to comment."
+    assert not only_as_label(sentence, ["State Department"], "organizations")
+    assert only_as_label(
+        "The State Department case was dropped.", ["State Department"], "organizations"
+    )
 
 
 def test_all_label_stub_gets_an_uncited_note_after_the_mentions():
