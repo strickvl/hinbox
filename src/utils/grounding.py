@@ -355,11 +355,7 @@ def plan_grounding(
                 plan.results[aid] = list(earlier_results)
                 plan.reused_articles += 1
                 continue
-        known = (
-            {_claim_key(v.claim, max_claim_chars): v for v in earlier_results}
-            if usable
-            else {}
-        )
+        known = {_claim_key(v.claim): v for v in earlier_results} if usable else {}
         article = _article_text(article_texts[aid][:max_article_chars])
         plan.results[aid] = [
             _settled(aid, c, known, article, entity_name, max_claim_chars)
@@ -371,20 +367,34 @@ def plan_grounding(
 _HEADING_LINES = re.compile(r"^[ \t]*#+[^\n]*$", re.MULTILINE)
 
 
-def _claim_key(claim: str, max_claim_chars: int) -> str:
-    """The claim as a key for reusing an earlier verdict on it.
+def _claim_key(claim: str) -> str:
+    """The claim without heading lines and runs of spaces.
 
-    Heading lines and runs of spaces are left out, so a claim keeps its
-    verdict when a section is split and a sub-heading lands in front of it
-    ("#### Plea negotiations\n\nKSM's lawyers said...^[a1]"): the sentence,
-    and so what the article has to support, hasn't changed. Stored claims
-    were cut at ``max_claim_chars``, so the key is cut 200 characters
-    shorter (when that still leaves 200), leaving room for a heading taken
-    out of one but not the other.
+    A claim keeps its verdict when a section is split and a sub-heading
+    lands in front of it ("#### Plea negotiations\n\nKSM's lawyers
+    said...^[a1]"): the sentence, and so what the article has to support,
+    hasn't changed.
     """
-    body = _SPACE.sub(" ", _HEADING_LINES.sub("", claim)).strip()
-    cut = max_claim_chars - 200 if max_claim_chars >= 400 else max_claim_chars
-    return body[:cut]
+    return _SPACE.sub(" ", _HEADING_LINES.sub("", claim)).strip()
+
+
+def _earlier_verdict(
+    claim: str, known: Dict[str, ClaimVerification], max_claim_chars: int
+) -> Optional[ClaimVerification]:
+    """The stored verdict on this same claim, if any.
+
+    Stored claims were cut at ``max_claim_chars``, which is all the judge saw.
+    A stored claim that wasn't cut must equal this one, heading lines and
+    spacing aside. A cut one only shows its start, so this claim must start
+    with it, as before this comparison ignored headings (``claim[:cap]``).
+    """
+    key = _claim_key(claim)
+    if key in known:
+        return known[key]
+    for old_key, verdict in known.items():
+        if len(verdict.claim) >= max_claim_chars and key.startswith(old_key):
+            return verdict
+    return None
 
 
 def _settled(
@@ -397,9 +407,9 @@ def _settled(
 ) -> Optional[ClaimVerification]:
     """A verdict that needs no model call: kept from the last report, or
     "supported" for a sentence quoted from the article. None otherwise."""
-    key = _claim_key(claim["claim"], max_claim_chars)
-    if key in known:
-        return known[key].model_copy(update={"citation": claim["citation"]})
+    earlier = _earlier_verdict(claim["claim"], known, max_claim_chars)
+    if earlier is not None:
+        return earlier.model_copy(update={"citation": claim["citation"]})
     body = _HEADINGS.sub("", claim["claim"])
     if _names_entity(body, entity_name) and _is_quote(body, article):
         why = "Quoted word for word from the article"

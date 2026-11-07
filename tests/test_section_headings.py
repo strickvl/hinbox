@@ -15,6 +15,7 @@ from src.utils.grounding import (
     ClaimVerification,
     SupportLevel,
     _claim_key,
+    _earlier_verdict,
     verify_profile_grounding,
 )
 
@@ -64,10 +65,36 @@ def test_unknown_heading_still_appends_at_the_end():
 
 
 def test_claim_key_ignores_heading_lines_and_spacing():
-    assert _claim_key("#### Plea negotiations\n\nPlea talks  began.", 600) == (
-        _claim_key("Plea talks began.", 600)
+    assert _claim_key("#### Plea negotiations\n\nPlea talks  began.") == (
+        _claim_key("Plea talks began.")
     )
-    assert _claim_key("Plea talks began.", 600) != _claim_key("Plea talks ended.", 600)
+    assert _claim_key("Plea talks began.") != _claim_key("Plea talks ended.")
+
+
+def _verdict(claim: str) -> ClaimVerification:
+    return ClaimVerification(
+        article_id="a1",
+        citation="^[a1]",
+        claim=claim,
+        support_level=SupportLevel.SUPPORTED,
+    )
+
+
+def test_a_change_late_in_a_long_claim_is_not_reused():
+    # Two 500-character claims that differ only in the year near the end
+    old = "x " * 230 + "He was released in 2012."
+    new = "x " * 230 + "He was released in 2016."
+    known = {_claim_key(old): _verdict(old)}
+    assert _earlier_verdict(new, known, 600) is None
+    assert _earlier_verdict("#### Release\n\n" + old, known, 600) is not None
+
+
+def test_a_stored_claim_cut_at_the_cap_matches_by_its_start():
+    full = "y " * 400 + "End."
+    stored = full[:600]
+    known = {_claim_key(stored): _verdict(stored)}
+    assert _earlier_verdict("#### Part 1\n\n" + full, known, 600) is not None
+    assert _earlier_verdict("z" + full, known, 600) is None
 
 
 ARTICLES: Dict[str, str] = {
