@@ -151,14 +151,17 @@ def _find(text: str, anchor: str) -> Optional[Tuple[int, int]]:
     return (match.start(), match.end()) if match else None
 
 
-def _section_end(text: str, heading: str) -> Optional[int]:
+def _section_end(text: str, heading: str, own: bool = False) -> Optional[int]:
     """Index where the section under ``heading`` ends, or None if absent.
 
     The heading is found by its words, whatever its level: models write
     "## Legal proceedings" for a profile's "### Legal proceedings". The
     section runs to the next heading of the same or a higher level, so its
     sub-sections ("#### Plea negotiations" under "### Legal proceedings")
-    belong to it and an add goes after them, not before.
+    belong to it and an add goes after them, not before. With ``own``, it
+    ends at its first sub-heading instead: in a reorganised profile an add
+    on the parent heading went to the end of its last sub-section, and in a
+    replay KSM's "#### Combatant status" collected his courtroom outbursts.
     """
     words = heading.strip().lstrip("#").strip()
     if not words:
@@ -168,7 +171,7 @@ def _section_end(text: str, heading: str) -> Optional[int]:
     )
     if not match:
         return None
-    level = len(match.group(1))
+    level = 6 if own else len(match.group(1))
     following = re.search(rf"^#{{1,{level}}} ", text[match.end() :], re.MULTILINE)
     return match.end() + following.start() if following else len(text)
 
@@ -222,7 +225,7 @@ def apply_edits(
                     continue
             anchor = f"# {name}"
         if anchor.startswith("#"):
-            at = _section_end(text, anchor)
+            at = _section_end(text, anchor, own=bool(starter))
             if at is not None:
                 head, tail = text[:at].rstrip("\n"), text[at:].lstrip("\n")
                 text = f"{head}\n{addition}\n" + (f"\n{tail}" if tail else "")

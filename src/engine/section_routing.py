@@ -44,7 +44,7 @@ about {entity_name}. A court ruling, order, motion or hearing goes under the \
 legal heading even when it is about detention, clothing, mail or health. \
 Anchor the `add` on a sentence in that section, or on \
 the section's heading copied exactly (the text then goes at the end of the \
-section). When a section has sub-headings (one more "#"), anchor on the \
+section's own text, before any of its sub-headings). When a section has sub-headings (one more "#"), anchor on the \
 sub-heading or a sentence under it that fits. A heading marked "not in the \
 profile yet" can be an anchor too: code adds the heading in its place. Use \
 it for a fact that belongs there rather than putting it under another \

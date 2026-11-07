@@ -64,16 +64,21 @@ def test_a_bare_or_annotated_starter_name_counts_as_a_heading_anchor():
         assert "### Detention at Guantánamo" in out and report["appended"] == 0
 
 
-def test_an_existing_starter_heading_takes_the_add_at_its_section_end():
-    out, report = apply_edits(
-        TEXT, [_add("### Military commission or legal case")], STARTER
-    )
+def test_an_add_on_a_parent_heading_stays_out_of_its_sub_sections():
+    parent = _add("### Military commission or legal case")
+    out, report = apply_edits(TEXT, [parent], STARTER)
     assert "new_headings" not in report
-    assert (
-        out.index("He faces the death penalty")
-        < out.index(NEW)
-        < out.index("### Legal mail")
-    )
+    assert out.index("### Military commission") < out.index(NEW)
+    assert out.index(NEW) < out.index("#### Capital charges")
+    # Without starter headings it still goes after the sub-sections
+    flat, _ = apply_edits(TEXT, [parent])
+    assert flat.index("He faces the death penalty") < flat.index(NEW)
+
+
+def test_an_add_on_a_sub_heading_goes_at_its_end():
+    out, _ = apply_edits(TEXT, [_add("#### Capital charges")], STARTER)
+    assert out.index("He faces the death penalty") < out.index(NEW)
+    assert out.index(NEW) < out.index("### Legal mail")
 
 
 def test_without_starter_headings_nothing_changes():
