@@ -178,9 +178,13 @@ def test_an_end_add_opening_with_an_existing_heading_goes_into_that_section():
     ))  # fmt: skip
     out, report = apply_edits(TEXT, [add], STARTER)
     assert out.count("Military commission or legal case") == 1
-    assert "\n#### Video testimony\n" in out and report["appended"] == 0
-    assert out.index("### Military commission") < out.index("#### Video testimony")
+    # A sub-heading of its own is dropped: code, not the model, makes them
+    assert "Video testimony" not in out and report["appended"] == 0
+    assert out.index("### Military commission") < out.index(NEW)
     assert out.index(NEW) < out.index("#### Capital charges")
+    # Without starter headings it is kept, at the level under the section
+    flat, _ = apply_edits(TEXT, [add])
+    assert "\n#### Video testimony\n" in flat
 
 
 def test_an_end_add_opening_with_a_missing_starter_heading_creates_it():
@@ -195,3 +199,22 @@ def test_an_end_add_opening_with_a_missing_starter_heading_creates_it():
     assert out.index("### Detention at Guantánamo") < out.index(
         "### Military commission"
     )
+
+
+def test_a_bare_sub_heading_anchor_is_not_glued_onto_the_heading_line():
+    # Luna replay: anchor "Nashiri Proceedings" (no "#") gave the heading
+    # "#### Nashiri Proceedings Pohl assigned himself ..."
+    for starter in (STARTER, None):
+        out, _ = apply_edits(TEXT, [_add("Capital charges")], starter)
+        assert "\n#### Capital charges\n" in out
+        assert out.index("He faces the death penalty") < out.index(NEW)
+        assert out.index(NEW) < out.index("### Legal mail")
+
+
+def test_an_end_add_opening_with_an_unknown_heading():
+    add = ProfileEdit(op="add", anchor="END", text="## Legal Proceedings\n" + NEW)
+    out, report = apply_edits(TEXT, [add], STARTER)
+    assert "Legal Proceedings" not in out and NEW in out
+    assert report["dropped_headings"] == ["## Legal Proceedings"]
+    flat, _ = apply_edits(TEXT, [add])
+    assert "\n### Legal Proceedings\n" in flat and "\n## Legal" not in flat

@@ -181,6 +181,34 @@ def _shift_heading(line: str, shift: int) -> str:
     return "#" * min(6, max(1, len(match.group(1)) + shift)) + match.group(2)
 
 
+def _unknown_heading(
+    text: str, addition: str, starter: Optional[List[str]], report: Dict[str, Any]
+) -> str:
+    """``addition`` opening with a heading the profile lacks: in a profile with
+    starter headings the heading line is dropped (the outline is the starter
+    list), else it is kept but never above the profile's top level. A local
+    model's "## Legal Proceedings" on END, in a "###" profile, became the
+    only top-level heading that code saw."""
+    first, _, rest = addition.partition("\n")
+    if starter:
+        report.setdefault("dropped_headings", []).append(first.strip())
+        return rest.strip()
+    levels = [len(m.group(1)) for m in re.finditer(r"^(#{1,6})[ \t]", text, re.M)]
+    shift = max(0, min(levels) - (len(first) - len(first.lstrip("#")))) if levels else 0
+    return _shift_heading(first, shift) + ("\n" + rest if rest else "")
+
+
+def _anchor_heading(text: str, anchor: str) -> Optional[str]:
+    """The heading line ``anchor`` is found on, when it is found on one."""
+    span = _find(text, anchor)
+    if span is None:
+        return None
+    start = text.rfind("\n", 0, span[0]) + 1
+    end = text.find("\n", span[1])
+    line = text[start : end if end >= 0 else len(text)].strip()
+    return line if line.startswith("#") else None
+
+
 def _heading_or_missing(text: str, anchor: str) -> bool:
     """True when ``anchor`` isn't in ``text`` or is found only on a heading
     line: a second add on a bare "Detention at Guantánamo", after the first
@@ -245,6 +273,8 @@ def apply_edits(
                 # A missing starter heading written into the text: created in
                 # its place, at the profile's level, like an anchor on it
                 addition, anchor = (first[1] if len(first) > 1 else "").strip(), name
+            elif first[0].lstrip().startswith("#"):
+                addition = _unknown_heading(text, addition, starter, report)
         if not addition:
             report["skipped"].append(
                 {"op": edit.op, "anchor": edit.anchor, "why": "empty"}
@@ -275,6 +305,10 @@ def apply_edits(
                     report.setdefault("new_headings", []).append(name)
                     continue
             anchor = f"# {name}"
+        if not anchor.startswith("#") and anchor != END:
+            # A heading's words without "#" ("Nashiri Proceedings") are that
+            # heading: as a sentence anchor the add was glued onto its line
+            anchor = _anchor_heading(text, anchor) or anchor
         if anchor.startswith("#"):
             at = _section_end(text, anchor, own=bool(starter))
             if at is not None:
