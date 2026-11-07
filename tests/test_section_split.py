@@ -266,3 +266,34 @@ def test_uncited_text_moves_with_the_cited_sentence_after_it():
     units = long_sections(text, min_chars=200)[0]["units"]
     assert len(units) == 7
     assert units[3] == "He later moved to Karachi.\n\n" + PARAS[4]
+
+
+def test_uncited_tail_stays_at_the_end_of_the_section():
+    # "Hearings resumed." has no citation: its claim is the next citation's
+    # (under "### Health"), so it must not move up the section
+    text = TEXT.replace("\n\n### Health", "\n\nHearings resumed.\n\n### Health")
+    section = long_sections(text, min_chars=200)[0]
+    assert section["units"] == PARAS and section["tail"] == "Hearings resumed."
+    reply = SectionSplit(
+        subsections=[
+            SubSection(heading="Charges", paragraphs=[1, 2, 6, 7, 8]),
+            SubSection(heading="Hearings", paragraphs=[3, 4, 5]),
+        ]
+    )
+    out, reports, _ = _split(reply, text)
+    assert reports[0]["status"] == "split"
+    assert out.index("Hearings resumed.") > out.index(PARAS[4])
+    assert out.index("Hearings resumed.") < out.index("### Health")
+    from scripts.section_split_bench import regrounded
+
+    articles = {f"a{i}": PARAS[0] for i in range(6)}
+    assert regrounded(text, out, articles, "KSM") == 0
+
+
+def test_profiles_with_fact_rows_are_not_split(monkeypatch):
+    monkeypatch.setattr(section_split, "SPLIT_CHARS", 200)
+    profile = {"text": TEXT, "fact_rows_json": "[{}]"}
+    out, reports = section_split.split_profile(
+        profile, "person", "KSM", "m", False, ask=_asker(GOOD, [])
+    )
+    assert out is profile and reports == []

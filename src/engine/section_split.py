@@ -120,7 +120,7 @@ def _ends_cited(text: str) -> bool:
     return bool(_CITED_END.search(text))
 
 
-def _units(own: str) -> List[str]:
+def _units(own: str) -> Tuple[List[str], str]:
     """The pieces of a section's own text that the model numbers and code moves.
 
     A piece is a paragraph or list item; one over ``PARAGRAPH_CHARS`` is cut
@@ -129,6 +129,12 @@ def _units(own: str) -> List[str]:
     reads everything since the previous citation as one claim, and moving
     "He later moved to Karachi." away from "He studied there.^[a2]" would
     change that claim.
+
+    Returns the numbered pieces and the section's uncited tail: text after its
+    last citation, which belongs to the claim of the next citation further
+    down the profile, so it is not numbered and stays at the section's end.
+    The first piece stays first too (sub-sections go in the order of their
+    first piece), so text before the section's first citation keeps its claim.
     """
     pieces: List[Tuple[int, str]] = []  # (paragraph number, text)
     for index, block in enumerate(_blocks(own)):
@@ -153,7 +159,8 @@ def _units(own: str) -> List[str]:
         else:
             units.append(text)
         open_unit, last = not _ends_cited(text), index
-    return units
+    tail = units.pop() if open_unit and units else ""
+    return units, tail
 
 
 def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -169,11 +176,11 @@ def long_sections(text: str, min_chars: Optional[int] = None) -> List[Dict[str, 
         own = "\n".join(lines[i + 1 : end]).strip()
         if level >= MAX_LEVEL or len(own) <= limit:
             continue
-        units = _units(own)
+        units, tail = _units(own)
         if len(units) >= MIN_PARAGRAPHS:
             found.append(
                 {"line": i, "level": level, "heading": title, "start": i + 1,
-                 "end": end, "units": units}
+                 "end": end, "units": units, "tail": tail}
             )  # fmt: skip
     return found
 
@@ -246,14 +253,14 @@ def plan_groups(
 
 
 def _render(
-    level: int, units: List[str], plan: List[Tuple[str, List[int]]]
+    level: int, units: List[str], plan: List[Tuple[str, List[int]]], tail: str = ""
 ) -> List[str]:
     out: List[str] = [""]
     for heading, numbers in plan:
         out += [f"{'#' * (level + 1)} {heading}", ""]
         for n in numbers:
             out += [units[n - 1], ""]
-    return out
+    return out + ([tail, ""] if tail else [])
 
 
 def split_long_sections(
@@ -292,7 +299,7 @@ def split_long_sections(
             continue
         new_lines = (
             lines[: section["start"]]
-            + _render(section["level"], section["units"], plan)
+            + _render(section["level"], section["units"], plan, section["tail"])
             + lines[section["end"] :]
         )
         if _sentences("\n".join(new_lines)) != _sentences("\n".join(lines)):
@@ -339,6 +346,13 @@ def split_profile(
     ask: Optional[Ask] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     """``profile`` with its long sections split, and the reports."""
+    from src.engine.fact_list import FACT_ROWS_KEY
+
+    if profile.get(FACT_ROWS_KEY):
+        # The fact-list updater saves each row's section name and edits only
+        # inside it; moved rows would be looked for in the wrong section
+        logger.info(f"No section split for {entity_name}: it has saved fact rows")
+        return profile, []
     text = str(profile.get("text") or "")
     new_text, reports = split_long_sections(
         text, entity_type, entity_name, ask or make_asker(model, local)

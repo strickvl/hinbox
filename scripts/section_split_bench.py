@@ -27,10 +27,13 @@ import argparse
 import json
 import os
 import shutil
+import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import patch
+
+_PATCH_LOCK = threading.Lock()
 
 
 def _asker(model: str):
@@ -57,7 +60,9 @@ def regrounded(before: str, after: str, articles: Dict[str, str], name: str) -> 
     on ``before``. No model calls: the first report comes from a fake judge."""
     from src.utils.grounding import plan_grounding, verify_profile_grounding
 
-    with patch("src.utils.llm.cloud_generation", side_effect=_fake_judge):
+    # The patch replaces a module-wide function, so worker threads take turns:
+    # one finishing early must not put the real judge back under another
+    with _PATCH_LOCK, patch("src.utils.llm.cloud_generation", side_effect=_fake_judge):
         report = verify_profile_grounding(
             profile_text=before, article_texts=articles, entity_name=name
         )
