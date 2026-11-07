@@ -355,6 +355,12 @@ _QUOTE_MIN_CHARS = 40
 _EDGE = " .;:,!?\"'“”‘’()"
 _SENTENCE_START = re.compile(r"(^|[.!?][\"'”’)]*\s|\n\s*)$")
 _OPENING_QUOTES = "\"'“‘"
+# Where the claim stops, the article's sentence must stop too: closing
+# punctuation with a full stop, ! or ? in it, then a space, a line break or
+# the end. '"Khadr was released in 2012" is false, officials said.' does not
+# support "Khadr was released in 2012." The comma in "Khadr was released,
+# officials said" doesn't end the sentence either.
+_SENTENCE_END = re.compile(r"[\"'”’)]*(?:[.!?][\"'”’)]*(?:\s|$)|\s*\n|$)")
 # Markdown heading lines at the start of a claim: the first sentence under a
 # heading is cut from the profile with the heading on it ("### Mentions\n\n…")
 _HEADINGS = re.compile(r"^(?:\s*#+[^\n]*\n)+\s*")
@@ -397,9 +403,7 @@ def _is_quote(claim: str, article: str) -> bool:
         # An opening quote mark before the claim is part of the sentence:
         # '"We will appeal," he said.' starts at the quote mark
         before = article[:start].rstrip(_OPENING_QUOTES)
-        if _SENTENCE_START.search(before) and (
-            end == len(article) or article[end] in _EDGE + "\n"
-        ):
+        if _SENTENCE_START.search(before) and _SENTENCE_END.match(article, end):
             return True
     return False
 

@@ -82,3 +82,20 @@ def test_edited_stub_sentence_goes_to_the_model():
     text = "### Mentions\n\nKhalid Shaikh Mohammed appeared in court on Tuesday at Camp Justice for a hearing.^[a1]"
     _, mock = _ground(text, "Khalid Shaikh Mohammed")
     assert mock.call_count == 1
+
+
+def test_quoted_claim_the_article_rejects_goes_to_the_model():
+    """The quote check must end where the article's sentence ends."""
+    article = '"Omar Khadr was released from custody in 2012" is a false claim, officials said.'
+    text = "Omar Khadr was released from custody in 2012.^[a1]"
+    _, mock = _ground(text, "Omar Khadr", article)
+    assert mock.call_count == 1
+
+
+def test_claim_cut_at_a_comma_goes_to_the_model():
+    article = (
+        "Omar Khadr was released from custody in 2012, his critics claimed wrongly."
+    )
+    text = "Omar Khadr was released from custody in 2012.^[a1]"
+    _, mock = _ground(text, "Omar Khadr", article)
+    assert mock.call_count == 1
