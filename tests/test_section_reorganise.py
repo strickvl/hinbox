@@ -291,3 +291,30 @@ def test_moved_long_claims_keep_verdicts_under_a_shorter_heading():
     after = "### Overview\n\n" + long_para + "\n"
     assert len(long_para) > 600
     assert regrounded(before, after, {"a1": "Article."}, "CIA") == 0
+
+
+def test_a_heading_copied_back_with_its_note_means_the_starter():
+    from src.engine.section_reorganise import _starter_for
+
+    starter = ["Overview", "Role", "Role at Guantánamo"]
+    assert (
+        _starter_for("Overview: what the organization is, its leaders", starter)
+        == "Overview"
+    )
+    assert (
+        _starter_for("Role at Guantánamo: its part in detention", starter)
+        == "Role at Guantánamo"
+    )
+    assert _starter_for("role", starter) == "Role"
+    assert _starter_for("Roles of lawyers", starter) is None
+    reply = SectionSplit(
+        subsections=[
+            SubSection(
+                heading="Background: origin, life and activities before capture",
+                paragraphs=[1, 2, 3, 4],
+            ),
+            SubSection(heading="Health and treatment", paragraphs=[5, 6, 7]),
+        ]
+    )
+    out, report, _ = _run(reply)
+    assert report["status"] == "done" and "### Background\n" in out

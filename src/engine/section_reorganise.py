@@ -85,8 +85,9 @@ each heading is for. A court ruling, order or hearing goes under the legal \
 heading even when it concerns detention or health; a general heading such as \
 Background or Overview is only for who or what {entity_name} is and their \
 history, not for paragraphs that fit nowhere else.
-- Use the headings above, spelled exactly as given. Leave out a heading no \
-paragraph belongs under.
+- Use the headings above, spelled exactly as given: the heading name only, \
+without the description after the colon. Leave out a heading no paragraph \
+belongs under.
 - Only if a paragraph fits none of them, you may add up to {max_new} new \
 headings of 2 to 6 plain words. A new heading must not share a word with \
 another heading.
@@ -175,18 +176,29 @@ def messages(
     ]
 
 
+def _starter_for(heading: str, starter: List[str]) -> Optional[str]:
+    """The starter heading a reply means: "military commission or legal case",
+    or one copied back with its note ("Overview: what the organization is").
+    Longest first, so "Role at Guantánamo" isn't read as "Role"."""
+    low = heading.lower()
+    for h in sorted(starter, key=len, reverse=True):
+        name = _clean_heading(h).lower()
+        if low == name or (low.startswith(name) and low[len(name)] in ":(-–—"):
+            return h
+    return None
+
+
 def plan_sections(
     reply: SectionSplit, count: int, starter: List[str]
 ) -> Tuple[Optional[List[Tuple[str, List[int]]]], str]:
     """Headings and their paragraph numbers (1-based) in the order they go,
     or None and why the reply was refused."""
-    canon = {_clean_heading(h).lower(): h for h in starter}
     groups: Dict[str, List[int]] = {}
     new: List[str] = []
     placed: Dict[int, str] = {}
     for sub in reply.subsections:
         cleaned = _clean_heading(sub.heading)
-        heading = canon.get(cleaned.lower(), cleaned)
+        heading = _starter_for(cleaned, starter) or cleaned
         if heading not in groups:
             if heading not in starter:
                 problem = _heading_problem(heading, [])
