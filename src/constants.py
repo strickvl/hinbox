@@ -58,7 +58,7 @@ PROFILE_UPDATE_APPROACH = os.getenv("HINBOX_PROFILE_UPDATE_APPROACH", "edit").st
 # A hub profile ("United States", ~50k characters from 83 articles) was sent
 # whole on every update and every merge check against it. Over these sizes
 # the model sees a shortened copy instead (src/engine/profile_view.py: the
-# opening, every heading, and the parts closest to the new article); the
+# opening, the headings, and the parts closest to the new article); the
 # stored profile keeps everything. 0 turns the shortening off.
 PROFILE_VIEW_CHARS = int(os.getenv("HINBOX_PROFILE_VIEW_CHARS", "16000"))
 MATCH_PROFILE_CHARS = int(os.getenv("HINBOX_MATCH_PROFILE_CHARS", "8000"))

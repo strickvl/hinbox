@@ -9,7 +9,8 @@ again, though most of that text had nothing to do with the new article.
 its budget:
 
 1. the opening text before the first heading (at most a quarter of the budget),
-2. every heading line, so the model can still add to the end of any section,
+2. the heading lines (up to a third of the budget), so the model can still
+   add to the end of a section,
 3. the passages that share the most words, names and years with the new
    article, best first, until the budget is used up,
 
@@ -172,8 +173,17 @@ def profile_view(text: str, article_text: str, budget: int) -> str:
     if budget <= 0 or len(text) <= budget:
         return text
     passages = _passages(text, max(200, budget // 8))
-    keep = [p.heading for p in passages]
-    used = sum(len(p.text) + 2 for p in passages if p.heading)
+    marker = len(NOT_SHOWN.format(n=99, what="passages")) + 2
+    # Headings first, each with room for the gap marker after it, up to a
+    # third of the budget (a profile with 40 short sections would otherwise
+    # be all headings and markers)
+    keep = [False] * len(passages)
+    used = 0
+    for i, passage in enumerate(passages):
+        cost = len(passage.text) + 2 + marker
+        if passage.heading and used + cost <= budget // 3:
+            keep[i] = True
+            used += cost
     # The opening text says what the entity is: keep its start
     lead_used = 0
     for i, passage in enumerate(passages):
@@ -184,7 +194,6 @@ def profile_view(text: str, article_text: str, budget: int) -> str:
         keep[i] = True
         lead_used += len(passage.text) + 2
     used += lead_used
-    marker = len(NOT_SHOWN.format(n=99, what="passages")) + 2
     scores = _scores(passages, article_text)
     order = sorted(range(len(passages)), key=lambda i: (-scores[i], i))
     for i in order:
