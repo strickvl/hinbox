@@ -84,8 +84,11 @@ under one of these headings, so that a reader can find a topic quickly:
 Rules:
 - Put every {piece} number under exactly one heading.{piece_rule}
 - Choose by what the {piece} mainly tells about {entity_name}, using what \
-each heading is for. A court ruling, order or hearing goes under the legal \
-heading even when it concerns detention or health; a general heading such as \
+each heading is for. What happens in or around a court case (a ruling, \
+order, motion, hearing, lawyers' argument, testimony or evidence request) goes \
+under the legal heading even when it is about detention, CIA custody, torture \
+or health; a statement heading is only for {entity_name}'s own words, not \
+what others said; a general heading such as \
 Background or Overview is only for who or what {entity_name} is and their \
 history, not for {piece}s that fit nowhere else.
 - Use the headings above, spelled exactly as given: the heading name only, \

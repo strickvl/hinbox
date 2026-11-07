@@ -40,8 +40,10 @@ This profile is organised under these headings, each for one kind of fact:
 {listed}
 
 Put each new fact in the section it belongs in, by what it mainly tells \
-about {entity_name}. A court ruling, order, motion or hearing goes under the \
-legal heading even when it is about detention, clothing, mail or health. \
+about {entity_name}. What happens in or around a court case (a ruling, \
+order, motion, hearing, lawyers' argument, testimony or evidence request) goes \
+under the legal heading even when it is about detention, CIA custody, torture, \
+clothing, mail or health. \
 Anchor the `add` on a sentence in that section, or on \
 the section's heading copied exactly (the text then goes at the end of the \
 section's own text, before any of its sub-headings). When a section has sub-headings (one more "#"), anchor on the \
