@@ -356,7 +356,9 @@ def plan_grounding(
                 plan.reused_articles += 1
                 continue
         known = (
-            {v.claim[:max_claim_chars]: v for v in earlier_results} if usable else {}
+            {_claim_key(v.claim, max_claim_chars): v for v in earlier_results}
+            if usable
+            else {}
         )
         article = _article_text(article_texts[aid][:max_article_chars])
         plan.results[aid] = [
@@ -364,6 +366,25 @@ def plan_grounding(
             for c in items
         ]
     return plan
+
+
+_HEADING_LINES = re.compile(r"^[ \t]*#+[^\n]*$", re.MULTILINE)
+
+
+def _claim_key(claim: str, max_claim_chars: int) -> str:
+    """The claim as a key for reusing an earlier verdict on it.
+
+    Heading lines and runs of spaces are left out, so a claim keeps its
+    verdict when a section is split and a sub-heading lands in front of it
+    ("#### Plea negotiations\n\nKSM's lawyers said...^[a1]"): the sentence,
+    and so what the article has to support, hasn't changed. Stored claims
+    were cut at ``max_claim_chars``, so the key is cut 200 characters
+    shorter (when that still leaves 200), leaving room for a heading taken
+    out of one but not the other.
+    """
+    body = _SPACE.sub(" ", _HEADING_LINES.sub("", claim)).strip()
+    cut = max_claim_chars - 200 if max_claim_chars >= 400 else max_claim_chars
+    return body[:cut]
 
 
 def _settled(
@@ -376,9 +397,9 @@ def _settled(
 ) -> Optional[ClaimVerification]:
     """A verdict that needs no model call: kept from the last report, or
     "supported" for a sentence quoted from the article. None otherwise."""
-    text = claim["claim"][:max_claim_chars]
-    if text in known:
-        return known[text].model_copy(update={"citation": claim["citation"]})
+    key = _claim_key(claim["claim"], max_claim_chars)
+    if key in known:
+        return known[key].model_copy(update={"citation": claim["citation"]})
     body = _HEADINGS.sub("", claim["claim"])
     if _names_entity(body, entity_name) and _is_quote(body, article):
         why = "Quoted word for word from the article"

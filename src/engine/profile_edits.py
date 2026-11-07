@@ -152,11 +152,24 @@ def _find(text: str, anchor: str) -> Optional[Tuple[int, int]]:
 
 
 def _section_end(text: str, heading: str) -> Optional[int]:
-    """Index just before the heading after ``heading``, or the text's end."""
-    match = re.search(rf"^{re.escape(heading.strip())}\s*$", text, re.MULTILINE)
+    """Index where the section under ``heading`` ends, or None if absent.
+
+    The heading is found by its words, whatever its level: models write
+    "## Legal proceedings" for a profile's "### Legal proceedings". The
+    section runs to the next heading of the same or a higher level, so its
+    sub-sections ("#### Plea negotiations" under "### Legal proceedings")
+    belong to it and an add goes after them, not before.
+    """
+    words = heading.strip().lstrip("#").strip()
+    if not words:
+        return None
+    match = re.search(
+        rf"^(#{{1,6}})[ \t]+{re.escape(words)}[ \t]*$", text, re.MULTILINE
+    )
     if not match:
         return None
-    following = re.search(r"^#{1,6} ", text[match.end() :], re.MULTILINE)
+    level = len(match.group(1))
+    following = re.search(rf"^#{{1,{level}}} ", text[match.end() :], re.MULTILINE)
     return match.end() + following.start() if following else len(text)
 
 
