@@ -14,6 +14,7 @@ from src.exceptions import RelevanceCheckError
 from src.logging_config import get_logger
 from src.utils.cache_utils import sha256_text
 from src.utils.error_handler import handle_article_processing_error
+from src.utils.letters_page import Letter, join_letters
 from src.utils.misfiled_locations import (
     drop_misfiled_locations,
     drop_misfiled_organizations,
@@ -162,6 +163,39 @@ class ArticleProcessor:
                 fallback=False,
                 context={"article_id": article_id},
             )
+
+    def check_letters_relevance(
+        self, letters: List[Letter], article_id: str
+    ) -> PhaseOutcome:
+        """Check each letter of a letters-to-the-editor page on its own.
+
+        The value is the text of the relevant letters joined, "" when none
+        is relevant, so it reads as the page's verdict. A failed check on
+        any letter fails the whole page, so it is retried next run instead
+        of being extracted with a letter missing.
+        """
+        kept: List[Letter] = []
+        kept_index: List[int] = []
+        dropped: List[str] = []
+        for i, letter in enumerate(letters):
+            outcome = self.check_relevance(letter.text, article_id)
+            if not outcome.success:
+                return outcome
+            if outcome.value:
+                kept.append(letter)
+                kept_index.append(i)
+            else:
+                dropped.append(letter.signer or "(unsigned)")
+        meta = {
+            "letters_page": True,
+            "letters": len(letters),
+            # Positions of the kept letters, so a later run can rebuild the
+            # same text (stored_letters_text())
+            "kept_letters": kept_index,
+            "kept_signers": [letter.signer or "(unsigned)" for letter in kept],
+            "dropped_signers": dropped,
+        }
+        return PhaseOutcome.ok("relevance", value=join_letters(kept), meta=meta)
 
     def _run_extraction(
         self,
