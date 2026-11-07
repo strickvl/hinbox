@@ -152,7 +152,9 @@ def _render(passages: List[_Passage], keep: List[bool], what: str) -> str:
             )
             hidden = 0
             parts.append(passage.text)
-        elif previous == i - 1 and passages[previous].paragraph == passage.paragraph:
+        elif (
+            0 <= previous == i - 1 and passages[previous].paragraph == passage.paragraph
+        ):
             parts[-1] += " " + passage.text  # the next sentences of the same paragraph
         else:
             parts.append(passage.text)

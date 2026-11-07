@@ -176,3 +176,11 @@ def test_profile_starting_with_a_heading_keeps_its_first_paragraph():
     text = "### Overview\nThe United States runs the prison.^[a0]\n\n" + _hub_profile()
     view = profile_view(text, ARTICLE, 1500)
     assert view.startswith("### Overview\n\nThe United States runs the prison.^[a0]")
+
+
+def test_profile_that_is_one_long_paragraph_is_cut_without_error():
+    text = " ".join(f"Sentence {i} says routine things.^[c{i}]" for i in range(900))
+    assert len(text) > 16000
+    view = profile_view(text, ARTICLE, 16000)
+    assert view.startswith("Sentence 0 says routine things.^[c0]")
+    assert len(view) <= 16000
