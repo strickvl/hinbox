@@ -102,13 +102,20 @@ _LABELLED_NOUNS = (
     "victims?|families|survivors?|survivor|legislation|bill|law"
 )
 LABEL_TYPES = ("locations", "organizations")
+_GAP_STOPWORDS = (
+    "(?:for|to|of|in|on|at|by|with|from|and|or|but|the|a|an|as|after|before|"
+    "over|under|into|during|without|against|about|than|is|was|were|are|has|had)"
+)
 
 
 def _as_label(needle: str) -> "re.Pattern[str]":
     """The name used as a label: followed by one of ``_LABELLED_NOUNS``,
-    perhaps with one word between ("USS Cole death-penalty case")."""
+    perhaps with one word between ("USS Cole death-penalty case"), but not a
+    small word that starts a new phrase ("sent to Israel for prosecution"
+    names the place)."""
     return re.compile(
-        rf"(?<!\w){re.escape(needle)}(?:'s)?\s+(?:[\w-]+\s+)?(?:{_LABELLED_NOUNS})(?!\w)",
+        rf"(?<!\w){re.escape(needle)}(?:'s)?\s+(?:(?!{_GAP_STOPWORDS}\s)[\w-]+\s+)?"
+        rf"(?:{_LABELLED_NOUNS})(?!\w)",
         re.I,
     )
 

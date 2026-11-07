@@ -31,6 +31,8 @@ def test_only_as_label():
         "The USS Cole case concerns the attack on the USS Cole in Aden.", ["USS Cole"]
     )
     assert not only_as_label("No mention here.", ["USS Cole"])
+    assert not only_as_label("He was sent to Israel for prosecution.", ["Israel"])
+    assert only_as_label("The Bali nightclub bombing killed 202.", ["Bali"])
 
 
 def test_label_sentences_come_after_real_mentions():
