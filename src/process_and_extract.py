@@ -41,6 +41,7 @@ from src.utils.embeddings.similarity import (
 )
 from src.utils.extraction import configure_extraction_sidecar_cache
 from src.utils.file_ops import write_entities_table
+from src.utils.grounding import describe_claim_counts
 from src.utils.letters_page import split_letters, stored_letters_text
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
@@ -910,6 +911,12 @@ def main():
                 f"{grounding_counts['llm_calls']} model calls, "
                 f"{grounding_counts['reused_checks']} kept from earlier runs",
                 level="success",
+            )
+            log(
+                "Claims in all grounding reports: "
+                f"{describe_claim_counts(grounding_counts)} "
+                f"({grounding_counts['profiles_with_problems']} profiles affected)",
+                level="warning" if grounding_counts["not_supported"] else "info",
             )
     except KeyboardInterrupt:
         log("Interrupted: saving entities merged so far...", level="warning")
