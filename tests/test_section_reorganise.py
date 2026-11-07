@@ -476,3 +476,12 @@ def test_the_bench_numbers_pieces_as_the_reorganise_does():
         "2003 was the year.^[a3]\n"
     )
     assert len(_reorg_units(text)) == 3
+
+
+def test_lines_moved_into_their_own_paragraphs_are_the_same_sentences():
+    # Codex review: a line opening in lowercase or a digit was numbered as its
+    # own piece but compared as part of the line before, so a word-for-word
+    # reorganise was refused as "sentences changed"
+    lines = "He was captured.^[a1]\nal Nashiri was transferred.^[a2]\n2003 was the year.^[a3]"
+    assert _sentences(lines) == _sentences(lines.replace("\n", "\n\n"))
+    assert _sentences(lines) != _sentences(lines.replace("2003", "2004"))

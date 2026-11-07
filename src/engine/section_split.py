@@ -130,10 +130,12 @@ def _norm(text: str) -> str:
 def _sentences(text: str) -> List[str]:
     """The text's sentences, heading lines and spacing aside, sorted. Each
     paragraph or list item is split on its own, so moving one can't join its
-    last sentence to the next one's first."""
+    last sentence to the next one's first. So is each line that ends a
+    sentence, as the reorganise numbers them: "al Nashiri was transferred."
+    on its own line, moved, is still that sentence."""
     out: List[str] = []
-    for block in _blocks(text):
-        joined = " ".join(" ".join(block).split())
+    for para in _paragraphs(text, by_line=True):
+        joined = " ".join(para.split())
         if joined and not _HEADING_LINE.match(joined):
             out += [s for s in _SENTENCE_GAP.split(joined) if s]
     return sorted(out)
