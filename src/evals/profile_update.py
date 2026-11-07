@@ -68,7 +68,7 @@ _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 _DISPUTE_WORDS = re.compile(
     r"\b(disagree\w*|differs?\b|contradict\w*|discrepanc\w*"
     r"|inconsistent with|conflicts? with|conflicting (?:accounts|reports|dates"
-    r"|figures|sources))",
+    r"|figures|sources)|gives? different)",
     re.I,
 )
 # ...and that the conflict is between sources, not one reported inside the
