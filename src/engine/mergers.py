@@ -19,6 +19,8 @@ from src.engine.merge_candidates import (
     find_similar_entity,
     next_candidate,
     pick_canonical_key,
+    rejected_note,
+    surname_note,
 )
 from src.engine.merge_dispute_agent import (
     REVIEW_QUEUE_FILENAME,
@@ -260,7 +262,11 @@ class EntityMerger:
                 level="debug",
             )
 
-        # Match check: pass evidence_text as new_profile_text
+        # Match check: pass evidence_text as new_profile_text ("Rubio" also
+        # says whether "Marco Rubio" is the only person with that surname)
+        evidence_text += surname_note(
+            self.entity_type, new_display, similar_display, entities
+        )
         match_model = task_model("match", model_type)
         check_match = (
             local_model_check_match
@@ -504,45 +510,12 @@ class EntityMerger:
             emb_dim = wi.evidence_dim
             entity_updated = False
 
-            # --- Similarity search (variant-aware) ---
-            similar_key, similarity_score = self.find_similar_entity(
-                entity_key,
-                evidence_embedding,
-                entities,
-                resolved_threshold,
-                embedding_model=emb_model_name,
-                embedding_dim=emb_dim,
-                lexical_blocking_config=lexical_blocking_cfg,
-                query_entity=entity_dict,
-                equivalence_groups=equivalence_groups,
-            )
-
             # Try candidates above the threshold closest first (up to
             # MERGE_MAX_SIMILAR_CHECKS), then the best name-variant one once
             # ("Guantánamo Bay" may lose to "Guantanamo Bay Navy Base" on cosine).
             rejected: List[Union[str, Tuple]] = []
-            verdict = "skip"
-            while similar_key and len(rejected) <= MERGE_MAX_SIMILAR_CHECKS:
-                verdict = self._check_candidate(
-                    entity_key,
-                    similar_key,
-                    similarity_score,
-                    entities,
-                    evidence_text,
-                    article_content,
-                    article_id,
-                    evidence_cfg,
-                    resolved_threshold,
-                    model_type,
-                    domain,
-                    review_queue_path,
-                    stats,
-                )
-                if verdict != "skip":
-                    break
-                rejected.append(similar_key)
-                if len(rejected) > 1 and (similarity_score or 0) < resolved_threshold:
-                    break  # a name-variant candidate was the last one to try
+            verdict, similar_key = "skip", None
+            while len(rejected) <= MERGE_MAX_SIMILAR_CHECKS:
                 similar_key, similarity_score = next_candidate(
                     self.entity_type,
                     self.alternative_field,
@@ -557,6 +530,28 @@ class EntityMerger:
                     query_entity=entity_dict,
                     equivalence_groups=equivalence_groups,
                 )
+                if not similar_key:
+                    break
+                verdict = self._check_candidate(
+                    entity_key,
+                    similar_key,
+                    similarity_score,
+                    entities,
+                    evidence_text + rejected_note(self.entity_type, rejected),
+                    article_content,
+                    article_id,
+                    evidence_cfg,
+                    resolved_threshold,
+                    model_type,
+                    domain,
+                    review_queue_path,
+                    stats,
+                )
+                if verdict != "skip":
+                    break
+                rejected.append(similar_key)
+                if len(rejected) > 1 and (similarity_score or 0) < resolved_threshold:
+                    break  # a name-variant candidate was the last one to try
             if verdict == "error":
                 stats.errors += 1
                 continue
@@ -660,6 +655,7 @@ class EntityMerger:
                             article_dates=article_dates(
                                 existing_entity, article_id, article_published_date
                             ),
+                            entity=existing_entity,
                         )
                     )
                     # update_profile hands back the old profile when the model

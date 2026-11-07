@@ -10,7 +10,7 @@ from typing import List
 from unittest.mock import patch
 
 from src.engine import EntityMerger, MatchCheckResult
-from src.engine.merge_candidates import next_candidate
+from src.engine.merge_candidates import next_candidate, rejected_note
 from tests.test_entity_merger_merge_smoke import (
     StubEmbeddingManager,
     create_profile_stub,
@@ -114,3 +114,38 @@ def test_below_threshold_candidates_are_not_tried_as_similar():
     )
     # REAL (0.90) and FAR (0.85) are under 0.92 and no name is a variant
     assert key is None and score is None
+
+
+def test_later_candidates_are_told_a_closer_one_was_rejected():
+    entities, notes = _entities(), []
+
+    def check(new_name, existing_name, new_text, *args, **kwargs):
+        notes.append("already judged a different event" in new_text)
+        return MatchCheckResult(is_match=False, confidence=0.95, reason="stub")
+
+    with (
+        patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
+        patch(
+            "src.engine.mergers.get_embedding_manager",
+            return_value=StubEmbeddingManager(vec=[1.0, 0, 0]),
+        ),
+        patch("src.engine.mergers.cloud_model_check_match", side_effect=check),
+    ):
+        EntityMerger("events").merge_entities(
+            [{"title": "Nashiri's defense lawyers resign", "event_type": "other"}],
+            entities,
+            article_id="a1",
+            article_title="t",
+            article_url="u",
+            article_published_date="2025-01-01",
+            article_content="Nashiri's defense lawyers resign.",
+            extraction_timestamp="x",
+            similarity_threshold=0.8,
+        )
+    assert notes == [False, True, True]
+
+
+def test_rejected_note_names_the_rejected_candidates():
+    assert rejected_note("events", []) == ""
+    note = rejected_note("events", [SIBLING])
+    assert f'"{SIBLING[0]}"' in note and "not just a related one" in note

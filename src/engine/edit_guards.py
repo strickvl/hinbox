@@ -34,6 +34,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.engine.date_disputes import _PUBLISHED
+from src.engine.dispute_check import Ask, check_disputes, replacement
 from src.engine.fact_list import _MONTH, _stems, _values, adds_values
 from src.engine.later_updates import (
     article_side,
@@ -67,7 +68,16 @@ _NARRATOR = re.compile(
     r"|\bdiscrepanc\w*"
     rf"|\b(?:differs?|disagrees?|contradicts?|contradicting|inconsistent|conflicts?)"
     rf"\s+(?:with|from)?\s*(?:the|an?|this)?\s*(?:earlier|previous|prior|other|"
-    rf"another|existing|new)\s+{_SRC}",
+    rf"another|existing|new|later|newer|older|original|reported)\s+{_SRC}"
+    # "these sources give different timelines", "this differs from the
+    # reported May transfer date": wordings the 7 Nov Luna run used
+    rf"|\b{_SRC}\s+(?:\w+\s+)?(?:give|gives|offer|offers)\s+(?:a\s+)?different"
+    r"|\b(?:this|which)\s+(?:differs?|conflicts?|contradicts?)\b"
+    # "The October 2010 article dates the attack to July 2001 instead."
+    # Only with the article as subject: "A Senate report recommended
+    # Colorado instead" is news
+    r"|^\s*(?:the|an?|this)\s+(?:[\w.,]+\s+){0,5}?(?:article|source|account)s?\b"
+    r"[^.;]*\binstead\b",
     re.I,
 )
 # Capitalised words after the first: names. "consulted Judge Spath" isn't a
@@ -331,18 +341,53 @@ def later_update(
     return as_update(verb, side, dated, article_date, own_citations(sentence, olds))
 
 
+def paragraph_citations(text: str) -> Dict[str, str]:
+    """Each uncited sentence with the citations of the next cited sentence in
+    its paragraph appended: profiles cite once per paragraph, so the dispute
+    check can see when "... killed 2,976 people." was reported."""
+    out: Dict[str, str] = {}
+    for paragraph in re.split(r"\n\s*\n", text):
+        pending: List[str] = []
+        for sentence in _sentences(paragraph):
+            if _CITATION.search(sentence):
+                cites = "".join(_CITATION.findall(sentence))
+                out.update({p: f"{p}{cites}" for p in pending})
+                pending = []
+            elif not sentence.startswith("#"):
+                pending.append(sentence)
+    return out
+
+
+def _disputed_olds(sentence: str, profile: List[str], anchor: str) -> List[str]:
+    """The profile sentences a kept "sources disagree" sentence disputes.
+
+    The prompt puts the dispute right after the sentence it disputes, but the
+    model often anchors on a whole paragraph, and the disputed value is
+    usually not in its last sentence ("... killed 2,976 people. It gives no
+    further details."). So: the anchor's sentences giving another value; else
+    all of them (at most three); else the profile's sentences giving another
+    value, at most two."""
+    anchors = [s for s in profile if s and s in anchor]
+    valued = disputed_sentences(sentence, anchors)
+    return valued or anchors[:3] or disputed_sentences(sentence, profile)[:2]
+
+
 def guard_edits(
     text: str,
     edits: List[ProfileEdit],
     article_date: Any = None,
     source_dates: Optional[Dict[str, Any]] = None,
+    ask: Optional[Ask] = None,
 ) -> Tuple[List[ProfileEdit], Dict[str, Any]]:
     """The edits with repeated and invented-dispute sentences taken out, and
     "sources disagree" sentences that are later updates rewritten as one.
 
     ``article_date`` is the new article's published date and
     ``source_dates`` the published date of each article the profile cites
-    (by id); without them no sentence is read as a later update.
+    (by id); without them no sentence is read as a later update. With
+    ``ask`` (a model call, ``dispute_check.py``), every "sources disagree"
+    sentence still left is checked by the model and kept, rewritten or
+    dropped by its verdict.
     """
     when = to_date(article_date)
     dates = {k: d for k, v in (source_dates or {}).items() if (d := to_date(v))}
@@ -355,12 +400,17 @@ def guard_edits(
     known = [s for s in _sentences(replaced) if not s.startswith("#")]
     profile = list(known)
     report: Dict[str, Any] = {"repeats": [], "disputes": [], "later_updates": []}
-    kept: List[ProfileEdit] = []
-    for edit in edits:
+    cited = paragraph_citations(replaced) if ask else {}
+    # Per edit: (span, new text) swaps and how many facts stay
+    swaps: List[List[Tuple[Tuple[int, int], str]]] = []
+    facts_left: List[int] = []
+    pending: List[Dict[str, Any]] = []  # disputes for the model check
+    for n, edit in enumerate(edits):
+        swaps.append([])
+        facts_left.append(0)
         if edit.op != "add":
-            kept.append(edit)
             continue
-        facts_left, cursor, swaps = 0, 0, []
+        cursor = 0
         for sentence in _sentences(edit.text):
             # Each sentence's own place in the text, so a dropped sentence
             # that also ends an earlier kept one is cut from the right spot
@@ -376,20 +426,71 @@ def guard_edits(
                 report["disputes"].append(sentence[:200])
             elif new := later_update(sentence, profile, when, dates, edit.anchor) or "":
                 report["later_updates"].append([sentence[:200], new[:200]])
-                facts_left += 1
+                facts_left[n] += 1
                 known.append(new)
             else:
-                facts_left += 1
+                facts_left[n] += 1
                 known.append(sentence)  # a later edit can't add it again
+                if ask and span and _NARRATOR.search(_claim(sentence)):
+                    olds = [
+                        cited.get(o, o)
+                        for o in _disputed_olds(sentence, profile, edit.anchor)
+                    ]
+                    pending.append(
+                        {"edit": n, "span": span, "sentence": sentence, "olds": olds}
+                    )
                 continue
             if span:
-                swaps.append((span, new))
-        new_text = edit.text
-        for (start, end), new in reversed(swaps):
-            new_text = new_text[:start] + new + new_text[end:]
-        if new_text == edit.text:
+                swaps[n].append((span, new))
+    if ask and pending:
+        _apply_dispute_check(
+            pending, ask, when, dates, known, swaps, facts_left, report
+        )
+    kept: List[ProfileEdit] = []
+    for n, edit in enumerate(edits):
+        if edit.op != "add" or not swaps[n]:
             kept.append(edit)
-        elif facts_left:
+            continue
+        new_text = edit.text
+        for (start, end), new in sorted(swaps[n], reverse=True):
+            new_text = new_text[:start] + new + new_text[end:]
+        if facts_left[n]:
             tidy = re.sub(r"[ \t]{2,}", " ", new_text).strip()
             kept.append(edit.model_copy(update={"text": tidy}))
     return kept, report
+
+
+def _apply_dispute_check(
+    pending: List[Dict[str, Any]],
+    ask: Ask,
+    when: Optional[dt.date],
+    dates: Dict[str, dt.date],
+    known: List[str],
+    swaps: List[List[Tuple[Tuple[int, int], str]]],
+    facts_left: List[int],
+    report: Dict[str, Any],
+) -> None:
+    """Keep, rewrite or drop each pending dispute by the model's verdict."""
+    verdicts = check_disputes(pending, ask, when, dates)
+    report["dispute_check"] = []
+    for i, item in enumerate(pending):
+        verdict = verdicts.get(i)
+        if verdict is None or verdict.verdict == "conflict":
+            report["dispute_check"].append(
+                [item["sentence"][:200], verdict.verdict if verdict else "unchecked"]
+            )
+            continue
+        sentence = item["sentence"]
+        known.remove(sentence)
+        cites = own_citations(sentence, item["olds"])
+        new = replacement(verdict, sentence, cites)
+        if new and is_repeat(new, known):
+            new = None
+        report["dispute_check"].append(
+            [sentence[:200], verdict.verdict, (new or "")[:200]]
+        )
+        if new:
+            known.append(new)
+        else:
+            facts_left[item["edit"]] -= 1
+        swaps[item["edit"]].append((item["span"], new or ""))

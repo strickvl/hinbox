@@ -105,6 +105,16 @@ merge_evidence:
   window_chars: 240       # characters per context window around entity mentions
   max_windows: 3          # max context windows to extract from article
 
+# Profiles
+profiles:
+  # Entity kinds whose profile is frozen after the first article: a later
+  # article is linked to the entity but makes no profile update and adds no
+  # text (src/engine/hub_profiles.py). Meant for hubs named in passing by most
+  # articles. Keys are entity tables, values are their `type` values.
+  # HINBOX_HUB_LINK_ONLY=off turns it off.
+  link_only:
+    locations: [country, region]
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction
