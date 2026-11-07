@@ -437,3 +437,24 @@ def test_a_sentence_wrapped_over_two_lines_stays_one_piece():
         "He was moved.^[a2]",
     ]
     assert spans == [(0, 0), (1, 1)] and tail == ""
+
+
+def test_a_refused_reorganise_is_asked_again_once_the_profile_grows(monkeypatch):
+    # Local replay: al Nashiri's was refused once ("1 sections") and the
+    # profile stayed flat for 29 more articles
+    monkeypatch.setattr(section_reorganise, "REORGANISE_CHARS", 100)
+    one = SectionSplit(subsections=[
+        SubSection(heading="Military commission or legal case", paragraphs=list(range(1, 8)))
+    ])  # fmt: skip
+    seen: List[Any] = []
+    args = ("person", "KSM", "detainee", "guantanamo", "m", False)
+    out, report = reorganise_profile({"text": TEXT}, *args, ask=_asker(one, seen))
+    assert report["reason"] == "1 sections" and out["reorganised"] == "refused"
+    assert out["reorganise_refused_chars"] == len(TEXT) and out["text"] == TEXT
+    same, report = reorganise_profile(out, *args, ask=_asker(GOOD, seen))
+    assert same is out and report is None and len(seen) == 1
+    # Uncited text at the end isn't numbered, so GOOD still places every piece
+    grown = {**out, "text": TEXT + "\nHe wrote poems in prison." * 20}
+    done, report = reorganise_profile(grown, *args, ask=_asker(GOOD, seen))
+    assert len(seen) == 2 and done["reorganised"] == "done"
+    assert "reorganise_refused_chars" not in done

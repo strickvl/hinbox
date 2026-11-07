@@ -32,8 +32,9 @@ after an update, it is reorganised once:
    and undoes the move if one differs.
 
 ``profile["reorganised"]`` records the outcome (``done`` or ``refused``), so
-it is tried once per entity; a failed call (no answer, prompt too long) is
-tried again on the next update. The section split
+it is done once per entity; a refused answer is asked again once the profile
+has grown 25% past its size then (``reorganise_refused_chars``), and a failed
+call (no answer, prompt too long) on the next update. The section split
 (``section_split.py``) then runs as before on any section still too long.
 
 ``HINBOX_SECTION_REORGANISE`` sets which tables this runs for: ``people`` by
@@ -65,6 +66,8 @@ logger = get_logger("engine.section_reorganise")
 REORGANISE_ENV = "HINBOX_SECTION_REORGANISE"
 REORGANISE_CHARS = int(os.getenv("HINBOX_SECTION_REORGANISE_CHARS", "8000"))
 MARK_KEY = "reorganised"
+REFUSED_CHARS_KEY = "reorganise_refused_chars"  # size when it was refused
+RETRY_GROWTH = 1.25
 MIN_PARAGRAPHS = 6
 OPENING_CHARS = 1500  # a longer opening is numbered with the rest
 MAX_NEW_HEADINGS = 2
@@ -369,8 +372,16 @@ def reorganise_profile(
     from src.engine.fact_list import FACT_ROWS_KEY
 
     text = str(profile.get("text") or "")
+    # A refused answer is asked again once the profile has grown 25%: in a
+    # local replay al Nashiri's was refused once ("1 sections"), the profile
+    # stayed flat for 29 more articles, and one sub-section reached 14,114
+    # characters because only reorganised profiles re-split sub-sections
+    refused_at = int(profile.get(REFUSED_CHARS_KEY) or REORGANISE_CHARS)
+    retry = (
+        profile.get(MARK_KEY) == "refused" and len(text) >= refused_at * RETRY_GROWTH
+    )
     if (
-        profile.get(MARK_KEY)
+        (profile.get(MARK_KEY) and not retry)
         or profile.get(FACT_ROWS_KEY)
         or len(text) <= REORGANISE_CHARS
     ):
@@ -387,6 +398,10 @@ def reorganise_profile(
         f"Reorganise for {entity_name}: {report['status']} "
         f"{report.get('reason') or [h for h, _ in report.get('sections', [])]}"
     )
-    if report["status"] in ("done", "refused"):
-        return {**profile, "text": new_text, MARK_KEY: report["status"]}, report
+    if report["status"] == "done":
+        out = {**profile, "text": new_text, MARK_KEY: "done"}
+        out.pop(REFUSED_CHARS_KEY, None)
+        return out, report
+    if report["status"] == "refused":
+        return {**profile, MARK_KEY: "refused", REFUSED_CHARS_KEY: len(text)}, report
     return profile, report
