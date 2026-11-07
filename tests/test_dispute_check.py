@@ -155,3 +155,55 @@ def test_an_uncited_sentence_borrows_its_paragraphs_citation():
         "The attacks killed 2,976 people.^[fb]"
     )
     assert "Alone." not in cited
+
+
+TOLL_PROFILE = (
+    "Pennsylvania is the state where a hijacked airliner crashed during the "
+    "Sept. 11, 2001 attacks, which killed 2,976 people. The article gives no "
+    "further details about Pennsylvania.^[sep]\n"
+)
+TOLL_ANCHOR = TOLL_PROFILE.strip()
+
+
+def _toll_calls(text: str) -> List[str]:
+    calls: List[str] = []
+    edit = ProfileEdit(op="add", anchor=TOLL_ANCHOR, text=text)
+    guard_edits(
+        TOLL_PROFILE, [edit], "2018-09-12", {"sep": "2021-09-11"}, ask=_asker([], calls)
+    )
+    return calls
+
+
+def test_rather_than_and_later_report_instead_go_to_the_dispute_check():
+    # Both wordings from the 7 Nov replay skipped every guard and the check
+    for text in (
+        "The article reports that the attacks killed 2,974 people, rather than 2,976.^[n]",
+        "A later report gives the death toll as 2,974 instead.^[n]",
+    ):
+        calls = _toll_calls(text)
+        assert len(calls) == 1 and "2,976" in calls[0]
+
+
+def test_rather_than_news_is_left_alone():
+    assert not _toll_calls("The article says Baker chose prison rather than exile.^[n]")
+    assert not _toll_calls("A Senate report recommended Colorado instead.^[n]")
+
+
+def test_a_named_old_value_keeps_a_real_count_dispute():
+    # Was dropped as invented: "death toll" shares no word with "killed", and
+    # the old sentence's year (2001) blocked the count rule
+    text = "A report gives the death toll as 2,974 rather than 2,976, so the sources disagree.^[n]"
+    calls = _toll_calls(text)
+    assert len(calls) == 1 and "2,976" in calls[0]
+
+
+def test_an_abbreviated_month_doesnt_hide_instead():
+    assert _NARRATOR.search(
+        "The article dates the conviction to Oct. 31, 2017, instead"
+    )
+
+
+def test_an_anchor_with_another_count_keeps_the_dispute_for_the_check():
+    text = "A later article gives the death toll as 2,974 instead; the sources disagree.^[n]"
+    calls = _toll_calls(text)
+    assert len(calls) == 1 and "2,976" in calls[0]

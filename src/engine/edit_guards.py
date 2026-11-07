@@ -61,6 +61,9 @@ _SOURCES = re.compile(r"\b(sources?|reports?|articles?|accounts?|records?)\b", r
 # disagree", "conflicting reports", "differs from the earlier report". A
 # disagreement the article reports ("his lawyers contradicted reports that he
 # confessed") is news and is never dropped as a dispute
+# Anything up to the sentence's end, letting through an abbreviation's period
+# ("dates the conviction to Oct. 31, 2017, instead")
+_NOT_END = r"(?:[^.;]|\.(?=\S|\s+\d))"
 _SRC = r"(?:sources?|reports?|accounts?|articles?|records?|profile)"
 _NARRATOR = re.compile(
     rf"\b{_SRC}\s+(?:disagree|differ|conflict|vary|contradict)\w*"
@@ -77,9 +80,26 @@ _NARRATOR = re.compile(
     # Only with the article as subject: "A Senate report recommended
     # Colorado instead" is news
     r"|^\s*(?:the|an?|this)\s+(?:[\w.,]+\s+){0,5}?(?:article|source|account)s?\b"
-    r"[^.;]*\binstead\b",
+    rf"{_NOT_END}*\binstead\b",
     re.I,
 )
+# Softer comparison wordings with no "disagree": "The article reports that the
+# attacks killed 2,974 people, rather than 2,976." and the prompt's own example
+# "A later report gives the year as 2003 instead." On the 7 Nov replay these
+# skipped every guard and the dispute check. They can also be news ("the
+# article says he chose prison rather than exile"), so they are never dropped
+# as invented disputes; they only go to the dispute check, with the sentences
+# ``_disputed_olds()`` finds (the anchor's, else ones giving another value)
+_SOFT_DISPUTE = re.compile(
+    r"^\s*(?:the|an?|this)\s+(?:[\w.,]+\s+){0,5}?(?:article|source|account)s?\b"
+    rf"{_NOT_END}*\brather than\s+(?:[\w.]+\s+){{0,2}}?(?:\d|(?:Jan|Feb|Mar|Apr|May|Jun|Jul"
+    r"|Aug|Sep|Oct|Nov|Dec)[a-z]*\b)"
+    r"|\b(?:later|earlier|newer|older|another|other|second|new|separate)\s+"
+    r"(?:report|article|account|source)s?\b"
+    rf"{_NOT_END}*\b(?:instead|rather than)\b",
+    re.I,
+)
+_NUMBERS = re.compile(r"\b\d[\d,]*\d\b|\b\d\b")
 # Capitalised words after the first: names. "consulted Judge Spath" isn't a
 # repeat of "consulted Judge Pohl", and the stems drop short names
 _NAME = re.compile(r"(?<!^)(?<![.!?]\s)\b[A-Z][a-z]{2,}\b")
@@ -280,19 +300,31 @@ def _disputes_value(claim: str, other: str) -> bool:
     return swapped or bool(undated and counts - o_counts and o_counts)
 
 
-def disputed_sentences(sentence: str, known: List[str]) -> List[str]:
+def disputed_sentences(
+    sentence: str, known: List[str], soft: bool = False
+) -> List[str]:
     """The known sentences a "sources disagree" sentence could be disputing:
     those giving a different year (or month or count for the same year), or
-    another name, for something it mentions. Empty for any other sentence."""
+    another name, for something it mentions. Empty for any other sentence;
+    with ``soft``, a ``_SOFT_DISPUTE`` wording ("rather than 2,976") counts too."""
     claim = _claim(sentence)
-    if not _NARRATOR.search(claim):
+    if not (_NARRATOR.search(claim) or (soft and _SOFT_DISPUTE.search(claim))):
         return []
     # The dispute wording itself says nothing about what is disputed, and a
     # source's own date ("the August 14, 2009 article describes Khadr as 22")
     # is when it was written: on dev, Luna's two kept false disputes differed
     # from the profile only in that year
     topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", _PUBLISHED.sub(" ", claim)))
-    return [o for o in known if _disputes_value(topic, _PUBLISHED.sub(" ", _claim(o)))]
+    # "... 2,974 people, rather than 2,976": the second value is the old one
+    rather = re.search(r"\brather than\b(.*)$", topic, flags=re.I)
+    topic = topic[: rather.start()] if rather else topic
+    found = [o for o in known if _disputes_value(topic, _PUBLISHED.sub(" ", _claim(o)))]
+    if found or not rather:
+        return found
+    # The value topic words can't link ("death toll" against "killed"): the
+    # old sentence holding the value the claim names after "rather than"
+    named = set(_NUMBERS.findall(rather.group(1))) - set(_NUMBERS.findall(topic))
+    return [o for o in known if named & set(_NUMBERS.findall(_claim(o)))]
 
 
 def is_invented_dispute(sentence: str, known: List[str]) -> bool:
@@ -368,8 +400,37 @@ def _disputed_olds(sentence: str, profile: List[str], anchor: str) -> List[str]:
     all of them (at most three); else the profile's sentences giving another
     value, at most two."""
     anchors = [s for s in profile if s and s in anchor]
-    valued = disputed_sentences(sentence, anchors)
-    return valued or anchors[:3] or disputed_sentences(sentence, profile)[:2]
+    valued = disputed_sentences(sentence, anchors, soft=True)
+    if valued:
+        return valued
+    return anchors[:3] or disputed_sentences(sentence, profile, soft=True)[:2]
+
+
+def _anchor_differs(sentence: str, profile: List[str], anchor: str) -> bool:
+    """A sentence of the edit's anchor gives another count or year than the
+    dispute does. Topic words can miss the link ("a later article gives the
+    death toll as 2,974 instead" against "... attacks, which killed 2,976
+    people"), so such a dispute goes to the model check instead of being
+    dropped as invented."""
+    topic = _PUBLISHED.sub(" ", _claim(sentence))
+    years, _, counts = _values(topic)
+    for old in (s for s in profile if s and s in anchor):
+        o_years, _, o_counts = _values(_PUBLISHED.sub(" ", _claim(old)))
+        if (counts - o_counts and o_counts) or (years - o_years and o_years):
+            return True
+    return False
+
+
+def _to_check(sentence: str, profile: List[str], anchor: str) -> bool:
+    """Whether a kept sentence goes to the dispute check: it says sources
+    disagree, or it compares them more softly ("rather than 2,976", "a later
+    report ... instead") and there is an old sentence to set it against."""
+    claim = _claim(sentence)
+    if _NARRATOR.search(claim):
+        return True
+    if not _SOFT_DISPUTE.search(claim):
+        return False
+    return bool(_disputed_olds(sentence, profile, anchor))
 
 
 def guard_edits(
@@ -422,7 +483,9 @@ def guard_edits(
             new = ""
             if is_repeat(sentence, known):
                 report["repeats"].append(sentence[:200])
-            elif is_invented_dispute(sentence, known):
+            elif is_invented_dispute(sentence, known) and not (
+                ask and _anchor_differs(sentence, profile, edit.anchor)
+            ):
                 report["disputes"].append(sentence[:200])
             elif new := later_update(sentence, profile, when, dates, edit.anchor) or "":
                 report["later_updates"].append([sentence[:200], new[:200]])
@@ -431,7 +494,7 @@ def guard_edits(
             else:
                 facts_left[n] += 1
                 known.append(sentence)  # a later edit can't add it again
-                if ask and span and _NARRATOR.search(_claim(sentence)):
+                if ask and span and _to_check(sentence, profile, edit.anchor):
                     olds = [
                         cited.get(o, o)
                         for o in _disputed_olds(sentence, profile, edit.anchor)
