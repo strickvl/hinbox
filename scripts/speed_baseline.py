@@ -209,11 +209,21 @@ def grounding_summary(tables: Dict[str, List[Dict]]) -> Dict[str, Any]:
     scores = [
         g["grounding_score"] for g in reports if g.get("grounding_score") is not None
     ]
+    from src.utils.grounding import claim_counts
+
+    levels: Counter = Counter()
+    for g in reports:
+        levels.update(claim_counts(g))
+    # The mean score counts "partial" as a pass, so show what it hides
     return {
         "profiles_scored": len(scores),
         "mean_score": round(sum(scores) / len(scores), 3) if scores else None,
         "verified": sum(g.get("verified", 0) for g in reports),
         "citations": sum(g.get("total_citations", 0) for g in reports),
+        "not_supported": levels["not_supported"],
+        "partial": levels["partial"],
+        "unclear": levels["unclear"],
+        "missing_source": levels["missing_source"],
     }
 
 
@@ -343,6 +353,9 @@ COLUMNS = [
     ("lost", lambda p: p["quality"]["audit_totals"].get("lost_sentences", 0)),
     ("dups", lambda p: p["quality"]["audit_totals"].get("name_variant_duplicates", 0)),
     ("grounding", lambda p: p["quality"]["grounding"]["mean_score"]),
+    ("not supp", lambda p: p["quality"]["grounding"].get("not_supported")),
+    ("partial", lambda p: p["quality"]["grounding"].get("partial")),
+    ("unclear", lambda p: p["quality"]["grounding"].get("unclear")),
 ]
 
 
