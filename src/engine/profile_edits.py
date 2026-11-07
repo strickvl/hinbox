@@ -151,6 +151,17 @@ def _find(text: str, anchor: str) -> Optional[Tuple[int, int]]:
     return (match.start(), match.end()) if match else None
 
 
+def _heading_or_missing(text: str, anchor: str) -> bool:
+    """True when ``anchor`` isn't in ``text`` or is found only on a heading
+    line: a second add on a bare "Detention at Guantánamo", after the first
+    created that heading, would otherwise be put inside the heading line."""
+    span = _find(text, anchor)
+    if span is None:
+        return True
+    line_start = text.rfind("\n", 0, span[0]) + 1
+    return text[line_start:].startswith("#")
+
+
 def _section_end(text: str, heading: str, own: bool = False) -> Optional[int]:
     """Index where the section under ``heading`` ends, or None if absent.
 
@@ -215,7 +226,7 @@ def apply_edits(
             continue
 
         name = starter_anchor(anchor, starter) if starter and anchor != END else None
-        if name and (anchor.startswith("#") or _find(text, anchor) is None):
+        if name and (anchor.startswith("#") or _heading_or_missing(text, anchor)):
             if _section_end(text, name) is None:
                 placed = insert_missing_heading(text, name, addition, starter or [])
                 if placed is not None:

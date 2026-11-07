@@ -395,3 +395,41 @@ def test_split_profile_re_splits_only_reorganised_profiles(monkeypatch):
         ask=_asker(GOOD, []),
     )  # fmt: skip
     assert "#### Pretrial hearings" in done["text"]
+
+
+def test_re_splits_under_one_parent_share_the_sibling_cap(monkeypatch):
+    # Two long sub-sections under one parent, room for one more sub-section:
+    # the second split (bottom up) fits, the first must then be refused
+    two = NESTED.replace(
+        "### Health and treatment",
+        "#### Detention hearings\n\n"
+        + "\n\n".join(PARAS)
+        + "\n\n### Health and treatment",
+    )
+    replies = iter([
+        SectionSplit(subsections=[
+            SubSection(heading="Review boards", paragraphs=[1, 2, 3, 4]),
+            SubSection(heading="Habeas", paragraphs=[5, 6, 7, 8]),
+        ]),
+        SectionSplit(subsections=[
+            SubSection(heading="Charges", paragraphs=[1, 2, 3, 4]),
+            SubSection(heading="Pleas", paragraphs=[5, 6, 7, 8]),
+        ]),
+    ])  # fmt: skip
+    monkeypatch.setattr(section_split, "MAX_SIBLINGS", 4)
+    out, reports = split_long_sections(
+        two, "person", "KSM", lambda m: next(replies), min_chars=200, resplit=True
+    )
+    assert [r["status"] for r in reports] == ["refused", "split"]
+    assert "over 4 sub-sections" in reports[0]["reason"]
+    assert out.count("\n#### ") <= 4
+
+
+def test_a_parent_split_counts_its_existing_sub_sections(monkeypatch):
+    parent = "### Legal case\n\n" + "\n\n".join(PARAS) + "\n\n#### Old\n\nA.^[a1]\n"
+    assert long_sections(parent, min_chars=200)[0]["children"] == 1
+    monkeypatch.setattr(section_split, "MAX_SIBLINGS", 2)
+    out, reports = split_long_sections(
+        parent, "person", "KSM", _asker(GOOD, []), min_chars=200
+    )
+    assert reports[0]["status"] == "refused" and out == parent

@@ -145,3 +145,16 @@ def test_edit_profile_sends_the_note_and_routes_adds(monkeypatch):
     )  # fmt: skip
     assert "## Where new text goes" not in seen["system"]
     assert flat["edit_report"]["routed"] is False
+
+
+def test_two_bare_adds_on_a_missing_heading_both_go_under_it():
+    second = ProfileEdit(
+        op="add", anchor="Detention at Guantánamo", text="He fasted.^[a8]"
+    )
+    out, report = apply_edits(TEXT, [_add("Detention at Guantánamo"), second], STARTER)
+    assert report["applied"] == 2 and report["new_headings"] == [
+        "Detention at Guantánamo"
+    ]
+    assert "\n### Detention at Guantánamo\n" in out
+    assert out.index("### Detention at Guantánamo") < out.index("He fasted.")
+    assert out.index("He fasted.") < out.index("### Military commission")

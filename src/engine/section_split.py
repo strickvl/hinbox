@@ -216,6 +216,9 @@ def long_sections(
             continue
         above = [h for h in heads[:k] if h[1] < level]
         parent = above[-1] if above else None
+        rest = heads[k + 1 :]
+        stop = next((j for j, h in enumerate(rest) if h[1] <= level), len(rest))
+        children = sum(h[1] == level + 1 for h in rest[:stop])
         if parent:
             # A sub-section is never split deeper: in a replay of al Nashiri's
             # articles a sub-section the split had made was split again, down
@@ -235,7 +238,8 @@ def long_sections(
                 {"line": i, "level": level, "heading": title,
                  "start": i if parent else i + 1, "end": end, "units": units,
                  "tail": tail, "parent": parent[2] if parent else None,
-                 "siblings": len(siblings) if parent else 0}
+                 "siblings": len(siblings) if parent else 0,
+                 "children": children}
             )  # fmt: skip
     return found
 
@@ -347,7 +351,12 @@ def split_long_sections(
     lines = text.splitlines()
     taken = [title for _, _, title in _headings(lines)]
     reports: List[Dict[str, Any]] = []
-    # Bottom up, so earlier line numbers stay right
+    # Sub-sections each accepted split added, by parent heading: two re-splits
+    # under one parent, or a parent's own text split beside its sub-sections,
+    # share the MAX_SIBLINGS room
+    added: Dict[str, int] = {}
+    # Bottom up, so earlier line numbers stay right (a parent comes after its
+    # sub-sections)
     for section in reversed(sections):
         report: Dict[str, Any] = {
             "section": section["heading"],
@@ -357,17 +366,25 @@ def split_long_sections(
         reports.insert(0, report)
         sibling = section.get("parent") is not None
         other = [t for t in taken if t != section["heading"]]
+        # A re-split replaces the heading, so one new heading may keep its name
+        if sibling:
+            room = (
+                MAX_SIBLINGS - section["siblings"] - added.get(section["parent"], 0) + 1
+            )
+        else:
+            room = MAX_SIBLINGS - section["children"] - added.get(section["heading"], 0)
+        if room < MIN_GROUPS:
+            report.update(status="refused", reason=f"over {MAX_SIBLINGS} sub-sections")
+            continue
         try:
             reply = ask(messages(section, entity_type, entity_name, other))
         except Exception as e:  # keep the section as it is
             logger.warning(f"Section split call failed for {entity_name}: {e}")
             report.update(status="failed", reason=f"{type(e).__name__}: {e}")
             continue
-        # A re-split replaces the heading, so one new heading may keep its name
-        room = MAX_SIBLINGS - section.get("siblings", 0) + 1
         plan, why = plan_groups(
             reply, len(section["units"]), other if sibling else taken,
-            min(MAX_GROUPS, room) if sibling else MAX_GROUPS,
+            min(MAX_GROUPS, room),
         )  # fmt: skip
         if plan is None:
             report.update(status="refused", reason=why)
@@ -382,6 +399,8 @@ def split_long_sections(
             report.update(status="refused", reason="sentences changed")
             continue
         lines = new_lines
+        owner = section["parent"] if sibling else section["heading"]
+        added[owner] = added.get(owner, 0) + len(plan) - (1 if sibling else 0)
         taken = (other if sibling else taken) + [h for h, _ in plan]
         report.update(status="split", subsections=[[h, ns] for h, ns in plan])
     new_text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip() + "\n"
