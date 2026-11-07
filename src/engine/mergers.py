@@ -9,6 +9,7 @@ from src.constants import (
     ENABLE_PROFILE_VERSIONING,
     ENTITY_SINGULAR,
     MERGE_GRAY_BAND_DELTA,
+    MERGE_MAX_SIMILAR_CHECKS,
     MERGE_UNCERTAIN_CONFIDENCE_CUTOFF,
     SIMILARITY_THRESHOLD,
 )
@@ -16,7 +17,7 @@ from src.engine.later_updates import article_dates
 from src.engine.match_checker import cloud_model_check_match, local_model_check_match
 from src.engine.merge_candidates import (
     find_similar_entity,
-    name_variant_candidate,
+    next_candidate,
     pick_canonical_key,
 )
 from src.engine.merge_dispute_agent import (
@@ -516,12 +517,12 @@ class EntityMerger:
                 equivalence_groups=equivalence_groups,
             )
 
-            # Try the closest candidate; if the match check rejects it, try
-            # the best name-variant candidate once ("Guantánamo Bay" may lose
-            # to "Guantanamo Bay Navy Base" on cosine but match on name).
+            # Try candidates above the threshold closest first (up to
+            # MERGE_MAX_SIMILAR_CHECKS), then the best name-variant one once
+            # ("Guantánamo Bay" may lose to "Guantanamo Bay Navy Base" on cosine).
             rejected: List[Union[str, Tuple]] = []
             verdict = "skip"
-            while similar_key and len(rejected) < 2:
+            while similar_key and len(rejected) <= MERGE_MAX_SIMILAR_CHECKS:
                 verdict = self._check_candidate(
                     entity_key,
                     similar_key,
@@ -540,17 +541,21 @@ class EntityMerger:
                 if verdict != "skip":
                     break
                 rejected.append(similar_key)
-                similar_key, similarity_score = name_variant_candidate(
+                if len(rejected) > 1 and (similarity_score or 0) < resolved_threshold:
+                    break  # a name-variant candidate was the last one to try
+                similar_key, similarity_score = next_candidate(
                     self.entity_type,
                     self.alternative_field,
                     entity_key,
                     evidence_embedding,
                     entities,
+                    resolved_threshold,
+                    rejected,
                     embedding_model=emb_model_name,
                     embedding_dim=emb_dim,
+                    lexical_blocking_config=lexical_blocking_cfg,
                     query_entity=entity_dict,
                     equivalence_groups=equivalence_groups,
-                    exclude=tuple(rejected),
                 )
             if verdict == "error":
                 stats.errors += 1

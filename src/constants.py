@@ -34,6 +34,12 @@ OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/v1").strip(
 
 # Threshold for similarity matching
 SIMILARITY_THRESHOLD = 0.75
+# How many candidates above the similarity threshold the match check may try,
+# closest first, before only a name-variant candidate is left (one more check).
+# With 1, a sibling event from the same story that outranks the real one ("the
+# defense lawyers quit" vs "the judge accepts the resignation") blocks the
+# merge: in the 7 Nov 150-article run about 6 merges were lost that way.
+MERGE_MAX_SIMILAR_CHECKS = int(os.getenv("HINBOX_MERGE_MAX_SIMILAR_CHECKS", "3"))
 
 # Retry configuration for LLM API calls
 MAX_RETRIES = 3

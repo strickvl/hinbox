@@ -91,6 +91,57 @@ def _pattern(needle: str) -> "re.Pattern[str]":
     return re.compile(rf"(?<!\w){re.escape(needle)}(?!\w)", re.I)
 
 
+# Nouns that turn a place or organization name into a label for something
+# else: "the USS Cole case", "Guantánamo detainees", "Pentagon officials".
+_LABELLED_NOUNS = (
+    "case|cases|trial|trials|bombing|bombings|attack|attacks|hearing|hearings|"
+    "proceedings|prosecution|prosecutors?|judges?|defendants?|detainees?|"
+    "prisoners?|captives?|inmates?|lawyers?|attorneys?|officials?|spokesm[ae]n|"
+    "spokeswom[ae]n|spokesperson|policy|policies|commissions?|court|courts|"
+    "docket|file|files|report|reports|investigation|probe|suspects?|plotters?|"
+    "victims?|families|survivors?|survivor|legislation|bill|law"
+)
+LABEL_TYPES = ("locations", "organizations")
+
+
+def _as_label(needle: str) -> "re.Pattern[str]":
+    """The name used as a label: followed by one of ``_LABELLED_NOUNS``,
+    perhaps with one word between ("USS Cole death-penalty case")."""
+    return re.compile(
+        rf"(?<!\w){re.escape(needle)}(?:'s)?\s+(?:[\w-]+\s+)?(?:{_LABELLED_NOUNS})(?!\w)",
+        re.I,
+    )
+
+
+def only_as_label(sentence: str, names: List[str]) -> bool:
+    """True when every mention of the names in the sentence is a label.
+
+    "An appeal of the stalled USS Cole case" names the case, not the ship;
+    "The USS Cole was bombed in Aden" names the ship.
+    """
+    mentions = sum(len(_pattern(n).findall(sentence)) for n in names)
+    labels = sum(len(_as_label(n).findall(sentence)) for n in names)
+    return mentions > 0 and labels >= mentions
+
+
+def label_note(
+    entity_type: str, name: str, names: List[str], sentences: List[str]
+) -> Optional[str]:
+    """A line saying the stub's sentences only use the name as a label.
+
+    Uncited on purpose, and placed after the cited sentences so grounding
+    never reads it as a claim: it describes the article, not the entity.
+    """
+    if entity_type not in LABEL_TYPES or not sentences:
+        return None
+    if not all(only_as_label(s, names) for s in sentences):
+        return None
+    example = next(
+        m.group(0) for n in names for m in [_as_label(n).search(sentences[0])] if m
+    )
+    return f'(The article mentions {name} only to describe something else, as in "{example}".)'
+
+
 def mention_sentences(
     article_text: str,
     entity_type: str,
@@ -100,7 +151,11 @@ def mention_sentences(
     """Up to ``limit`` article sentences naming the entity, in article order.
 
     Sentences with the full name (or an alias) come first; sentences with
-    only a person's surname fill any remaining places.
+    only a person's surname fill any remaining places. For places and
+    organizations, a sentence that uses the name only as a label ("the USS
+    Cole case") comes after every sentence that names the entity itself: on
+    7 Nov a USS Cole stub made only of "USS Cole case" sentences led the match
+    check to read it as a court case and reject the ship.
     """
     names = list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
     if not names:
@@ -111,12 +166,18 @@ def mention_sentences(
     sentences = [
         s for s in split_sentences(article_text) if len(s) <= MAX_SENTENCE_CHARS
     ]
-    strong = [i for i, s in enumerate(sentences) if any(p.search(s) for p in full)]
+    named = [i for i, s in enumerate(sentences) if any(p.search(s) for p in full)]
+    labels = (
+        [i for i in named if only_as_label(sentences[i], names)]
+        if entity_type in LABEL_TYPES
+        else []
+    )
+    strong = [i for i in named if i not in labels]
     weak = [
         i
         for i, s in enumerate(sentences)
-        if i not in strong and any(p.search(s) for p in short)
-    ]
+        if i not in named and any(p.search(s) for p in short)
+    ] + labels
     picked = sorted(strong[:limit] + weak[: max(0, limit - len(strong))])
     return [sentences[i] for i in picked]
 
@@ -153,13 +214,15 @@ def build_stub_profile(
     description = str(entity_dict.get("description") or "").strip()
     if entity_type == "events" and description:
         blocks.append(f"### Summary\n\n{description}{marker}")
-    sentences = mention_sentences(
-        article_text, entity_type, [name] + _alt_names(entity_dict, alternative_field)
-    )
+    names = [name] + _alt_names(entity_dict, alternative_field)
+    sentences = mention_sentences(article_text, entity_type, names)
     if sentences:
         blocks.append(
             "### Mentions\n\n" + "\n\n".join(f"{s}{marker}" for s in sentences)
         )
+    note = label_note(entity_type, name, names, sentences)
+    if note:
+        blocks.append(note)
     if not blocks:
         blocks.append(f"{name} is mentioned in this article.{marker}")
     tags = [t for t in entity_dict.get("tags") or [] if isinstance(t, str) and t]
