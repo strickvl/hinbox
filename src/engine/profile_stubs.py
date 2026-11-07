@@ -463,6 +463,7 @@ def update_or_fill(
         domain,
         model=model,
         article_dates=article_dates,
+        kind=(entity or {}).get("type"),
     )
     # A failed update hands back the profile it was given; the caller sees
     # that this article isn't in its sources and keeps the stub

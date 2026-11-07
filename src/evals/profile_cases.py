@@ -233,6 +233,7 @@ def _case(
         "kind": kind,
         "entity_name": entity["name"],
         "entity_type": entity["entity_type"],
+        "entity_kind": entity.get("kind") or "",
         "snapshot_model": manifest["model"],
         "step": snapshot["step"],
         "profile": snapshot["profile"],

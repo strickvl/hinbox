@@ -318,7 +318,7 @@ def split_long_sections(
     return new_text, reports
 
 
-def make_asker(model: str, local: bool) -> Ask:
+def make_asker(model: str, local: bool, step: str = "profile.section_split") -> Ask:
     """The split call on ``model``, through the same clients as profile updates."""
     from src.utils.llm import cloud_generation, local_generation
     from src.utils.step_timing import timed_step
@@ -326,7 +326,7 @@ def make_asker(model: str, local: bool) -> Ask:
     generate = local_generation if local else cloud_generation
 
     def ask(msgs: List[Dict[str, str]]) -> SectionSplit:
-        with timed_step("profile.section_split"):
+        with timed_step(step):
             reply = generate(
                 messages=msgs, response_model=SectionSplit, model=model, max_tokens=2048
             )

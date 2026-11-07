@@ -119,6 +119,22 @@ profiles:
     locations: [country, region]
     organizations: [media]
 
+  # Headings a long profile is reorganised under, once, when it passes
+  # HINBOX_SECTION_REORGANISE_CHARS (8000) with HINBOX_SECTION_REORGANISE=on
+  # (src/engine/section_reorganise.py). Keys are entity tables, then `type`
+  # values or `default`. The model may add up to 2 headings for topics none
+  # of these fit; code refuses one that shares a word with another heading.
+  starter_headings:
+    people:
+      detainee: [Background, Capture and CIA custody, Detention at Guantánamo, Military commission or legal case, Health and treatment, Release or transfer]
+      default: [Background, Role, Cases and decisions, Public statements]
+    organizations:
+      default: [Overview, Role at Guantánamo, Actions and decisions, Legal challenges]
+    events:
+      default: [What happened, People involved, Reactions, Aftermath]
+    locations:
+      default: [Overview, Operations and conditions, Notable events, Legal and policy decisions]
+
 # Processing configuration
 processing:
   # Enable relevance checking before extraction

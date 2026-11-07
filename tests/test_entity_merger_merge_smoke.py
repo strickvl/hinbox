@@ -106,6 +106,7 @@ def update_profile_stub(
     domain: str = "guantanamo",
     model=None,
     article_dates=None,
+    kind=None,
 ):
     """Deterministic update_profile stub that appends a new version to the provided versioned_profile."""
     updated_profile = {
