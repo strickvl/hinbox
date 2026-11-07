@@ -534,3 +534,26 @@ class TestGroundingJudgeModel:
                 profile_text=text, article_texts=articles, previous=stored
             )
             assert cloud.call_count == 1
+
+    def test_grounding_only_thinking_applies_to_local_judge(self, monkeypatch):
+        """HINBOX_GROUNDING_REASONING_EFFORT turns thinking on for the local
+        judge's call only, and is part of the judge name stored on reports."""
+        from src.utils import grounding as g
+        from src.utils.ollama_context import thinking_settings
+
+        monkeypatch.setenv("HINBOX_GROUNDING_MODEL", "ollama/judge")
+        monkeypatch.setattr(g, "GROUNDING_REASONING_EFFORT", "high")
+        seen = []
+
+        def fake_local(**kw):
+            seen.append(thinking_settings("none", 0))
+            return self._verdict()
+
+        with patch("src.utils.llm.local_generation", side_effect=fake_local):
+            report = verify_profile_grounding(
+                profile_text="A fact.^[a1]", article_texts={"a1": "A fact."}
+            )
+        assert seen == [("high", g.GROUNDING_THINKING_MAX_TOKENS)]
+        assert thinking_settings("none", 0) == ("none", 0)
+        assert report.model == "ollama/judge (reasoning_effort=high)"
+        assert not g.judged_by({"model": "ollama/judge"}, report.model)

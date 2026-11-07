@@ -41,7 +41,7 @@ from src.utils.logging import (
     log_iterative_complete,
     log_iterative_start,
 )
-from src.utils.ollama_context import check_prompt_fits
+from src.utils.ollama_context import check_prompt_fits, thinking_settings
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
 from src.utils.step_timing import record_llm_call, timed, timed_step
 from src.utils.tracing import instrument_client, request_span
@@ -235,11 +235,14 @@ def _sampling_kwargs(
         return {"max_tokens": max_tokens}
     kwargs = {"max_tokens": max_tokens, "temperature": temperature}
     if target.provider_label == "ollama":
-        if OLLAMA_REASONING_EFFORT:
-            kwargs["reasoning_effort"] = OLLAMA_REASONING_EFFORT
-        if OLLAMA_REASONING_EFFORT != "none":
+        effort, thinking_max = thinking_settings(
+            OLLAMA_REASONING_EFFORT, OLLAMA_THINKING_MAX_TOKENS
+        )
+        if effort:
+            kwargs["reasoning_effort"] = effort
+        if effort != "none":
             # Thinking may be on, so leave room for it before the answer
-            kwargs["max_tokens"] = max(max_tokens, OLLAMA_THINKING_MAX_TOKENS)
+            kwargs["max_tokens"] = max(max_tokens, thinking_max)
     return kwargs
 
 

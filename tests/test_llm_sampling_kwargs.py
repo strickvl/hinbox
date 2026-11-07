@@ -86,3 +86,13 @@ def test_older_gemini_output_limit_is_capped(monkeypatch):
     assert _kwargs("gemini/gemini-2.0-flash", max_tokens=16384)["max_tokens"] == 8192
     assert _kwargs("gemini/gemini-2.0-flash", max_tokens=2048)["max_tokens"] == 2048
     assert _kwargs("openai/gpt-4o", max_tokens=16384)["max_tokens"] == 16384
+
+
+def test_local_thinking_overrides_the_run_wide_effort_inside_the_block():
+    from src.utils.ollama_context import local_thinking
+
+    with local_thinking("high", 16384):
+        kw = _kwargs("ollama/qwen3.6:35b")
+        assert kw["reasoning_effort"] == "high"
+        assert kw["max_tokens"] == 16384
+    assert _kwargs("ollama/qwen3.6:35b")["reasoning_effort"] == "none"

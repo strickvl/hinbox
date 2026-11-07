@@ -13,8 +13,10 @@ error on every retry.
 
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import requests
 
@@ -31,6 +33,28 @@ CHARS_PER_TOKEN = 4
 # Bolt ran out of room with a 14.6k-token prompt on a 16k model, so with
 # thinking on, a prompt must leave at least this much of the window free.
 THINKING_RESERVE = 4096
+
+
+# (reasoning_effort, thinking max tokens) for local calls made inside
+# ``local_thinking()``; None means the run-wide HINBOX_OLLAMA_* settings.
+_THINKING: ContextVar[Optional[Tuple[str, int]]] = ContextVar("thinking", default=None)
+
+
+@contextmanager
+def local_thinking(effort: str, max_tokens: int) -> Iterator[None]:
+    """Use this ``reasoning_effort`` (and output budget when thinking) for the
+    local calls made inside the block, whatever HINBOX_OLLAMA_REASONING_EFFORT
+    says. The grounding judge uses it to think while other steps don't."""
+    token = _THINKING.set((effort, max_tokens))
+    try:
+        yield
+    finally:
+        _THINKING.reset(token)
+
+
+def thinking_settings(default_effort: str, default_max: int) -> Tuple[str, int]:
+    """The effort and thinking budget for a local call made here and now."""
+    return _THINKING.get() or (default_effort, default_max)
 
 
 class PromptTooLongError(RuntimeError):
@@ -79,7 +103,7 @@ def check_prompt_fits(target: ProviderTarget, messages: List[Dict[str, Any]]) ->
     if not limit:
         return
     tokens = estimate_prompt_tokens(messages)
-    thinking = OLLAMA_REASONING_EFFORT != "none"
+    thinking = thinking_settings(OLLAMA_REASONING_EFFORT, 0)[0] != "none"
     reserve = THINKING_RESERVE if thinking else 0
     if tokens + reserve > limit:
         why = (

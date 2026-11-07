@@ -82,10 +82,10 @@ def run(args: argparse.Namespace) -> None:
         for data in table.values()
         for f in (data.get("profile_grounding") or {}).get("flags") or []
     )
-    from src.utils.grounding import grounding_model
+    from src.utils.grounding import grounding_judge
 
     out = {
-        "model": grounding_model("ollama" if args.local else "gemini"),
+        "model": grounding_judge("ollama" if args.local else "gemini"),
         "seconds": round(seconds, 1),
         "counts": counts,
         "flags": dict(flags),

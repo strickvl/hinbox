@@ -16,7 +16,7 @@ from src.logging_config import log
 from src.utils.grounding import (
     finish_report,
     grounding_is_current,
-    grounding_model,
+    grounding_judge,
     judge_pending,
     judged_by,
     plan_grounding,
@@ -73,7 +73,7 @@ def run_profile_grounding_postprocess(
         "llm_calls": 0,
     }
     jobs: List[Tuple[str, str, Dict[str, Any], str]] = []
-    model = grounding_model(model_type)
+    model = grounding_judge(model_type)
 
     for entity_type, entity_dict in entities.items():
         for entity_key, entity_data in entity_dict.items():

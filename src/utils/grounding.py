@@ -14,6 +14,7 @@ import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -21,6 +22,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 from src.logging_config import get_logger
+from src.utils.ollama_context import local_thinking
 from src.utils.quality_controls import CITATION_RE, citation_ids
 from src.utils.step_timing import timed
 from src.utils.task_models import is_local_model, task_model
@@ -169,6 +171,15 @@ GROUNDING_MAX_CLAIM_CHARS = 600
 # grows past the output limit.
 GROUNDING_MAX_CLAIMS_PER_CALL = int(os.getenv("HINBOX_GROUNDING_MAX_CLAIMS", "20"))
 GROUNDING_MAX_TOKENS = int(os.getenv("HINBOX_GROUNDING_MAX_TOKENS", "4096"))
+# Thinking for a local grounding judge only (other local steps keep
+# HINBOX_OLLAMA_REASONING_EFFORT). Empty = follow that run-wide setting. On the
+# 64 hand-labelled claims Qwen3.6 with "high" matched 35 labels instead of 25
+# and passed 11 of 42 bad claims instead of 19, but took 5.6x as long, and an
+# 8,192-token budget ran out on 4 of 30 articles, hence the larger default.
+GROUNDING_REASONING_EFFORT = os.getenv("HINBOX_GROUNDING_REASONING_EFFORT", "").strip()
+GROUNDING_THINKING_MAX_TOKENS = int(
+    os.getenv("HINBOX_GROUNDING_THINKING_MAX_TOKENS", "16384")
+)
 
 _GROUNDING_SYSTEM_PROMPT = """You are a strict fact-checker. You check claims from entity profiles against one source article.
 
@@ -391,6 +402,16 @@ def grounding_model(model_type: str) -> str:
     return task_model("grounding", model_type)
 
 
+def grounding_judge(model_type: str) -> str:
+    """The judge as stored on reports: the model, plus its thinking setting
+    when a local judge thinks for grounding only, so turning that on or off
+    rechecks old reports like a change of model does."""
+    model = grounding_model(model_type)
+    if is_local_model(model) and GROUNDING_REASONING_EFFORT:
+        return f"{model} (reasoning_effort={GROUNDING_REASONING_EFFORT})"
+    return model
+
+
 def judged_by(report: Any, model: str) -> bool:
     """True when ``report`` was judged by ``model``. Verdicts from another
     judge (or from before reports named their judge) are not reused."""
@@ -431,14 +452,21 @@ def judge_claims(
         },
     ]
     model = grounding_model(model_type)
-    generate = local_generation if is_local_model(model) else cloud_generation
-    reply = generate(
-        messages=messages,
-        response_model=List[ClaimVerdict],
-        model=model,
-        temperature=0,
-        max_tokens=GROUNDING_MAX_TOKENS,
+    local = is_local_model(model)
+    generate = local_generation if local else cloud_generation
+    thinking = (
+        local_thinking(GROUNDING_REASONING_EFFORT, GROUNDING_THINKING_MAX_TOKENS)
+        if local and GROUNDING_REASONING_EFFORT
+        else nullcontext()
     )
+    with thinking:
+        reply = generate(
+            messages=messages,
+            response_model=List[ClaimVerdict],
+            model=model,
+            temperature=0,
+            max_tokens=GROUNDING_MAX_TOKENS,
+        )
     out: List[Optional[Tuple[SupportLevel, Optional[str]]]] = [None] * len(claims)
     numbers = [getattr(v, "claim_number", None) for v in reply]
     by_number = len(set(numbers)) == len(numbers) and all(
@@ -602,7 +630,7 @@ def verify_profile_grounding(
 
     Never raises — returns a report with flags on any error.
     """
-    model = grounding_model(model_type)
+    model = grounding_judge(model_type)
     plan = plan_grounding(
         profile_text=profile_text,
         article_texts=article_texts,
