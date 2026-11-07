@@ -21,6 +21,7 @@ from src.utils.name_variants import (
     lone_name_in_full_name,
     names_are_variants,
     names_likely_same,
+    person_name_tokens,
     score_canonical_name,
 )
 
@@ -484,3 +485,41 @@ def pick_canonical_key(
         return incoming_key, existing_key, True
 
     return existing_key, incoming_key, False
+
+
+def surname_note(
+    entity_type: str, new_name: str, candidate_name: str, entities: Dict[str, Dict]
+) -> str:
+    """A note for the match check when a person is named by surname alone
+    ("Rubio") and the candidate ("Marco Rubio") is the only person in the
+    table with that surname; "" otherwise.
+
+    News stories name a well-known person by surname alone. The match check
+    can't see the rest of the table, so on the 7 Nov Luna run it rejected
+    "Rubio" against "Marco Rubio": "the available evidence does not establish
+    that the unnamed Rubio is Marco Rubio." With two people of that surname
+    ("Jennifer Parrella", "Keith Parrella") no note is added.
+    """
+    word = person_name_tokens(new_name)
+    if (
+        entity_type != "people"
+        or len(word) != 1
+        or person_name_tokens(candidate_name)[-1:] != word
+    ):
+        return ""
+    if len(person_name_tokens(candidate_name)) < 2:
+        return ""
+    others = [
+        key
+        for key in entities.get("people", {})
+        if isinstance(key, str)
+        and key != candidate_name
+        and len(tokens := person_name_tokens(key)) >= 2
+        and tokens[-1] == word[0]
+    ]
+    if others:
+        return ""
+    return (
+        f'\n\nNOTE: The article names this person only by the surname "{new_name}". '
+        f"{candidate_name} is the only person in the database with that surname."
+    )

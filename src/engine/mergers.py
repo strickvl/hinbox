@@ -18,6 +18,7 @@ from src.engine.merge_candidates import (
     find_similar_entity,
     name_variant_candidate,
     pick_canonical_key,
+    surname_note,
 )
 from src.engine.merge_dispute_agent import (
     REVIEW_QUEUE_FILENAME,
@@ -259,7 +260,11 @@ class EntityMerger:
                 level="debug",
             )
 
-        # Match check: pass evidence_text as new_profile_text
+        # Match check: pass evidence_text as new_profile_text ("Rubio" also
+        # says whether "Marco Rubio" is the only person with that surname)
+        evidence_text += surname_note(
+            self.entity_type, new_display, similar_display, entities
+        )
         match_model = task_model("match", model_type)
         check_match = (
             local_model_check_match
