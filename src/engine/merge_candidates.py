@@ -10,7 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from rapidfuzz import fuzz
 from rapidfuzz import process as rfprocess
 
-from src.constants import SIMILARITY_THRESHOLD
+from src.constants import (
+    ENTITY_SINGULAR,
+    MERGE_MAX_SIMILAR_CHECKS,
+    SIMILARITY_THRESHOLD,
+)
 from src.logging_config import log
 from src.utils.embeddings.similarity import compute_similarity
 from src.utils.name_variants import (
@@ -267,8 +271,12 @@ def find_similar_entity(
     lexical_blocking_config: Optional[Dict[str, Any]] = None,
     query_entity: Optional[Dict[str, Any]] = None,
     equivalence_groups: Optional[List[List[str]]] = None,
+    exclude: Tuple = (),
 ) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
     """Find the most similar entity in the entities database using embedding similarity.
+
+    Keys in ``exclude`` (candidates the match check already rejected) are
+    skipped, so calling again gives the next-closest candidate.
 
     When embedding_model and embedding_dim are provided, entities whose stored
     embeddings are from an incompatible model/dimension are skipped during the
@@ -291,7 +299,7 @@ def find_similar_entity(
     best_score = 0.0
 
     # Exact key match first
-    if entity_key in entities[entity_type]:
+    if entity_key in entities[entity_type] and entity_key not in exclude:
         existing_entity = entities[entity_type][entity_key]
         existing_emb = get_search_embedding(existing_entity)
         if existing_emb:
@@ -316,7 +324,7 @@ def find_similar_entity(
     all_candidates = [
         k
         for k, e in entities[entity_type].items()
-        if k != entity_key and get_search_embedding(e)
+        if k != entity_key and k not in exclude and get_search_embedding(e)
     ]
 
     # Apply lexical blocking if configured
@@ -374,6 +382,78 @@ def find_similar_entity(
         embedding_dim=new_dim,
         query_entity=query_entity,
         equivalence_groups=equivalence_groups,
+        exclude=exclude,
+    )
+
+
+def next_candidate(
+    entity_type: str,
+    alternative_field: str,
+    entity_key: Union[str, Tuple],
+    entity_embedding: List[float],
+    entities: Dict[str, Dict],
+    similarity_threshold: float,
+    rejected: List[Union[str, Tuple]],
+    *,
+    max_similar: Optional[int] = None,
+    **kwargs: Any,
+) -> Tuple[Optional[Union[str, Tuple]], Optional[float]]:
+    """The candidate to check after the match check rejected every key in ``rejected``.
+
+    While fewer than ``max_similar`` have been rejected, this is the next-closest
+    candidate above the threshold (or, when none is left, the best name-variant
+    candidate). After that, only the best name-variant candidate. Example: an
+    incoming "Resignation of Nashiri's defense lawyers" is closest to a
+    sibling event from an earlier article in the same story; the match check
+    rejects the sibling, and the real event, second-closest, is checked next.
+    """
+    exclude = tuple(rejected)
+    if max_similar is None:
+        max_similar = MERGE_MAX_SIMILAR_CHECKS
+    if len(rejected) < max_similar:
+        return find_similar_entity(
+            entity_type,
+            alternative_field,
+            entity_key,
+            entity_embedding,
+            entities,
+            similarity_threshold,
+            exclude=exclude,
+            **kwargs,
+        )
+    kwargs.pop("lexical_blocking_config", None)
+    return name_variant_candidate(
+        entity_type,
+        alternative_field,
+        entity_key,
+        entity_embedding,
+        entities,
+        exclude=exclude,
+        **kwargs,
+    )
+
+
+def rejected_note(entity_type: str, rejected: List[Union[str, Tuple]]) -> str:
+    """A note for the match check on a second or third candidate; "" on the first.
+
+    Checking more candidates gives the match check more chances to say a
+    wrong "yes". Replaying the 7 Nov run, all 7 wrong merges it added were a
+    sibling event from the same story: "Judge rejects the lawyers'
+    resignations" joined into "Resignation of Nashiri's lawyers". The note
+    says a closer candidate was already judged different and asks for the
+    same entity, not a related one.
+    """
+    if not rejected:
+        return ""
+    singular = ENTITY_SINGULAR.get(entity_type, "entity")
+    names = ", ".join(f'"{lexical_text(k)}"' for k in rejected)
+    return (
+        f"\n\nNote: this {singular} was already judged a different {singular}"
+        f" from {names}, a closer match from the same coverage. Related"
+        f" {entity_type} from the same story (an action and the response to it,"
+        " one step and the next step of a process, two similar incidents) are"
+        f" different. Answer yes only if the evidence shows this is the same"
+        f" {singular}, not just a related one."
     )
 
 
