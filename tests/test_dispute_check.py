@@ -119,3 +119,28 @@ def test_surname_note_only_for_a_unique_surname():
     assert not surname_note("people", "Parrella", "Keith Parrella", {"people": people})
     assert not surname_note("people", "Marco", "Marco Rubio", {"people": people})
     assert not surname_note("organizations", "Navy", "U.S. Navy", {"people": people})
+
+
+def test_a_replacement_states_the_fact_not_what_the_article_says():
+    verdict = DisputeVerdict(
+        item=1,
+        verdict="different",
+        sentence="The April 17, 2018 article says Ring became commander on Tuesday.",
+    )
+    assert replacement(verdict, DISPUTE, "^[a]") == (
+        "Ring became commander on Tuesday.^[a]"
+    )
+
+
+def test_the_disputed_sentence_is_found_inside_a_paragraph_anchor():
+    from src.engine.edit_guards import _disputed_olds
+
+    toll = "The five are charged over the attacks that killed 2,976 people."
+    tail = "It gives no further details about the state."
+    claim = "The new article says the attacks killed 2,974 people; sources disagree."
+    assert _disputed_olds(claim, [toll, tail], f"{toll} {tail}") == [toll]
+
+
+def test_instead_wording_counts_as_a_dispute():
+    assert _NARRATOR.search("The October 2010 article dates the attack to 2001 instead")
+    assert not _NARRATOR.search("A Senate report recommended Colorado instead")

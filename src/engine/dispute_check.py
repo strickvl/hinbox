@@ -46,6 +46,11 @@ logger = get_logger("engine.dispute_check")
 
 DISPUTE_CHECK_ENV = "HINBOX_DISPUTE_CHECK"
 _CITATION = re.compile(r"\^\[[^\]]*\]")
+_ABOUT_SOURCE = re.compile(
+    r"^(?:the|an?|this)\s+(?:[\w.,]+\s+){0,4}?(?:article|report|story)\s+"
+    r"(?:says|said|states|stated|reports|reported|notes|noted)\s+(?:that\s+)?",
+    re.I,
+)
 
 INSTRUCTIONS = """You check a profile of the {entity_type} "{entity_name}" \
 that is built from news articles, one article at a time. Articles are not \
@@ -70,13 +75,29 @@ separate interviews.
 - `same`: the same fact, in other words or with more detail. Example: "the \
 judge had no contempt authority" and "the judge could not convict him alone".
 
-When in doubt between `conflict` and another verdict, it is not a conflict.
+Harder cases, from real articles:
+- A count from a May article (10 charged) against a count from a July \
+article (9 charged): `later`. Counts of people held, charged or on staff \
+change between dates; different source dates with different counts are \
+`later` unless both counts are given for the same day.
+- Two reasons given for the same ruling, one fuller or worded differently \
+("the defense could not probe the CIA years" against "protective orders \
+put the defense at an unfair disadvantage"): `same`.
+- Reporters interviewed someone "this week" in one article and on June 19 \
+in another: `different` (two interviews), unless both name the same day.
+- The same event on two different days, or the same death toll with two \
+different numbers: `conflict`.
+
+`conflict` needs the very same thing at the very same time. Do not answer \
+`conflict` because the values would clash "if" both were about the same \
+thing: decide whether they are. When in doubt, it is not a conflict.
 
 For each item, first write `reasoning`: what the profile sentence says, what \
 the article says, and whether both can be true. Then the verdict. For \
 `later` and `different`, also write `sentence`: the article's fact as one \
 plain sentence about {entity_name}, without comparing it to the profile and \
-without words such as "instead", "disagree", "differ" or "rather than". For \
+without words such as "instead", "disagree", "differ" or "rather than", and \
+stating the fact itself rather than what "the article says". For \
 `later`, say when it held, from the article's own date or wording ("In \
 February 2018, al Darbi was slated to return to Saudi Arabia on Feb. 20."). \
 No citations. For `conflict` and `same`, leave `sentence` empty."""
@@ -187,6 +208,8 @@ def replacement(
     if verdict.verdict == "conflict":
         return sentence
     body = _CITATION.sub("", verdict.sentence).strip().rstrip(".")
+    # "The April 17, 2018 article says Ring became commander" -> the fact
+    body = _ABOUT_SOURCE.sub("", body)
     if verdict.verdict == "same" or len(body.split()) < 4 or _NARRATOR.search(body):
         return None
     if re.search(r"\b(?:instead|rather than|disagree\w*)\b", body, re.I):

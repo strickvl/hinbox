@@ -72,7 +72,12 @@ _NARRATOR = re.compile(
     # "these sources give different timelines", "this differs from the
     # reported May transfer date": wordings the 7 Nov Luna run used
     rf"|\b{_SRC}\s+(?:\w+\s+)?(?:give|gives|offer|offers)\s+(?:a\s+)?different"
-    r"|\b(?:this|which)\s+(?:differs?|conflicts?|contradicts?)\b",
+    r"|\b(?:this|which)\s+(?:differs?|conflicts?|contradicts?)\b"
+    # "The October 2010 article dates the attack to July 2001 instead."
+    # Only with the article as subject: "A Senate report recommended
+    # Colorado instead" is news
+    r"|^\s*(?:the|an?|this)\s+(?:[\w.,]+\s+){0,5}?(?:article|source|account)s?\b"
+    r"[^.;]*\binstead\b",
     re.I,
 )
 # Capitalised words after the first: names. "consulted Judge Spath" isn't a
@@ -337,11 +342,17 @@ def later_update(
 
 
 def _disputed_olds(sentence: str, profile: List[str], anchor: str) -> List[str]:
-    """The profile sentences a kept "sources disagree" sentence disputes: the
-    edit's anchor when it is a profile sentence (the prompt puts the dispute
-    right after it), else the ones giving another value, at most two."""
+    """The profile sentences a kept "sources disagree" sentence disputes.
+
+    The prompt puts the dispute right after the sentence it disputes, but the
+    model often anchors on a whole paragraph, and the disputed value is
+    usually not in its last sentence ("... killed 2,976 people. It gives no
+    further details."). So: the anchor's sentences giving another value; else
+    all of them (at most three); else the profile's sentences giving another
+    value, at most two."""
     anchors = [s for s in profile if s and s in anchor]
-    return anchors[-1:] or disputed_sentences(sentence, profile)[:2]
+    valued = disputed_sentences(sentence, anchors)
+    return valued or anchors[:3] or disputed_sentences(sentence, profile)[:2]
 
 
 def guard_edits(
