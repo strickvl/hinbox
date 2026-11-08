@@ -212,6 +212,22 @@ def test_split_is_on_for_people_only_by_default(monkeypatch):
     assert not section_split.split_enabled("people")
 
 
+def test_sections_are_off_for_local_models_unless_turned_on(monkeypatch):
+    # 8 Nov rerun: local Qwen put 24 of 82 checked sentences under the right
+    # heading, so a local run makes flat profiles unless asked
+    from src.engine.section_reorganise import reorganise_enabled
+
+    for env in ("HINBOX_SECTION_SPLIT", "HINBOX_SECTION_REORGANISE"):
+        monkeypatch.delenv(env, raising=False)
+    assert not section_split.split_enabled("people", local=True)
+    assert not reorganise_enabled("people", local=True)
+    assert reorganise_enabled("people") and section_split.split_enabled("people")
+    monkeypatch.setenv("HINBOX_SECTION_SPLIT", "people")
+    monkeypatch.setenv("HINBOX_SECTION_REORGANISE", "people")
+    assert section_split.split_enabled("people", local=True)
+    assert reorganise_enabled("people", local=True)
+
+
 def test_update_profile_splits_after_the_edit_when_on(monkeypatch):
     from src.engine import profiles
 

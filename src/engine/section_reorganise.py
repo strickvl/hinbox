@@ -137,11 +137,12 @@ def piece_chars() -> int:
     return PARAGRAPH_CHARS if pieces_mode() == "paragraphs" else 0
 
 
-def reorganise_enabled(entity_type: Optional[str] = None) -> bool:
-    """On for people by default (``section_split.tables_enabled()``)."""
+def reorganise_enabled(entity_type: Optional[str] = None, local: bool = False) -> bool:
+    """On for people by default with a cloud model, off with a local one
+    (``section_split.tables_enabled()``)."""
     from src.engine.section_split import tables_enabled
 
-    return tables_enabled(REORGANISE_ENV, entity_type)
+    return tables_enabled(REORGANISE_ENV, entity_type, local)
 
 
 def _starter_entries(
