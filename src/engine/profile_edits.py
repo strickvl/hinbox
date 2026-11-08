@@ -257,6 +257,16 @@ def _section_end(text: str, heading: str, own: bool = False) -> Optional[int]:
     return match.end() + following.start() if following else len(text)
 
 
+_CITATION_RUN = re.compile(r"[.,;:!?\"”’)]*(?:\^\[[^\]]*\][.,;:!?\"”’)]*)+")
+
+
+def _past_citations(text: str, end: int) -> int:
+    """``end`` moved past the citations (and the punctuation around them)
+    that follow it straight away, so they stay with the sentence before."""
+    run = _CITATION_RUN.match(text, end)
+    return run.end() if run else end
+
+
 def apply_edits(
     text: str, edits: List[ProfileEdit], starter: Optional[List[str]] = None
 ) -> Tuple[str, Dict[str, Any]]:
@@ -329,8 +339,12 @@ def apply_edits(
         elif anchor and anchor != END:
             span = _find(text, last_added.get(anchor, anchor))
             if span is not None:
-                # Same paragraph, right after the anchor sentence
-                text = f"{text[: span[1]]} {addition}{text[span[1] :]}"
+                # Same paragraph, right after the anchor sentence and its
+                # citations: an anchor copied without its "^[id]" put the add
+                # between the sentence and its citation, and in a local replay
+                # 5 of Obama's sentences lost theirs that way
+                end = _past_citations(text, span[1])
+                text = f"{text[:end]} {addition}{text[end:]}"
                 last_added[anchor] = addition
                 report["applied"] += 1
                 continue
