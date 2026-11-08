@@ -372,3 +372,99 @@ def place_profile(
         f"{report.get('reason') or report.get('moved') or ''}"
     )
     return ({**profile, "text": new_text} if new_text != text else profile), report
+
+
+SUB_INSTRUCTIONS = """You file sentences from the section "{parent}" of a \
+profile of the {entity_type} "{entity_name}", built from news articles, \
+under the section's sub-headings.
+
+Sub-headings, each with what belongs under it:
+
+{listed}
+
+For each numbered sentence:
+1. Say in a few words what it is mainly about.
+2. Pick the one sub-heading whose description fits that best.{stay_rule}
+
+Rules:
+- Go by each sub-heading's description, not by which words appear in it.
+- Answer with the sub-heading name only, spelled exactly as given, without \
+the description after the colon."""
+
+STAY_RULE = """ If none of them fits it well, answer "{stay}": it then \
+stays at the top of "{parent}", above its sub-headings."""
+STAY = "None of these"
+REFILE_ENV = "HINBOX_SPLIT_REFILE"
+
+
+def refile_enabled() -> bool:
+    return os.getenv(REFILE_ENV, "on").strip().lower() not in ("off", "0", "false")
+
+
+def sub_messages(
+    sentences: List[str],
+    headings: List[Tuple[str, str]],
+    parent: str,
+    entity_type: str,
+    entity_name: str,
+    stay: bool,
+) -> List[Dict[str, str]]:
+    listed = [f"- {h}" + (f": {c}" if c else "") for h, c in headings]
+    system = SUB_INSTRUCTIONS.format(
+        parent=parent, entity_type=entity_type, entity_name=entity_name,
+        listed="\n".join(listed),
+        stay_rule=STAY_RULE.format(stay=STAY, parent=parent) if stay else "",
+    )  # fmt: skip
+    numbered = "\n\n".join(f"[{n}] {t}" for n, t in enumerate(sentences, 1))
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": f"Sentences:\n\n{numbered}"},
+    ]
+
+
+def refile_split(
+    plan: List[Tuple[str, List[int]]],
+    covers: Dict[str, str],
+    units: List[str],
+    parent: str,
+    entity_type: str,
+    entity_name: str,
+    ask: AskPlacements,
+    stay: bool,
+    batch: int = BATCH,
+) -> Tuple[List[Tuple[str, List[int]]], List[int], Dict[str, Any]]:
+    """The split's sub-headings kept, its pieces filed again by the
+    placement-only prompt, ``batch`` per call: (plan, pieces that stay above
+    the sub-headings, report). A piece with no usable answer keeps the
+    split's choice; a refiling that leaves fewer than 2 sub-headings, or a
+    failed call, keeps the split's plan as it was."""
+    from src.engine.section_split import MIN_GROUPS
+
+    names = [h for h, _ in plan]
+    first = {n: h for h, ns in plan for n in ns}
+    options = names + ([STAY] if stay else [])
+    answers: List[Optional[str]] = []
+    try:
+        for i in range(0, len(units), batch):
+            chunk = units[i : i + batch]
+            msgs = sub_messages(
+                chunk, [(h, covers.get(h, "")) for h in names], parent,
+                entity_type, entity_name, stay,
+            )  # fmt: skip
+            answers += read_reply(ask(msgs), len(chunk), options)
+    except Exception as e:
+        logger.warning(f"Split refiling failed for {entity_name}: {e}")
+        return plan, [], {"status": "failed", "reason": f"{type(e).__name__}: {e}"}
+    groups: Dict[str, List[int]] = {h: [] for h in names}
+    stayed: List[int] = []
+    for n, answer in enumerate(answers, 1):
+        if answer == STAY:
+            stayed.append(n)
+        else:
+            groups[answer or first[n]].append(n)
+    kept = [(h, ns) for h, ns in groups.items() if ns]
+    if len(kept) < MIN_GROUPS:
+        return plan, [], {"status": "kept", "reason": f"{len(kept)} sub-sections"}
+    changed = sum(1 for n, a in enumerate(answers, 1) if a and a != first[n])
+    report = {"status": "done", "refiled": changed, "stayed": len(stayed)}
+    return sorted(kept, key=lambda g: g[1][0]), stayed, report
