@@ -66,8 +66,9 @@ citation). Put each piece under one of these headings:
 Rules:
 - Put every piece number under exactly one heading.
 - {opening}: only for pieces that say who {entity_name} is (identity, \
-nationality, age, the main role or charge they are known for). Piece 1 \
-always stays there.
+nationality, age, the main role or charge they are known for). A piece \
+that gives {entity_name}'s age stays there even when it names the hearing or \
+date the age was given at. Piece 1 always stays there.
 - Every other piece goes under the heading for what it mainly tells about \
 {entity_name}, using what each heading is for. What happens in or around a \
 court case (a ruling, order, motion, hearing, lawyers' argument, testimony, \
