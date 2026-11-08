@@ -174,6 +174,9 @@ def _render(units: List[str], spans: List[Tuple[int, int]], keep: List[int]) -> 
     return "\n\n".join(out)
 
 
+_AFTER_CITATION = re.compile(r"[.,;:!?\"”’)]*")
+
+
 def _put(rest: str, heading: str, block: str, starter: List[str]) -> Optional[str]:
     """``rest`` with ``block`` at the end of ``heading``'s own text, or under
     the starter heading made for it; None when neither works. It goes right
@@ -189,7 +192,10 @@ def _put(rest: str, heading: str, block: str, starter: List[str]) -> Optional[st
     head = re.search(rf"^#{{1,6}}[ \t]+{words}[ \t]*$", rest[:end], re.MULTILINE)
     at = head.end() if head else end
     cited = [m.end() for m in CITATION_RE.finditer(rest, at, end)]
-    at = cited[-1] if cited else at
+    if cited:
+        # Past the full stop or quote mark a citation is often written before
+        # ("...in 2003^[a1]."): cut between them and the "." starts a sentence
+        at = cited[-1] + len(_AFTER_CITATION.match(rest, cited[-1]).group(0))
     return (rest[:at].rstrip() + "\n\n" + block + "\n\n" + rest[at:].lstrip()).strip()
 
 

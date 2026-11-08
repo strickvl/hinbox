@@ -164,3 +164,13 @@ def test_a_moved_piece_never_takes_over_an_uncited_sentence():
         "status": "refused",
         "reason": "claims changed",
     }
+
+
+def test_a_piece_goes_after_the_full_stop_that_follows_a_citation():
+    # r18: profiles write "...^[id]." and the cut landed between "]" and ".",
+    # so every real sort was refused as "sentences changed"
+    rest = REST.replace("born in Kuwait.^[a1]", "born in Kuwait^[a1].")
+    one = SectionSplit(subsections=[SubSection(heading="Background", paragraphs=[3])])
+    out, report, _ = _run(one, f"{OPENING}\n\n{rest}")
+    assert report["status"] == "done"
+    assert "born in Kuwait^[a1].\n\nLeaked documents" in out
