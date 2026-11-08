@@ -48,7 +48,7 @@ reorganised), ``on`` for every table, ``off``, or a comma list.
 import json
 import os
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
@@ -321,6 +321,21 @@ def _clean_heading(heading: str) -> str:
     return " ".join(heading.strip().lstrip("#").strip(" *_\"'“”:.").split())
 
 
+_FILLER = {"and", "or", "of", "the", "a", "an", "in", "on", "at", "to", "for", "with"}
+
+
+def _heading_words(heading: str) -> FrozenSet[str]:
+    """A heading's words, order, filler words, years and plurals aside: in a
+    Luna rerun al Nashiri got "Judge Authority and Appeals (2018)" beside
+    "Appeals and Judge Authority"."""
+    words = _norm(heading).split()
+    return frozenset(
+        w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+        for w in words
+        if w not in _FILLER and not re.fullmatch(r"(19|20)\d\d", w)
+    )
+
+
 def _heading_problem(heading: str, taken: List[str]) -> Optional[str]:
     if not heading:
         return "empty heading"
@@ -330,6 +345,9 @@ def _heading_problem(heading: str, taken: List[str]) -> Optional[str]:
         return f"heading not plain text: {heading!r}"
     if _norm(heading) in {_norm(t) for t in taken}:
         return f"heading already used: {heading!r}"
+    words = _heading_words(heading)
+    if words and words in {_heading_words(t) for t in taken}:
+        return f"heading repeats another in other words: {heading!r}"
     return None
 
 

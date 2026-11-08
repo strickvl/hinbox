@@ -462,3 +462,25 @@ def test_a_refused_split_waits_until_its_section_grows(monkeypatch):
     )
     assert reports[0]["status"] == "split" and len(seen) == 2
     assert done[section_split.REFUSED_KEY] == "{}"
+
+
+def test_a_heading_that_repeats_another_in_other_words_is_refused():
+    # Luna rerun: al Nashiri got "Judge Authority and Appeals (2018)" beside
+    # "Appeals and Judge Authority"
+    reply = SectionSplit(
+        subsections=[
+            SubSection(heading="Appeals and Judge Authority", paragraphs=[1, 2, 3, 4]),
+            SubSection(heading="Judge Authority and Appeals (2018)", paragraphs=[5, 6, 7, 8]),
+        ]
+    )  # fmt: skip
+    plan, why = plan_groups(reply, 8, [])
+    assert plan is None and "in other words" in why
+    other = SectionSplit(
+        subsections=[
+            SubSection(heading="Judge authority, appeals", paragraphs=[1, 2, 3, 4]),
+            SubSection(heading="Plea talks", paragraphs=[5, 6, 7, 8]),
+        ]
+    )
+    # Against a heading already in the profile too; fewer words is a new one
+    assert plan_groups(other, 8, ["Appeal and judge authority"])[0] is None
+    assert plan_groups(other, 8, ["Appeals", "Judge authority"])[0] is not None

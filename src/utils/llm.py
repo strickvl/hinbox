@@ -37,6 +37,7 @@ from src.constants import (
     REFLECTION_MAX_TOKENS,
 )
 from src.logging_config import get_logger
+from src.utils.client_cache import shared_client
 from src.utils.logging import (
     log_iterative_complete,
     log_iterative_start,
@@ -157,6 +158,12 @@ def _resolve_instructor_mode(
 
 
 def _create_raw_client(target: ProviderTarget) -> Any:
+    """The run's plain SDK client for a target, made once and then reused
+    (``src/utils/client_cache.py`` says why)."""
+    return shared_client(("raw", target), lambda: _new_raw_client(target))
+
+
+def _new_raw_client(target: ProviderTarget) -> Any:
     """Create the plain SDK client (Anthropic or OpenAI-compatible) for a target."""
     if target.sdk == "anthropic":
         try:
@@ -183,11 +190,15 @@ def _create_instructor_client(
     target: ProviderTarget,
     mode: instructor.Mode,
 ) -> Any:
-    """Create an Instructor-wrapped SDK client for the resolved provider."""
-    raw = _create_raw_client(target)
-    if target.sdk == "anthropic":
-        return instructor.from_anthropic(raw, mode=mode)
-    return instructor.from_openai(raw, mode=mode)
+    """The run's Instructor-wrapped SDK client for a target and mode."""
+
+    def make() -> Any:
+        raw = _create_raw_client(target)
+        if target.sdk == "anthropic":
+            return instructor.from_anthropic(raw, mode=mode)
+        return instructor.from_openai(raw, mode=mode)
+
+    return shared_client(("instructor", target, mode), make)
 
 
 def _is_retryable(error_str: str) -> bool:
