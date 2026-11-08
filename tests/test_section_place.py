@@ -36,6 +36,7 @@ RULES = [
     ("waterboarded", "Capture and CIA custody"),
     ("moved to Guantánamo", "Detention at Guantánamo"),
     ("heart", "Health and treatment"),
+    ("engineer", "Background"),
 ]
 
 
@@ -225,3 +226,17 @@ def test_update_profile_files_new_pieces_of_a_reorganised_profile(monkeypatch):
         model_type="cloud", model="m", approach="edit", kind="detainee",
     )  # fmt: skip
     assert len(seen) == 1 and "charged." in out["text"].split("### Military")[1]
+
+
+def test_pieces_stay_out_of_background_and_next_to_what_they_answer():
+    new = SECTIONED.replace(
+        "planning the 9/11 attacks.^[a2]",
+        "planning the 9/11 attacks.^[a2] He is an engineer.^[a5]",
+    ).replace(
+        "1964.^[a0]",
+        "1964.^[a0] However, a later report says he was charged in 2009.^[a5] "
+        "As of 2025, he was charged with more counts.^[a5]",
+    )
+    out, report, seen = _place(new)
+    assert len(seen) == 1 and report["pieces"] == 3
+    assert out == new and report["status"] == "kept"

@@ -30,10 +30,17 @@ The pipeline uses it twice, for reorganised profiles:
    update added (text not in the old profile), asks where each goes, and
    moves a piece filed under another top-level heading, word for word, to
    the end of its section's own text (or under a starter heading it
-   creates). A piece in the opening stays when it is answered with the first
-   starter heading (Background, who the entity is). Code undoes the move if
-   any sentence or citation claim changes. ``HINBOX_SECTION_PLACE=off``
-   turns this off.
+   creates). Code undoes the move if any sentence or citation claim
+   changes. ``HINBOX_SECTION_PLACE=off`` turns this off.
+
+   Two kinds of piece stay where the edit put them. One answered with the
+   first starter heading (Background, who the entity is): in 3 local
+   replays of Spath, Trump and Obama, Qwen moved 41 new pieces into
+   Background, mostly Guantánamo news that says little about the person
+   ("the special envoys had left their jobs", detainee counts), which the
+   hand labels left out as unsure. And one that leans on the sentence
+   before it ("However, ...", "As of March 2017, ...", "That ..."):
+   moved, it lost what it answers.
 """
 
 import os
@@ -47,6 +54,14 @@ from src.logging_config import get_logger
 logger = get_logger("engine.section_place")
 
 PLACE_ENV = "HINBOX_SECTION_PLACE"
+# A new piece that opens like this answers the sentence before it ("However,
+# later reports...", "As of March 2017, 41 captives..."): in a local replay
+# such pieces were moved away from what they qualify
+_LEANS_ON_BEFORE = re.compile(
+    r"^\W*(?:however|but|yet|still|nevertheless|meanwhile|instead|also|later|"
+    r"then|by then|as of|another|that|this|these|those|such|it)\b",
+    re.IGNORECASE,
+)
 BATCH = 8  # pieces per call, as scored by the placement eval
 
 INSTRUCTIONS = """You file sentences from a profile of the {entity_type} \
@@ -282,8 +297,8 @@ def place_new(
     moves = []
     for (top, s, e), heading in zip(found, answers):
         here = _starter_for(top, starter) if top else None
-        stays = heading is None or heading == here
-        if stays or (top is None and heading == starter[0]):
+        stays = heading is None or heading == here or heading == starter[0]
+        if stays or _LEANS_ON_BEFORE.match(new[s:e]):
             continue
         moves.append((s, e, heading, top or "(opening)"))
     if not moves:
