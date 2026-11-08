@@ -104,6 +104,7 @@ def test_both_approaches_score_against_gold():
     records = score_batches("classify", groups, CONFIG, classify, workers=1)
     summary = summarize(records)
     assert summary["right"] == 2 and summary["per_heading"]["Role"] == "0/1"
+    assert summary["balanced_accuracy"] == round(2 / 3, 4)
     assert summary["top_mistakes"] == {"Role -> Cases and decisions": 1}
 
     reorganise = lambda msgs: SectionSplit(  # noqa: E731

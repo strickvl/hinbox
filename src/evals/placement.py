@@ -21,7 +21,8 @@ Approaches (``--placement-approaches``):
 - ``classify``: ``src/engine/section_place.py``, placement alone, a few
   words on what each sentence tells about the entity before its heading.
 
-The report has accuracy over sure rows, per gold heading, the most common
+The report has accuracy over sure rows, balanced accuracy (the mean of
+each gold heading's accuracy, since most rows are court items), per gold heading, the most common
 mistakes, and the baseline: how often the run a row came from had put it
 under its gold heading (``placed``), per model. Rows are split into
 train/dev/test by a hash of the sentence (``assign_split()``), so a prompt
@@ -191,6 +192,13 @@ def summarize(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "errors": len(records) - len(scored),
         "right": right,
         "accuracy": round(right / len(scored), 4) if scored else 0.0,
+        # Mean of per-heading accuracy: most sure rows are court items, so
+        # answering "Cases and decisions" every time would score 66% accuracy
+        "balanced_accuracy": round(
+            sum(a / b for a, b in per_heading.values()) / len(per_heading), 4
+        )
+        if per_heading
+        else 0.0,
         "per_heading": {h: f"{a}/{b}" for h, (a, b) in sorted(per_heading.items())},
         "top_mistakes": dict(mistakes.most_common(6)),
         "median_seconds": seconds[len(seconds) // 2] if seconds else 0.0,
