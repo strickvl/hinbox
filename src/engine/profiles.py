@@ -687,19 +687,6 @@ def _split_sections(
         annotate(opening_sort=report and report["status"])
     if not split_enabled(entity_type, local):
         return profile
-    # A long top-level section's misfiled facts go to their own sections
-    # first, so the split doesn't give them sub-headings (``section_sort.py``)
-    from src.engine import section_split
-    from src.engine.section_sort import sort_long_sections
-
-    profile, reports = sort_long_sections(
-        profile, entity_type, entity_name, kind, domain,
-        section_split.make_asker(
-            _prompt_model(model_type, model), local, step="profile.section_sort"
-        ),
-        section_split.SPLIT_CHARS,
-    )  # fmt: skip
-    annotate(section_sorts=[f"{r['section']}: {r['status']}" for r in reports] or None)
     split, reports = split_profile(
         profile, entity_type, entity_name, _prompt_model(model_type, model), local
     )
@@ -760,7 +747,7 @@ def update_profile(
     # The rewrite and fact-list updaters build a new dict: keep the marker
     # that stops a second reorganise and the sizes refused steps wait on
     keys = ("reorganised", "reorganise_refused_chars", "split_refused_json")
-    for key in keys + ("opening_sorted_chars", "section_sorted_json"):
+    for key in keys + ("opening_sorted_chars",):
         if existing_profile.get(key) and updated_profile:
             updated_profile.setdefault(key, existing_profile[key])
     updated_profile = _split_sections(
