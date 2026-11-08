@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from openai import OpenAI
 
 from src.logging_config import get_logger
+from src.utils.client_cache import shared_client
 from src.utils.provider_routing import resolve_embedding_target
 from src.utils.tracing import in_current_context, instrument_embeddings
 
@@ -77,11 +78,13 @@ class CloudEmbeddingProvider(EmbeddingProvider):
         """Call cloud API with exponential backoff retry."""
         loop = asyncio.get_running_loop()
         target = resolve_embedding_target(self.config.model_name)
-        client = OpenAI(
-            base_url=target.base_url,
-            api_key=target.api_key or "not-set",
+        client = shared_client(
+            ("embeddings", target),
+            lambda: instrument_embeddings(
+                OpenAI(base_url=target.base_url, api_key=target.api_key or "not-set"),
+                target,
+            ),
         )
-        instrument_embeddings(client, target)
         # Jina refuses input over 8194 tokens unless asked to truncate. A hub
         # entity's profile (e.g. the Guantanamo base) grows past that, and then
         # every later article that mentions it failed its merge step.
