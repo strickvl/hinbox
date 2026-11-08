@@ -21,8 +21,10 @@ For a profile marked ``reorganised: done`` whose opening passes
    (before its sub-headings), creating a missing starter heading in its
    place (``insert_missing_heading()``). Piece 1 always stays; a piece left
    out, or put under a heading the profile doesn't have, stays too.
-4. Code compares the sentences before and after, sorted, and undoes the move
-   if one differs.
+4. Code compares the sentences before and after, sorted, and the claim each
+   citation covers (what grounding judges), and undoes the move if one
+   differs. A piece goes right after its section's last citation, so an
+   uncited sentence there stays with the claim it belonged to.
 
 ``profile["opening_sorted_chars"]`` keeps the opening's size after a sort (or
 when nothing moved, or the answer was refused), and it is asked again only
@@ -43,6 +45,7 @@ from src.engine.section_split import (
     make_asker,
 )
 from src.logging_config import get_logger
+from src.utils.quality_controls import CITATION_RE
 
 logger = get_logger("engine.opening_sort")
 
@@ -173,14 +176,30 @@ def _render(units: List[str], spans: List[Tuple[int, int]], keep: List[int]) -> 
 
 def _put(rest: str, heading: str, block: str, starter: List[str]) -> Optional[str]:
     """``rest`` with ``block`` at the end of ``heading``'s own text, or under
-    the starter heading made for it; None when neither works."""
+    the starter heading made for it; None when neither works. It goes right
+    after the section's last citation: an uncited sentence after it belongs
+    to the next citation's claim, and the block's citation would take it."""
     from src.engine.profile_edits import _section_end
     from src.engine.section_routing import insert_missing_heading
 
     end = _section_end(rest, heading, own=True)
     if end is None:
         return insert_missing_heading(rest, heading, block, starter)
-    return (rest[:end].rstrip() + "\n\n" + block + "\n\n" + rest[end:].lstrip()).strip()
+    words = re.escape(heading.strip().lstrip("#").strip())
+    head = re.search(rf"^#{{1,6}}[ \t]+{words}[ \t]*$", rest[:end], re.MULTILINE)
+    at = head.end() if head else end
+    cited = [m.end() for m in CITATION_RE.finditer(rest, at, end)]
+    at = cited[-1] if cited else at
+    return (rest[:at].rstrip() + "\n\n" + block + "\n\n" + rest[at:].lstrip()).strip()
+
+
+def _claims(text: str) -> List[Tuple[str, str]]:
+    """Each citation's article and claim text, sorted: what grounding judges."""
+    from src.utils.grounding import _claim_key, _extract_cited_claims
+
+    return sorted(
+        (c["article_id"], _claim_key(c["claim"])) for c in _extract_cited_claims(text)
+    )
 
 
 def sort_text(
@@ -233,6 +252,10 @@ def sort_text(
     new_text = re.sub(r"\n{3,}", "\n\n", f"{new_opening}\n\n{new_rest}").strip() + "\n"
     if _sentences(new_text) != _sentences(text):
         return text, {**report, "status": "refused", "reason": "sentences changed"}
+    # Each moved sentence must keep its citation, and no uncited sentence may
+    # be taken over by another citation (a new heading put after one)
+    if _claims(new_text) != _claims(text):
+        return text, {**report, "status": "refused", "reason": "claims changed"}
     return new_text, {
         **report,
         "status": "done",

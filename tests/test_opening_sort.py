@@ -143,3 +143,24 @@ def test_sort_waits_until_the_opening_grows_and_needs_a_reorganised_profile(
 def test_the_edit_model_is_told_the_opening_is_only_who_they_are():
     note = routing_note(STARTER, {}, "KSM", TEXT)
     assert "text above the first heading only says who KSM is" in note
+
+
+def test_a_moved_piece_never_takes_over_an_uncited_sentence():
+    # Codex review: "He had a brother." after Background's last citation
+    # belongs to the next citation's claim; a piece put after it would take it
+    rest = REST.replace("Kuwait.^[a1]", "Kuwait.^[a1] He had a brother.")
+    one = SectionSplit(subsections=[SubSection(heading="Background", paragraphs=[3])])
+    out, report, _ = _run(one, f"{OPENING}\n\n{rest}")
+    assert report["status"] == "done"
+    assert out.index("birthday") < out.index("He had a brother.") < out.index("### Mil")
+    # A new heading after that sentence would take it from its claim: refused
+    new = SectionSplit(
+        subsections=[SubSection(heading="Detention at Guantánamo", paragraphs=[4])]
+    )
+    text = f"{OPENING}\n\n{rest}"
+    out, report, _ = _run(new, text)
+    assert out == text and report == {
+        **report,
+        "status": "refused",
+        "reason": "claims changed",
+    }
