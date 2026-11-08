@@ -100,15 +100,24 @@ apart. Group by topic; a period in brackets is fine, as in \
 
 
 DEFAULT_TABLES = "people"  # on the dev eval, events and organizations scored lower
+# Local runs default to flat profiles: in the 8 Nov 150-article rerun local
+# Qwen put 24 of 82 hand-checked sentences under the right heading (Luna 64
+# of 72), e.g. Spath's 2018 trial suspension under "Background > Post-military
+# career". Setting the variable (e.g. "people") turns it on for local runs too.
+DEFAULT_LOCAL_TABLES = "off"
 
 
-def tables_enabled(env: str, entity_type: Optional[str] = None) -> bool:
+def tables_enabled(
+    env: str, entity_type: Optional[str] = None, local: bool = False
+) -> bool:
     """Whether the step named by ``env`` runs for ``entity_type``: ``off``,
-    ``on`` (every table) or a comma list of tables, default ``people``.
+    ``on`` (every table) or a comma list of tables, default ``people`` for a
+    cloud model and ``off`` for a local one (``DEFAULT_LOCAL_TABLES``).
     With no ``entity_type``, whether it runs for any table."""
     from src.engine.hub_profiles import _PLURAL
 
-    value = os.getenv(env, DEFAULT_TABLES).strip().lower()
+    default = DEFAULT_LOCAL_TABLES if local else DEFAULT_TABLES
+    value = os.getenv(env, default).strip().lower()
     if value in ("off", "0", "false", ""):
         return False
     if value in ("on", "1", "true", "all"):
@@ -119,8 +128,8 @@ def tables_enabled(env: str, entity_type: Optional[str] = None) -> bool:
     return _PLURAL.get(entity_type, entity_type) in tables
 
 
-def split_enabled(entity_type: Optional[str] = None) -> bool:
-    return tables_enabled(SPLIT_ENV, entity_type)
+def split_enabled(entity_type: Optional[str] = None, local: bool = False) -> bool:
+    return tables_enabled(SPLIT_ENV, entity_type, local)
 
 
 def _norm(text: str) -> str:
