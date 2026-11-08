@@ -234,7 +234,7 @@ def test_update_profile_splits_after_the_edit_when_on(monkeypatch):
     monkeypatch.setenv("HINBOX_SECTION_SPLIT", "on")
     monkeypatch.setattr(section_split, "SPLIT_CHARS", 200)
     monkeypatch.setattr(
-        section_split, "make_asker", lambda model, local: _asker(GOOD, [])
+        section_split, "make_asker", lambda model, local, **k: _asker(GOOD, [])
     )
     monkeypatch.setitem(
         profiles._UPDATERS, "edit",

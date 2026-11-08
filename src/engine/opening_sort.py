@@ -141,11 +141,15 @@ def messages(
 
 
 def plan_moves(
-    reply: SectionSplit, count: int, targets: List[Tuple[str, str]]
+    reply: SectionSplit,
+    count: int,
+    targets: List[Tuple[str, str]],
+    keep_first: bool = True,
 ) -> Dict[int, str]:
     """Piece number (1-based) -> heading for each piece that leaves the
-    opening. A repeat keeps its first place; piece 1, a piece left out and a
-    piece under a heading that isn't offered stay."""
+    opening. A repeat keeps its first place; piece 1 (unless not
+    ``keep_first``), a piece left out and a piece under a heading that isn't
+    offered stay."""
     from src.engine.section_reorganise import _starter_for
 
     names = [h for h, _ in targets]
@@ -157,7 +161,7 @@ def plan_moves(
             if not 1 <= n <= count or n in seen:
                 continue
             seen.add(n)
-            if heading and n != 1:
+            if heading and (n != 1 or not keep_first):
                 moves[n] = heading
     return moves
 
