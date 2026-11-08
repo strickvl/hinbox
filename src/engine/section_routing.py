@@ -51,7 +51,9 @@ sub-heading or a sentence under it that fits. A heading marked "not in the \
 profile yet" can be an anchor too: code adds the heading in its place. Use \
 it for a fact that belongs there rather than putting it under another \
 heading, even when a sentence on a related point already sits under that \
-other heading. Use END only for a fact that fits none of the headings.
+other heading. Use END only for a fact that fits none of the headings. The \
+text above the first heading only says who {entity_name} is: don't anchor a \
+new fact on its sentences, anchor it in the section it belongs in.
 
 This only decides where a new fact goes, not whether to add one: the rules \
 above on what to add still hold, so an article with nothing new about \

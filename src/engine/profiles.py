@@ -663,9 +663,11 @@ def _split_sections(
     domain: str = "guantanamo",
 ) -> Dict:
     """Give a long profile its kind's starter headings once when
-    ``HINBOX_SECTION_REORGANISE`` is on (``section_reorganise.py``), then split
+    ``HINBOX_SECTION_REORGANISE`` is on (``section_reorganise.py``) and move
+    an over-long opening's facts into their sections (``opening_sort.py``), then split
     over-long sections into sub-sections when ``HINBOX_SECTION_SPLIT`` is on
     (``section_split.py``); the update's model answers both."""
+    from src.engine.opening_sort import sort_opening
     from src.engine.section_reorganise import reorganise_enabled, reorganise_profile
     from src.engine.section_split import split_enabled, split_profile
 
@@ -678,6 +680,11 @@ def _split_sections(
             _prompt_model(model_type, model), local,
         )  # fmt: skip
         annotate(section_reorganise=report and report["status"])
+        profile, report = sort_opening(
+            profile, entity_type, entity_name, kind, domain,
+            _prompt_model(model_type, model), local,
+        )  # fmt: skip
+        annotate(opening_sort=report and report["status"])
     if not split_enabled(entity_type):
         return profile
     split, reports = split_profile(
@@ -739,7 +746,8 @@ def update_profile(
     )
     # The rewrite and fact-list updaters build a new dict: keep the marker
     # that stops a second reorganise and the sizes refused steps wait on
-    for key in ("reorganised", "reorganise_refused_chars", "split_refused_json"):
+    keys = ("reorganised", "reorganise_refused_chars", "split_refused_json")
+    for key in keys + ("opening_sorted_chars",):
         if existing_profile.get(key) and updated_profile:
             updated_profile.setdefault(key, existing_profile[key])
     updated_profile = _split_sections(
