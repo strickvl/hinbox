@@ -102,6 +102,19 @@ headings of 2 to 6 plain words. A new heading must not share a word with \
 another heading.
 - You don't write or change any profile text; code moves the {piece}s."""
 
+ASSIGN_ENV = "HINBOX_REORGANISE_ASSIGN"  # "classify" (default) or "sections"
+
+
+def assign_mode() -> str:
+    """How pieces are given headings: ``classify`` asks the placement-only
+    prompt (``section_place.py``) about 8 pieces per call, which on 204
+    hand-labelled sentences was right on 93.6% for local Qwen against
+    83.8-85.3% for this module's one-call prompt; ``sections`` brings that
+    prompt back (it may also add up to 2 headings)."""
+    value = os.getenv(ASSIGN_ENV, "classify").strip().lower()
+    return "sections" if value == "sections" else "classify"
+
+
 PIECES_ENV = "HINBOX_REORGANISE_PIECES"  # "sentences" (default) or "paragraphs"
 _PIECE_WORDING = {
     "paragraphs": {"pieces_intro": "paragraphs, numbered", "piece": "paragraph",
@@ -308,9 +321,12 @@ def reorganise_text(
     ask: Ask,
     min_chars: Optional[int] = None,
     notes: Optional[Dict[str, str]] = None,
+    place: Optional[Any] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """The reorganised text and a report (``status``: ``skipped``, ``done``,
-    ``refused`` or ``failed``). The text comes back unchanged unless done."""
+    ``refused`` or ``failed``). The text comes back unchanged unless done.
+    With ``place`` (a ``section_place`` asker) the pieces are filed by the
+    placement-only prompt instead of ``ask``."""
     limit = REORGANISE_CHARS if min_chars is None else min_chars
     if len(text) <= limit or not starter:
         return text, {"status": "skipped", "reason": "short or no starter headings"}
@@ -327,7 +343,18 @@ def reorganise_text(
         return text, {**report, "status": "skipped", "reason": "few paragraphs"}
     shown = spans if sentences else None
     try:
-        reply = ask(messages(units, starter, entity_type, entity_name, notes, shown))
+        if place is not None:
+            from src.engine.section_place import as_split, place_pieces
+
+            answers = place_pieces(
+                units, starter, notes or {}, entity_type, entity_name, place
+            )
+            reply = as_split(answers)
+            report["assign"] = "classify"
+        else:
+            reply = ask(
+                messages(units, starter, entity_type, entity_name, notes, shown)
+            )
     except Exception as e:  # keep the profile as it is; try again next update
         logger.warning(f"Reorganise call failed for {entity_name}: {e}")
         return text, {
@@ -396,9 +423,15 @@ def reorganise_profile(
     config = get_domain_config(domain).load_config()
     starter = starter_headings(config, entity_type, kind)
     notes = starter_notes(config, entity_type, kind)
-    asker = ask or make_asker(model, local, step="profile.section_reorganise")
+    step = "profile.section_reorganise"
+    place = None
+    if ask is None and assign_mode() == "classify":
+        from src.engine import section_place
+
+        place = section_place.make_asker(model, local, step=step)
+    asker = ask or make_asker(model, local, step=step)
     new_text, report = reorganise_text(
-        text, entity_type, entity_name, starter, asker, notes=notes
+        text, entity_type, entity_name, starter, asker, notes=notes, place=place
     )
     level = "info" if report["status"] == "done" else "warning"
     getattr(logger, level)(

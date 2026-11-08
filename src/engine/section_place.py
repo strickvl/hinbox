@@ -13,13 +13,41 @@ This prompt asks for placement alone: for each numbered sentence the model
 first says in a few words what it mainly tells a reader about the entity,
 then names one heading from the list. Code reads the heading back with
 ``section_reorganise._starter_for()``, so a heading copied with its note
-still counts. Nothing here moves text yet: ``src/evals/placement.py``
-scores it against hand labels first (``just eval placement``).
+still counts.
+
+On 204 hand-labelled sentences (``just eval placement``, 2 seeds) it filed
+93.6% under the right starter heading on local Qwen and 93.6-94.1% on Luna,
+against 83.8-85.3% and 85.8-87.3% for the reorganise prompt; most of the
+gap was Role and Capture sentences the reorganise put under Background, and
+headings it made up ("Statements", "Retirement").
+
+The pipeline uses it twice, for reorganised profiles:
+
+1. The reorganise (``section_reorganise.py``) asks it where each numbered
+   piece goes, 8 pieces per call (``HINBOX_REORGANISE_ASSIGN=sections``
+   brings back the one-call prompt that may add headings).
+2. After each later update, ``place_new()`` finds the cited pieces the
+   update added (text not in the old profile), asks where each goes, and
+   moves a piece filed under another top-level heading, word for word, to
+   the end of its section's own text (or under a starter heading it
+   creates). A piece in the opening stays when it is answered with the first
+   starter heading (Background, who the entity is). Code undoes the move if
+   any sentence or citation claim changes. ``HINBOX_SECTION_PLACE=off``
+   turns this off.
 """
 
-from typing import Callable, Dict, List, Optional
+import os
+import re
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from pydantic import BaseModel, Field
+
+from src.logging_config import get_logger
+
+logger = get_logger("engine.section_place")
+
+PLACE_ENV = "HINBOX_SECTION_PLACE"
+BATCH = 8  # pieces per call, as scored by the placement eval
 
 INSTRUCTIONS = """You file sentences from a profile of the {entity_type} \
 "{entity_name}", built from news articles, under the profile's headings.
@@ -112,3 +140,220 @@ def make_asker(model: str, local: bool, step: str = "profile.section_place"):
         return reply
 
     return ask
+
+
+def place_enabled() -> bool:
+    return os.getenv(PLACE_ENV, "on").strip().lower() not in ("off", "0", "false")
+
+
+def place_pieces(
+    pieces: List[str],
+    starter: List[str],
+    notes: Dict[str, str],
+    entity_type: str,
+    entity_name: str,
+    ask: AskPlacements,
+    batch: int = BATCH,
+) -> List[Optional[str]]:
+    """The starter heading for each piece, ``batch`` pieces per call; a
+    failed call raises."""
+    out: List[Optional[str]] = []
+    for i in range(0, len(pieces), batch):
+        chunk = pieces[i : i + batch]
+        reply = ask(messages(chunk, starter, notes, entity_type, entity_name))
+        out += read_reply(reply, len(chunk), starter)
+    return out
+
+
+def as_split(answers: List[Optional[str]]):
+    """The answers as the reorganise's reply: heading -> piece numbers."""
+    from src.engine.section_split import SectionSplit, SubSection
+
+    groups: Dict[str, List[int]] = {}
+    for n, heading in enumerate(answers, 1):
+        if heading:
+            groups.setdefault(heading, []).append(n)
+    return SectionSplit(
+        subsections=[SubSection(heading=h, paragraphs=ns) for h, ns in groups.items()]
+    )
+
+
+def _blocks(text: str) -> Iterator[Tuple[Optional[str], int, int]]:
+    """(top-level heading it sits under or None, start, end) of the text
+    between each two heading lines."""
+    from src.engine.section_split import _HEADING_LINE, _clean_heading
+
+    lines = text.splitlines(keepends=True)
+    heads = []
+    at = 0
+    for line in lines:
+        m = _HEADING_LINE.match(line.strip())
+        if m:
+            heads.append((at, at + len(line), len(m.group(1)), m.group(2).strip()))
+        at += len(line)
+    top_level = min((lv for *_, lv, _ in heads), default=0)
+    top, start = None, 0
+    for line_start, line_end, level, title in heads:
+        yield top, start, line_start
+        if level == top_level:
+            top = _clean_heading(title)
+        start = line_end
+    yield top, start, len(text)
+
+
+def new_pieces(old: str, new: str) -> List[Tuple[Optional[str], int, int]]:
+    """(top-level heading, start, end) of each cited piece of ``new`` whose
+    text isn't in ``old``."""
+    from src.engine.section_split import _norm, unit_spans
+
+    old_norm = _norm(old)
+    found = []
+    for top, start, end in _blocks(new):
+        units, _, _ = unit_spans(new[start:end], 0, by_line=True)
+        pos = start
+        for unit in units:
+            at = new.find(unit, pos, end)
+            if at < 0:  # rejoined with other spacing: leave it where it is
+                continue
+            pos = at + len(unit)
+            if _norm(unit) and _norm(unit) not in old_norm:
+                found.append((top, at, pos))
+    return found
+
+
+def _cut(text: str, start: int, end: int) -> str:
+    if text[start - 1 : start] == " " and text[end : end + 1] in (" ", "\n", ""):
+        start -= 1  # the space before a piece cut from inside a paragraph
+    return text[:start] + text[end:]
+
+
+def _drop_empty_headings(text: str, before: str) -> str:
+    """``text`` without heading lines left with nothing under them (no text
+    and no sub-heading), unless that was already so in ``before``."""
+    from src.engine.section_split import _headings
+
+    def empty(lines: List[str]) -> set:
+        heads = _headings(lines)
+        out = set()
+        for k, (i, level, title) in enumerate(heads):
+            j, next_level = (
+                (heads[k + 1][0], heads[k + 1][1])
+                if k + 1 < len(heads)
+                else (len(lines), 0)
+            )
+            if next_level <= level and not "".join(lines[i + 1 : j]).strip():
+                out.add((title, i))
+        return out
+
+    lines = text.splitlines()
+    was = {t for t, _ in empty(before.splitlines())}
+    drop = {i for t, i in empty(lines) if t not in was}
+    return "\n".join(line for i, line in enumerate(lines) if i not in drop)
+
+
+def place_new(
+    old: str,
+    new: str,
+    entity_type: str,
+    entity_name: str,
+    starter: List[str],
+    notes: Dict[str, str],
+    ask: AskPlacements,
+) -> Tuple[str, Dict[str, Any]]:
+    """``new`` with the pieces an update added moved under the starter
+    heading the model files them under, and a report (``status``:
+    ``skipped``, ``kept``, ``done``, ``refused`` or ``failed``)."""
+    from src.engine.opening_sort import _claims, _put
+    from src.engine.section_reorganise import _starter_for
+    from src.engine.section_split import _sentences
+
+    found = new_pieces(old, new)
+    if not found or not starter:
+        return new, {"status": "skipped", "reason": "no new pieces"}
+    report: Dict[str, Any] = {"pieces": len(found)}
+    try:
+        answers = place_pieces(
+            [new[s:e] for _, s, e in found], starter, notes, entity_type,
+            entity_name, ask,
+        )  # fmt: skip
+    except Exception as e:  # keep the update as the edit placed it
+        logger.warning(f"Section placement failed for {entity_name}: {e}")
+        return new, {**report, "status": "failed", "reason": f"{type(e).__name__}: {e}"}
+    moves = []
+    for (top, s, e), heading in zip(found, answers):
+        here = _starter_for(top, starter) if top else None
+        stays = heading is None or heading == here
+        if stays or (top is None and heading == starter[0]):
+            continue
+        moves.append((s, e, heading, top or "(opening)"))
+    if not moves:
+        return new, {**report, "status": "kept"}
+    out = new
+    for s, e, _, _ in sorted(moves, reverse=True):
+        out = _cut(out, s, e)
+    out = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", out)
+    groups: Dict[str, List[Tuple[int, int]]] = {}
+    for s, e, heading, _ in moves:
+        groups.setdefault(heading, []).append((s, e))
+    for heading, spans in groups.items():
+        block = new[spans[0][0] : spans[0][1]]
+        for (_, prev_end), (s, e) in zip(spans, spans[1:]):
+            gap = (
+                " "
+                if not new[prev_end:s].strip() and "\n" not in new[prev_end:s]
+                else "\n\n"
+            )
+            block += gap + new[s:e]
+        placed = _put(out, heading, block, starter)
+        if placed is None:
+            return new, {**report, "status": "refused", "reason": f"no {heading!r}"}
+        out = placed
+    out = _drop_empty_headings(out, new)
+    out = re.sub(r"\n{3,}", "\n\n", out).strip() + "\n"
+    if _sentences(out) != _sentences(new):
+        return new, {**report, "status": "refused", "reason": "sentences changed"}
+    if _claims(out) != _claims(new):
+        return new, {**report, "status": "refused", "reason": "claims changed"}
+    moved: Dict[str, int] = {}
+    for _, _, heading, here in moves:
+        moved[f"{here} -> {heading}"] = moved.get(f"{here} -> {heading}", 0) + 1
+    return out, {**report, "status": "done", "moved": moved}
+
+
+def place_profile(
+    profile: Dict[str, Any],
+    old_text: str,
+    entity_type: str,
+    entity_name: str,
+    kind: Optional[str],
+    domain: str,
+    model: str,
+    local: bool,
+    ask: Optional[AskPlacements] = None,
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+    """``profile`` with an update's new pieces filed under their starter
+    headings, for profiles reorganised before this update; the report, or
+    None when it was not tried."""
+    from src.config_loader import get_domain_config
+    from src.engine.fact_list import FACT_ROWS_KEY
+    from src.engine.section_reorganise import MARK_KEY, starter_headings, starter_notes
+
+    if (
+        profile.get(MARK_KEY) != "done"
+        or profile.get(FACT_ROWS_KEY)
+        or not place_enabled()
+    ):
+        return profile, None
+    config = get_domain_config(domain).load_config()
+    starter = starter_headings(config, entity_type, kind)
+    notes = starter_notes(config, entity_type, kind)
+    text = str(profile.get("text") or "")
+    new_text, report = place_new(
+        old_text, text, entity_type, entity_name, starter, notes,
+        ask or make_asker(model, local),
+    )  # fmt: skip
+    logger.info(
+        f"Section placement for {entity_name}: {report['status']} "
+        f"{report.get('reason') or report.get('moved') or ''}"
+    )
+    return ({**profile, "text": new_text} if new_text != text else profile), report
