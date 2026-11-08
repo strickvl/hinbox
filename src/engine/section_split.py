@@ -87,7 +87,7 @@ INSTRUCTIONS = """You organise one section of a profile of the {entity_type} \
 "{entity_name}", built from news articles.
 
 The section "{heading}" has grown long. Below are its paragraphs, numbered. \
-Group them under 2 to 5 {grouping} so that a reader can find a topic quickly.
+Group them under 2 to {most} {grouping} so that a reader can find a topic quickly.
 
 Rules:
 - Put every paragraph number under exactly one sub-heading.
@@ -298,11 +298,23 @@ def long_sections(
     return found
 
 
+PROMPT_MOST = 5  # the prompt asks for at most this many; up to MAX_GROUPS are taken
+
+
 def messages(
-    section: Dict[str, Any], entity_type: str, entity_name: str, other: List[str]
+    section: Dict[str, Any],
+    entity_type: str,
+    entity_name: str,
+    other: List[str],
+    most: int = PROMPT_MOST,
 ) -> List[Dict[str, str]]:
+    """The split call. ``most``: how many headings fit. Under a parent near
+    ``MAX_SIBLINGS`` that is fewer than 5; in a local replay every refused
+    Qwen split was a re-split asked for "2 to 5" with room for 2 or 3, and the
+    refused section then grew into a 9,332-character catch-all."""
     parent = section.get("parent")
     system = INSTRUCTIONS.format(
+        most=max(MIN_GROUPS, min(most, PROMPT_MOST)),
         entity_type=entity_type,
         entity_name=entity_name,
         heading=section["heading"],
@@ -459,7 +471,7 @@ def split_long_sections(
             report.update(status="refused", reason=f"over {MAX_SIBLINGS} sub-sections")
             continue
         try:
-            reply = ask(messages(section, entity_type, entity_name, other))
+            reply = ask(messages(section, entity_type, entity_name, other, room))
         except Exception as e:  # keep the section as it is
             logger.warning(f"Section split call failed for {entity_name}: {e}")
             report.update(status="failed", reason=f"{type(e).__name__}: {e}")
