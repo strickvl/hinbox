@@ -108,6 +108,15 @@ def test_unreadable_lines_are_listed_not_dropped(corr):
     assert len(cs.problems) == 3 and not cs.active
     assert "line 1" in cs.problems[0] and "c-0001" in cs.problems[1]
     assert "isn't in the file" in cs.problems[2]
+    # Valid JSON of the wrong shape is listed too, and good lines still load
+    good = json.dumps({"id": "c-0004", "kind": "rename", "entity": PAGE, "name": "Y"})
+    shapes = [{"id": "c-0003", "kind": []}, {"id": "c-0005", "kind": "split", "entity": PAGE, "article_ids": [[A1]]},
+              {"id": "c-0006", "kind": "strike", "entity": {**PAGE, "key": []}, "sentence": "X."},
+              {"id": "c-0007", "kind": "withdraw", "withdraws": ["c-0004"]},
+              {"id": "c-0008", "kind": "verdict", "entity": PAGE, "sentence": "X.", "article_id": A1, "verdict": ["supported"]}]  # fmt: skip
+    corr.write_text("\n".join([good] + [json.dumps(x) for x in shapes]) + "\n")
+    cs = load_corrections(str(corr))
+    assert [r["id"] for r in cs.active] == ["c-0004"] and len(cs.problems) == 5
 
 
 def test_split_undone_by_joins_is_a_contradiction(corr):

@@ -108,9 +108,12 @@ def _bad_entity(ref: Any, what: str) -> List[str]:
     errs = []
     if ref.get("table") not in TABLES:
         errs.append(f"{what} has no known table")
-    if not ref.get("key"):
+    if not ref.get("key") or not isinstance(ref.get("key"), str):
         errs.append(f"{what} has no key")
-    if not isinstance(ref.get("article_ids"), list):
+    if not isinstance(ref.get("name", ""), str):
+        errs.append(f"{what} has a name that isn't text")
+    ids = ref.get("article_ids")
+    if not isinstance(ids, list) or not all(isinstance(a, str) for a in ids):
         errs.append(f"{what} has no article list")
     return errs
 
@@ -118,17 +121,23 @@ def _bad_entity(ref: Any, what: str) -> List[str]:
 def validate(rec: Dict[str, Any]) -> List[str]:
     """What is wrong with a correction (empty when it can be saved)."""
     kind = rec.get("kind")
-    if kind not in KINDS:
+    if not isinstance(kind, str) or kind not in KINDS:
         return [f"unknown kind {kind!r}"]
     errs = [f"{f} is missing" for f in KINDS[kind] if rec.get(f) in (None, "", [])]
     if errs:
         return errs
     if kind == "withdraw":
-        return (
-            []
-            if _ID.match(str(rec["withdraws"]))
-            else ["withdraws must be a correction id"]
-        )
+        ok = isinstance(rec["withdraws"], str) and _ID.match(rec["withdraws"])
+        return [] if ok else ["withdraws must be a correction id"]
+    for f in ("verdict", "article_id", "to_table", "replacement_cites"):
+        if f in rec and not isinstance(rec[f], str):
+            errs.append(f"{f} must be text")
+    for f in ("article_ids", "cites"):
+        ids = rec.get(f, [])
+        if not isinstance(ids, list) or not all(isinstance(a, str) for a in ids):
+            errs.append(f"{f} must be a list of article ids")
+    if errs:
+        return errs
     errs += _bad_entity(rec.get("entity"), "the page")
     for f in ("sentence", "heading", "name", "reason", "passage", "replacement"):
         if f in rec and (msg := _bad_text(rec[f], f, required=f in KINDS[kind])):
@@ -294,7 +303,10 @@ def load_corrections(path: str) -> CorrectionSet:
         if not isinstance(rec, dict) or not _ID.match(str(rec.get("id", ""))):
             cs.problems.append(f"line {n}: no correction id")
             continue
-        errs = validate(rec)
+        try:
+            errs = validate(rec)
+        except Exception as e:  # a hand-edited line of an unexpected shape
+            errs = [f"can't be read ({type(e).__name__})"]
         if errs:
             cs.problems.append(f"line {n} ({rec['id']}): {'; '.join(errs)}")
             continue
