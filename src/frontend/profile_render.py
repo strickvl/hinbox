@@ -26,8 +26,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import markdown
 
 from src.utils.grounding import (
-    GROUNDING_MAX_CLAIM_CHARS,
     _HEADING_LINES,
+    GROUNDING_MAX_CLAIM_CHARS,
     _claim_key,
 )
 from src.utils.grounding import _LEADING_PUNCT as _GROUNDING_LEAD
