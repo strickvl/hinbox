@@ -297,3 +297,14 @@ def test_single_quoted_sentence_keeps_its_apostrophes():
     ]
     # A possessive after a closing quote doesn't swallow the rest
     assert quotes_in("It quotes 'the base' and Qadir's lawyer.") == ["the base"]
+
+
+def test_a_phrase_the_article_has_twice_is_not_kept():
+    article = (
+        "He was moved to the maximum-security Camp 7 in 2006.\n"
+        "Lawyers have never seen the maximum-security Camp 7."
+    )
+    assert verified_passages(article, ["the maximum-security Camp 7"]) == []
+    assert verified_passages(article, ["moved to the maximum-security Camp 7"]) == [
+        "moved to the maximum-security Camp 7"
+    ]
