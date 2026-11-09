@@ -15,7 +15,8 @@ folder still finds it. It quotes sentences written from articles, so it is
 article-derived data and must stay out of the public repository.
 
 The reader (``src/frontend/``) appends to it and draws the corrections on
-top of the page; the pipeline will read it at the start of each run.
+top of the page. Each pipeline run reads it after merging and carries out
+the strikes in the stored profiles (``src/engine/corrections_pass.py``).
 """
 
 import json
@@ -59,6 +60,10 @@ TABLES = ("people", "organizations", "locations", "events")
 # Kinds that only a pipeline run can carry out (the reader just records them)
 NEEDS_RUN = ("heading", "rename", "wrong_table", "not_entity", "split", "join")
 MAX_TEXT = 2000
+# Each run's report sits beside the file; the latest under this name
+REPORT_LATEST = "last-run.json"
+# Report states that mean a run carried a strike out and it still holds
+DONE = ("applied", "held", "re-applied")
 
 _ID = re.compile(r"^c-(\d+)$")
 _LOCK = threading.Lock()
@@ -92,6 +97,36 @@ def entity_ref(
         "name": name,
         "article_ids": sorted(set(article_ids)),
     }
+
+
+def resolve_ref(
+    ref: Any, candidates: Iterable[Tuple[str, str, Iterable[str], Any]]
+) -> Any:
+    """The page a correction names, among one table's ``(key, name,
+    linked article ids, page)`` candidates: the one with its key; else the
+    one with its name; among several with that name, the one sharing the
+    most linked articles with it, if one shares strictly more than the rest.
+    Keys change between runs (an organization retyped), names less often.
+    The reader and the pipeline both look pages up this way, so they agree
+    on which page a correction is about."""
+    if not isinstance(ref, dict):
+        return None
+    pool = list(candidates)
+    for key, _, _, page in pool:
+        if key == ref.get("key"):
+            return page
+    same = [
+        (set(arts), page) for _, name, arts, page in pool if name == ref.get("name")
+    ]
+    if len(same) == 1:
+        return same[0][1]
+    wanted = set(ref.get("article_ids") or [])
+    shared = sorted(
+        ((len(arts & wanted), page) for arts, page in same), key=lambda x: -x[0]
+    )
+    if len(shared) > 1 and shared[0][0] > shared[1][0]:
+        return shared[0][1]
+    return None
 
 
 def _bad_text(value: Any, what: str, required: bool = True) -> Optional[str]:
@@ -394,3 +429,36 @@ def append_correction(path: str, rec: Dict[str, Any]) -> Dict[str, Any]:
             f.flush()
             os.fsync(f.fileno())
     return out
+
+
+# ── the pipeline's report (src/engine/corrections_pass.py) ──
+
+
+def _report_dir(path: str) -> str:
+    return os.path.dirname(os.path.abspath(path))
+
+
+def last_states(path: str) -> Dict[str, str]:
+    """Each correction's state after the last run, from its report."""
+    try:
+        with open(
+            os.path.join(_report_dir(path), REPORT_LATEST), encoding="utf-8"
+        ) as f:
+            rows = json.load(f).get("rows") or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {
+        r["id"]: r.get("state", "") for r in rows if isinstance(r, dict) and r.get("id")
+    }
+
+
+def last_report(path: str) -> Dict[str, Any]:
+    """The last run's report, or {}."""
+    try:
+        with open(
+            os.path.join(_report_dir(path), REPORT_LATEST), encoding="utf-8"
+        ) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}

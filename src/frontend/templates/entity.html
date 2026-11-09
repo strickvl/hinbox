@@ -118,7 +118,7 @@
         <ol class="rows">
           {% for h in history %}
           <li><span class="dt">v{{ h.n }}{% if h.n == current_version %} · now{% endif %}</span>
-            <span>{% if h.source %}From <a href="{{ u('/sources/' ~ h.source.id) }}">{{ h.source.title }}</a>{% if h.source.date %} ({{ h.source.date|fmt_date }}){% endif %}{% else %}Written {{ h.date }}{% endif %}<br>
+            <span>{% if h.source %}From <a href="{{ u('/sources/' ~ h.source.id) }}">{{ h.source.title }}</a>{% if h.source.date %} ({{ h.source.date|fmt_date }}){% endif %}{% elif h.corrections %}Your corrections {{ h.corrections }}, carried out {{ h.date }}{% else %}Written {{ h.date }}{% endif %}<br>
               <span class="muted small">{% if h.added %}{{ h.added }} sentence{{ 's' if h.added != 1 }} added{% endif %}{% if h.added and h.removed %}, {% endif %}{% if h.removed %}{{ h.removed }} changed or removed{% endif %}{% if not h.added and not h.removed %}Wording or layout only{% endif %} · {{ h.chars }} characters</span></span>
             <a class="small" href="{{ u(ent.url, version=h.n) }}">read</a></li>
           {% endfor %}

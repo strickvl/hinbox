@@ -10,7 +10,6 @@ Entity tables are listed once in ``TABLES``; navigation, search and the
 new ``TableSpec``.
 """
 
-import hashlib
 import os
 import threading
 from dataclasses import dataclass, field
@@ -20,27 +19,13 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
-from src.constants import HASH_TRUNCATE_LENGTH
 from src.utils.corrections import corrections_path
-
-
-def _hashed_key(name_field: str, other_field: str) -> Callable[[Dict[str, Any]], str]:
-    def key(row: Dict[str, Any]) -> str:
-        name = row.get(name_field) or ""
-        other = row.get(other_field) or ""
-        h = hashlib.md5(f"{name}##{other}".encode()).hexdigest()[:HASH_TRUNCATE_LENGTH]
-        return f"{name} ({h})"
-
-    return key
-
-
-def make_person_key(person: Dict[str, Any]) -> str:
-    return person.get("name", "") or ""
-
-
-make_event_key = _hashed_key("title", "start_date")
-make_location_key = _hashed_key("name", "type")
-make_org_key = _hashed_key("name", "type")
+from src.utils.entity_keys import (
+    make_event_key,
+    make_location_key,
+    make_org_key,
+    make_person_key,
+)
 
 
 @dataclass(frozen=True)

@@ -14,6 +14,7 @@ from src.constants import (
     SIMILARITY_THRESHOLD,
 )
 from src.engine.alternative_names import add_alternative_name
+from src.engine.corrections_pass import correction_scope
 from src.engine.later_updates import article_dates
 from src.engine.match_checker import (
     check_failed,
@@ -627,26 +628,27 @@ class EntityMerger:
                         else VersionedProfile()
                     )
 
-                    updated_profile, versioned_profile, reflection_history = (
-                        _profile_or_fallback(
-                            (existing_entity["profile"], versioned_profile, []),
-                            update_or_fill,
-                            ENTITY_SINGULAR[self.entity_type],
-                            self._format_key_for_display(similar_key),
-                            existing_entity["profile"],
-                            versioned_profile,
-                            article_content,
-                            article_id,
-                            model_type,
-                            domain,
-                            article_texts=article_texts,
-                            model=task_model("profile", model_type),
-                            article_dates=article_dates(
-                                existing_entity, article_id, article_published_date
-                            ),
-                            entity=existing_entity,
+                    with correction_scope(self.entity_type, existing_entity):
+                        updated_profile, versioned_profile, reflection_history = (
+                            _profile_or_fallback(
+                                (existing_entity["profile"], versioned_profile, []),
+                                update_or_fill,
+                                ENTITY_SINGULAR[self.entity_type],
+                                self._format_key_for_display(similar_key),
+                                existing_entity["profile"],
+                                versioned_profile,
+                                article_content,
+                                article_id,
+                                model_type,
+                                domain,
+                                article_texts=article_texts,
+                                model=task_model("profile", model_type),
+                                article_dates=article_dates(
+                                    existing_entity, article_id, article_published_date
+                                ),
+                                entity=existing_entity,
+                            )
                         )
-                    )
                     # update_profile hands back the old profile when the model
                     # call fails, and only a real update cites this article
                     if article_id not in (updated_profile.get("sources") or []):

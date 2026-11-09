@@ -444,6 +444,7 @@ def edit_profile(
     the starter headings a reorganised profile's new facts are routed to
     (``section_routing.py``).
     """
+    from src.engine.corrections_pass import guard_corrections
     from src.engine.edit_guards import guard_edits
     from src.engine.section_routing import routing_note, routing_sections
 
@@ -483,9 +484,12 @@ def edit_profile(
         if guard
         else (response.edits, {})
     )
+    # A historian's corrections (only inside correction_scope(), during a run)
+    edits, by_corrections = guard_corrections(old_text, edits)
     text, report = apply_edits(old_text, edits, sections[0] if sections else None)
     report["routed"] = bool(sections)
     report["guard"] = guarded
+    report["corrections"] = by_corrections
     report["profile_chars_shown"] = len(
         profile_view(old_text, article_text, PROFILE_VIEW_CHARS)
     )

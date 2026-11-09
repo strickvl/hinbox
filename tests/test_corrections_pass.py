@@ -1,0 +1,265 @@
+"""Tests for how a pipeline run carries out a historian's corrections
+(src/engine/corrections_pass.py): strikes cut from the stored text, the
+historian's own sentence put in their place, the edit guard, the run report,
+and how the reader shows a strike a run carried out.
+
+Every name, sentence and article here is invented (see tests/test_frontend.py).
+"""
+
+import json
+
+from src.engine import corrections_pass as cp
+from src.engine.profile_edits import ProfileEdit
+from src.frontend import data_access
+from src.utils.corrections import (
+    append_correction,
+    entity_ref,
+    last_states,
+    load_corrections,
+)
+from src.utils.file_ops import load_existing_entities
+from tests.test_corrections import (  # noqa: F401
+    FORCE_FED,
+    ORIGIN,
+    PAGE,
+    _sentence_form,
+    corr,
+)
+from tests.test_frontend import A1, A2, A3, TEXT, client  # noqa: F401
+
+SHIPPING = "He worked for a shipping firm"
+STUDIED = "Qadir studied engineering at a local college."
+
+
+def _strike(
+    sentence: str,
+    cites,
+    replacement: str = "",
+    rep_cites: str = A3,
+    cid: str = "c-0001",
+):
+    rec = {
+        "id": cid,
+        "kind": "strike",
+        "entity": PAGE,
+        "sentence": sentence,
+        "cites": cites,
+    }
+    if replacement:
+        rec.update(replacement=replacement, replacement_cites=rep_cites)
+    return rec
+
+
+def _apply(text, lines, done=(), withdrawn=()):
+    return cp.apply_to_text(text, cp._rules(lines), set(done), list(withdrawn))
+
+
+# ── one page's text ──────────────────────────────────────────
+
+
+def test_a_strike_is_cut_and_then_held():
+    text, states, _ = _apply(TEXT, [_strike(FORCE_FED, [A3])])
+    assert FORCE_FED not in text and states["c-0001"] == ("applied", "")
+    # The rest of the paragraph and every other sentence stay as they were
+    assert "Sources disagree on the year he arrived" in text
+    assert "####  " not in text and "\n\n\n" not in text
+    assert text.count("^[") == TEXT.count("^[") - 1
+    # Next run: nothing to cut, the strike holds
+    again, states, _ = _apply(text, [_strike(FORCE_FED, [A3])], done=["c-0001"])
+    assert again == text and states["c-0001"] == ("held", "")
+
+
+def test_your_sentence_goes_in_its_place():
+    rec = _strike(FORCE_FED, [A3], "He refused food for several weeks.")
+    text, states, _ = _apply(TEXT, [rec])
+    assert f"He refused food for several weeks.^[{A3}] Sources disagree" in text
+    assert FORCE_FED not in text and states["c-0001"][0] == "applied"
+    # Missing later (a run lost it): put back, and said so
+    gone = text.replace(f"He refused food for several weeks.^[{A3}] ", "")
+    back, states, _ = _apply(gone, [rec], done=["c-0001"])
+    assert "He refused food for several weeks." in back
+    assert states["c-0001"][0] == "re-applied" and "put back" in states["c-0001"][1]
+
+
+def test_a_restatement_is_cut_but_not_the_true_half():
+    struck = "Qadir was born in Taiz in 1975 and studied engineering in Karachi."
+    text = (
+        f"The article states that Qadir was born in Taiz in 1975 and studied engineering in Karachi.^[{A1}] "
+        f"Qadir was born in Taiz in 1975.^[{A1}]"
+    )
+    out, states, _ = _apply(text, [_strike(struck, [A1])], done=["c-0001"])
+    assert out == f"Qadir was born in Taiz in 1975.^[{A1}]"
+    assert states["c-0001"][0] == "re-applied" and "said again" in states["c-0001"][1]
+
+
+def test_other_words_are_listed_not_cut():
+    struck = "Qadir was captured in Mukalla in 2002."
+    text = f"Police arrested Qadir at a Mukalla hotel in 2002.^[{A1}]"
+    out, states, maybe = _apply(text, [_strike(struck, [A1])])
+    assert out == text and states["c-0001"][0] == "needs a look"
+    assert maybe == [
+        {
+            "id": "c-0001",
+            "sentence": "Police arrested Qadir at a Mukalla hotel in 2002.",
+        }
+    ]
+
+
+def test_a_withdrawn_strike_is_undone():
+    rec = _strike(FORCE_FED, [A3], "He refused food for several weeks.")
+    text, _, _ = _apply(TEXT, [rec])
+    undone, states, _ = _apply(text, [], withdrawn=[rec])
+    assert f"{FORCE_FED}^[{A3}]" in undone and "refused food" not in undone
+    assert states["c-0001"][0] == "undone"
+
+
+def test_verdicts_hold_while_the_words_stay():
+    rec = {"id": "c-0002", "kind": "verdict", "entity": PAGE, "sentence": FORCE_FED,
+           "article_id": A3, "verdict": "supported"}  # fmt: skip
+    _, states, _ = _apply(TEXT, [rec])
+    assert states["c-0002"] == ("held", "")
+    _, states, _ = _apply(TEXT.replace("several", "six"), [rec])
+    assert states["c-0002"][0] == "needs a look"
+    wait = {"id": "c-0003", "kind": "rename", "entity": PAGE, "name": "Yusuf al-Qadir"}
+    assert _apply(TEXT, [wait])[1]["c-0003"][0] == "waiting"
+
+
+# ── the edit guard ───────────────────────────────────────────
+
+
+def _cs(tmp_path, *lines):
+    path = tmp_path / "c.jsonl"
+    for rec in lines:
+        append_correction(str(path), {k: v for k, v in rec.items() if k != "id"})
+    return load_corrections(str(path))
+
+
+def test_the_edit_model_cant_bring_a_strike_back_or_reword_yours(tmp_path):
+    rec = _strike(FORCE_FED, [A3], "He refused food for several weeks.")
+    cs_ = _cs(tmp_path, rec)
+    cp.configure_corrections(cs_)
+    person = {"name": "Yusuf Qadir", "type": "detainee"}
+    text = f"Qadir was held.^[{A1}] He refused food for several weeks.^[{A3}]"
+    edits = [
+        ProfileEdit(op="add", anchor="END", text=f"{FORCE_FED}^[{A3}] He lost weight.^[{A3}]"),
+        ProfileEdit(op="replace", anchor="He refused food for several weeks.",
+                    text=f"He was force-fed.^[{A3}]"),
+        ProfileEdit(op="add", anchor="END", text=f"The article states that {FORCE_FED[0].lower()}{FORCE_FED[1:]}^[{A3}]"),
+    ]  # fmt: skip
+    # Outside a run's scope nothing changes
+    assert cp.guard_corrections(text, edits)[0] == edits
+    with cp.correction_scope("people", person):
+        kept, report = cp.guard_corrections(text, edits)
+    assert [e.text for e in kept] == [f"He lost weight.^[{A3}]"]
+    assert len(report["restated"]) == 2 and len(report["kept_yours"]) == 1
+    assert cs_.active[0]["id"] in cp._GUARDED
+    # Another page is not guarded
+    with cp.correction_scope("people", {"name": "Miriam Hale"}):
+        assert cp.guard_corrections(text, edits)[0] == edits
+    cp.configure_corrections(None)
+
+
+# ── the run ──────────────────────────────────────────────────
+
+
+def _run(tmp_path, monkeypatch):
+    """A run's pass over the reader's made-up tables, then a save."""
+    from src.process_and_extract import write_entities_to_files
+
+    out = tmp_path / "entities"
+    entities = load_existing_entities(str(out))
+    path = data_access.build_store("guantanamo").corrections_path
+    report = cp.run_corrections_pass(entities, path, str(out))
+    write_entities_to_files(entities, str(out))
+    data_access._CACHE.clear()
+    return entities, report
+
+
+def test_a_run_carries_out_the_reader_corrections(client, corr, tmp_path, monkeypatch):  # noqa: F811
+    from tests.test_corrections import _index
+
+    c = _index(client, FORCE_FED)
+    form = {**_sentence_form(client, c), "kind": "strike",
+            "replacement": "He refused food for several weeks.", "replacement_cites": A3}  # fmt: skip
+    r = client.post("/corrections", data=form, headers=ORIGIN, follow_redirects=False)
+    assert r.status_code == 303
+    lost = {"kind": "strike", "entity": entity_ref("people", "Nobody", "Nobody", [A1]),
+            "sentence": "Nobody was held.", "cites": [A1]}  # fmt: skip
+    append_correction(str(corr), lost)
+    entities, report = _run(tmp_path, monkeypatch)
+    person = entities["people"]["Yusuf Qadir"]
+    assert FORCE_FED not in person["profile"]["text"]
+    assert "He refused food for several weeks." in person["profile"]["text"]
+    latest = person["profile_versions"]["versions"][-1]
+    assert latest["trigger_article_id"] == "corrections:c-0001"
+    assert report["counts"] == {"applied": 1, "needs a look": 1}
+    assert cp.describe_report(report) == "Corrections: 1 applied, 1 needs a look"
+    assert last_states(str(corr)) == {"c-0001": "applied", "c-0002": "needs a look"}
+    assert len(list(corr.parent.glob("report-*.json"))) == 1
+    # The reader marks the stored sentence as theirs, and says a run did it
+    page = client.get("/people/Yusuf%20Qadir").text
+    # Once in the text (marked as theirs, not added again) and once in the box
+    assert page.count("refused food for several weeks") == 2
+    assert 'c-mine" id="claim-3">He refused food' in page
+    listing = client.get("/corrections").text
+    assert "Carried out in the tables by the run of" in listing
+    assert "the page can&#39;t be found" in listing
+    # The next run finds nothing to do
+    _, report = _run(tmp_path, monkeypatch)
+    assert (
+        report["counts"] == {"held": 1, "needs a look": 1}
+        and report["profiles_changed"] == 0
+    )
+
+
+def test_no_file_no_report(tmp_path):
+    assert cp.run_corrections_pass({}, str(tmp_path / "none.jsonl")) is None
+    assert not list(tmp_path.iterdir())
+
+
+def test_report_is_written_beside_the_file_only_when_asked(tmp_path):
+    path = tmp_path / "c.jsonl"
+    path.write_text("")
+    report = cp.run_corrections_pass({"people": {}}, str(path), write=False)
+    assert report["counts"] == {} and not (tmp_path / cp.REPORT_LATEST).exists()
+    cp.write_report(str(path), report)
+    assert json.loads((tmp_path / cp.REPORT_LATEST).read_text())["rows"] == []
+
+
+def test_a_page_whose_key_changed_is_found_by_name():
+    from src.utils.corrections import resolve_ref
+
+    ref = entity_ref("organizations", "Old key (abc)", "Harbour Police", [A1])
+    pages = [("New key (def)", "Harbour Police", [A1], "p1")]
+    assert resolve_ref(ref, pages) == "p1"
+    two = pages + [("Third (ghi)", "Harbour Police", [A2], "p2")]
+    assert resolve_ref(ref, two) == "p1"  # shares the article
+    assert resolve_ref(ref, two + [("Fourth", "Harbour Police", [A1], "p3")]) is None
+
+
+def test_edit_profile_applies_the_guard_in_a_run(monkeypatch, tmp_path):
+    from src.engine import profile_edits as pe
+    from src.engine.profile_edits import ProfileEditList
+
+    reply = ProfileEditList(
+        edits=[ProfileEdit(op="add", anchor="END", text=f"{FORCE_FED}^[{A3}]")]
+    )
+    monkeypatch.setattr(pe, "cloud_generation", lambda **_: reply)
+    cp.configure_corrections(_cs(tmp_path, _strike(FORCE_FED, [A3])))
+    profile = {"text": f"Qadir was held.^[{A1}]", "sources": [A1]}
+    try:
+        with cp.correction_scope("people", {"name": "Yusuf Qadir"}):
+            out = pe.edit_profile(
+                "person", "Yusuf Qadir", profile, "x", A3, model="openai/x"
+            )
+    finally:
+        cp.configure_corrections(None)
+    assert FORCE_FED not in out["text"]
+    assert out["edit_report"]["corrections"]["restated"] == [FORCE_FED]
+
+
+def test_the_history_names_a_corrections_version(client, corr, tmp_path, monkeypatch):  # noqa: F811
+    append_correction(str(corr), _strike(FORCE_FED, [A3]) | {"id": None})
+    _run(tmp_path, monkeypatch)
+    page = client.get("/people/Yusuf%20Qadir").text
+    assert "Your corrections c-0001, carried out" in page
