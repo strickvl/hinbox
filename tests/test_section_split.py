@@ -676,3 +676,106 @@ def test_a_heading_that_repeats_another_in_other_words_is_refused():
     # Against a heading already in the profile too; fewer words is a new one
     assert plan_groups(other, 8, ["Appeal and judge authority"])[0] is None
     assert plan_groups(other, 8, ["Appeals", "Judge authority"])[0] is not None
+
+
+def test_a_re_split_refiling_may_send_a_piece_to_a_sibling():
+    # 9 Nov local run: Trump's "Migrant operations at base" was re-split and
+    # the $14 million legal-complex expansion went under one of its new
+    # headings, though the sibling "Prison infrastructure and funding" fitted.
+    # The refiling now offers the siblings too; the piece joins one
+    from src.engine.section_place import Placement, Placements
+
+    asked: List[str] = []
+
+    def place(msgs):
+        asked.append(msgs[0]["content"])
+        found = re.findall(r"^\[(\d+)\] (.*)$", msgs[1]["content"], re.M)
+        pick = lambda n, t: (  # noqa: E731
+            "Arraignment" if "arraignment" in t
+            else "Charges and arraignment" if int(n) <= 3
+            else "Pretrial hearings" if "2019" in t or "Pretrial" in t
+            else "Plea negotiations (2017–2024)"
+        )  # fmt: skip
+        return Placements(placements=[
+            Placement(sentence=int(n), about="", heading=pick(n, t))
+            for n, t in found
+        ])  # fmt: skip
+
+    out, reports = split_long_sections(
+        NESTED, "person", "KSM", _asker(GOOD, []), min_chars=200, resplit=True,
+        place=place,
+    )  # fmt: skip
+    assert "- Arraignment\n" in asked[0]  # the sibling is offered by name
+    assert reports[0]["status"] == "split"
+    assert reports[0]["refile"]["to_siblings"] == 1
+    assert reports[0]["joined"] == [["Arraignment", [2]]]
+    arraignment = out.split("#### Arraignment")[1].split("####")[0]
+    assert arraignment.index("June 2008") < arraignment.index(PARAS[1])
+    charges = out.split("#### Charges and arraignment")[1].split("####")[0]
+    assert PARAS[0] in charges and PARAS[1] not in charges
+    assert section_split._sentences(out) == section_split._sentences(NESTED)
+
+
+def test_a_refiling_that_sends_every_piece_to_siblings_keeps_the_split():
+    from src.engine.section_place import Placement, Placements, refile_split
+
+    plan = [("A", [1, 2]), ("B", [3])]
+    away = lambda msgs: Placements(  # noqa: E731
+        placements=[Placement(sentence=n, about="", heading="S") for n in (1, 2, 3)]
+    )
+    out, stay, report = refile_split(
+        plan, {}, ["x", "y", "z"], "P", "person", "K", away, False, siblings=["S"]
+    )
+    assert out == plan and stay == [] and report["status"] == "kept"
+
+
+def test_a_refiling_may_not_join_a_sibling_still_to_split():
+    # Bottom up, "Hearings" (above) is split after "Legal proceedings": a
+    # piece added to it now would be lost when its numbered pieces are moved
+    from src.engine.section_place import Placement, Placements
+
+    hearings = [f"Hearing {i} was held in 201{i}.^[h{i}]" for i in range(6)]
+    text = (
+        "### Military commission\n\n#### Arraignment\n\nHe was arraigned.^[a1]\n\n"
+        "#### Hearings\n\n" + "\n\n".join(hearings) + "\n\n"
+        "#### Legal proceedings\n\n" + "\n\n".join(PARAS) + "\n\n"
+        "### Health\n\nHe has a heart condition.^[a3]\n"
+    )
+
+    def place(msgs):
+        found = re.findall(r"^\[(\d+)\] (.*)$", msgs[1]["content"], re.M)
+        return Placements(placements=[
+            Placement(sentence=int(n), about="",
+                      heading="Hearings" if "2019" in t else
+                      "Early" if int(n) <= 4 else "Later")
+            for n, t in found
+        ])  # fmt: skip
+
+    replies = iter([
+        SectionSplit(subsections=[
+            SubSection(heading="Early", paragraphs=[1, 2, 3, 4]),
+            SubSection(heading="Later", paragraphs=[5, 6, 7, 8]),
+        ]),
+        SectionSplit(subsections=[
+            SubSection(heading="Early hearings", paragraphs=[1, 2, 3]),
+            SubSection(heading="Later hearings", paragraphs=[4, 5, 6]),
+        ]),
+    ])  # fmt: skip
+    out, reports = split_long_sections(
+        text, "person", "KSM", lambda m: next(replies), min_chars=150, resplit=True,
+        place=place,
+    )  # fmt: skip
+    legal = next(r for r in reports if r["section"] == "Legal proceedings")
+    assert legal["status"] == "split" and "joined" not in legal
+    assert legal["refile"] == {**legal["refile"], "status": "kept",
+                               "reason": "joins a section still to split"}  # fmt: skip
+    assert section_split._sentences(out) == section_split._sentences(text)
+
+
+def test_covers_notes_that_only_list_piece_numbers_are_not_shown():
+    from src.engine.section_place import _useful_cover
+
+    for note in ("Paragraphs [1], [2], [3]", "1, 2, 3, 5, 6", "[4,6]", "pieces 3-5"):
+        assert _useful_cover(note) == ""
+    for note in ("Trial dates and delays", "Dan"):
+        assert _useful_cover(note) == note

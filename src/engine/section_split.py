@@ -607,22 +607,32 @@ def split_long_sections(
             covers = {_clean_heading(s.heading): s.covers for s in reply.subsections}
             refiled, stay, refile = refile_split(
                 plan, covers, section["units"], section["parent"] or section["heading"],
-                entity_type, entity_name, place, stay=not sibling,
+                entity_type, entity_name, place, stay=not sibling, siblings=names,
             )  # fmt: skip
-            refiled_lines, refiled_shifts = _build(
-                lines, section, level, refiled, joins, stay
-            )
+            # Pieces the refiling filed under a sibling join it, beside the
+            # split's own joins
+            more = {h: ns for h, ns in refiled if h in names}
+            refiled = [(h, ns) for h, ns in refiled if h not in names]
+            refiled_joins = [(h, ns + more.pop(h, [])) for h, ns in joins]
+            refiled_joins += list(more.items())
+            refiled_lines, refiled_shifts = None, []
+            if not any(h in waiting for h, _ in refiled_joins):
+                refiled_lines, refiled_shifts = _build(
+                    lines, section, level, refiled, refiled_joins, stay
+                )
             # Uncited text above the section counts toward its first piece's
             # citation, so a piece that stays above the sub-headings may not
             # go before piece 1 and take that text's claim
             if refiled_lines and _claims("\n".join(refiled_lines)) == old_claims:
                 plan, new_lines, shifts = refiled, refiled_lines, refiled_shifts
+                joins = refiled_joins
             else:
-                refile = {
-                    **refile,
-                    "status": "kept",
-                    "reason": "citation claims changed",
-                }
+                why = (
+                    "citation claims changed"
+                    if refiled_lines
+                    else ("joins a section still to split")
+                )
+                refile = {**refile, "status": "kept", "reason": why}
             report["refile"] = refile
         if joins:
             report["joined"] = [[h, ns] for h, ns in joins]

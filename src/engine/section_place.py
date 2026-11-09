@@ -464,35 +464,46 @@ def refile_split(
     ask: AskPlacements,
     stay: bool,
     batch: int = BATCH,
+    siblings: Optional[List[str]] = None,
 ) -> Tuple[List[Tuple[str, List[int]]], List[int], Dict[str, Any]]:
     """The split's sub-headings kept, its pieces filed again by the
     placement-only prompt, ``batch`` per call: (plan, pieces that stay above
     the sub-headings, report). A piece with no usable answer keeps the
     split's choice; a refiling that leaves fewer than 2 sub-headings, or a
-    failed call, keeps the split's plan as it was."""
+    failed call, keeps the split's plan as it was.
+
+    ``siblings``: for a re-split, the sub-headings beside the section being
+    re-split. They are offered by name too, and a piece filed under one is
+    returned in the plan under that sibling's name (the caller joins it to
+    the end of that sibling's text). In the 9 Nov local run 5 of the 13
+    sentences the split put under the wrong sub-heading belonged under such
+    a sibling ("Prison infrastructure and funding" beside Trump's re-split
+    "Migrant operations at base"), which only the re-split's own new
+    headings could be picked over. At least one new heading must keep a
+    piece, as in ``section_split.plan_groups()``."""
     from src.engine.section_split import MIN_GROUPS
 
     names = [h for h, _ in plan]
+    siblings = [h for h in siblings or [] if h not in names]
     first = {n: h for h, ns in plan for n in ns}
     # Only the plan's pieces: a re-split's pieces that join a sibling
     # (``section_split.plan_groups()``) are not in it
     numbers = sorted(first)
     answers: Dict[int, Optional[str]] = {}
-    options = names + ([STAY] if stay else [])
+    options = names + siblings + ([STAY] if stay else [])
+    listed = [(h, _useful_cover(covers.get(h, ""))) for h in names]
+    listed += [(h, "") for h in siblings]
     try:
         for i in range(0, len(numbers), batch):
             chunk = numbers[i : i + batch]
             texts = [units[n - 1] for n in chunk]
-            msgs = sub_messages(
-                texts, [(h, covers.get(h, "")) for h in names], parent,
-                entity_type, entity_name, stay,
-            )  # fmt: skip
+            msgs = sub_messages(texts, listed, parent, entity_type, entity_name, stay)
             got = read_reply(ask(msgs), len(chunk), options, texts)
             answers.update(zip(chunk, got))
     except Exception as e:
         logger.warning(f"Split refiling failed for {entity_name}: {e}")
         return plan, [], {"status": "failed", "reason": f"{type(e).__name__}: {e}"}
-    groups: Dict[str, List[int]] = {h: [] for h in names}
+    groups: Dict[str, List[int]] = {h: [] for h in names + siblings}
     stayed: List[int] = []
     for n in numbers:
         if answers.get(n) == STAY:
@@ -500,8 +511,26 @@ def refile_split(
         else:
             groups[answers.get(n) or first[n]].append(n)
     kept = [(h, ns) for h, ns in groups.items() if ns]
-    if len(kept) < MIN_GROUPS:
-        return plan, [], {"status": "kept", "reason": f"{len(kept)} sub-sections"}
+    new = sum(h in names for h, _ in kept)
+    if len(kept) < MIN_GROUPS or not new:
+        return plan, [], {"status": "kept", "reason": f"{new} new sub-sections"}
     changed = sum(1 for n, a in answers.items() if a and a != first[n])
     report = {"status": "done", "refiled": changed, "stayed": len(stayed)}
+    joined = sum(len(ns) for h, ns in kept if h in siblings)
+    if joined:
+        report["to_siblings"] = joined
     return sorted(kept, key=lambda g: g[1][0]), stayed, report
+
+
+# Local Qwen wrote "Paragraphs [1], [2], [3]" for 60 of 63 sub-headings'
+# notes in the 9 Nov run: a list of numbers says nothing about the heading
+_NUMBERS_ONLY = re.compile(
+    r"^\W*(?:paragraphs?|pieces?|sentences?|items?)?(?:\band\b|[\s\d,;:.\[\]()&\-–])*$",
+    re.I,
+)
+
+
+def _useful_cover(note: str) -> str:
+    """The split's note on what a sub-heading covers, or "" when it only
+    lists piece numbers."""
+    return "" if _NUMBERS_ONLY.match(note or "") else note
