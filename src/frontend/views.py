@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from markupsafe import Markup
 
-from src.utils.grounding_passages import find_passage, long_enough
+from src.utils.grounding_passages import find_once, long_enough
 
 from .data_access import SPECS, TABLES, Entity, Source, Store, pretty_type, to_date
 from .profile_render import (
@@ -324,11 +324,12 @@ def passage_spans(
     (paragraph number, start, end). Each passage is looked up whole in the
     paragraphs joined by line breaks, so one that runs over a paragraph
     break gives a piece in each, and a short piece is never searched for on
-    its own. A passage not found gives nothing."""
+    its own. A passage not found, or found in more than one place (so the
+    reader could light up the wrong sentence), gives nothing."""
     joined = "\n".join(paragraphs)
     spans: List[Tuple[int, int]] = []
     for passage in passages:
-        span = find_passage(joined, passage) if long_enough(passage) else None
+        span = find_once(joined, passage) if long_enough(passage) else None
         if span and not any(s < span[1] and span[0] < e for s, e in spans):
             spans.append(span)
     out: List[Tuple[int, int, int]] = []

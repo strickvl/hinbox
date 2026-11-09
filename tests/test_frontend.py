@@ -438,3 +438,11 @@ def test_static_copy_gets_passage_positions_not_words(client):
     assert (
         cite_data(render_profile(TEXT, _report(), show_verdicts=False))["0"]["p"] == {}
     )
+
+
+def test_reader_does_not_mark_a_passage_found_twice():
+    from src.frontend.views import passage_spans
+
+    paras = ["He went to the old harbour gate.", "They met at the old harbour gate."]
+    assert passage_spans(paras, ["the old harbour gate"]) == []
+    assert passage_spans(paras, ["They met at the old harbour gate"]) == [(1, 0, 32)]

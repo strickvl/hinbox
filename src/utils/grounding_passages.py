@@ -21,7 +21,7 @@ import re
 import threading
 from collections import Counter
 from functools import lru_cache
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, Iterator, List, Optional, Tuple
 
 # A quote shorter than this, or with fewer words, can match in the wrong
 # place ("the base" appears in most Guantánamo articles), so it isn't kept
@@ -116,25 +116,41 @@ def long_enough(quote: str) -> bool:
     return len(q) >= MIN_PASSAGE_CHARS and len(q.split(" ")) >= MIN_PASSAGE_WORDS
 
 
-def find_passage(text: str, quote: str) -> Optional[Tuple[int, int]]:
-    """Start and end in ``text`` of the first place ``quote`` appears, typing
-    differences aside (see the module notes), or None. The match must start
-    and end on word edges, so "ran to" doesn't match inside "Iran today"."""
+def _matches(text: str, quote: str) -> Iterator[Tuple[int, int]]:
+    """Every place in ``text`` where ``quote`` appears, typing differences
+    aside (see the module notes), as start and end in ``text``. A match must
+    start and end on word edges, so "ran to" doesn't match inside "Iran
+    today"."""
     q = _clean(quote)
     if not q:
-        return None
+        return
     folded, where = _folded(text)
     start = 0
     while True:
         i = folded.find(q, start)
         if i < 0:
-            return None
+            return
         j = i + len(q)
         left_ok = i == 0 or not (folded[i - 1].isalnum() and q[0].isalnum())
         right_ok = j == len(folded) or not (folded[j].isalnum() and q[-1].isalnum())
         if left_ok and right_ok:
-            return where[i], where[j - 1] + 1
+            yield where[i], where[j - 1] + 1
         start = i + 1
+
+
+def find_passage(text: str, quote: str) -> Optional[Tuple[int, int]]:
+    """Start and end in ``text`` of the first place ``quote`` appears, or
+    None."""
+    return next(_matches(text, quote), None)
+
+
+def find_once(text: str, quote: str) -> Optional[Tuple[int, int]]:
+    """Where ``quote`` appears in ``text``, only if it appears exactly once.
+    A phrase the article uses twice ("the maximum-security Camp 7") can't
+    say which sentence the judge read, so it is not kept."""
+    found = _matches(text, quote)
+    first = next(found, None)
+    return first if first is not None and next(found, None) is None else None
 
 
 def quotes_in(reasoning: Optional[str]) -> List[str]:
@@ -147,14 +163,16 @@ def quotes_in(reasoning: Optional[str]) -> List[str]:
 
 
 def verified_passages(article: str, candidates: Iterable[str]) -> List[str]:
-    """The candidates found in ``article``, each as the article's own text at
-    that place, long enough to be told apart, without repeats or a passage
-    lying inside another kept one, at most ``MAX_PASSAGES``."""
+    """The candidates found in ``article`` exactly once, each as the
+    article's own text at that place, long enough to be told apart, without
+    repeats or a passage lying inside another kept one, at most
+    ``MAX_PASSAGES``. A candidate the article has in two places is dropped,
+    since the reader could not tell which one the judge meant."""
     spans: List[Tuple[int, int]] = []
     for c in candidates:
         if not long_enough(c):
             continue
-        span = find_passage(article, c)
+        span = find_once(article, c)
         if span is None:
             continue
         if any(s <= span[0] and span[1] <= e for s, e in spans):
@@ -174,7 +192,8 @@ def passages_for(
     quoted = quotes_in(reasoning)
     for name, items in (("model", copied), ("reasoning", quoted)):
         tried = [p for p in items if long_enough(p)]
-        found = sum(1 for p in tried if find_passage(article, p) is not None)
-        _count(f"{name}_kept", found)
-        _count(f"{name}_rejected", len(tried) - found)
+        places = [sum(1 for _ in _matches(article, p)) for p in tried]
+        _count(f"{name}_kept", sum(1 for n in places if n == 1))
+        _count(f"{name}_rejected", sum(1 for n in places if n == 0))
+        _count(f"{name}_ambiguous", sum(1 for n in places if n > 1))
     return verified_passages(article, copied + quoted) or None
