@@ -111,11 +111,12 @@ apart. Group by topic; a period in brackets is fine, as in \
 
 
 DEFAULT_TABLES = "people"  # on the dev eval, events and organizations scored lower
-# Local runs default to flat profiles: in the 8 Nov 150-article rerun local
-# Qwen put 24 of 82 hand-checked sentences under the right heading (Luna 64
-# of 72), e.g. Spath's 2018 trial suspension under "Background > Post-military
-# career". Setting the variable (e.g. "people") turns it on for local runs too.
-DEFAULT_LOCAL_TABLES = "off"
+# Local runs were flat until the 9 Nov 150-article Qwen rerun: 59 of 100
+# sure hand-checked sentences under the right heading (8 Nov 24 of 59, Luna
+# 64 of 69), and 93 of 100 under the right top-level heading; most misses are
+# the right top-level heading but the wrong sub-heading. "off" makes local
+# profiles flat again.
+DEFAULT_LOCAL_TABLES = "people"
 
 
 def tables_enabled(
