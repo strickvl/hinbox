@@ -96,8 +96,11 @@ def _folded(text: str) -> Tuple[str, List[int]]:
             in_space = True
             continue
         in_space = False
-        chars.append(ch.lower())
-        where.append(i)
+        # Lowercasing can give two characters ("İ" -> "i" + a combining
+        # dot): each gets this position, so later matches still map back
+        for low in ch.lower():
+            chars.append(low)
+            where.append(i)
     return "".join(chars), where
 
 

@@ -277,3 +277,9 @@ def test_backfill_gives_a_quoted_stub_sentence_its_place(tmp_path):
     assert report["verifications"][0]["passages"] == [
         "Among them was Yusuf Qadir, a made-up detainee"
     ]
+
+
+def test_find_passage_after_a_letter_that_lowercases_to_two():
+    text = "İstanbul: fourteen men were flown to the base."
+    span = find_passage(text, "fourteen men were flown to the base.")
+    assert text[span[0] : span[1]] == "fourteen men were flown to the base"
