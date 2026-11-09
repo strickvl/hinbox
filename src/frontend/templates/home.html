@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_macros.html" import entity_row, flags with context %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<section class="home-hero">
+  <h1>Find a person, organization, place or event</h1>
+  <p>{{ n_sources }} sources read. Every profile sentence cites one of them. A checker compares each sentence with its source, and the pages mark what it could not confirm.</p>
+  <form class="search" action="/search" method="get" role="search">
+    {% if domain != 'guantanamo' %}<input type="hidden" name="domain" value="{{ domain }}">{% endif %}
+    <input type="search" name="q" placeholder="Search by name or other name…" aria-label="Search everything" autofocus>
+  </form>
+</section>
+
+<div class="home-grid">
+  {% for t in tables %}
+  <section>
+    <h2 class="section-title"><a href="{{ u('/' ~ t.spec.table) }}" style="color:inherit;text-decoration:none">{{ t.spec.label }}</a> <span class="count num">{{ t.count }} · {{ t.full }} full profiles</span></h2>
+    <ul class="elist tight">{% for r in t.top %}{{ entity_row(r) }}{% else %}<li class="empty">None yet.</li>{% endfor %}</ul>
+    <p class="small"><a href="{{ u('/' ~ t.spec.table) }}">All {{ t.spec.label|lower }} →</a></p>
+  </section>
+  {% endfor %}
+</div>
+
+<div class="two">
+  <section>
+    <h2 class="section-title">Needs attention</h2>
+    {% if attention %}
+    <p class="small muted">Pages with sentences the checker found not supported by their source, most first.{% if totals.not_supported %} {{ totals.not_supported }} such sentences in all{% if totals.partial %}, and {{ totals.partial }} partly supported{% endif %}.{% endif %}</p>
+    <ul class="elist tight">{% for a in attention %}{{ entity_row(a.summary, show_table=True) }}{% endfor %}</ul>
+    {% else %}<p class="empty">Nothing marked as not supported.</p>{% endif %}
+    {% if queue %}<p class="small">{{ queue }} merge decision{{ 's' if queue != 1 }} waiting for review in <code>merge_review_queue.jsonl</code>.</p>{% endif %}
+  </section>
+  <section>
+    <h2 class="section-title">Latest sources</h2>
+    <ol class="rows">{% for s in latest %}<li><span class="dt">{{ s.date }}</span><a href="{{ u('/sources/' ~ s.id) }}">{{ s.title }}</a><span></span></li>{% endfor %}</ol>
+    <p class="small"><a href="{{ u('/sources') }}">All sources →</a></p>
+  </section>
+</div>
+{% endblock %}

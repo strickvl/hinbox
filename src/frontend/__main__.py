@@ -1,36 +1,35 @@
-"""
-Refactored aggregator for the Guantánamo Entities Browser.
-All the old code has been split among data_access.py, utils.py, filters.py, app_config.py, and routes/*.
-We simply import them here to ensure everything is registered with 'app, rt'.
+"""Run the reader: ``uv run python -m src.frontend`` (or ``just frontend``).
+
+It listens on 127.0.0.1 only, so the profiles and article texts of a private
+corpus are not served to the local network. Set ``HINBOX_FRONTEND_HOST``
+(e.g. ``0.0.0.0``) to share it on purpose, and ``HINBOX_FRONTEND_PORT`` to
+change the port.
 """
 
-# Import and expose the app at module level for FastHTML serve() to find
+import os
 import sys
 
 import uvicorn
 
 from ..constants import DEFAULT_FRONTEND_PORT
-from .app_config import app
+from .app import app
 
-# Import the routes so they get registered
-from .routes import events, home, locations, organizations, people  # noqa: F401
 
-# We only need to define the run logic if this file is run directly under -m syntax:
-if __name__ == "__main__":
+def main() -> None:
+    host = os.getenv("HINBOX_FRONTEND_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    port = int(os.getenv("HINBOX_FRONTEND_PORT", "") or DEFAULT_FRONTEND_PORT)
+    print(
+        f"Hinbox reader: http://{'localhost' if host == '127.0.0.1' else host}:{port}"
+    )
     try:
-        uvicorn.run(app, host="0.0.0.0", port=DEFAULT_FRONTEND_PORT, reload=False)
+        uvicorn.run(app, host=host, port=port, reload=False)
     except OSError as e:
         if "address already in use" in str(e).lower():
-            print(f"\n❌ Error: Port {DEFAULT_FRONTEND_PORT} is already in use!")
-            print("💡 Try one of these solutions:")
-            print("   • Stop the existing server (Ctrl+C in the other terminal)")
-            print(
-                f"   • Kill existing process: pkill -f 'uvicorn.*{DEFAULT_FRONTEND_PORT}'"
-            )
-            print(
-                f"   • Use a different port: uvicorn src.frontend:app --port {DEFAULT_FRONTEND_PORT + 1}"
-            )
-            print()
+            print(f"\nPort {port} is already in use. Stop the other server, or set")
+            print(f"HINBOX_FRONTEND_PORT={port + 1} and run again.")
             sys.exit(1)
-        else:
-            raise
+        raise
+
+
+if __name__ == "__main__":
+    main()

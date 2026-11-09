@@ -1,7 +1,5 @@
-# Export app for ASGI loading
-from .app_config import app
+"""Hinbox's web reader (``just frontend``): see ``app.py``."""
 
-# Import routes to register them
-from .routes import events, home, locations, organizations, people  # noqa: F401
+from .app import app
 
 __all__ = ["app"]

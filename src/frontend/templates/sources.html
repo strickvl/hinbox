@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Sources{% endblock %}
+{% block content %}
+<div class="page-head"><h1>Sources</h1><span class="muted num">{{ rows|length }} sources linked to at least one page</span></div>
+<form class="filters" method="get" action="/sources">
+  {% if domain != 'guantanamo' %}<input type="hidden" name="domain" value="{{ domain }}">{% endif %}
+  <label>Title<input type="text" name="q" value="{{ q }}" placeholder="Filter by title"></label>
+  <button class="btn" type="submit">Apply</button>
+</form>
+<div class="tblwrap"><table class="tbl">
+  <thead><tr><th>Date</th><th>Source</th><th>Kind</th><th>Pages</th></tr></thead>
+  <tbody>{% for r in rows %}<tr><td class="dt">{{ r.source.date }}</td><td><a href="{{ u('/sources/' ~ r.source.id) }}">{{ r.source.title }}</a> <span class="muted small">{{ r.source.outlet }}</span></td><td class="small muted">{{ r.source.kind }}</td><td class="n">{{ r.n_entities }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No sources.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}

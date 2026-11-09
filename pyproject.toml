@@ -17,7 +17,10 @@ dependencies = [
     "aiohttp>=3.11.12",
     "instructor>=1.14",
     "openai>=1.0",
-    "python-fasthtml>=0.12.4",
+    "starlette>=0.46",
+    "jinja2>=3.1",
+    "pyyaml>=6.0",
+    "uvicorn>=0.34",
     "markdown>=3.7",
     "arrow>=1.3.0",
     "pyarrow>=19.0.1",
@@ -69,7 +72,6 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"src/frontend/**" = ["F403", "F405"]  # FastHTML uses `from fasthtml.common import *`
 "src/config_loader.py" = ["B019"]  # lru_cache on methods is intentional; instances are module-cached
 
 [dependency-groups]

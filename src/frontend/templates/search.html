@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% from "_macros.html" import entity_row with context %}
+{% block title %}Search{% endblock %}
+{% block content %}
+<div class="page-head"><h1>{% if q %}Results for “{{ q }}”{% else %}Search{% endif %}</h1></div>
+{% if not q %}<p class="muted">Type a name in the search box above. Other names and spellings are searched too.</p>
+{% elif not groups and not sources %}<p class="empty">Nothing matches “{{ q }}”. Try a shorter part of the name, or another spelling.</p>{% endif %}
+{% for g in groups %}
+<section style="margin-bottom:28px">
+  <h2 class="section-title">{{ g.spec.label }} <span class="count num muted" style="font-size:15px;font-weight:400">{{ g.total }}</span></h2>
+  <ul class="elist">{% for r in g.rows %}{{ entity_row(r) }}{% endfor %}</ul>
+  {% if g.total > g.rows|length %}<p class="small"><a href="{{ u('/' ~ g.spec.table, q=q) }}">All {{ g.total }} in {{ g.spec.label|lower }} →</a></p>{% endif %}
+</section>
+{% endfor %}
+{% if sources %}
+<section>
+  <h2 class="section-title">Sources <span class="count num muted" style="font-size:15px;font-weight:400">{{ n_sources }}</span></h2>
+  <ol class="rows">{% for s in sources %}<li><span class="dt">{{ s.date }}</span><a href="{{ u('/sources/' ~ s.id) }}">{{ s.title }}</a><span class="muted small">{{ s.outlet }}</span></li>{% endfor %}</ol>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% from "_macros.html" import kind_pill, flags with context %}
+{% block title %}{{ ent.name }}{% endblock %}
+{% block content %}
+{% set s = summary %}
+<header class="head">
+  <div class="eyebrow"><span>{{ ent.spec.singular }}{% if ent.type %} · {{ ent.type }}{% endif %}</span>{{ kind_pill(kind) }}{% if kind == 'full' %}<span class="pill">Full profile</span>{% endif %}</div>
+  <h1>{{ ent.name }}</h1>
+  <div class="meta">
+    {% if ent.other_names %}<span class="aka">Also: {{ ent.other_names|join(', ') }}</span>{% endif %}
+    {% if event_dates %}<span>{{ event_dates }}</span>{% endif %}
+    <span class="num">{{ s.n_articles }} article{{ 's' if s.n_articles != 1 }}{% if s.first %} · {{ s.first }}{% if s.last != s.first %}–{{ s.last }}{% endif %}{% endif %}</span>
+    {% if s.last_date %}<span>Latest source {{ s.last_date|fmt_date }}</span>{% endif %}
+  </div>
+</header>
+
+<div class="trust" id="trust">
+  {% if version %}
+    <span>You are reading <b>version {{ version }}</b> of {{ current_version }}{% if old_date %}, from {{ old_date }}{% endif %}. The checker's marks describe the current version only, so none are shown. <a href="{{ u(ent.url) }}">Read the current version</a></span>
+  {% elif not n_claims %}
+    <span>This page has no cited sentences.</span>
+  {% elif checked %}
+    <span><b class="num">{{ n_claims }}</b> cited sentence{{ 's' if n_claims != 1 }}{% if issues %}:{% else %}, all supported by their sources.{% endif %}</span>
+    {% for i in issues %}<button type="button" class="chip" data-filter="{{ i.verdict }}" aria-pressed="false"><span class="dot v-{{ i.verdict }}"></span><span class="num">{{ i.n }}</span> {{ i.label }}</button>{% endfor %}
+    <span class="checker">Checked by {{ checker.name }}. {{ checker.note }}</span>
+  {% else %}
+    <span><b class="num">{{ n_claims }}</b> cited sentence{{ 's' if n_claims != 1 }}, <b>not checked yet</b> against their sources.</span>
+  {% endif %}
+</div>
+
+{% if kind == 'stub' %}
+<div class="banner"><b>Stub: sentences copied word for word from {% if first_source %}one article{% else %}the first article{% endif %}.</b> No model wrote this text. A full profile is written when a second article about this {{ ent.spec.singular }} is merged in.{% if s.n_articles > 1 %} It is linked to {{ s.n_articles }} articles; only the first is quoted.{% endif %}</div>
+{% elif kind == 'link-only' %}
+<div class="banner"><b>Link-only page.</b> {{ ent.type or 'This kind of entity' }} pages are named in so many articles that the profile is frozen after the first one, and later articles are only linked below. Read it as a list of sources, not a biography.</div>
+{% endif %}
+{% if description and kind != 'full' %}<p class="banner"><b>Extracted description:</b> {{ description }}</p>{% endif %}
+
+{% set has_toc = sections|length > 0 %}
+<div class="desk{% if not has_toc %} no-toc{% endif %}" id="desk" data-table="{{ ent.spec.table }}" data-key="{{ ent.key }}" data-domain="{{ domain }}" data-version="{{ version or '' }}">
+  {% if has_toc %}
+  <nav class="toc" aria-label="Contents"><details id="toc-details" open><summary class="label">Contents</summary>
+    <ol>
+      {% for sec in sections %}
+      <li><a class="l{{ sec.level }}" href="#{{ sec.anchor }}"><span>{{ sec.title }}</span><span class="n">{% for k, n in sec.flags.items() %}<span class="dot v-{{ k }}" title="{{ n }} {{ VERDICT_LABELS[k]|lower }}"></span>{% endfor %}{{ sec.claims }}</span></a></li>
+      {% endfor %}
+    </ol>
+    <hr>
+    <p class="label">On this page</p>
+    <ol>
+      {% if disputes %}<li><a href="#disagree">Sources disagree</a></li>{% endif %}
+      <li><a href="#dates">In date order</a></li>
+      {% if appears %}<li><a href="#with">Appears with</a></li>{% endif %}
+      <li><a href="#sources">Sources</a></li>
+      {% if history %}<li><a href="#history">History</a></li>{% endif %}
+    </ol>
+  </details></nav>
+  {% endif %}
+
+  <main style="min-width:0">
+    <article class="prose" id="prose">
+      {% if body %}{{ body }}{% else %}<p class="empty">No profile text yet.</p>{% endif %}
+    </article>
+
+    <div class="lower">
+      {% if disputes %}
+      <section id="disagree">
+        <h2 class="section-title">Sources disagree</h2>
+        <ul class="dis">
+          {% for d in disputes %}<li>{% if d.verdict and d.verdict != 'supported' %}<span class="dot v-{{ d.verdict }}" title="{{ VERDICT_LABELS[d.verdict] }}"></span> {% endif %}<a href="#claim-{{ d.claim.index }}">{{ d.text }}</a></li>{% endfor %}
+        </ul>
+        <p class="note">Sentences where the profile says two sources give different facts. Open each source to see who is right.</p>
+      </section>
+      {% endif %}
+
+      <section id="dates">
+        <h2 class="section-title">In date order</h2>
+        <ol class="rows">
+          {% for row in timeline %}
+          <li><span class="dt">{{ row.date or '—' }}</span><a href="{{ u('/sources/' ~ row.source.id) }}">{{ row.source.title }}</a><span class="muted small">{{ row.source.outlet }}</span>
+            {% if row.events %}<span class="ev">Events: {% for e in row.events %}<a href="{{ u(e.url) }}">{{ e.name }}</a>{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}</li>
+          {% else %}<li class="empty">No linked articles.</li>{% endfor %}
+        </ol>
+      </section>
+
+      {% if appears %}
+      <section id="with">
+        <h2 class="section-title">Appears with</h2>
+        <div class="with">
+          {% for a in appears %}<a href="{{ u(a.ent.url) }}">{{ a.ent.name }}<small>{{ a.ent.spec.singular }}{% if a.ent.type %} · {{ a.ent.type|lower }}{% endif %} · {{ a.n }} shared article{{ 's' if a.n != 1 }}</small></a>{% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      <section id="sources">
+        <h2 class="section-title">Sources</h2>
+        <div class="tblwrap"><table class="tbl">
+          <thead><tr><th>#</th><th>Date</th><th>Source</th><th>Cited by</th></tr></thead>
+          <tbody>
+          {% for r in sources %}
+          <tr><td class="n">{{ r.n or '–' }}</td><td class="dt">{{ r.source.date }}</td><td><a href="{{ u('/sources/' ~ r.source.id) }}">{{ r.source.title }}</a> <span class="muted small">{{ r.source.outlet }}</span></td>
+            <td class="n">{% if r.cites %}{{ r.cites }} sentence{{ 's' if r.cites != 1 }} {{ flags(r.flags) }}{% else %}<span title="Linked to this page, but no sentence cites it">linked only</span>{% endif %}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table></div>
+      </section>
+
+      {% if history %}
+      <section id="history">
+        <h2 class="section-title">History</h2>
+        <ol class="rows">
+          {% for h in history %}
+          <li><span class="dt">v{{ h.n }}{% if h.n == current_version %} · now{% endif %}</span>
+            <span>{% if h.source %}From <a href="{{ u('/sources/' ~ h.source.id) }}">{{ h.source.title }}</a>{% if h.source.date %} ({{ h.source.date|fmt_date }}){% endif %}{% else %}Written {{ h.date }}{% endif %}<br>
+              <span class="muted small">{% if h.added %}{{ h.added }} sentence{{ 's' if h.added != 1 }} added{% endif %}{% if h.added and h.removed %}, {% endif %}{% if h.removed %}{{ h.removed }} changed or removed{% endif %}{% if not h.added and not h.removed %}Wording or layout only{% endif %} · {{ h.chars }} characters</span></span>
+            <a class="small" href="{{ u(ent.url, version=h.n) }}">read</a></li>
+          {% endfor %}
+        </ol>
+      </section>
+      {% endif %}
+    </div>
+  </main>
+
+  <aside class="panel" id="panel" aria-live="polite" aria-label="Source">
+    <p class="panel-msg">Click a citation number to read that source here, next to the sentence it supports. You keep your place in the profile.</p>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/reader.js" defer></script>{% endblock %}

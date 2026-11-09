@@ -1,0 +1,25 @@
+<div class="ph">
+  <div class="lbl"><span>{% if n %}Source {{ n }}{% else %}Source{% endif %} · {{ source.kind }}{% if source.outlet %} · {{ source.outlet }}{% endif %}</span><button type="button" class="close" data-close aria-label="Close source">×</button></div>
+  <div class="t">{{ source.title }}</div>
+  <div class="d">{% if source.date %}{{ source.date|fmt_date }} · {% endif %}<a href="{{ u('/sources/' ~ source.id) }}">source page</a>{% if source.url %} · <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">original</a>{% endif %}</div>
+</div>
+{% if claim and old_version %}
+<div class="verdict v-">
+  <b>Older version</b>
+  <span class="claim">“{{ claim }}”</span>
+  <span>The checker's verdicts describe the current version only.</span>
+</div>
+{% elif claim %}
+<div class="verdict v-{{ verdict }}">
+  {% if verdict %}<b>{{ verdict_label }}</b>{% else %}<b>Not checked yet</b>{% endif %}
+  <span class="claim">“{{ claim }}”</span>
+  {% if reason %}<span>{{ reason }}</span>{% elif verdict == 'supported' %}<span>The checker found this in the source.</span>{% elif verdict == 'unchecked' or not verdict %}<span>No checker verdict is stored for this sentence and source.</span>{% endif %}
+</div>
+{% endif %}
+<div class="pbody">
+  {% for p in paragraphs %}<p>{{ p }}</p>{% else %}<p class="empty">The text of this source isn't stored, so it can't be shown here.{% if source.url %} Open the original.{% endif %}</p>{% endfor %}
+  {% if paragraphs and claim and not highlighted %}<p class="note">The checker doesn't yet save which words it relied on, so the whole source is shown. Sentences copied word for word are highlighted.</p>{% endif %}
+</div>
+{% if named %}
+<div class="ents"><span>Named here:</span>{% for g in named %}{% for e in g.entities[:12] %}{% if e.key != ent.key %}<a class="chipl" href="{{ u(e.url) }}">{{ e.name }}</a>{% endif %}{% endfor %}{% endfor %}</div>
+{% endif %}

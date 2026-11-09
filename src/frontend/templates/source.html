@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ source.title }}{% endblock %}
+{% block content %}
+<header class="head">
+  <div class="eyebrow"><span>{{ source.kind }}{% if source.outlet %} · {{ source.outlet }}{% endif %}</span></div>
+  <h1>{{ source.title }}</h1>
+  <div class="meta">{% if source.date %}<span>{{ source.date|fmt_date }}</span>{% endif %}{% if source.url %}<a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">Original</a>{% endif %}<span>Cited by {{ n_citing }} profile sentence{{ 's' if n_citing != 1 }}</span></div>
+</header>
+<div class="source-desk" style="margin-top:22px">
+  <article class="source-text">
+    {% for p in paragraphs %}<p>{{ p }}</p>{% else %}<p class="empty">The text of this source isn't stored in this domain's articles file.</p>{% endfor %}
+  </article>
+  <aside class="side">
+    {% if named %}
+    <section><p class="label">Named in this source</p>
+      {% for g in named %}<div style="margin-bottom:10px"><div class="small muted" style="margin-bottom:4px">{{ g.spec.label }}</div><div class="grp">{% for e in g.entities %}<a class="chipl" href="{{ u(e.url) }}">{{ e.name }}</a>{% endfor %}</div></div>{% endfor %}
+    </section>
+    {% endif %}
+    {% if citing %}
+    <section><p class="label">Profile sentences citing it</p>
+      <ul class="citing">{% for r in citing %}<li><a href="{{ u(r.ent.url) }}"><b>{{ r.ent.name }}</b></a>{% for c in r.claims[:4] %}<p class="q">{% if c.verdict and c.verdict != 'supported' %}<span class="dot v-{{ c.verdict }}" title="{{ VERDICT_LABELS[c.verdict] }}"></span> {% endif %}<a href="{{ u(r.ent.url) }}#claim-{{ c.index }}" style="color:inherit;text-decoration:none">{{ c.text }}</a></p>{% endfor %}{% if r.claims|length > 4 %}<p class="small muted">and {{ r.claims|length - 4 }} more</p>{% endif %}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}
