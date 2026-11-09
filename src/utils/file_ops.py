@@ -377,3 +377,64 @@ def entity_exists(entity_type: str, entity_key: Any, base_dir: str) -> bool:
             return True
 
     return False
+
+
+def load_existing_entities(base_dir: str) -> Dict[str, Dict]:
+    """Load existing entities from Parquet files if they exist.
+
+    Reads all existing entity Parquet files and loads them into memory for merging
+    with newly extracted entities. Handles different keying schemes for each entity type.
+
+    Returns:
+        Dictionary with keys 'people', 'events', 'locations', 'organizations', each
+        containing a dictionary of entities keyed by their unique identifiers:
+        - people: keyed by name (string)
+        - events: keyed by (title, start_date) tuple
+        - locations: keyed by (name, type) tuple
+        - organizations: keyed by (name, type) tuple
+
+    Note:
+        Missing Parquet files result in empty dictionaries for those entity types.
+        This allows the pipeline to work even when starting from scratch.
+    """
+    people = {}
+    events = {}
+    locations = {}
+    organizations = {}
+
+    # Build file paths under the domain's output directory
+    people_path = os.path.join(base_dir, "people.parquet")
+    events_path = os.path.join(base_dir, "events.parquet")
+    locations_path = os.path.join(base_dir, "locations.parquet")
+    orgs_path = os.path.join(base_dir, "organizations.parquet")
+
+    # People
+    if os.path.exists(people_path):
+        people_table = pq.read_table(people_path)
+        for p in people_table.to_pylist():
+            people[p["name"]] = p
+
+    # Events
+    if os.path.exists(events_path):
+        events_table = pq.read_table(events_path)
+        for e in events_table.to_pylist():
+            events[(e["title"], e.get("start_date", ""))] = e
+
+    # Locations
+    if os.path.exists(locations_path):
+        locations_table = pq.read_table(locations_path)
+        for loc in locations_table.to_pylist():
+            locations[(loc["name"], loc.get("type", ""))] = loc
+
+    # Organizations
+    if os.path.exists(orgs_path):
+        orgs_table = pq.read_table(orgs_path)
+        for o in orgs_table.to_pylist():
+            organizations[(o["name"], o.get("type", ""))] = o
+
+    return {
+        "people": people,
+        "events": events,
+        "locations": locations,
+        "organizations": organizations,
+    }
