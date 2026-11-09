@@ -106,7 +106,7 @@ apart. Group by topic; a period in brackets is fine, as in \
 "Plea negotiations (2017–2024)".
 - A sub-heading is 2 to 6 plain words: no "#", no citations, no quotes.
 - For each sub-heading, say in a few words what belongs under it.
-- Don't repeat {repeat_rule}: {other_headings}.{join_rule}
+- Don't repeat {repeat_rule}: {other_headings}.
 - You don't write or change any profile text; code moves the paragraphs."""
 
 
@@ -320,14 +320,11 @@ def messages(
     entity_name: str,
     other: List[str],
     most: int = PROMPT_MOST,
-    siblings: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     """The split call. ``most``: how many headings fit. Under a parent near
     ``MAX_SIBLINGS`` that is fewer than 5; in a local replay every refused
     Qwen split was a re-split asked for "2 to 5" with room for 2 or 3, and the
-    refused section then grew into a 9,332-character catch-all. ``siblings``:
-    the other sub-sections beside a re-split one, which its paragraphs may
-    join (``plan_groups()``)."""
+    refused section then grew into a 9,332-character catch-all."""
     parent = section.get("parent")
     system = INSTRUCTIONS.format(
         most=max(MIN_GROUPS, min(most, PROMPT_MOST)),
@@ -346,13 +343,6 @@ def messages(
             else "the section's own heading, or any heading the profile already has"
         ),
         other_headings="; ".join(f'"{h}"' for h in other) or "none",
-        join_rule=(
-            f"\n- Except: paragraphs that belong under one of the other sub-sections "
-            f'of "{parent}" ({names}) go under its exact name; code adds them to '
-            "the end of that sub-section. Use at least one new heading as well."
-            if parent and (names := "; ".join(f'"{h}"' for h in siblings or []))
-            else ""
-        ),
     )
     numbered = "\n\n".join(f"[{n}] {u}" for n, u in enumerate(section["units"], 1))
     return [
@@ -415,6 +405,8 @@ def plan_groups(
     "Al-Nashiri Proceedings (2014–2015)" reached 10,349 characters because
     each re-split put its relocation-order paragraphs under "Relocation Order
     Challenge", beside "Relocation Order Challenge (2015)", and was refused.
+    The prompt doesn't offer this: told it could, local Qwen named only
+    siblings and no new heading, and its section grew to 10,188 characters.
     ``max_groups`` counts new sub-headings; at least one is needed."""
     groups: List[Tuple[str, List[int]]] = []
     placed: Dict[int, int] = {}
@@ -556,12 +548,7 @@ def split_long_sections(
             report.update(status="refused", reason=f"over {MAX_SIBLINGS} sub-sections")
             continue
         try:
-            reply = ask(
-                messages(
-                    section, entity_type, entity_name, other, room,
-                    section.get("sibling_names"),
-                )
-            )  # fmt: skip
+            reply = ask(messages(section, entity_type, entity_name, other, room))
         except Exception as e:  # keep the section as it is
             logger.warning(f"Section split call failed for {entity_name}: {e}")
             report.update(status="failed", reason=f"{type(e).__name__}: {e}")

@@ -399,7 +399,7 @@ def test_a_re_split_may_keep_the_old_name_and_join_a_sibling():
     assert arraignment.index("June 2008") < arraignment.index(PARAS[0])
     assert all(p in arraignment for p in PARAS[:3])
     assert section_split._sentences(out) == section_split._sentences(NESTED)
-    assert '("Arraignment") go under its exact name' in seen[0][0]["content"]
+    assert "Arraignment" in seen[0][0]["content"]  # in the don't-repeat list
     # Only new headings may be put under a sibling's name with it
     only = SectionSplit(subsections=[
         SubSection(heading="Arraignments", paragraphs=[1, 2, 3, 4, 5, 6, 7, 8]),
@@ -439,6 +439,36 @@ def test_a_join_above_a_section_still_to_split_keeps_its_place():
     assert all(h in early for h in hearings[:3]) and PARAS[0] not in early
     arraignment = out.split("#### Arraignment")[1].split("####")[0]
     assert all(p in arraignment for p in PARAS[:3])
+
+
+def test_refiling_a_re_split_leaves_the_joined_pieces_alone():
+    # Qwen replay: the refile was asked about the joined pieces too, one got
+    # no usable answer, and looking up its split heading raised KeyError
+    from src.engine.section_place import Placement, Placements
+
+    reply = SectionSplit(subsections=[
+        SubSection(heading="Arraignment", paragraphs=[1, 2]),
+        SubSection(heading="Charges", paragraphs=[3, 4]),
+        SubSection(heading="Plea negotiations", paragraphs=[5, 6, 7, 8]),
+    ])  # fmt: skip
+    asked: List[str] = []
+
+    def place(msgs):
+        asked.append(msgs[1]["content"])
+        return Placements(placements=[  # sentence 2 of each batch: no answer
+            Placement(sentence=1, starts_with="", about="", heading="Charges")
+        ])  # fmt: skip
+
+    out, reports = split_long_sections(
+        NESTED, "person", "KSM", _asker(reply, []), min_chars=200, resplit=True,
+        place=place,
+    )  # fmt: skip
+    assert reports[0]["status"] == "split"
+    assert reports[0]["joined"] == [["Arraignment", [1, 2]]]
+    assert not any(PARAS[0] in a or PARAS[1] in a for a in asked)
+    assert section_split._sentences(out) == section_split._sentences(NESTED)
+    arraignment = out.split("#### Arraignment")[1].split("####")[0]
+    assert PARAS[0] in arraignment and PARAS[1] in arraignment
 
 
 def test_only_a_re_split_joins_a_heading_it_repeats():
