@@ -44,3 +44,15 @@ def test_counts_where_sentences_added_after_the_reorganise_land(tmp_path):
     assert summary["deepest_level_below_top"] == 1
     review = (tmp_path / "o" / "review.md").read_text()
     assert "**Military commission or legal case › Plea talks**: Talks began" in review
+
+
+def test_abbreviations_and_initials_do_not_cut_a_sentence():
+    old = "### Legal\n\nHe was charged.^[a1]\n"
+    new = (
+        "### Legal\n\nHe was charged.^[a1] Rear Adm. John F. Smith ruled for the"
+        " U.S. government.^[a2] Gen. Mark Martins agreed.^[a3]\n"
+    )
+    assert section_placements.added_sentences(old, new) == [
+        "Rear Adm. John F. Smith ruled for the U.S. government.^[a2]",
+        "Gen. Mark Martins agreed.^[a3]",
+    ]
