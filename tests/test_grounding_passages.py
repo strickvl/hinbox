@@ -63,6 +63,7 @@ def test_quotes_in_reasoning():
     )
     assert quotes_in(why) == [
         "fourteen men were flown to the base",
+        "Qadir's lawyer",
         "Among them was",
         "a made-up detainee",
     ]
@@ -283,3 +284,16 @@ def test_find_passage_after_a_letter_that_lowercases_to_two():
     text = "İstanbul: fourteen men were flown to the base."
     span = find_passage(text, "fourteen men were flown to the base.")
     assert text[span[0] : span[1]] == "fourteen men were flown to the base"
+
+
+def test_single_quoted_sentence_keeps_its_apostrophes():
+    why = (
+        "The article says 'Hamdan's next hearing won't be held until May' and "
+        "‘the judge’s order isn’t final’; it says nothing else."
+    )
+    assert quotes_in(why) == [
+        "Hamdan's next hearing won't be held until May",
+        "the judge’s order isn’t final",
+    ]
+    # A possessive after a closing quote doesn't swallow the rest
+    assert quotes_in("It quotes 'the base' and Qadir's lawyer.") == ["the base"]
