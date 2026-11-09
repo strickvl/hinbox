@@ -505,6 +505,41 @@ def test_a_re_split_with_a_join_can_still_be_refiled():
     assert PARAS[4] in out.split("#### Plea negotiations")[1]
 
 
+def test_joins_into_two_siblings_above_keep_a_pending_section_in_place():
+    # Codex review: the first join pushed the second one's insertion point
+    # past the old start of the section being split, so the second shift
+    # was not counted and "Pending" was then split from the wrong lines
+    hearings = [f"Hearing {i} was held in 201{i}.^[h{i}]" for i in range(6)]
+    source = [f"Filing {i} was made in 200{i % 10}.^[f{i}]" for i in range(12)]
+    text = (
+        "### Military commission\n\n#### Alpha\n\nAlpha began.^[a1]\n\n"
+        "#### Beta\n\nBeta began.^[b1]\n\n"
+        "#### Pending\n\n" + "\n\n".join(hearings) + "\n\n"
+        "#### Source\n\n" + "\n\n".join(source) + "\n\n"
+        "### Health\n\nHe has a heart condition.^[a3]\n"
+    )
+    replies = iter([
+        SectionSplit(subsections=[
+            SubSection(heading="Alpha", paragraphs=list(range(1, 10))),
+            SubSection(heading="Beta", paragraphs=[10, 11]),
+            SubSection(heading="Late filings", paragraphs=[12]),
+        ]),
+        SectionSplit(subsections=[
+            SubSection(heading="Early hearings", paragraphs=[1, 2, 3]),
+            SubSection(heading="Later hearings", paragraphs=[4, 5, 6]),
+        ]),
+    ])  # fmt: skip
+    out, reports = split_long_sections(
+        text, "person", "KSM", lambda m: next(replies), min_chars=150, resplit=True
+    )
+    assert [r["status"] for r in reports] == ["split", "split"]
+    assert section_split._sentences(out) == section_split._sentences(text)
+    early = out.split("#### Early hearings")[1].split("####")[0]
+    assert [h in early for h in hearings] == [True] * 3 + [False] * 3
+    beta = out.split("#### Beta")[1].split("####")[0]
+    assert source[9] in beta and source[10] in beta
+
+
 def test_only_a_re_split_joins_a_heading_it_repeats():
     clash = SectionSplit(subsections=[
         SubSection(heading="Health", paragraphs=[1, 2, 3, 4]),

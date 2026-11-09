@@ -467,6 +467,7 @@ def _join(
     own text, and (line, count) of each insertion above the re-split section,
     in order; None when a sibling heading isn't found once."""
     shifts: List[Tuple[int, int]] = []
+    start = section["start"]  # moves down as pieces are added above it
     for heading, numbers in joins:
         heads = _headings(lines)
         mine = [k for k, h in enumerate(heads) if h[1:] == (section["level"], heading)]
@@ -480,8 +481,9 @@ def _join(
         for n in numbers:
             block += [section["units"][n - 1], ""]
         lines = lines[:end] + block + lines[end:]
-        if end < section["start"]:
+        if end < start:
             shifts.append((end, len(block)))
+            start += len(block)
     return lines, shifts
 
 
