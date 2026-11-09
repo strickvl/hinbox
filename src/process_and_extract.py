@@ -742,8 +742,10 @@ def process_articles_batch(
                     )
 
                 progress.update(task_id, advance=1)
-                merged += 1
-                if save_every and merged % save_every == 0:
+                # Only articles that went through merging count: a resumed
+                # run skips its already-processed ones without saving
+                merged += bool(result.was_extracted)
+                if save_every and result.was_extracted and merged % save_every == 0:
                     # A crash, kill or power cut keeps what is saved here;
                     # without it a 30-hour run lost everything merged so far
                     save_entities_then_status(
