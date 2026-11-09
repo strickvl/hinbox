@@ -416,3 +416,18 @@ def test_static_export_writes_linked_files(client, tmp_path):
     cites = json.loads(data.group(1))
     assert any("partial" in c["v"].values() for c in cites.values())
     assert 'id="cite-data"' not in client.get("/people/Yusuf%20Qadir").text
+
+
+def test_static_copy_gets_passages_cut_at_line_breaks():
+    from src.frontend.views import cite_data
+
+    rp = render_profile(TEXT, _report())
+    data = cite_data(rp)
+    shipping = next(v for v in data.values() if "shipping" in v["q"])
+    assert shipping["p"][A1] == [
+        "arrested Yusuf Qadir in a dawn raid.",
+        "Neighbours said Qadir",
+    ]
+    assert (
+        cite_data(render_profile(TEXT, _report(), show_verdicts=False))["0"]["p"] == {}
+    )

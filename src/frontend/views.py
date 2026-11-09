@@ -274,13 +274,20 @@ def entity_page(
 def cite_data(rp: RenderedProfile) -> Dict[str, Any]:
     """What the static copy's panel needs about each cited sentence (the
     server's ``/panel`` works it out per click): its words and, per source,
-    the checker's verdict and reason. Empty verdicts when nothing was checked
-    or the page shows an older version."""
+    the checker's verdict, reason and stored passages, the passages cut at
+    line breaks, since the source page shows one paragraph per line. Empty
+    verdicts when nothing was checked or the page shows an older version."""
     return {
         str(c.index): {
             "q": plain_claim(c.text),
             "v": dict(c.verdicts) if rp.checked else {},
             "r": dict(c.reasons) if rp.checked else {},
+            "p": {
+                aid: [s.strip() for p in ps for s in p.split("\n") if s.strip()]
+                for aid, ps in c.passages.items()
+            }
+            if rp.checked
+            else {},
         }
         for c in rp.claims
     }
