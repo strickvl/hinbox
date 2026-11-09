@@ -18,7 +18,7 @@
 {% endif %}
 <div class="pbody">
   {% for p in paragraphs %}<p>{{ p }}</p>{% else %}<p class="empty">The text of this source isn't stored, so it can't be shown here.{% if source.url %} Open the original.{% endif %}</p>{% endfor %}
-  {% if paragraphs and claim and not highlighted %}<p class="note">The checker doesn't yet save which words it relied on, so the whole source is shown. Sentences copied word for word are highlighted.</p>{% endif %}
+  {% if paragraphs and claim and passage_marked %}<p class="note">Highlighted: the words the checker quoted when it judged this sentence, found word for word in the source. {% if verdict == 'supported' %}They are what it took as support.{% else %}They are what it compared the sentence with; read around them, since the checker can be wrong.{% endif %}</p>{% elif paragraphs and claim and not highlighted and verdict and verdict != 'unchecked' %}<p class="note">The checker quoted nothing from this source that could be found in it word for word, so the whole source is shown with nothing highlighted.</p>{% endif %}
 </div>
 {% if named %}
 <div class="ents"><span>Named here:</span>{% for g in named %}{% for e in g.entities[:12] %}{% if e.key != ent.key %}<a class="chipl" href="{{ u(e.url) }}">{{ e.name }}</a>{% endif %}{% endfor %}{% endfor %}</div>

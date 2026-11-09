@@ -23,6 +23,7 @@ import pyarrow.parquet as pq
 
 from src.utils.file_ops import write_entities_table
 from src.utils.grounding import _extract_cited_claims
+from src.utils.grounding_passages import passages_for
 
 OUTLET = "https://example.org/herald/"
 # key: (title, date, paragraphs)
@@ -93,8 +94,8 @@ His lawyers asked the court to order the government to hand over CIA cables abou
 In July 2024 prosecutors announced a plea agreement that would take the death penalty off the table, but the Secretary of Defense withdrew it two days later.{c("j")}
 """
 VERDICTS = {  # words in a claim -> (verdict, the checker's reason)
-    "three years": ("partial", "The article says he was kept awake for days at CIA sites, but says it does not know how long he was held there. \"Three years\" is not in this article."),
-    "force-fed": ("not_supported", "The article says more than 100 prisoners joined the strike and some were force-fed, but it names no one. It does not say Qadir was force-fed."),
+    "three years": ("partial", "The filing says \"Qadir was kept awake for days at a time while in CIA custody\" but \"did not say how long he was held at the sites\". \"Three years\" is not in this article."),
+    "force-fed": ("not_supported", "The article says \"More than 100 prisoners have joined a hunger strike\" and some are force-fed, but \"The military did not name the prisoners being fed.\" It does not say Qadir was force-fed."),
     "late into the night": (None, ""),  # left unchecked: the call for this article failed
 }  # fmt: skip
 
@@ -116,8 +117,11 @@ def _report(text: str) -> Dict[str, Any]:
             if words in cl["claim"]:
                 level, reason = v, why
         if level:
+            key = next(k for k, i in ID.items() if i == cl["article_id"])
+            seen = "\n".join(ARTICLES[key][2])
             out.append({"article_id": cl["article_id"], "citation": cl["citation"],
-                        "claim": cl["claim"], "support_level": level, "reasoning": reason})  # fmt: skip
+                        "claim": cl["claim"], "support_level": level, "reasoning": reason,
+                        "passages": passages_for(seen, reason)})  # fmt: skip
     return {"verifications": out, "model": "anthropic/claude-haiku-5-5"}
 
 

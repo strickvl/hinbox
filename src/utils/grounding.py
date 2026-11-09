@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from pydantic import BaseModel, Field
 
 from src.logging_config import get_logger
+from src.utils.grounding_passages import find_passage, passages_for
 from src.utils.ollama_context import local_thinking
 from src.utils.quality_controls import CITATION_RE, citation_ids
 from src.utils.server_health import ModelServerUnreachable, unreachable
@@ -48,6 +49,10 @@ class ClaimVerification(BaseModel):
     claim: str = Field(..., description="The text span supported by the citation")
     support_level: SupportLevel
     reasoning: Optional[str] = None
+    # The article's own words the verdict rests on, each found in the text the
+    # judge saw (``src/utils/grounding_passages.py``); None when the judge
+    # quoted nothing that is really there
+    passages: Optional[List[str]] = None
 
 
 class SourceCheck(BaseModel):
@@ -235,6 +240,19 @@ A claim saying that sources disagree ("one report says X; this article says Y") 
 
 For each claim, first write the reasoning: quote or name the article passage you compared it with, and say which detail, if any, differs (at most 40 words). Then give the support_level. Return one verdict for every claim, with its claim_number. Do not repeat the claim text."""
 
+# HINBOX_GROUNDING_PASSAGE=on: the judge also copies the passage its verdict
+# rests on into a field of its own, after the verdict. Off by default until it
+# is shown not to change verdicts on the hand-labelled claims; either way the
+# quotes in the reasoning are looked up (``passages_for()``)
+GROUNDING_PASSAGE = os.getenv("HINBOX_GROUNDING_PASSAGE", "off").strip().lower() in (
+    "on",
+    "1",
+    "true",
+)
+_PASSAGE_INSTRUCTION = """
+
+After the support_level, copy into passage the article sentence or sentences the verdict rests on (at most two), exactly as they are printed in the article, every word and mark the same. Leave passage empty when the article says nothing about the claim."""
+
 _GROUNDING_USER_TEMPLATE = """## SOURCE ARTICLE (ID: {article_id})
 {article_text}
 
@@ -249,6 +267,13 @@ class ClaimVerdict(BaseModel):
     claim_number: int
     reasoning: Optional[str] = None  # before the verdict, so it is written first
     support_level: SupportLevel
+
+
+class ClaimVerdictWithPassage(ClaimVerdict):
+    """``ClaimVerdict`` plus the article words it rests on, copied after the
+    verdict so the verdict is written exactly as without it."""
+
+    passage: Optional[str] = None
 
 
 @dataclass
@@ -279,7 +304,12 @@ class GroundingPlan:
 
 
 def _verification(
-    aid: str, claim: Dict[str, str], level: SupportLevel, why: Optional[str], cap: int
+    aid: str,
+    claim: Dict[str, str],
+    level: SupportLevel,
+    why: Optional[str],
+    cap: int,
+    passages: Optional[List[str]] = None,
 ) -> ClaimVerification:
     return ClaimVerification(
         article_id=aid,
@@ -287,7 +317,30 @@ def _verification(
         claim=claim["claim"][:cap],
         support_level=level,
         reasoning=why,
+        passages=passages,
     )
+
+
+def passages_from_reasoning(
+    seen: str, reasoning: Optional[str], claim: str
+) -> Optional[List[str]]:
+    """Passages for a stored verdict that has none: the quotes in its
+    reasoning found in ``seen`` (the text the judge saw), or, for a sentence
+    accepted as quoted from the article, that sentence's place in it."""
+    if reasoning == QUOTE_REASON:
+        span = find_passage(seen, _HEADINGS.sub("", claim))
+        return [seen[span[0] : span[1]]] if span else None
+    return passages_for(seen, reasoning)
+
+
+def _with_passages(v: ClaimVerification, article: str) -> ClaimVerification:
+    """A stored verdict from before passages were saved, given the passages
+    its reasoning quotes from ``article`` (the text the judge saw). The
+    verdict itself is unchanged."""
+    if v.passages is not None or not v.reasoning:
+        return v
+    found = passages_from_reasoning(article, v.reasoning, v.claim)
+    return v.model_copy(update={"passages": found}) if found else v
 
 
 def plan_grounding(
@@ -354,16 +407,15 @@ def plan_grounding(
             and earlier.status == "checked"
             and earlier.text_hash == text_hash
         )
+        seen = article_texts[aid][:max_article_chars]
         if usable and earlier.claims_hash == claims_hash:
             if len(earlier_results) == len(items):
-                plan.results[aid] = list(earlier_results)
+                plan.results[aid] = [_with_passages(v, seen) for v in earlier_results]
                 plan.reused_articles += 1
                 continue
         known = {_claim_key(v.claim): v for v in earlier_results} if usable else {}
-        article = _article_text(article_texts[aid][:max_article_chars])
         plan.results[aid] = [
-            _settled(aid, c, known, article, entity_name, max_claim_chars)
-            for c in items
+            _settled(aid, c, known, seen, entity_name, max_claim_chars) for c in items
         ]
     return plan
 
@@ -410,23 +462,30 @@ def _settled(
     aid: str,
     claim: Dict[str, str],
     known: Dict[str, ClaimVerification],
-    article: str,
+    seen: str,
     entity_name: str,
     max_claim_chars: int,
 ) -> Optional[ClaimVerification]:
     """A verdict that needs no model call: kept from the last report, or
-    "supported" for a sentence quoted from the article. None otherwise."""
+    "supported" for a sentence quoted from the article (``seen``, the text
+    the judge would see). None otherwise."""
     earlier = _earlier_verdict(claim["claim"], known, max_claim_chars)
     if earlier is not None:
+        earlier = _with_passages(earlier, seen)
         return earlier.model_copy(update={"citation": claim["citation"]})
     body = _HEADINGS.sub("", claim["claim"])
-    if _names_entity(body, entity_name) and _is_quote(body, article):
-        why = "Quoted word for word from the article"
-        return _verification(aid, claim, SupportLevel.SUPPORTED, why, max_claim_chars)
+    if _names_entity(body, entity_name) and _is_quote(body, _article_text(seen)):
+        why = QUOTE_REASON
+        span = find_passage(seen, body)
+        passages = [seen[span[0] : span[1]]] if span else None
+        return _verification(
+            aid, claim, SupportLevel.SUPPORTED, why, max_claim_chars, passages
+        )
     return None
 
 
 _SPACE = re.compile(r"\s+")
+QUOTE_REASON = "Quoted word for word from the article"
 _QUOTE_MIN_CHARS = 40
 _EDGE = " .;:,!?\"'“”‘’()"
 _SENTENCE_START = re.compile(r"(^|[.!?][\"'”’)]*\s|\n\s*)$")
@@ -517,18 +576,25 @@ def judge_claims(
     article_text: str,
     claims: List[Tuple[str, str]],
     model_type: str,
-) -> List[Optional[Tuple[SupportLevel, Optional[str]]]]:
+    ask_passage: Optional[bool] = None,
+) -> List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]]:
     """One model call: judge ``claims`` (entity name, claim text) against one
-    article. Returns a verdict per claim, or None where the reply had none.
-    Raises when the call itself fails. The judge is ``HINBOX_GROUNDING_MODEL``
-    if set, else the run's default model; its prefix picks local or cloud."""
+    article. Returns (verdict, reasoning, copied passage) per claim, or None
+    where the reply had none; the passage is None unless ``ask_passage``
+    (default ``HINBOX_GROUNDING_PASSAGE``) and is not yet checked against the
+    article. Raises when the call itself fails. The judge is
+    ``HINBOX_GROUNDING_MODEL`` if set, else the run's default model; its
+    prefix picks local or cloud."""
+    if ask_passage is None:
+        ask_passage = GROUNDING_PASSAGE
     from src.utils.llm import cloud_generation, local_generation
 
     claims_text = "\n".join(
         _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
     )
+    system = _GROUNDING_SYSTEM_PROMPT + (_PASSAGE_INSTRUCTION if ask_passage else "")
     messages = [
-        {"role": "system", "content": _GROUNDING_SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {
             "role": "user",
             "content": _GROUNDING_USER_TEMPLATE.format(
@@ -549,12 +615,16 @@ def judge_claims(
     with thinking:
         reply = generate(
             messages=messages,
-            response_model=List[ClaimVerdict],
+            response_model=List[
+                ClaimVerdictWithPassage if ask_passage else ClaimVerdict
+            ],
             model=model,
             temperature=0,
             max_tokens=GROUNDING_MAX_TOKENS,
         )
-    out: List[Optional[Tuple[SupportLevel, Optional[str]]]] = [None] * len(claims)
+    out: List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]] = [
+        None
+    ] * len(claims)
     numbers = [getattr(v, "claim_number", None) for v in reply]
     by_number = len(set(numbers)) == len(numbers) and all(
         isinstance(n, int) and 1 <= n <= len(claims) for n in numbers
@@ -562,22 +632,26 @@ def judge_claims(
     for pos, v in enumerate(reply):
         i = v.claim_number - 1 if by_number else pos
         if i < len(claims):
-            out[i] = (v.support_level, v.reasoning)
+            out[i] = (v.support_level, v.reasoning, getattr(v, "passage", None))
     return out
 
 
 def _record_verdicts(
     batch: List[Tuple[GroundingPlan, str, int]],
-    verdicts: List[Optional[Tuple[SupportLevel, Optional[str]]]],
+    verdicts: List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]],
     error: Optional[str],
     max_claim_chars: int,
+    seen: str = "",
 ) -> None:
-    """Write one call's verdicts into the plans it came from. A claim with no
-    verdict (failed call, or the reply skipped it) is "unclear" and its
-    article is marked failed, so the next run asks again."""
+    """Write one call's verdicts into the plans it came from, each with the
+    passages it quoted that are really in ``seen`` (the article text the
+    judge saw). A claim with no verdict (failed call, or the reply skipped
+    it) is "unclear" and its article is marked failed, so the next run asks
+    again."""
     for (plan, aid, i), verdict in zip(batch, verdicts):
         plan.asked.add(aid)
         claim = plan.by_article[aid][i]
+        passages = None
         if verdict is None:
             why = error or "LLM did not return verification for this claim"
             flag = "verification_error" if error else "llm_count_mismatch"
@@ -586,8 +660,11 @@ def _record_verdicts(
             if flag not in plan.flags:
                 plan.flags.append(flag)
         else:
-            level, why = verdict
-        plan.results[aid][i] = _verification(aid, claim, level, why, max_claim_chars)
+            level, why, copied = verdict
+            passages = passages_for(seen, why, copied) if seen else None
+        plan.results[aid][i] = _verification(
+            aid, claim, level, why, max_claim_chars, passages
+        )
 
 
 _results_lock = threading.Lock()
@@ -625,6 +702,7 @@ def judge_pending(
             (plan.entity_name, plan.by_article[a][i]["claim"][:max_claim_chars])
             for plan, a, i in batch
         ]
+        seen = article_texts[aid][:max_article_chars]
         try:
             # Once the server is gone, fail the rest fast: a failed check is
             # stored as an error and asked again on the next run
@@ -633,7 +711,7 @@ def judge_pending(
                 raise ModelServerUnreachable(why)
             verdicts = judge_claims(
                 article_id=aid,
-                article_text=article_texts[aid][:max_article_chars],
+                article_text=seen,
                 claims=claims,
                 model_type=model_type,
             )
@@ -643,7 +721,7 @@ def judge_pending(
             verdicts = [None] * len(batch)
             error = f"Verification error: {e}"
         with _results_lock:
-            _record_verdicts(batch, verdicts, error, max_claim_chars)
+            _record_verdicts(batch, verdicts, error, max_claim_chars, seen)
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         futures = [

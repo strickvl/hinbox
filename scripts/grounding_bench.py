@@ -16,6 +16,12 @@ not_supported or unclear that are now supported or partial.
         [--model ollama/<judge> | --model anthropic/<judge>]
     uv run python -m scripts.grounding_bench compare <file.json>
 
+``--passage on`` asks the judge to copy the passage its verdict rests on
+(``HINBOX_GROUNDING_PASSAGE``); run once with and once without on the same
+entities and compare verdicts, since the copied passage must not change
+them. Either way the file records each verdict's saved passages and how many
+quoted passages were found in the article or dropped (``passages``).
+
 Outputs hold claim text from profiles: keep them off GitHub.
 """
 
@@ -43,6 +49,7 @@ def _verdict_rows(entities: Dict[str, Dict], field: str = "profile_grounding"):
                         "claim": v.get("claim"),
                         "level": v.get("support_level"),
                         "reasoning": v.get("reasoning"),
+                        "passages": list(v.get("passages") or []),
                     }
                 )
     return rows
@@ -53,9 +60,11 @@ def run(args: argparse.Namespace) -> None:
 
     if args.model:
         os.environ["HINBOX_GROUNDING_MODEL"] = args.model
+    os.environ["HINBOX_GROUNDING_PASSAGE"] = args.passage
     from src.engine.article_processor import ArticleProcessor
     from src.engine.grounding_pass import run_profile_grounding_postprocess
     from src.process_and_extract import load_existing_entities
+    from src.utils.grounding_passages import passage_stats
     from src.utils.llm import configure_llm_concurrency
 
     entities = load_existing_entities(args.entities)
@@ -67,6 +76,7 @@ def run(args: argparse.Namespace) -> None:
     configure_llm_concurrency(
         cloud_in_flight=args.in_flight, local_in_flight=args.in_flight
     )
+    passage_stats(reset=True)
     start = time.perf_counter()
     counts = run_profile_grounding_postprocess(
         entities=entities,
@@ -89,6 +99,8 @@ def run(args: argparse.Namespace) -> None:
         "seconds": round(seconds, 1),
         "counts": counts,
         "flags": dict(flags),
+        "passage_setting": args.passage,
+        "passages": dict(passage_stats()),
         "before": before,
         "after": _verdict_rows(entities),
     }
@@ -96,7 +108,8 @@ def run(args: argparse.Namespace) -> None:
         json.dump(out, f, indent=1)
     print(
         json.dumps(
-            {k: out[k] for k in ("model", "seconds", "counts", "flags")}, indent=1
+            {k: out[k] for k in ("model", "seconds", "counts", "flags", "passages")},
+            indent=1,
         )
     )
 
@@ -132,6 +145,14 @@ def compare(args: argparse.Namespace) -> None:
     print(f"claims compared: {total}, same verdict: {same}, unmatched: {unmatched}")
     for (a, b), n in sorted(moves.items(), key=lambda x: -x[1]):
         print(f"  {a:>15} -> {b:<15} {n}")
+    print(f"passages ({data.get('passage_setting', 'off')}): {data.get('passages')}")
+    with_passage: Counter = Counter()
+    by_level: Counter = Counter()
+    for r in data["after"]:
+        by_level[r["level"]] += 1
+        with_passage[r["level"]] += bool(r.get("passages"))
+    for level, n in sorted(by_level.items()):
+        print(f"  {level:>15}: {with_passage[level]} of {n} have a saved passage")
     for name, items in (
         ("newly accepted", newly_accepted),
         ("newly rejected", newly_rejected),
@@ -151,6 +172,12 @@ def main() -> None:
     r.add_argument("--local", action="store_true", help="use the local model")
     r.add_argument(
         "--model", help="judge model (sets HINBOX_GROUNDING_MODEL for this run)"
+    )
+    r.add_argument(
+        "--passage",
+        choices=("on", "off"),
+        default="off",
+        help="ask the judge to copy its passage (HINBOX_GROUNDING_PASSAGE)",
     )
     r.add_argument("--workers", type=int, default=8, help="calls submitted at once")
     r.add_argument("--in-flight", type=int, default=4, help="model calls in flight")
