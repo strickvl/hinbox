@@ -353,3 +353,34 @@ def test_your_words_stay_literal_in_the_tables():
     assert "# He was *not* force-fed." in rp.html and "<em>" not in rp.html
     mine = [c for c in rp.claims if c.correction == "mine"]
     assert [c.text for c in mine] == ["# He was *not* force-fed."]
+
+
+def test_a_newer_strike_of_the_same_sentence_replaces_the_older_one():
+    old = _strike(FORCE_FED, [A3], "He refused food for several weeks.")
+    new = _strike(FORCE_FED, [A3], "He refused food for six weeks.", cid="c-0002")
+    text, _, _ = _apply(TEXT, [old])
+    # Run 2: c-0002 replaced c-0001, whose sentence a run carried out
+    again, states, _ = cp.apply_to_text(text, cp._rules([new]), {"c-0001"}, [], [old])
+    assert f"He refused food for six weeks.^[{A3}] Sources disagree" in again
+    assert "several weeks" not in again and FORCE_FED not in again
+    assert states == {"c-0002": ("applied", "")}
+    # The same words written in both: nothing to swap, the newer one holds
+    same = _strike(FORCE_FED, [A3], "He refused food for several weeks.", cid="c-0002")
+    kept, states, _ = cp.apply_to_text(text, cp._rules([same]), {"c-0001"}, [], [old])
+    assert kept == text and states == {"c-0002": ("held", "")}
+
+
+def test_a_run_carries_out_the_newer_strike(tmp_path):
+    path = tmp_path / "c.jsonl"
+    person = {"name": "Yusuf Qadir", "type": "detainee",
+              "articles": [{"article_id": a} for a in (A1, A2, A3)],
+              "profile": {"text": TEXT}}  # fmt: skip
+    entities = {"people": {"Yusuf Qadir": person}}
+    for rep in ("He refused food for several weeks.", "He refused food for six weeks."):
+        append_correction(str(path), {k: v for k, v in _strike(FORCE_FED, [A3], rep).items() if k != "id"})  # fmt: skip
+        report = cp.run_corrections_pass(entities, str(path))
+        assert report["counts"] == {"applied": 1}, report["rows"]
+    text = person["profile"]["text"]
+    assert "six weeks" in text and "several weeks" not in text
+    report = cp.run_corrections_pass(entities, str(path))  # a third run: held
+    assert report["counts"] == {"held": 1} and person["profile"]["text"] == text

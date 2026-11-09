@@ -37,7 +37,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 from src.engine.edit_guards import is_repeat
 from src.utils.claim_spans import claim_end, parse_claims
@@ -309,13 +309,36 @@ def _original(rec: Dict[str, Any]) -> str:
     return rec["sentence"].strip() + (f"^[{', '.join(cites)}]" if cites else "")
 
 
+def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
+    """``text`` with an earlier strike's replacement swapped back for the
+    original sentence, if the replacement is there and the original isn't."""
+    claims, markers = parse_claims(text)
+    by_key = {sentence_key(c.text): c for c in claims}
+    rep = by_key.get(sentence_key(rec.get("replacement") or ""))
+    if rep is None or sentence_key(rec["sentence"]) in by_key:
+        return text, False
+    return _cut_claim(text, markers, rep, _original(rec)), True
+
+
 def apply_to_text(
-    text: str, rules: PageRules, done_before: Set[str], withdrawn: List[Dict[str, Any]]
+    text: str,
+    rules: PageRules,
+    done_before: Set[str],
+    withdrawn: List[Dict[str, Any]],
+    superseded: Sequence[Dict[str, Any]] = (),
 ) -> Tuple[str, Dict[str, Tuple[str, str]], List[Dict[str, str]]]:
     """Carry one page's corrections out in its profile text. Returns the new
     text, (state, why) per correction id, and claims that may say a struck
-    thing again in other words (sharing a year and a name with it)."""
+    thing again in other words (sharing a year and a name with it).
+
+    ``superseded`` are older strikes a run carried out that a newer strike
+    of the same sentence replaced: their sentence is first swapped back for
+    the original, so the newer strike is carried out on it like any other
+    (2000 → 2001 by the old one, then 2001 → original → 2002)."""
     states: Dict[str, Tuple[str, str]] = {}
+    for old in superseded:
+        if sentence_key(old.get("replacement") or "") not in rules.written:
+            text, _ = _swap_back(text, old)
     claims, markers = parse_claims(text)
     keys = {sentence_key(c.text) for c in claims}
     present = {k for k in rules.written if k in keys}
@@ -363,9 +386,8 @@ def apply_to_text(
     claims, markers = parse_claims(text)
     by_key = {sentence_key(c.text): c for c in claims}
     for rec in withdrawn:
-        rep = by_key.get(sentence_key(rec.get("replacement") or ""))
-        if rep is not None and sentence_key(rec["sentence"]) not in by_key:
-            text = _cut_claim(text, markers, rep, _original(rec))
+        text, swapped = _swap_back(text, rec)
+        if swapped:
             claims, markers = parse_claims(text)
             by_key = {sentence_key(c.text): c for c in claims}
             states[rec["id"]] = (
@@ -478,6 +500,18 @@ def run_corrections_pass(
         if page is not None:
             withdrawn.setdefault(page, []).append(rec)
             pages.setdefault(page, [])
+    # An older strike a run carried out, replaced by a newer strike of the
+    # same sentence: its sentence goes before the newer one is carried out
+    superseded: Dict[Tuple[str, Any], List[Dict[str, Any]]] = {}
+    for cid in cs.replaced:
+        rec = by_id.get(cid)
+        if not rec or rec["kind"] != "strike" or not rec.get("replacement"):
+            continue
+        if before.get(cid) not in DONE:
+            continue
+        page = where(rec)
+        if page is not None and page in pages:
+            superseded.setdefault(page, []).append(rec)
     changed = 0
     for (table, pk), lines in pages.items():
         entity = entities[table][pk]
@@ -488,6 +522,7 @@ def run_corrections_pass(
             rules,
             done_before,
             withdrawn.get((table, pk), []),
+            superseded.get((table, pk), []),
         )
         if text != (profile.get("text") or ""):
             entity["profile"] = {**profile, "text": text}
