@@ -24,7 +24,7 @@ This document helps contributors work effectively in this repository.
     - `relevance.py` — domain-specific relevance filtering
   - `process_and_extract.py` — CLI pipeline entry point; parallel producer/consumer with `ThreadPoolExecutor` workers and a single-threaded merge actor
   - `dynamic_models.py` — Pydantic models generated from domain configs
-  - `frontend/` — FastHTML "Archival Elegance" UI (routes, components, config). See `src/frontend/CLAUDE.md` for design system details.
+  - `frontend/` — the web reader: Starlette + Jinja2 templates (`app.py`, `views.py`, `profile_render.py`, `templates/`). See `src/frontend/CLAUDE.md`.
   - `utils/` — shared utilities:
     - `embeddings/` — `EmbeddingManager`, cloud/local providers, similarity helpers
     - `extraction_cache.py` — persistent sidecar cache for extraction results (keyed on content hash, model, prompt, schema, temperature)
@@ -79,7 +79,7 @@ This document helps contributors work effectively in this repository.
 - Write focused unit tests per module; prefer pure functions and fixtures.
 - All tests run without API keys or GPU — use mocks/stubs for LLM and embedding calls.
 - Async tests (`@pytest.mark.asyncio`) are excluded in CI; mark them appropriately.
-- Key coverage areas: embedding similarity, lexical blocking, per-type thresholds, fingerprints, merge dispute routing, extraction caching/retry, canonical name selection, name variants, profile grounding, profile versioning, privacy mode, LLM multi-tool-call recovery, frontend version navigation.
+- Key coverage areas: embedding similarity, lexical blocking, per-type thresholds, fingerprints, merge dispute routing, extraction caching/retry, canonical name selection, name variants, profile grounding, profile versioning, privacy mode, LLM multi-tool-call recovery, the web reader.
 
 ## Commit & Pull Request Guidelines
 - Messages: imperative, concise headers (e.g., "Add X", "Fix Y").
@@ -107,4 +107,4 @@ This document helps contributors work effectively in this repository.
 - Prefer `src/engine/extractors.py` abstractions over duplicating cloud/local logic.
 - When modifying merge behaviour, update both `mergers.py` and the corresponding test in `test_entity_merger_*.py` or `test_merge_dispute_agent_routing.py`.
 - Name handling logic lives in `src/utils/name_variants.py` — don't duplicate in QC or merger code.
-- The frontend has its own CLAUDE.md at `src/frontend/CLAUDE.md` with FastHTML patterns and CSS class references.
+- The frontend has its own CLAUDE.md at `src/frontend/CLAUDE.md` with its page map and conventions.

@@ -1,0 +1,25 @@
+{% macro flags(issues) -%}
+{% if issues %}<span class="flags">{% for k in ['not_supported', 'partial', 'unclear', 'unchecked'] %}{% if issues.get(k) %}<span title="{{ issues[k] }} {{ VERDICT_LABELS[k]|lower }}"><span class="dot v-{{ k }}"></span><span class="num">{{ issues[k] }}</span></span>{% endif %}{% endfor %}</span>{% endif %}
+{%- endmacro %}
+
+{% macro kind_pill(kind) -%}
+{% if kind == 'stub' %}<span class="pill stub" title="Sentences copied from one article; no model wrote this text">Stub</span>{% elif kind == 'link-only' %}<span class="pill link-only" title="Profile frozen after the first article; later articles are only linked">Link-only</span>{% endif %}
+{%- endmacro %}
+
+{% macro entity_row(r, show_table=False) -%}
+<li>
+  <div>
+    <a class="nm" href="{{ u(r.url) }}">{{ r.name }}</a>
+    <div class="sub">
+      {% if show_table %}<span>{{ r.singular|capitalize }}</span>{% endif %}
+      {% if r.type %}<span>{{ r.type }}</span>{% endif %}
+      {{ kind_pill(r.kind) }}
+      {% if r.other_names %}<span class="muted">also {{ r.other_names|join(', ') }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="right">
+    <span class="num">{{ r.n_articles }} article{{ 's' if r.n_articles != 1 }}{% if r.first %} · {{ r.first }}{% if r.last != r.first %}–{{ r.last }}{% endif %}{% endif %}</span>
+    {{ flags(r.issues) }}
+  </div>
+</li>
+{%- endmacro %}

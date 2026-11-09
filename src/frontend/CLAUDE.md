@@ -1,88 +1,44 @@
-# Frontend Development Notes
+# Web reader notes
 
-## FastHTML Documentation
+The reader is a Starlette app (`app.py`) that fills Jinja2 templates
+(`templates/`). It reads saved Parquet tables and the domain's articles file;
+it never calls a model. Run it with `just frontend`.
 
-FastHTML has limited training data in most LLMs. When working on this frontend,
-consult these resources:
+## Where things are
 
-- **LLMs context file**: `https://www.fastht.ml/docs/llms-ctx.txt` — comprehensive
-  single-file reference optimised for LLM consumption. Fetch this with WebFetch
-  when you need to look up idiomatic patterns.
-- **Main docs**: `https://www.fastht.ml/docs/` — human-readable docs site
-- **FastHTML repo**: `https://github.com/AnswerDotAI/fasthtml`
-
-## Key FastHTML Patterns
-
-### App setup
-```python
-from fasthtml.common import *
-
-app, rt = fast_app(
-    static_path="src/frontend/static",
-    hdrs=(Link(rel="stylesheet", href="/styles.css", type="text/css"),),
-)
-```
-- `fast_app()` includes Pico CSS by default. Pass `pico=False` to disable.
-- `hdrs` tuple injects elements into `<head>` of every page.
-- `static_path` configures where static files are served from.
-
-### HTML generation
-- HTML elements are Python functions: `Div()`, `Span()`, `H2()`, `A()`, etc.
-- CSS classes via `cls="my-class"` (not `class_` or `className`).
-- Inline styles via `style="..."` string.
-- Boolean attributes: `checked="checked"` or `None` to omit.
-- HTMX attributes use underscores: `hx_get`, `hx_target`, `hx_swap`.
-- Children are positional args: `Div(H2("Title"), P("Body"))`.
-- `NotStr(html_string)` renders raw HTML without escaping.
-- Return `""` (empty string) from a component to render nothing.
-
-### Layouts
-- `Titled(page_title, *children)` wraps in Container with H1 + meta title.
-- For custom layouts, build `Html(Head(...), Body(...))` manually (what we do).
-- `fast_app()` includes Pico CSS which provides semantic styling.
-
-### Routes
-```python
-@rt("/path")
-def handler(request): ...
-
-
-@rt("/path/{key:path}")
-def detail(key: str, request): ...
-```
-
-## Project-Specific Patterns
-
-### Design system ("Archival Elegance")
-- **Fonts**: Crimson Pro (headings), IBM Plex Sans (body) — loaded via Google Fonts
-- **Colors**: Warm teal-slate primary (#2c5f7c), amber accent (#c97b3a)
-- **CSS variables**: All defined in `:root` of `static/styles.css`
-
-### Layout structure
-- `main_layout()` in `app_config.py` provides the standard sidebar + content layout
-- `titled_with_domain_picker()` provides full HTML page with domain switcher
-- Filter panels go in the left sidebar (220px fixed)
-- Content area is the flexible right panel
-
-### Component conventions
-- Reusable components live in `components.py` as plain functions returning FT elements
-- Components return `""` when they have nothing to render (FastHTML ignores empty strings)
-- Use CSS classes over inline styles wherever possible
-- Entity detail pages share a common structure: breadcrumb, version selector, type badge, aliases, tags, profile text, confidence badge, articles
-
-### CSS class reference
-| Class | Used for |
+| File | What it does |
 |---|---|
-| `.home-card` | Home page entity cards |
-| `.home-grid` | Home page card grid |
-| `.breadcrumb` | Detail page back-navigation |
-| `.version-selector` | Profile version dropdown |
-| `.filter-panel` | Sidebar filter controls |
-| `.content-area` | Main content panel |
-| `.entity-detail` | Detail page content wrapper |
-| `.profile-text` | Long-form profile content |
-| `.tag` | Pill badges for types/tags |
-| `.filter-chip` | Toggle filter chips |
-| `.card-link` | Styled links in cards |
-| `.empty-state` | No-results message |
-| `.article-list` | Related articles list |
+| `app.py` | Routes and the `u()` template helper that keeps `?domain=` on links |
+| `views.py` | Builds the plain dicts each template shows (no HTML except escaped, highlighted text) |
+| `profile_render.py` | Profile Markdown → HTML with numbered citations, verdict marks and contents list |
+| `data_access.py` | `TABLES`, `load_store()` (cached until a Parquet file changes), `Entity`, `Source` |
+| `templates/base.html` | Top bar (brand, search, table links, domain picker) |
+| `templates/entity.html` | Header, trust line, banner for stubs and link-only pages, contents, profile, sources disagree, in date order, appears with, sources, history, source panel |
+| `templates/_panel.html` | The source panel fragment (`/panel`), also shown under a paragraph on narrow screens |
+| `templates/_macros.html` | `entity_row`, `flags`, `kind_pill` (import them `with context`, or `u()` is undefined) |
+| `static/reader.js` | Opens sources in the panel, filters marks, folds contents on phones |
+| `static/styles.css` | Tokens for light and dark, all layout |
+
+## Rules worth keeping
+
+- **Claims must be split the way grounding splits them.** `parse_claims()`
+  mirrors `_extract_cited_claims()` in `src/utils/grounding.py`; the test
+  `test_claims_match_the_grounding_step` fails if they drift. If they drift,
+  verdicts land on the wrong sentences.
+- **Mark the exceptions, not the passes.** Supported sentences carry no mark.
+  Partly supported = amber, not supported = red, not checked or checker
+  unsure = grey. An older version (`?version=N`) shows no marks, because the
+  stored report describes the current text only.
+- **Name the checker and its miss rate.** `CHECKER_MISSES` in `views.py`
+  holds the hand-test numbers; update it when the grounding bench is rerun.
+- **Escape model text.** Profile text is HTML-escaped before Markdown;
+  article text is escaped before `<mark>` is added.
+- **Every page works without JavaScript.** A citation is a link to
+  `/sources/<id>`; the script only intercepts it.
+- **New entity table** (court cases, say): add a `TableSpec` to `TABLES`.
+  Navigation, search, lists, "appears with" and source pages loop over it.
+- **Sources, not articles.** A source has a `kind` ("News article" today) so
+  books, reports and translations can be added without a new page.
+- The server listens on 127.0.0.1 unless `HINBOX_FRONTEND_HOST` is set.
+- The repository is public: tests use made-up tables only. Never commit
+  screenshots or fixtures from a real run.

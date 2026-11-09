@@ -25,7 +25,7 @@ through a simple configuration system.
 - **Parallel Pipeline**: Concurrent article extraction with LLM rate limiting and batched embedding computation
 - **Modular Engine**: `src/engine` coordinates article processing, extraction, merging, and profile versioning so new domains can reuse the same pipeline
 - **Privacy Mode**: `--local` flag enforces local-only embeddings and disables all LLM telemetry callbacks
-- **Web Interface**: FastHTML-based "Archival Elegance" UI with confidence badges, alias display, tag pills, and profile version navigation
+- **Web reader**: profiles with a contents list, every citation opening its source beside the sentence, and the grounding checker's doubts marked on the sentences themselves; source pages, search across all tables, and version history
 - **Easy Setup**: Simple configuration files, no Python coding required
 
 ## 📸 Screenshots
@@ -215,7 +215,9 @@ just process --domain afghanistan_1980s --force-reprocess
 ```bash
 just frontend
 ```
-Explore extracted entities at http://localhost:5001
+Read the profiles at http://localhost:5001. The server listens on 127.0.0.1 only, so a private corpus is not shared on your network; set `HINBOX_FRONTEND_HOST=0.0.0.0` to share it on purpose.
+
+On an entity page, a sentence the grounding checker did not fully confirm is underlined (amber: partly supported, red: not supported, grey dots: not checked), and the line above the profile counts them and names the checker with its known miss rate. Click a citation number to read that source beside the profile. Point the reader at another run with `HINBOX_OUTPUT_DIR=<entities folder> just frontend`.
 
 ### Traces of every model call
 Every run records each pipeline step and each model call (the prompt sent, the reply or tool-call arguments, any reasoning the model returned, token counts, finish reason) as OpenTelemetry spans. One trace per article: `article #3` → `extraction` → `extract.people` → `chat qwen3.6:35b`, and `merge.people` → `match_check` → `chat …`, with each NEW/MERGE/SKIP decision as an event on its merge step.
@@ -347,11 +349,13 @@ src/
 │   ├── merge_dispute_agent.py # Second-stage arbitration for gray-band matches
 │   ├── profiles.py            # VersionedProfile history management
 │   └── relevance.py           # Domain-specific relevance filtering
-├── frontend/               # FastHTML "Archival Elegance" UI
-│   ├── routes/             # Modular route handlers (home, people, orgs, locations, events)
-│   ├── components.py       # Reusable UI building blocks (badges, version selectors, tags)
-│   ├── data_access.py      # Centralised Parquet data loading
-│   └── static/styles.css   # CSS variables, fonts, layout
+├── frontend/               # Web reader (Starlette + Jinja2 templates)
+│   ├── app.py              # Routes: home, search, lists, entity, sources, source panel
+│   ├── views.py            # What each page shows
+│   ├── profile_render.py   # Citations, checker verdict marks, contents list
+│   ├── data_access.py      # Loads entity tables and sources; `TABLES`
+│   ├── templates/          # Jinja2 page templates
+│   └── static/             # styles.css, reader.js
 ├── utils/
 │   ├── embeddings/         # EmbeddingManager, cloud/local providers, similarity helpers
 │   ├── cache_utils.py      # Thread-safe LRU cache and stable hashing
@@ -381,7 +385,7 @@ tests/
 ├── test_name_variants.py               # Name normalisation, acronyms, equivalence groups
 ├── test_profile_grounding.py           # Citation extraction and grounding verification
 ├── test_profile_versioning.py          # Versioned profile regression tests
-└── test_frontend_versioning.py         # UI behaviour for profile history
+└── test_frontend.py                    # Web reader on made-up tables
 
 data/
 ├── guantanamo/        # Default domain data directory (created locally)
@@ -455,7 +459,7 @@ Historical sources should be in Parquet format with columns:
 - **Smart Processing**: Automatic relevance filtering, caching, and multi-layer deduplication
 - **Profile Versioning**: Track entity profile changes over time with full version history
 - **Profile Grounding**: Citation-backed claim verification for generated profiles
-- **Modern Interface**: FastHTML "Archival Elegance" theme with confidence badges, aliases, tag pills, and version navigation
+- **Reader built for checking**: sources open beside the sentence, the checker's doubts are marked, stubs and link-only pages are labelled
 - **Robust Pipeline**: Structured `PhaseOutcome` error handling, quality controls, extraction retry, and progress tracking
 - **Structured Logging**: Colour-coded decision lines (`NEW`, `MERGE`, `SKIP`, `DISPUTE`, `DEFER`) for pipeline transparency
 
@@ -471,7 +475,7 @@ just test -k test_profile_versioning
 just test tests/test_entity_merger_similarity.py
 ```
 
-CI runs lint and tests automatically on every PR (`.github/workflows/test.yml`). The test suite covers embedding similarity, lexical blocking, per-type threshold resolution, entity merger behavior, merge dispute agent routing, extraction caching, extraction retry logic, canonical name selection, name variant detection, profile grounding, profile versioning, privacy mode enforcement, and frontend components — all without requiring API keys or GPU.
+CI runs lint and tests automatically on every PR (`.github/workflows/test.yml`). The test suite covers embedding similarity, lexical blocking, per-type threshold resolution, entity merger behavior, merge dispute agent routing, extraction caching, extraction retry logic, canonical name selection, name variant detection, profile grounding, profile versioning, privacy mode enforcement, and the web reader — all without requiring API keys or GPU.
 
 ### Code Quality
 ```bash
@@ -515,4 +519,4 @@ For questions about:
 
 **Built for**: Historians, researchers, and academics working with large document collections
 
-**Built with**: Python, Pydantic, FastHTML, Instructor, OpenAI SDK, RapidFuzz, Jina Embeddings, Rich
+**Built with**: Python, Pydantic, Starlette, Jinja2, Instructor, OpenAI SDK, RapidFuzz, Jina Embeddings, Rich
