@@ -560,3 +560,26 @@ def test_each_output_folder_keeps_its_own_last_run(tmp_path):
     report = cp.run_corrections_pass({"people": {"Yusuf Qadir": a}}, str(path), str(tmp_path / "A"))  # fmt: skip
     assert a["profile"]["text"] == TEXT
     assert {r["id"]: r["state"] for r in report["rows"]} == {"c-0001": "undone"}
+
+
+def test_same_words_with_a_new_source():
+    from src.frontend.profile_render import Overlay, render_profile
+
+    text = f"Kept.^[{A1}] Correct.^[{A1}]"
+    rec = _strike("Correct.", [A1], "Correct.", A2)
+    # Before a run the reader shows the struck one and theirs once
+    rp = render_profile(text, overlay=Overlay(struck={"Correct.": rec}))
+    assert sorted(c.correction for c in rp.claims) == ["", "mine", "struck"]
+    out, states, _ = _apply(text, [rec])
+    assert out == f"Kept.^[{A1}] Correct.^[{A2}]" and states["c-0001"] == (
+        "applied",
+        "",
+    )
+    for _ in range(2):  # and it stays, run after run
+        out, states, _ = _apply(out, [rec], done=["c-0001"])
+        assert out == f"Kept.^[{A1}] Correct.^[{A2}]" and states["c-0001"] == (
+            "held",
+            "",
+        )
+    rp = render_profile(out, overlay=Overlay(struck={"Correct.": rec}))
+    assert [c.correction for c in rp.claims] == ["", "mine"]

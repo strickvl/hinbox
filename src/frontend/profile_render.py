@@ -288,7 +288,13 @@ def _insert_replacements(
     claims, markers = parse_claims(text)
     inserts: List[Tuple[int, str]] = []
     mine: Dict[str, Dict[str, Any]] = {}
-    there = {stored_key(c.text) for c in claims}  # a run put it in
+    # a run put it in (a struck claim is not theirs, unless it already
+    # cites only their source: same words, new source)
+    there = {
+        stored_key(c.text)
+        for c in claims
+        if sentence_key(c.text) not in overlay.struck or _theirs(c, overlay)
+    }
     for c in claims:
         rec = overlay.struck.get(sentence_key(c.text))
         if not rec or not rec.get("replacement"):
@@ -302,6 +308,16 @@ def _insert_replacements(
     for pos, add in sorted(inserts, reverse=True):
         text = text[:pos] + add + text[pos:]
     return text, mine
+
+
+def _theirs(c: Any, overlay: Overlay) -> bool:
+    """The historian's own sentence, citing only their source, and not
+    struck again by a later correction of theirs."""
+    rec = overlay.written.get(stored_key(c.text))
+    struck = overlay.struck.get(sentence_key(c.text))
+    if struck is not None and (rec is None or struck["id"] != rec["id"]):
+        return False
+    return bool(rec) and list(c.articles) == [rec.get("replacement_cites")]
 
 
 def _words(rec: Dict[str, Any]) -> str:
@@ -326,7 +342,7 @@ def _apply_overlay(
             c.correction, c.by[""] = "mine", written[plain]
             c.text = _words(written[plain])
             used.add(written[plain]["id"])
-        if key in overlay.struck:
+        if key in overlay.struck and not _theirs(c, overlay):
             c.correction, c.by[""] = "struck", overlay.struck[key]
             used.add(overlay.struck[key]["id"])
         for aid in c.articles:

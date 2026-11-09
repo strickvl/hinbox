@@ -340,6 +340,16 @@ def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
     return _cut_claim(text, markers, rep, _original(rec)), True
 
 
+def _is_theirs(c: Any, rules: PageRules) -> bool:
+    """A claim that is the historian's own sentence with only their source."""
+    key = sentence_key(c.text)
+    rec = rules.written.get(key)
+    struck = rules.struck.get(key)
+    if struck is not None and (rec is None or struck["id"] != rec["id"]):
+        return False  # they struck their own sentence again later
+    return bool(rec) and c.articles == [rec.get("replacement_cites")]
+
+
 def _add_your_sources(text: str, rules: PageRules) -> str:
     """Each historian's sentence in the text cites the source they chose: one
     whose words were already in the profile ("Correct.^[a]", they cite b)
@@ -446,14 +456,22 @@ def apply_to_text(
                         "which a newer correction replaced",
                     )
     claims, markers = parse_claims(text)
-    keys = {sentence_key(c.text) for c in claims}
-    present = {k for k in rules.written if k in keys}
+    # Which claims go: a struck one, unless it is the historian's own
+    # sentence citing their source (same words, new source: "Correct.^[b]")
+    to_cut = [
+        (c, r)
+        for c in claims
+        if not _is_theirs(c, rules) and (r := _restated(c.text, rules))
+    ]
+    cut = {c.index for c, _ in to_cut}
+    present = {
+        k
+        for c in claims
+        if c.index not in cut and (k := sentence_key(c.text)) in rules.written
+    }
     edits: List[Tuple[Any, str]] = []
-    for c in claims:
+    for c, rec in to_cut:
         key = sentence_key(c.text)
-        rec = _restated(c.text, rules)
-        if not rec:
-            continue
         last = _last_in_chain(rec, rules)
         put = _yours(last) if last.get("replacement") else ""
         rep_key = words_key(last.get("replacement") or "")
