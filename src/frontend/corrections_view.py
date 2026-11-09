@@ -37,10 +37,23 @@ def load(store: Store) -> CorrectionSet:
     return load_corrections(store.corrections_path)
 
 
-def overlay_for(cs: CorrectionSet, ent: Entity) -> Overlay:
+def for_page(store: Store, cs: CorrectionSet, ent: Entity) -> List[Dict[str, Any]]:
+    """Active corrections about this page (a join from either side), found the
+    way ``find_entity()`` finds pages, so a page whose key changed since (an
+    organization retyped, say) keeps its corrections."""
+
+    def here(ref: Any) -> bool:
+        if not isinstance(ref, dict) or ref.get("table") != ent.spec.table:
+            return False
+        return ref.get("key") == ent.key or find_entity(store, ref) is ent
+
+    return [r for r in cs.active if here(r.get("entity")) or here(r.get("other"))]
+
+
+def overlay_for(store: Store, cs: CorrectionSet, ent: Entity) -> Overlay:
     """The struck sentences and overruled verdicts on one page."""
     ov = Overlay()
-    for r in cs.for_entity(ent.spec.table, ent.key):
+    for r in for_page(store, cs, ent):
         if r["kind"] == "strike":
             ov.struck[sentence_key(r["sentence"])] = r
         elif r["kind"] == "verdict":
@@ -49,14 +62,14 @@ def overlay_for(cs: CorrectionSet, ent: Entity) -> Overlay:
 
 
 def render_current(
-    ent: Entity, cs: CorrectionSet, link: str = "/sources/{article}"
+    store: Store, ent: Entity, cs: CorrectionSet, link: str = "/sources/{article}"
 ) -> RenderedProfile:
     """The current profile with its corrections drawn on top."""
     return render_profile(
         ent.profile.get("text") or "",
         ent.row.get("profile_grounding"),
         link=link,
-        overlay=overlay_for(cs, ent),
+        overlay=overlay_for(store, cs, ent),
     )
 
 
@@ -141,7 +154,7 @@ def status(
         )
     key = (ent.spec.table, ent.key)
     if key not in cache:
-        cache[key] = render_current(ent, cs)
+        cache[key] = render_current(store, ent, cs)
     if any(u["id"] == r["id"] for u in cache[key].unmatched):
         return "look", "Needs a look: the sentence is no longer on the page"
     return "ok", "Shown on the page"
@@ -165,7 +178,7 @@ def entity_box(
 ) -> Dict[str, Any]:
     """The page's own corrections, for the box above the profile."""
     cache = {(ent.spec.table, ent.key): rp}
-    rows = [row(store, cs, r, cache) for r in cs.for_entity(ent.spec.table, ent.key)]
+    rows = [row(store, cs, r, cache) for r in for_page(store, cs, ent)]
     return {"rows": rows, "look": sum(1 for r in rows if r["tone"] == "look")}
 
 
@@ -218,7 +231,7 @@ def sentence_form(
     store: Store, cs: CorrectionSet, ent: Entity, index: int, article: str
 ) -> Optional[Dict[str, Any]]:
     """The form for one sentence: strike it, overrule the checker, move it."""
-    rp = render_current(ent, cs)
+    rp = render_current(store, ent, cs)
     if not 0 <= index < len(rp.claims):
         return None
     c = rp.claims[index]
@@ -255,7 +268,7 @@ def sentence_form(
 def page_form(store: Store, cs: CorrectionSet, ent: Entity) -> Dict[str, Any]:
     """The form for the page: rename, wrong table, split, join, and a list of
     its sentences to correct one by one (works without JavaScript)."""
-    rp = render_current(ent, cs)
+    rp = render_current(store, ent, cs)
     others = [
         e for e in store.entities.get(ent.spec.table, {}).values() if e.key != ent.key
     ]
@@ -299,7 +312,7 @@ def build_record(
     rec: Dict[str, Any] = {"kind": kind, "entity": ref, "reason": _one(form, "reason")}
     anchor = ""
     if kind in ("strike", "verdict", "heading"):
-        rp = render_current(ent, cs)
+        rp = render_current(store, ent, cs)
         try:
             c = rp.claims[int(_one(form, "c"))]
         except (ValueError, IndexError):

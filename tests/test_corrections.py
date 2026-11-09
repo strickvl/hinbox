@@ -328,3 +328,19 @@ def test_static_panel_data_says_whose_verdict_it_is(client, corr, tmp_path):  # 
     assert data["x"] == "verdict" and data["i"][A3] == "c-0001"
     js = (out / "static" / "reader.js").read_text()
     assert "your verdict, " in js and "The checker said " in js
+
+
+def test_corrections_follow_a_page_whose_key_changed(client, corr, monkeypatch):  # noqa: F811
+    """A later run can change a page's key (an organization retyped changes
+    its hashed key); its corrections are found by name and still drawn."""
+    from src.frontend import data_access
+
+    c = _index(client, FORCE_FED)
+    form = {**_sentence_form(client, c), "kind": "strike"}
+    client.post("/corrections", data=form, headers=ORIGIN)
+    rec = _lines(corr)[0]
+    rec["entity"]["key"] = "Yusuf Qadir (old key)"
+    corr.write_text(json.dumps(rec) + "\n")
+    data_access._CACHE.clear()
+    page = client.get("/people/Yusuf%20Qadir").text
+    assert "c-struck" in page and "Shown on the page" in page

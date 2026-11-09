@@ -183,7 +183,7 @@ def entity_page(
         report,
         link="/sources/{article}" + domain_query,
         show_verdicts=old is None,
-        overlay=cv.overlay_for(cs, ent) if old is None else None,
+        overlay=cv.overlay_for(store, cs, ent) if old is None else None,
     )
     counts = rp.counts()
     issues = [
@@ -336,7 +336,7 @@ def source_panel(
         text,
         ent.row.get("profile_grounding"),
         show_verdicts=old is None,
-        overlay=cv.overlay_for(cs, ent) if old is None else None,
+        overlay=cv.overlay_for(store, cs, ent) if old is None else None,
     )
     claim = (
         rp.claims[claim_index]
