@@ -95,15 +95,20 @@ def load_labels(path: str) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
 def batches(
     rows: List[Dict[str, Any]], size: int, seed: int = 0
 ) -> List[List[Dict[str, Any]]]:
-    """Each (entity, section)'s rows shuffled (fixed seed) and cut into
-    batches of ``size``: one call only offers one section's sub-headings."""
-    groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    """Each (entity, section, sub-heading list)'s rows shuffled (fixed seed)
+    and cut into batches of ``size``: one call only offers one outline's
+    sub-headings, and rows from two snapshots of a section may list
+    different ones."""
+    groups: Dict[Tuple[str, str, Tuple[str, ...]], List[Dict[str, Any]]] = {}
     for row in rows:
-        groups.setdefault((row["entity"], row["top_heading"]), []).append(row)
+        subs = tuple(_clean_heading(s) for s in row["subheadings"])
+        groups.setdefault((row["entity"], row["top_heading"], subs), []).append(row)
     out = []
     for key in sorted(groups):
         group = sorted(groups[key], key=lambda r: r["id"])
-        random.Random(f"{seed}|{key}").shuffle(group)
+        # Seeded by entity and section only, as before, so a label file with
+        # one outline per section is batched as in the 9 Nov runs
+        random.Random(f"{seed}|{key[:2]}").shuffle(group)
         out += [group[i : i + size] for i in range(0, len(group), size)]
     return out
 

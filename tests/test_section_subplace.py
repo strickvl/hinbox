@@ -204,6 +204,10 @@ def test_the_eval_scores_answers_against_gold_and_the_baseline():
     ]  # fmt: skip
     groups = subplacement.batches(rows, 8)
     assert len(groups) == 1
+    # A row from another snapshot of the section, with other sub-headings,
+    # is asked in its own batch with its own list
+    other = {**rows[0], "id": "4", "subheadings": ["A", "B"]}
+    assert len(subplacement.batches(rows + [other], 8)) == 2
     records = subplacement.score_batches(groups, _asker([]), 1)
     summary = subplacement.summarize(records)
     assert summary["right"] == 2 and summary["right_stay_gold"] == "1/1"
