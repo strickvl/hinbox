@@ -339,3 +339,17 @@ def test_a_sentence_put_back_after_an_empty_heading_is_its_own_paragraph():
     assert out.endswith(f"## Later\n\nHe refused food for several weeks.^[{A3}]\n")
     again, states, _ = _apply(out, [rec], done=["c-0001"])
     assert again == out and states["c-0001"] == ("held", "")
+
+
+def test_your_words_stay_literal_in_the_tables():
+    from src.frontend.profile_render import Overlay, render_profile
+
+    rec = _strike(FORCE_FED, [A3], "# He was *not* force-fed.")
+    text, _, _ = _apply(TEXT, [rec])
+    assert "\\# He was \\*not\\* force-fed." in text
+    again, states, _ = _apply(text, [rec], done=["c-0001"])
+    assert again == text and states["c-0001"] == ("held", "")
+    rp = render_profile(text, overlay=Overlay(struck={"x": rec}))
+    assert "# He was *not* force-fed." in rp.html and "<em>" not in rp.html
+    mine = [c for c in rp.claims if c.correction == "mine"]
+    assert [c.text for c in mine] == ["# He was *not* force-fed."]

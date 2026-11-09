@@ -49,12 +49,22 @@ from src.utils.corrections import (
     _report_dir,
     last_states,
     load_corrections,
+    md_literal,
+    md_plain,
     resolve_ref,
-    sentence_key,
 )
+from src.utils.corrections import sentence_key as _raw_key
 from src.utils.entity_keys import KEY_FUNCS, NAME_FIELDS
 
 VERSION_TRIGGER = "corrections:"  # a profile version made by this pass
+
+
+def sentence_key(text: str) -> str:
+    """``sentence_key()`` of the words as written: a historian's sentence is
+    stored with Markdown escaped (``md_literal()``), so both sides of every
+    comparison drop the escapes first."""
+    return _raw_key(md_plain(text))
+
 
 _ACTIVE: Optional[CorrectionSet] = None
 _CURRENT: contextvars.ContextVar = contextvars.ContextVar("corrections", default=None)
@@ -290,7 +300,8 @@ def _cut_claim(text: str, markers: List[Any], c: Any, put: str = "") -> str:
 
 
 def _yours(rec: Dict[str, Any]) -> str:
-    return f"{' '.join(rec['replacement'].split())}^[{rec['replacement_cites']}]"
+    words = md_literal(" ".join(rec["replacement"].split()))
+    return f"{words}^[{rec['replacement_cites']}]"
 
 
 def _original(rec: Dict[str, Any]) -> str:

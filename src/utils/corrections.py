@@ -86,6 +86,29 @@ def sentence_key(text: str) -> str:
     return " ".join(CITATION_RE.sub("", text or "").split()).strip()
 
 
+# A historian's sentence goes into a stored profile as literal text: the
+# characters Markdown would read are escaped, so "*not*" stays "*not*" and a
+# sentence starting "# " is not a heading
+_MD_ANY = re.compile(r"([\\`*_\[\]])")
+_MD_START = re.compile(r"^(\s*)([#>+-]|\d+(?=[.)]))")
+_MD_ESCAPED = re.compile(r"\\([\\`*_\[\]#>+\-.)])")
+
+
+def md_literal(text: str) -> str:
+    """``text`` escaped so Markdown shows it as written."""
+    out = _MD_ANY.sub(r"\\\1", text)
+    m = _MD_START.match(out)
+    if m and m.group(2)[0].isdigit():
+        end = m.end()
+        return out[:end] + "\\" + out[end:]
+    return _MD_START.sub(r"\1\\\2", out, count=1)
+
+
+def md_plain(text: str) -> str:
+    """``md_literal()`` undone: the words as the historian wrote them."""
+    return _MD_ESCAPED.sub(r"\1", text)
+
+
 def entity_ref(
     table: str, key: str, name: str, article_ids: Iterable[str]
 ) -> Dict[str, Any]:
