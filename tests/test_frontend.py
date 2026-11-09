@@ -351,7 +351,7 @@ def test_demo_corpus_renders(tmp_path, monkeypatch):
 def test_static_export_writes_linked_files(client, tmp_path):
     """`export_site()` writes every page with relative links and no server forms."""
     import re
-    from urllib.parse import unquote
+    from urllib.parse import quote, unquote
 
     from src.frontend.export import export_site, file_for
 
@@ -362,6 +362,10 @@ def test_static_export_writes_linked_files(client, tmp_path):
     assert file_for("/people/a%2Fb?version=2") == "people/versions/a%2Fb.v2.html"
     assert file_for("/people/a_b") == "people/a_b.html"  # never the same file
     assert file_for("/people/.x") == "people/%2Ex.html"
+    assert file_for("/places/Guant%C3%A1namo") == "places/Guantánamo.html"
+    long_ = file_for("/events/" + quote("ب" * 150))  # 300 bytes before the cut
+    assert len(long_.split("/")[1].encode()) < 200 and "~" in long_
+    assert long_ != file_for("/events/" + quote("ب" * 151))
     page = (out / "people" / "Yusuf Qadir.html").read_text()
     assert 'data-static="1"' in page and 'data-root="../"' in page
     assert 'href="/' not in page and 'action="/' not in page

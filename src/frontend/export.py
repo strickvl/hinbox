@@ -20,6 +20,7 @@ articles may be shared.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import posixpath
@@ -36,7 +37,22 @@ from .data_access import SPECS, TABLES, load_store
 
 _LINK = re.compile(r'(href|src|action)="(/[^"]*)"')
 _SKIP = ("/search", "/panel", "/static/")
-_NAME_SAFE = " -_,'()&"
+# Characters a file name can't hold safely (path, URL or Windows trouble);
+# "%" so the encoding can be undone, "~" so only a cut name has one
+_UNSAFE = re.compile(r'[%/\\?#:*"<>|~\x00-\x1f]')
+_MAX_NAME_BYTES = 180  # well under the usual 255-byte limit, with room for ".vNN.html"
+
+
+def safe_name(key: str) -> str:
+    """A file name for ``key``: different keys never get the same name."""
+    name = _UNSAFE.sub(lambda m: "%{:02X}".format(ord(m.group())), key)
+    if name.startswith("."):
+        name = "%2E" + name[1:]
+    if len(name.encode("utf-8")) > _MAX_NAME_BYTES:
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+        cut = name.encode("utf-8")[:120].decode("utf-8", "ignore")
+        name = f"{cut}~{digest}"
+    return name
 
 
 def page_url(raw: str) -> Optional[str]:
@@ -64,11 +80,8 @@ def file_for(url: str) -> str:
     first, rest = segs[0], [unquote(s) for s in segs[1:]]
     if not rest:
         return f"{first}.html"
-    # Percent-encode everything but plain name characters, so two keys never
-    # share a file ("A/B" is "A%2FB", "A_B" stays "A_B") and no name starts with "."
-    name = quote("/".join(rest), safe=_NAME_SAFE)
-    if name.startswith("."):  # quote() never encodes "."
-        name = "%2E" + name[1:]
+    # "A/B" is "A%2FB", "A_B" stays "A_B"; see safe_name()
+    name = safe_name("/".join(rest))
     version = parse_qs(parts.query).get("version", [""])[0]
     if version:  # its own folder, so "X?version=2" can't meet a key "X.v2"
         return f"{first}/versions/{name}.v{version}.html"
