@@ -310,3 +310,20 @@ def test_templates_exist():
         "sources",
     ]:
         assert os.path.exists(os.path.join(here, f"{name}.html"))
+
+
+def test_demo_corpus_renders(tmp_path, monkeypatch):
+    """`just demo-reader`'s made-up corpus loads and shows every kind of mark."""
+    from scripts.demo_reader_data import build
+
+    build(str(tmp_path))
+    monkeypatch.setenv("HINBOX_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("HINBOX_ARTICLES_PATH", str(tmp_path / "articles.parquet"))
+    data_access._CACHE.clear()
+    from src.frontend.app import app
+
+    c = TestClient(app)
+    page = c.get("/people/Yusuf%20Qadir").text
+    for cls in ("v-partial", "v-not_supported", "v-unchecked"):
+        assert cls in page
+    assert c.get("/").status_code == 200
