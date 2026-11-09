@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from markupsafe import Markup
 
+from src.utils.grounding_passages import find_passage, long_enough
+
 from .data_access import SPECS, TABLES, Entity, Source, Store, pretty_type, to_date
 from .profile_render import (
     SEVERITY,
@@ -296,6 +298,34 @@ def _highlight(paragraph: str, needle: str) -> Markup:
     return Markup(esc)
 
 
+def _mark_passages(paragraphs: List[str], passages: List[str]) -> List[Markup]:
+    """The panel's paragraphs, escaped, with each stored passage marked where
+    it appears. Passages are looked up in the paragraphs joined by line
+    breaks, so one that runs over a paragraph break is marked in both."""
+    joined = "\n".join(paragraphs)
+    spans: List[Tuple[int, int]] = []
+    for passage in passages:
+        span = find_passage(joined, passage) if long_enough(passage) else None
+        if span and not any(s < span[1] and span[0] < e for s, e in spans):
+            spans.append(span)
+    out: List[Markup] = []
+    offset = 0
+    for para in paragraphs:
+        end = offset + len(para)
+        parts, last = [], 0
+        for s, e in sorted(spans):
+            s, e = max(s, offset) - offset, min(e, end) - offset
+            if s >= e:
+                continue
+            parts.append(html.escape(para[last:s]))
+            parts.append(f'<mark class="passage">{html.escape(para[s:e])}</mark>')
+            last = e
+        parts.append(html.escape(para[last:]))
+        out.append(Markup("".join(parts)))
+        offset = end + 1
+    return out
+
+
 def named_in(store: Store, article_id: str) -> List[Dict[str, Any]]:
     """The entities linked to a source, grouped by table."""
     groups = []
@@ -331,13 +361,18 @@ def source_panel(
     )
     verdict = reason = ""
     quote = ""
+    passages: List[str] = []
     if claim:
         quote = plain_claim(claim.text)
         if rp.checked:
             verdict = claim.verdicts.get(article_id, "unchecked")
             reason = claim.reasons.get(article_id, "")
-    needle = quote.rstrip(".,;: ")
-    paras = [_highlight(p, needle) for p in src.paragraphs()]
+            passages = claim.passages.get(article_id, [])
+    if passages:
+        paras = _mark_passages(src.paragraphs(), passages)
+    else:
+        needle = quote.rstrip(".,;: ")
+        paras = [_highlight(p, needle) for p in src.paragraphs()]
     return {
         "source": src,
         "n": rp.order.index(article_id) + 1 if article_id in rp.order else None,
@@ -346,7 +381,8 @@ def source_panel(
         "verdict_label": VERDICT_LABELS.get(verdict, verdict),
         "reason": reason,
         "paragraphs": paras,
-        "highlighted": any("<mark>" in p for p in paras),
+        "highlighted": any("<mark" in p for p in paras),
+        "passage_marked": any('<mark class="passage">' in p for p in paras),
         "old_version": old is not None,
         "named": named_in(store, article_id),
         "ent": ent,

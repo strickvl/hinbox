@@ -9,12 +9,15 @@ per article. The calls run in a thread pool; the LLM concurrency limiters in
 back to the entity dicts on the calling thread.
 """
 
+from collections import Counter
 from typing import Any, Dict, List, Tuple
 
 from src.engine.article_processor import ArticleProcessor
 from src.logging_config import log
 from src.utils.grounding import (
     COUNTED_LEVELS,
+    GROUNDING_MAX_ARTICLE_CHARS,
+    _sha,
     claim_counts,
     describe_claim_counts,
     finish_report,
@@ -22,6 +25,7 @@ from src.utils.grounding import (
     grounding_judge,
     judge_pending,
     judged_by,
+    passages_from_reasoning,
     plan_grounding,
 )
 from src.utils.quality_controls import CITATION_RE
@@ -34,6 +38,18 @@ def _display_name(entity_key: Any, entity_data: Dict[str, Any]) -> str:
     if not name:
         name = entity_key[0] if isinstance(entity_key, tuple) else entity_key
     return str(name)
+
+
+def article_texts_from_rows(
+    rows: List[Dict], processor: ArticleProcessor
+) -> Dict[str, str]:
+    """Article id -> text, as the grounding judge is given it."""
+    article_texts: Dict[str, str] = {}
+    for i, row in enumerate(rows):
+        info = processor.prepare_article_info(row, i)
+        if info["id"] and info["content"]:
+            article_texts[info["id"]] = info["content"]
+    return article_texts
 
 
 def run_profile_grounding_postprocess(
@@ -65,12 +81,7 @@ def run_profile_grounding_postprocess(
     ``profiles_with_problems``: profiles with any claim that isn't plainly
     supported. A mean grounding score near 1 can hide dozens of these.
     """
-    # Build article_id -> content map from rows
-    article_texts: Dict[str, str] = {}
-    for i, row in enumerate(rows):
-        info = processor.prepare_article_info(row, i)
-        if info["id"] and info["content"]:
-            article_texts[info["id"]] = info["content"]
+    article_texts = article_texts_from_rows(rows, processor)
 
     counts = {
         "verified": 0,
@@ -161,3 +172,55 @@ def stored_claim_totals(entities: Dict[str, Dict]) -> Dict[str, int]:
         # checks that failed (server gone, bad reply): asked again next run
         "profiles_with_failed_checks": failed,
     }
+
+
+def backfill_passages(
+    entities: Dict[str, Dict],
+    article_texts: Dict[str, str],
+    max_article_chars: int = GROUNDING_MAX_ARTICLE_CHARS,
+) -> Counter:
+    """Give stored verdicts that have no ``passages`` the passages their
+    reasoning quotes, found word for word in the article, with no model call.
+
+    Only verdicts from an article checked against the same text as now
+    (its stored ``text_hash``) get one: if the article changed, the words the
+    judge quoted may no longer be where it saw them. Verdicts, reasoning and
+    hashes are left as they are, so the next run reuses the reports as
+    before. Returns counts: ``claims``, ``had_passages``, ``added``,
+    ``no_quote_found`` (the reasoning quotes nothing that is in the article),
+    ``article_changed`` (or missing), and ``added_<verdict>`` per verdict.
+    """
+    counts: Counter = Counter()
+    hashes: Dict[str, str] = {}
+    for entity_dict in entities.values():
+        for entity_data in entity_dict.values():
+            report = entity_data.get("profile_grounding")
+            if not isinstance(report, dict):
+                continue
+            checked = {
+                s.get("article_id"): s.get("text_hash")
+                for s in report.get("sources") or []
+                if s.get("status") == "checked"
+            }
+            for v in report.get("verifications") or []:
+                counts["claims"] += 1
+                if v.get("passages"):
+                    counts["had_passages"] += 1
+                    continue
+                aid = v.get("article_id") or ""
+                seen = (article_texts.get(aid) or "")[:max_article_chars]
+                if aid not in hashes:
+                    hashes[aid] = _sha(seen) if seen else ""
+                if not seen or checked.get(aid) != hashes[aid]:
+                    counts["article_changed"] += 1
+                    continue
+                found = passages_from_reasoning(
+                    seen, v.get("reasoning"), v.get("claim") or ""
+                )
+                if not found:
+                    counts["no_quote_found"] += 1
+                    continue
+                v["passages"] = found
+                counts["added"] += 1
+                counts[f"added_{v.get('support_level')}"] += 1
+    return counts

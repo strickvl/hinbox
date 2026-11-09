@@ -77,7 +77,17 @@ def _report() -> Dict[str, Any]:
         )
         if "shipping" in c["claim"] and c["article_id"] == A2:
             level, reason = "supported", ""
-        out.append(_verif(c["article_id"], c["claim"], level, reason))
+        v = _verif(c["article_id"], c["claim"], level, reason)
+        if "force-fed" in c["claim"]:
+            v["passages"] = ["More than 100 prisoners joined a hunger strike"]
+        if "shipping" in c["claim"]:
+            v["passages"] = {
+                # runs over a line break of the article
+                A1: ["arrested Yusuf Qadir in a dawn raid.\nNeighbours said Qadir"],
+                # not in the article: never marked
+                A2: ["He worked for a shipping firm in Aden"],
+            }[c["article_id"]]
+        out.append(v)
     return {"verifications": out, "model": "anthropic/claude-haiku-5-5"}
 
 
@@ -243,6 +253,29 @@ def test_panel_shows_verdict_reason_and_text(client):
         "/panel", params={"t": "people", "k": "Miriam Hale", "a": A2, "c": 0}
     )
     assert "<mark>Among them was Yusuf Qadir, a made-up detainee</mark>" in r.text
+
+
+def test_panel_marks_the_passage_the_checker_quoted(client):
+    claims, _ = parse_claims(TEXT)
+    idx = next(c.index for c in claims if "force-fed" in c.text)
+    r = client.get(
+        "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A3, "c": idx}
+    )
+    assert (
+        '<mark class="passage">More than 100 prisoners joined a hunger strike</mark>'
+        in r.text
+    )
+    assert "what it compared the sentence with" in r.text
+    idx = next(c.index for c in claims if "shipping" in c.text)
+    r = client.get(
+        "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A1, "c": idx}
+    )
+    assert '<mark class="passage">arrested Yusuf Qadir in a dawn raid.</mark>' in r.text
+    assert '<mark class="passage">Neighbours said Qadir</mark>' in r.text
+    r = client.get(
+        "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A2, "c": idx}
+    )
+    assert "<mark" not in r.text and "quoted nothing from this source" in r.text
 
 
 def test_panel_for_an_old_version_quotes_that_version(client):
