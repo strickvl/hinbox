@@ -221,6 +221,8 @@ Read the profiles at http://localhost:5001. The server listens on 127.0.0.1 only
 
 On an entity page, a sentence the grounding checker did not fully confirm is underlined (amber: partly supported, red: not supported, grey dots: not checked), and the line above the profile counts them and names the checker with its known miss rate. Click a citation number to read that source beside the profile. Point the reader at another run with `HINBOX_OUTPUT_DIR=<entities folder> just frontend`, or try it on a made-up corpus with `just demo-reader`.
 
+To share a run without running a server, `just export-site <folder>` writes the reader as plain HTML files that you can open from disk, zip or put on any web host. Search works in the browser. The list filters are left out, and a citation opens the source page instead of the side panel. On the 9 Nov 150-article run this took about 1.5 minutes and wrote 3,562 pages (122 MB, about half of it older profile versions). The folder holds the articles' text, so share it only where the articles may be shared.
+
 ### Traces of every model call
 Every run records each pipeline step and each model call (the prompt sent, the reply or tool-call arguments, any reasoning the model returned, token counts, finish reason) as OpenTelemetry spans. One trace per article: `article #3` → `extraction` → `extract.people` → `chat qwen3.6:35b`, and `merge.people` → `match_check` → `chat …`, with each NEW/MERGE/SKIP decision as an event on its merge step.
 

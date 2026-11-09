@@ -63,6 +63,7 @@ This document helps contributors work effectively in this repository.
 - Process articles: `just process --domain <name> --limit N`
 - Start frontend: `just frontend` (http://localhost:5001)
 - Demo reader on made-up data: `just demo-reader` (`scripts/demo_reader_data.py`)
+- Static copy of the reader: `just export-site <out>` (`src/frontend/export.py`)
 - Trace viewer: `just phoenix` (http://localhost:6006), then run with `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:6006/v1/traces`
 - Domain management: `just domains` / `just init <name>`
 - Evaluate a model on the gold sets: `just eval <relevance|merge> --model <model>`; `just eval show` prints the scoreboard (`--grid`: latest score per model × prompt file); `--prompt-variant <name>` scores a variant on any model

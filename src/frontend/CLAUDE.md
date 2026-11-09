@@ -17,6 +17,8 @@ it never calls a model. Run it with `just frontend`.
 | `templates/_panel.html` | The source panel fragment (`/panel`), also shown under a paragraph on narrow screens |
 | `templates/_macros.html` | `entity_row`, `flags`, `kind_pill` (import them `with context`, or `u()` is undefined) |
 | `static/reader.js` | Opens sources in the panel, filters marks, folds contents on phones |
+| `export.py` | `just export-site <out>`: the static copy. Renders every page through the app, rewrites links to relative files, writes `static/search-index.js` |
+| `static/static-search.js` | Search in the static copy (loaded only there) |
 | `static/styles.css` | Tokens for light and dark, all layout |
 
 ## Rules worth keeping
@@ -39,6 +41,10 @@ it never calls a model. Run it with `just frontend`.
   Navigation, search, lists, "appears with" and source pages loop over it.
 - **Sources, not articles.** A source has a `kind` ("News article" today) so
   books, reports and translations can be added without a new page.
+- **The static copy** sets the template global `static_site`. A template that
+  adds a form or a link needing the server (a query other than `?version=`)
+  must hide it when `static_site` is set, or the export test will show a
+  broken link.
 - The server listens on 127.0.0.1 unless `HINBOX_FRONTEND_HOST` is set.
 - The repository is public: tests use made-up tables only. Never commit
   screenshots or fixtures from a real run. README screenshots come from

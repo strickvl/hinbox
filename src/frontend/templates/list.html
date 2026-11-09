@@ -3,7 +3,7 @@
 {% block title %}{{ spec.label }}{% endblock %}
 {% block content %}
 <div class="page-head"><h1>{{ spec.label }}</h1><span class="muted num">{{ rows|length }} of {{ total }} shown</span></div>
-<form class="filters" method="get" action="/{{ spec.table }}">
+{% if not static_site %}<form class="filters" method="get" action="/{{ spec.table }}">
   {% if domain != 'guantanamo' %}<input type="hidden" name="domain" value="{{ domain }}">{% endif %}
   <label>Name<input type="text" name="q" value="{{ f.q }}" placeholder="Filter by name"></label>
   <label>Type<select name="type"><option value="">All types</option>{% for t, n in types %}<option value="{{ t }}" {% if t == f.type %}selected{% endif %}>{{ t }} ({{ n }})</option>{% endfor %}</select></label>
@@ -12,6 +12,6 @@
   <label class="check"><input type="checkbox" name="flagged" value="1" {% if f.flagged %}checked{% endif %}> With checker marks</label>
   <button class="btn" type="submit">Apply</button>
   {% if f.q or f.type or f.kind or f.flagged %}<a class="btn ghost" href="{{ u('/' ~ spec.table) }}">Clear</a>{% endif %}
-</form>
+</form>{% endif %}
 <ul class="elist">{% for r in rows %}{{ entity_row(r) }}{% else %}<li class="empty">No {{ spec.label|lower }} match these filters.</li>{% endfor %}</ul>
 {% endblock %}

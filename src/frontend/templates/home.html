@@ -5,7 +5,7 @@
 <section class="home-hero">
   <h1>Find a person, organization, place or event</h1>
   <p>{{ n_sources }} sources read. Every profile sentence cites one of them. A checker compares each sentence with its source, and the pages mark what it could not confirm.</p>
-  <form class="search" action="/search" method="get" role="search">
+  <form class="search" action="/search" method="get" role="search"{% if static_site %} data-static-search{% endif %}>
     {% if domain != 'guantanamo' %}<input type="hidden" name="domain" value="{{ domain }}">{% endif %}
     <input type="search" name="q" placeholder="Search by name or other name…" aria-label="Search everything" autofocus>
   </form>

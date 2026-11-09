@@ -30,6 +30,10 @@ frontend:
 
 alias web := frontend
 
+# The reader as a static site in <out> (plain HTML, no server; holds article text)
+export-site out *args:
+    uv run python -m src.frontend.export --out {{out}} {{args}}
+
 # The reader on a small made-up corpus (data/demo), for trying it without a run
 demo-reader:
     uv run python -m scripts.demo_reader_data data/demo
