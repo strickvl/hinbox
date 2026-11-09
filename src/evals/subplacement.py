@@ -1,6 +1,6 @@
 """Score which sub-heading a model files a section's new sentences under.
 
-``just eval subplacement --model <m> --labels <file> [--entities-dir <dir>]``
+``just eval subplacement --model <m> --labels <file>``
 reads hand labels, one row per sentence::
 
     {"entity": "Barack Obama", "entity_type": "people", "kind": "government",
@@ -19,16 +19,12 @@ leaves the sentence at the top of the section: that is the best the step in
 Why: in the 9 Nov 150-article local run 46 of 55 misplaced sentences were
 under the right top-level heading but the wrong sub-heading (or above the
 sub-headings). A rerun takes 6 hours and its hand check swings from run to
-run; here every approach sees the same sentences in the same batches.
+run; here every run sees the same sentences in the same batches.
 
-Approaches (``--placement-approaches``):
-
-- ``names``: the sub-headings by name alone.
-- ``examples``: each sub-heading with the first words of the first cited
-  sentence under it in the entity's profile (``section_subplace.describe()``,
-  the row's own sentence skipped), read from ``--entities-dir``. This is
-  what the pipeline shows for profiles split before the split's notes were
-  stored.
+The model is shown the row's sub-headings by name, as the pipeline shows
+them. Showing each with the first sentence under it in the profile was tried
+on the 9 Nov labels and did worse on both Qwen and Luna (see
+``section_subplace.py``).
 
 The baseline is how often the run had already put the row under its gold
 place (``placed``). Records hold sentences from articles: they stay under
@@ -48,11 +44,10 @@ from src.engine.profile_create import type_tag
 from src.engine.section_place import STAY
 from src.engine.section_place import make_asker as place_asker
 from src.engine.section_split import _clean_heading
-from src.engine.section_subplace import ask_subheadings, describe
+from src.engine.section_subplace import ask_subheadings
 from src.logging_config import console
 from src.utils.cache_utils import sha256_text
 
-APPROACHES = ("names", "examples")
 STAY_GOLDS = ("(above)", "(none fits)")
 
 
@@ -97,28 +92,6 @@ def load_labels(path: str) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     return rows, dict(skipped)
 
 
-def load_profiles(entities_dir: Optional[str]) -> Dict[str, str]:
-    """Profile text by entity name, from ``{entities_dir}/people.parquet``
-    and the other tables."""
-    import pyarrow.parquet as pq
-
-    from src.evals.profile_create import ENTITY_TABLES, _entity_name
-
-    texts: Dict[str, str] = {}
-    for table in ENTITY_TABLES if entities_dir else ():
-        path = os.path.join(entities_dir, f"{table}.parquet")
-        if not os.path.exists(path):
-            continue
-        for row in pq.read_table(path).to_pylist():
-            profile = row.get("profile")
-            if isinstance(profile, str):
-                profile = json.loads(profile or "{}")
-            text = (profile or {}).get("text")
-            if _entity_name(row) and text:
-                texts.setdefault(_entity_name(row), text)
-    return texts
-
-
 def batches(
     rows: List[Dict[str, Any]], size: int, seed: int = 0
 ) -> List[List[Dict[str, Any]]]:
@@ -135,21 +108,8 @@ def batches(
     return out
 
 
-def _described(
-    approach: str, batch: List[Dict[str, Any]], profiles: Dict[str, str]
-) -> List[Tuple[str, str]]:
-    first = batch[0]
-    subs = [_clean_heading(s) for s in first["subheadings"]]
-    if approach == "names":
-        return [(s, "") for s in subs]
-    text = profiles.get(first["entity"], "")
-    return describe(text, subs, {}, [r["sentence"] for r in batch])
-
-
 def score_batches(
-    approach: str,
     groups: List[List[Dict[str, Any]]],
-    profiles: Dict[str, str],
     ask,
     workers: int = 4,
 ) -> List[Dict[str, Any]]:
@@ -158,7 +118,8 @@ def score_batches(
         first = batch[0]
         try:
             answers, error = ask_subheadings(
-                [r["sentence"] for r in batch], _described(approach, batch, profiles),
+                [r["sentence"] for r in batch],
+                [(_clean_heading(h), "") for h in first["subheadings"]],
                 _clean_heading(first["top_heading"]), type_tag(first["entity_type"]),
                 first["entity"], ask,
             ), ""  # fmt: skip
@@ -222,35 +183,22 @@ def run_subplacement(args: Any, parser: Any, eval_dir: str) -> None:
     if not rows:
         parser.error(f"No sure sub-heading labels in {args.labels}")
     console.print(f"{len(rows)} sure rows; left out: {skipped or 'none'}")
-    approaches = [a.strip() for a in args.placement_approaches.split(",")]
-    if approaches == ["reorganise", "classify"]:  # the placement eval's default
-        approaches = list(APPROACHES)
-    for approach in approaches:
-        if approach not in APPROACHES:
-            parser.error(f"Unknown sub-heading approach {approach!r}: {APPROACHES}")
-    profiles = load_profiles(args.entities_dir) if "examples" in approaches else {}
-    missing = {r["entity"] for r in rows} - set(profiles)
-    if "examples" in approaches and missing:
-        parser.error(f"No profile in --entities-dir for: {sorted(missing)}")
     configure_llm_concurrency(
         cloud_in_flight=args.workers, local_in_flight=args.workers
     )
     local = args.model.startswith("ollama/")
     groups = batches(rows, args.batch, args.seed)
-    for approach in approaches:
-        ask = place_asker(args.model, local, step=f"eval.subplacement.{approach}")
-        console.print(
-            f"Placing {len(rows)} sentences with {approach} on {args.model} …"
-        )
-        records = score_batches(approach, groups, profiles, ask, args.workers)
-        summary = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "task": "subplacement", "dataset": "subplacement", "model": args.model,
-            "approach": approach, "batch": args.batch, "seed": args.seed,
-            **summarize(records),
-        }  # fmt: skip
-        out = save_run(eval_dir, summary, records)
-        console.print(
-            json.dumps({k: v for k, v in summary.items() if k != "timestamp"}, indent=1)
-        )
-        console.print(f"Answers: {out}")
+    ask = place_asker(args.model, local, step="eval.subplacement")
+    console.print(f"Placing {len(rows)} sentences on {args.model} …")
+    records = score_batches(groups, ask, args.workers)
+    summary = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "task": "subplacement", "dataset": "subplacement", "model": args.model,
+        "approach": "names", "batch": args.batch, "seed": args.seed,
+        **summarize(records),
+    }  # fmt: skip
+    out = save_run(eval_dir, summary, records)
+    console.print(
+        json.dumps({k: v for k, v in summary.items() if k != "timestamp"}, indent=1)
+    )
+    console.print(f"Answers: {out}")

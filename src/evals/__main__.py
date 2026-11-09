@@ -9,8 +9,7 @@ Examples::
     just eval profile-create --model openai/gpt-6-luna --limit 40 --grounding
     just eval profile-update --rescore <run file>   # re-score saved profiles
     just eval placement --model ollama/local-qwen36-32k --split dev
-    just eval subplacement --model ollama/local-qwen36-32k --labels <file> \\
-        --placement-approaches names,examples --entities-dir <run>/entities
+    just eval subplacement --model ollama/local-qwen36-32k --labels <file>
     just eval show                       # print the scoreboard
     just eval show --grid                # latest score per model and prompt
 """
@@ -296,7 +295,7 @@ def main() -> None:
         "--placement-approaches",
         default="reorganise,classify",
         help="comma-separated: reorganise (the reorganise prompt), classify "
-        "(src/engine/section_place.py); subplacement: names, examples",
+        "(src/engine/section_place.py)",
     )
     parser.add_argument(
         "--claim-labels",

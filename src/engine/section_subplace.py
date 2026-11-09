@@ -23,15 +23,18 @@ right after its last citation (``opening_sort._put()``), and undoes a move
 if any sentence or any citation's claim text would change. A piece that
 leans on the sentence before it ("However, ...", "As of ...") stays.
 
-The sub-headings are shown with what they cover when the split's notes were
-stored (``SUB_NOTES_KEY``), else with the start of the first cited sentence
-under each (``describe()``), so "Background" style names that say little
-still get some context.
+The sub-headings are shown by name alone. On 91 hand-labelled sentences
+from that run (``just eval subplacement``, 2 seeds), whose run had 46 under
+the right place, filing them this way would leave 63 and 73 right with
+Qwen and 70 and 66 with Luna. Showing each sub-heading with the first
+sentence under it did worse on both (Qwen 53 and 58, Luna 65 and 63): that
+sentence was itself misfiled often enough to mislead, and all 7 of Mary
+Spears' subpoena sentences followed one. Luna's misses are mostly sentences
+that belong above the sub-headings that it forces into one.
 
 ``HINBOX_SUB_PLACE``: ``on``, ``off``, ``local`` (local models only).
 """
 
-import json
 import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -42,8 +45,6 @@ logger = get_logger("engine.section_subplace")
 
 SUB_PLACE_ENV = "HINBOX_SUB_PLACE"
 SUB_PLACE_DEFAULT = "on"
-SUB_NOTES_KEY = "sub_notes_json"  # sub-heading -> what the split said it covers
-EXAMPLE_WORDS = 25
 
 Ask = Callable[[List[Dict[str, str]]], Any]
 
@@ -103,39 +104,6 @@ def heading_at(text: str, pos: int) -> Tuple[Optional[str], Optional[str]]:
     return top, sub
 
 
-def _own_text(text: str, heading: str) -> str:
-    from src.engine.profile_edits import _section_end
-
-    words = re.escape(heading)
-    head = re.search(rf"^#{{1,6}}[ \t]+{words}[ \t]*$", text, re.MULTILINE)
-    end = _section_end(text, heading, own=True)
-    return text[head.end() : end] if head and end is not None else ""
-
-
-def describe(
-    text: str, subs: List[str], notes: Dict[str, str], skip: List[str] = ()
-) -> List[Tuple[str, str]]:
-    """Each sub-heading with what it covers: the split's stored note, else
-    the first words of the first cited piece under it (not one of ``skip``,
-    the sentences being asked about)."""
-    from src.engine.section_split import _norm, unit_spans
-
-    skipped = {_norm(s) for s in skip}
-    out = []
-    for sub in subs:
-        if notes.get(sub):
-            out.append((sub, notes[sub]))
-            continue
-        units, _, _ = unit_spans(_own_text(text, sub), 0, by_line=True)
-        first = next((u for u in units if _norm(u) not in skipped), "")
-        words = re.sub(r"\^\[[^\]]*\]", "", " ".join(first.split())).split()
-        example = " ".join(words[:EXAMPLE_WORDS]) + (
-            " …" if len(words) > EXAMPLE_WORDS else ""
-        )
-        out.append((sub, f'for example "{example}"' if example else ""))
-    return out
-
-
 def ask_subheadings(
     sentences: List[str],
     described: List[Tuple[str, str]],
@@ -189,7 +157,6 @@ def place_new_subs(
     entity_type: str,
     entity_name: str,
     ask: Ask,
-    notes: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     """``new`` with the cited pieces an update added moved under the
     sub-heading the model files them under, and a report (``status``:
@@ -210,7 +177,7 @@ def place_new_subs(
     try:
         for top, pieces in asked.items():
             texts = [p for p, _ in pieces]
-            described = describe(new, sections[top], notes or {}, texts)
+            described = [(sub, "") for sub in sections[top]]
             answers = ask_subheadings(
                 texts, described, top, entity_type, entity_name, ask
             )
@@ -234,14 +201,6 @@ def place_new_subs(
             moved[key] = moved.get(key, 0) + 1
     status = "done" if moved else "kept"
     return out, {**report, "status": status, "moved": moved, "refused": refused}
-
-
-def stored_notes(profile: Dict[str, Any]) -> Dict[str, str]:
-    try:
-        notes = json.loads(profile.get(SUB_NOTES_KEY) or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return notes if isinstance(notes, dict) else {}
 
 
 def subplace_profile(
@@ -270,7 +229,6 @@ def subplace_profile(
     new_text, report = place_new_subs(
         old_text, text, entity_type, entity_name,
         ask or make_asker(model, local, step="profile.section_subplace"),
-        stored_notes(profile),
     )  # fmt: skip
     logger.info(
         f"Sub-heading placement for {entity_name}: {report['status']} "

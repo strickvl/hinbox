@@ -15,14 +15,11 @@ from typing import Any, Callable, Dict, List
 from src.engine import section_place
 from src.engine.opening_sort import _claims
 from src.engine.section_place import STAY, Placement, Placements
-from src.engine.section_split import _keep_notes, _sentences
+from src.engine.section_split import _sentences
 from src.engine.section_subplace import (
-    SUB_NOTES_KEY,
-    describe,
     heading_at,
     outline,
     place_new_subs,
-    stored_notes,
     sub_place_enabled,
     subplace_profile,
 )
@@ -146,25 +143,13 @@ def test_the_outline_and_where_a_position_sits():
     assert heading_at(OLD, OLD.index("fights")) == ("Cases and decisions", None)
 
 
-def test_sub_headings_are_described_by_stored_notes_or_their_first_sentence():
-    subs = ["Guantanamo detention policy", "Military commissions"]
-    got = dict(describe(OLD, subs, {"Military commissions": "the war court"}))
-    assert got["Military commissions"] == "the war court"
-    assert got["Guantanamo detention policy"].startswith('for example "He signed')
-    assert "^[" not in got["Guantanamo detention policy"]
-    skip = ["He signed an order to close the prison in 2009.^[a1]"]
-    assert dict(describe(OLD, subs, {}, skip))["Guantanamo detention policy"] == ""
-
-
-def test_the_split_stores_what_each_new_sub_heading_covers():
-    reports = [
-        {"status": "split", "covers": {"Military commissions": "the war court"}},
-        {"status": "refused", "covers": {"Gone": "x"}},
-    ]
-    profile = {SUB_NOTES_KEY: json.dumps({"Old heading": "dropped"})}
-    out = _keep_notes(profile, OLD, reports)
-    assert stored_notes(out) == {"Military commissions": "the war court"}
-    assert stored_notes({SUB_NOTES_KEY: "not json"}) == {}
+def test_sub_headings_are_offered_by_name_alone():
+    new = _add(OLD, "fights.^[a1]", "Trump revoked the closure order.^[a3]")
+    seen: List[Any] = []
+    place_new_subs(OLD, new, "person", "Obama", _asker(seen))
+    listed = seen[0][0]["content"]
+    assert "- Guantanamo detention policy\n" in listed
+    assert "He signed an order" not in listed
 
 
 def test_only_reorganised_profiles_and_the_setting(monkeypatch):
@@ -219,7 +204,7 @@ def test_the_eval_scores_answers_against_gold_and_the_baseline():
     ]  # fmt: skip
     groups = subplacement.batches(rows, 8)
     assert len(groups) == 1
-    records = subplacement.score_batches("names", groups, {}, _asker([]), 1)
+    records = subplacement.score_batches(groups, _asker([]), 1)
     summary = subplacement.summarize(records)
     assert summary["right"] == 2 and summary["right_stay_gold"] == "1/1"
     assert summary["baseline"] == "1/3" and summary["after_step"] == "2/3"

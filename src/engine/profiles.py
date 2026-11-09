@@ -765,7 +765,7 @@ def update_profile(
     # The rewrite and fact-list updaters build a new dict: keep the marker
     # that stops a second reorganise and the sizes refused steps wait on
     keys = ("reorganised", "reorganise_refused_chars", "split_refused_json")
-    for key in keys + ("opening_sorted_chars", "sub_notes_json"):
+    for key in keys + ("opening_sorted_chars",):
         if existing_profile.get(key) and updated_profile:
             updated_profile.setdefault(key, existing_profile[key])
     updated_profile = _split_sections(
