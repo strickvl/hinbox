@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Correct · {{ ent.name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div class="eyebrow"><span>Correct this page</span></div>
+  <h1><a href="{{ u(ent.url) }}" style="color:inherit;text-decoration:none">{{ ent.name }}</a></h1>
+  <p class="small muted">Each correction is added to your corrections file; the tables aren't changed. Names, tables, splits and joins are saved now and carried out by a later pipeline step, which isn't built yet.</p>
+</header>
+{% if error %}<p class="corr-error" role="alert">{{ error }}</p>{% endif %}
+{% if box.rows %}
+<div class="corr-box"><b>Already corrected</b>
+  <ul>{% for r in box.rows %}<li class="tone-{{ r.tone }}"><span class="cid">{{ r.rec.id }}</span> {{ r.label }}: {{ r.what }} <span class="muted small">{{ r.status }}</span></li>{% endfor %}</ul>
+</div>
+{% endif %}
+<div class="corr-forms">
+  <form method="post" action="{{ u('/corrections') }}" class="corr-form">
+    <h2 class="section-title">Rename</h2>
+    <input type="hidden" name="kind" value="rename">{{ hidden() }}
+    <label>Name<input type="text" name="name" value="{{ posted.name or ent.name }}" required maxlength="300"></label>
+    <label>Why<textarea name="reason" rows="2" maxlength="2000"></textarea></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+
+  <form method="post" action="{{ u('/corrections') }}" class="corr-form">
+    <h2 class="section-title">Wrong table</h2>
+    <input type="hidden" name="kind" value="wrong_table">{{ hidden() }}
+    <label>This {{ ent.spec.singular }} is really<select name="to_table">{% for t in tables %}<option value="{{ t.table }}">a {{ t.singular }}</option>{% endfor %}<option value="none">not an entity at all</option></select></label>
+    <label>Why<textarea name="reason" rows="2" maxlength="2000"></textarea></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+
+  {% if sources|length > 1 %}
+  <form method="post" action="{{ u('/corrections') }}" class="corr-form">
+    <h2 class="section-title">Some sources are about someone else</h2>
+    <p class="small muted">Tick the ones that belong to a different {{ ent.spec.singular }}. A later run takes them off this page and makes a page for them.</p>
+    <input type="hidden" name="kind" value="split">{{ hidden() }}
+    <ul class="corr-ticks">{% for s in sources %}<li><label class="check"><input type="checkbox" name="article_ids" value="{{ s.id }}" {% if s.id in ticked %}checked{% endif %}> <span class="dt">{{ s.source.date }}</span> {{ s.source.title }}</label></li>{% endfor %}</ul>
+    <label>Why<textarea name="reason" rows="2" maxlength="2000"></textarea></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+  {% endif %}
+
+  {% if others %}
+  <form method="post" action="{{ u('/corrections') }}" class="corr-form">
+    <h2 class="section-title">Same as another page</h2>
+    <input type="hidden" name="kind" value="join">{{ hidden() }}
+    <label>The other {{ ent.spec.singular }}<input type="text" name="other" list="others" required value="{{ posted.other or '' }}" placeholder="Start typing a name"></label>
+    <datalist id="others">{% for o in others %}<option value="{{ o.key }}">{{ o.label }}</option>{% endfor %}</datalist>
+    <label>Why<textarea name="reason" rows="2" maxlength="2000"></textarea></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if claims %}
+<section>
+  <h2 class="section-title">Correct one sentence</h2>
+  <ol class="corr-claims">{% for c in claims %}<li{% if c.correction %} class="c-{{ c.correction }}"{% endif %}><a href="{{ u('/correct/sentence', t=ent.spec.table, k=ent.key, c=c.index) }}">{{ c.text }}</a></li>{% endfor %}</ol>
+</section>
+{% endif %}
+{% endblock %}
+{% macro hidden() -%}
+<input type="hidden" name="t" value="{{ ent.spec.table }}"><input type="hidden" name="k" value="{{ ent.key }}">
+{%- endmacro %}

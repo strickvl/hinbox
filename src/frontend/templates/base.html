@@ -21,6 +21,7 @@
     <nav class="nav" aria-label="Sections">
       {% for t in TABLES %}<a href="{{ u('/' ~ t.table) }}" {% if request.url.path.startswith('/' ~ t.table) %}aria-current="page"{% endif %}>{{ t.label }}</a>{% endfor %}
       <a href="{{ u('/sources') }}" {% if request.url.path.startswith('/sources') %}aria-current="page"{% endif %}>Sources</a>
+      {% if not static_site %}<a href="{{ u('/corrections') }}" {% if request.url.path.startswith('/correct') %}aria-current="page"{% endif %}>Corrections</a>{% endif %}
     </nav>
     {% if domains|length > 1 and not static_site %}
     <form class="domain" action="/" method="get">

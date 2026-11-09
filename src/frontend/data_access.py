@@ -21,6 +21,7 @@ import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
 from src.constants import HASH_TRUNCATE_LENGTH
+from src.utils.corrections import corrections_path
 
 
 def _hashed_key(name_field: str, other_field: str) -> Callable[[Dict[str, Any]], str]:
@@ -163,6 +164,7 @@ class Store:
     by_source: Dict[str, List[Entity]] = field(default_factory=dict)
     link_only: Dict[str, List[str]] = field(default_factory=dict)
     texts_loaded: bool = False
+    corrections_path: str = ""  # the historian's corrections file
 
     def get(self, table: str, key: str) -> Optional[Entity]:
         return self.entities.get(table, {}).get(key)
@@ -220,7 +222,7 @@ _DROP = (
 
 def build_store(domain: str) -> Store:
     output, data_path, cfg = _paths(domain)
-    store = Store(domain, output)
+    store = Store(domain, output, corrections_path=corrections_path(domain, cfg))
     if os.getenv("HINBOX_HUB_LINK_ONLY", "on").strip().lower() != "off":
         listed = (cfg.get("profiles") or {}).get("link_only") or {}
         store.link_only = {

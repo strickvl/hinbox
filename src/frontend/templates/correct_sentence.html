@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Correct a sentence · {{ ent.name }}{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div class="eyebrow"><span>Correct a sentence</span></div>
+  <h1><a href="{{ u(ent.url) }}#claim-{{ index }}" style="color:inherit;text-decoration:none">{{ ent.name }}</a></h1>
+</header>
+{% if error %}<p class="corr-error" role="alert">{{ error }}</p>{% endif %}
+<blockquote class="corr-quote{% if claim.correction == 'struck' %} c-struck{% endif %}">“{{ text }}”</blockquote>
+<p class="small muted">{% if heading %}Under “{{ heading }}”. {% endif %}Cites
+  {% for s in cites %}<a href="{{ u('/sources/' ~ s.id) }}">source {{ s.n or '?' }}</a> ({{ s.source.title }}{% if s.source.date %}, {{ s.source.date }}{% endif %}): {{ VERDICT_LABELS.get(s.verdict, s.verdict)|lower }}{% if s.checker %}, your verdict; the checker said {{ VERDICT_LABELS.get(s.checker, s.checker)|lower }}{% endif %}{{ '; ' if not loop.last else '.' }}{% endfor %}</p>
+
+{% if claim.correction == 'mine' %}
+<p class="banner">This is your own sentence, from correction {{ by.id }}. To change it, withdraw that correction on the <a href="{{ u('/corrections') }}">corrections page</a> and strike the sentence again.</p>
+{% else %}
+{% if by %}<p class="banner">You struck this sentence in {{ by.id }}{% if by.reason %} ({{ by.reason }}){% endif %}. A new correction below replaces that one; withdraw it on the <a href="{{ u('/corrections') }}">corrections page</a> to bring the sentence back.</p>{% endif %}
+<div class="corr-forms">
+  <form method="post" action="{{ u('/corrections') }}" class="corr-form">
+    <h2 class="section-title">This sentence is wrong</h2>
+    <p class="small muted">It is shown struck through from now on. If you write the right sentence, it is shown after it, marked as yours, citing the source you pick.</p>
+    <input type="hidden" name="kind" value="strike">
+    {{ hidden() }}
+    <label>Your sentence (optional)<textarea name="replacement" rows="2" maxlength="2000">{{ posted.replacement or '' }}</textarea></label>
+    <label>It cites<select name="replacement_cites">{% for s in sources %}<option value="{{ s.id }}" {% if s.id == article %}selected{% endif %}>{{ s.source.date }} · {{ s.source.title }}</option>{% endfor %}</select></label>
+    <label>Why (helps you in a year's time)<textarea name="reason" rows="2" maxlength="2000">{{ posted.reason or '' }}</textarea></label>
+    <button class="btn" type="submit">Strike the sentence</button>
+  </form>
+
+  {% if cites %}
+  <form method="post" action="{{ u('/corrections') }}" class="corr-form">
+    <h2 class="section-title">The checker is wrong</h2>
+    <p class="small muted">Your verdict is shown instead of the checker's, with the checker's beside it. It is about the source, so it stays if the checker model changes; it lapses if the sentence's words change.</p>
+    <input type="hidden" name="kind" value="verdict">
+    {{ hidden() }}
+    <label>Source<select name="article_id">{% for s in cites %}<option value="{{ s.id }}" {% if s.id == article %}selected{% endif %}>Source {{ s.n or '?' }} · {{ s.source.title }} (checker: {{ VERDICT_LABELS.get(s.checker or s.verdict, s.verdict)|lower }})</option>{% endfor %}</select></label>
+    <fieldset><legend>The source…</legend>{% for v, label in verdicts %}<label class="check"><input type="radio" name="verdict" value="{{ v }}" required {% if posted.verdict == v %}checked{% endif %}> {{ label }}</label>{% endfor %}</fieldset>
+    <label>The passage you relied on (optional)<textarea name="passage" rows="2" maxlength="2000">{{ posted.passage or '' }}</textarea></label>
+    <label>Why<textarea name="reason" rows="2" maxlength="2000"></textarea></label>
+    <button class="btn" type="submit">Save my verdict</button>
+  </form>
+  {% endif %}
+
+  {% if headings %}
+  <form method="post" action="{{ u('/corrections') }}" class="corr-form">
+    <h2 class="section-title">Wrong heading</h2>
+    <p class="small muted">Saved now; the move is made by a later pipeline step, which isn't built yet.</p>
+    <input type="hidden" name="kind" value="heading">
+    {{ hidden() }}
+    <label>It belongs under<select name="heading">{% for h in headings %}<option {% if posted.heading == h %}selected{% endif %}>{{ h }}</option>{% endfor %}</select></label>
+    <label>Why<textarea name="reason" rows="2" maxlength="2000"></textarea></label>
+    <button class="btn" type="submit">Save</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+<p class="small"><a href="{{ u(ent.url) }}#claim-{{ index }}">← Back to the page</a></p>
+{% endblock %}
+{% macro hidden() -%}
+<input type="hidden" name="t" value="{{ ent.spec.table }}"><input type="hidden" name="k" value="{{ ent.key }}"><input type="hidden" name="c" value="{{ index }}"><input type="hidden" name="sentence" value="{{ text }}">
+{%- endmacro %}

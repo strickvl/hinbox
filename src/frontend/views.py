@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from markupsafe import Markup
 
+from . import corrections_view as cv
 from .data_access import SPECS, TABLES, Entity, Source, Store, pretty_type, to_date
 from .profile_render import (
     SEVERITY,
@@ -176,11 +177,13 @@ def entity_page(
     versions = _versions(ent)
     text, old, current = _version_text(ent, version)
     report = ent.row.get("profile_grounding") or {}
+    cs = cv.load(store)
     rp: RenderedProfile = render_profile(
         text,
         report,
         link="/sources/{article}" + domain_query,
         show_verdicts=old is None,
+        overlay=cv.overlay_for(cs, ent) if old is None else None,
     )
     counts = rp.counts()
     issues = [
@@ -266,6 +269,7 @@ def entity_page(
         "old_date": fmt_date(to_date(old.get("created_at"))) if old else "",
         "first_source": store.source(arts[0]["article_id"]) if arts else None,
         "cite_data": cite_data(rp),
+        "corrections": cv.entity_box(store, cs, ent, rp) if old is None else None,
     }
 
 
@@ -279,6 +283,7 @@ def cite_data(rp: RenderedProfile) -> Dict[str, Any]:
             "q": plain_claim(c.text),
             "v": dict(c.verdicts) if rp.checked else {},
             "r": dict(c.reasons) if rp.checked else {},
+            "x": c.correction,
         }
         for c in rp.claims
     }
@@ -321,8 +326,12 @@ def source_panel(
     since the stored report describes the current text only."""
     src = store.source(article_id)
     text, old, _ = _version_text(ent, version)
+    cs = cv.load(store)
     rp = render_profile(
-        text, ent.row.get("profile_grounding"), show_verdicts=old is None
+        text,
+        ent.row.get("profile_grounding"),
+        show_verdicts=old is None,
+        overlay=cv.overlay_for(cs, ent) if old is None else None,
     )
     claim = (
         rp.claims[claim_index]
@@ -333,7 +342,7 @@ def source_panel(
     quote = ""
     if claim:
         quote = plain_claim(claim.text)
-        if rp.checked:
+        if rp.checked or article_id in claim.checker:
             verdict = claim.verdicts.get(article_id, "unchecked")
             reason = claim.reasons.get(article_id, "")
     needle = quote.rstrip(".,;: ")
@@ -350,6 +359,10 @@ def source_panel(
         "old_version": old is not None,
         "named": named_in(store, article_id),
         "ent": ent,
+        "index": claim.index if claim else None,
+        "correction": claim.correction if claim else "",
+        "mine": (claim.by.get(article_id) or claim.by.get("")) if claim else None,
+        "checker_said": claim.checker.get(article_id, "") if claim else "",
     }
 
 
@@ -419,6 +432,7 @@ def home_page(store: Store) -> Dict[str, Any]:
         "n_sources": sum(1 for s in store.sources if s in store.by_source),
         "latest": latest,
         "queue": store.review_queue_count(),
+        "corrections": cv.home_summary(store),
     }
 
 

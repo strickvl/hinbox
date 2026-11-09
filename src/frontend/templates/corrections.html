@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Corrections{% endblock %}
+{% block content %}
+<header class="page-head">
+  <h1>Corrections</h1>
+  <p class="small muted">Every correction you made, newest first, from <code>{{ path }}</code>. Nothing here is ever deleted: withdrawing adds a line that says so. The file quotes sentences written from your sources, so keep it out of public places.</p>
+</header>
+{% if error %}<p class="corr-error" role="alert">{{ error }}</p>{% endif %}
+{% if problems or contradictions %}
+<div class="corr-error" role="alert"><b>Lines that need a look</b>
+  <ul>{% for p in contradictions %}<li>Contradiction: {{ p }}</li>{% endfor %}{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
+</div>
+{% endif %}
+{% if counts %}
+<nav class="filters" aria-label="Kinds">
+  <a href="{{ u('/corrections') }}" {% if not kind %}aria-current="page"{% endif %}>All</a>
+  {% for k, n in counts.items() %}<a href="{{ u('/corrections', kind=k) }}" {% if kind == k %}aria-current="page"{% endif %}>{{ labels[k] }} ({{ n }})</a>{% endfor %}
+</nav>
+{% endif %}
+<ol class="corr-list">
+  {% for r in rows %}
+  <li class="tone-{{ r.tone }}">
+    <div><span class="cid">{{ r.rec.id }}</span> <b>{{ r.label }}</b> · {% if r.ent %}<a href="{{ u(r.ent.url) }}">{{ r.page_name }}</a>{% else %}{{ r.page_name }}{% endif %} <span class="muted small">{{ r.rec.made }}{% if r.rec.by %} · {{ r.rec.by }}{% endif %}</span></div>
+    <div class="what">{{ r.what }}</div>
+    {% if r.rec.reason %}<div class="small">Why: {{ r.rec.reason }}</div>{% endif %}
+    <div class="small status">{{ r.status }}</div>
+    {% if r.tone != 'off' %}
+    <form method="post" action="{{ u('/corrections/withdraw') }}" class="withdraw">
+      <input type="hidden" name="id" value="{{ r.rec.id }}">
+      <input type="text" name="reason" placeholder="Why withdraw it?" aria-label="Why withdraw {{ r.rec.id }}" maxlength="2000">
+      <button class="btn ghost" type="submit">Withdraw</button>
+    </form>
+    {% endif %}
+  </li>
+  {% else %}
+  <li class="empty">No corrections yet. Open a page, click a citation number and choose “Correct this sentence”, or use “Correct this page” under the page's name.</li>
+  {% endfor %}
+</ol>
+{% endblock %}
