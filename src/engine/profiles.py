@@ -661,8 +661,11 @@ def _split_sections(
     model: Optional[str],
     kind: Optional[str] = None,
     domain: str = "guantanamo",
+    old_text: Optional[str] = None,
 ) -> Dict:
-    """Give a long profile its kind's starter headings once when
+    """File an update's new pieces under their starter headings when the
+    profile was reorganised before (``section_place.py``, given ``old_text``).
+    Give a long profile its kind's starter headings once when
     ``HINBOX_SECTION_REORGANISE`` is on (``section_reorganise.py``) and move
     an over-long opening's facts into their sections (``opening_sort.py``), then split
     over-long sections into sub-sections when ``HINBOX_SECTION_SPLIT`` is on
@@ -675,6 +678,14 @@ def _split_sections(
         return profile
     local = _resolve_mode(model_type, model) == GenerationMode.LOCAL
     if reorganise_enabled(entity_type, local):
+        if old_text is not None:
+            from src.engine.section_place import place_profile
+
+            profile, report = place_profile(
+                profile, old_text, entity_type, entity_name, kind, domain,
+                _prompt_model(model_type, model), local,
+            )  # fmt: skip
+            annotate(section_place=report and report["status"])
         profile, report = reorganise_profile(
             profile, entity_type, entity_name, kind, domain,
             _prompt_model(model_type, model), local,
@@ -751,8 +762,9 @@ def update_profile(
         if existing_profile.get(key) and updated_profile:
             updated_profile.setdefault(key, existing_profile[key])
     updated_profile = _split_sections(
-        updated_profile, entity_type, entity_name, model_type, model, kind, domain
-    )
+        updated_profile, entity_type, entity_name, model_type, model, kind, domain,
+        str(existing_profile.get("text") or ""),
+    )  # fmt: skip
 
     updated_profile = _apply_profile_qc(updated_profile, entity_name)
     _annotate_profile(updated_profile)

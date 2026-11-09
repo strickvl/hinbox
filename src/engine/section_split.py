@@ -50,7 +50,7 @@ import os
 import re
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.engine.profile_view import _SENTENCE_GAP, _blocks
 from src.logging_config import get_logger
@@ -72,8 +72,18 @@ _HEADING_LINE = re.compile(r"^(#{1,6})\s+(\S.*)$")
 _CITED_END = re.compile(r"\^\[[^\]]*\][.,;:!?\"”’)\s]*$")
 
 
+def _covers_required(schema: Dict[str, Any]) -> None:
+    # Optional for code and tests, but required in the schema the model sees:
+    # with a default, local Qwen (JSON schema mode) left it out for 89 of 107
+    # sub-headings, and the refiling saw bare heading names
+    schema.setdefault("required", []).append("covers")
+
+
 class SubSection(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_covers_required)
+
     heading: str = Field(description="Short plain-text sub-heading")
+    covers: str = Field("", description="What belongs under it, in a few words")
     paragraphs: List[int] = Field(description="Numbers of its paragraphs")
 
 
@@ -87,7 +97,7 @@ INSTRUCTIONS = """You organise one section of a profile of the {entity_type} \
 "{entity_name}", built from news articles.
 
 The section "{heading}" has grown long. Below are its paragraphs, numbered. \
-Group them under 2 to 5 {grouping} so that a reader can find a topic quickly.
+Group them under 2 to {most} {grouping} so that a reader can find a topic quickly.
 
 Rules:
 - Put every paragraph number under exactly one sub-heading.
@@ -95,6 +105,7 @@ Rules:
 apart. Group by topic; a period in brackets is fine, as in \
 "Plea negotiations (2017–2024)".
 - A sub-heading is 2 to 6 plain words: no "#", no citations, no quotes.
+- For each sub-heading, say in a few words what belongs under it.
 - Don't repeat {repeat_rule}: {other_headings}.
 - You don't write or change any profile text; code moves the paragraphs."""
 
@@ -298,11 +309,23 @@ def long_sections(
     return found
 
 
+PROMPT_MOST = 5  # the prompt asks for at most this many; up to MAX_GROUPS are taken
+
+
 def messages(
-    section: Dict[str, Any], entity_type: str, entity_name: str, other: List[str]
+    section: Dict[str, Any],
+    entity_type: str,
+    entity_name: str,
+    other: List[str],
+    most: int = PROMPT_MOST,
 ) -> List[Dict[str, str]]:
+    """The split call. ``most``: how many headings fit. Under a parent near
+    ``MAX_SIBLINGS`` that is fewer than 5; in a local replay every refused
+    Qwen split was a re-split asked for "2 to 5" with room for 2 or 3, and the
+    refused section then grew into a 9,332-character catch-all."""
     parent = section.get("parent")
     system = INSTRUCTIONS.format(
+        most=max(MIN_GROUPS, min(most, PROMPT_MOST)),
         entity_type=entity_type,
         entity_name=entity_name,
         heading=section["heading"],
@@ -396,9 +419,15 @@ def plan_groups(
 
 
 def _render(
-    level: int, units: List[str], plan: List[Tuple[str, List[int]]], tail: str = ""
+    level: int,
+    units: List[str],
+    plan: List[Tuple[str, List[int]]],
+    tail: str = "",
+    stay: Optional[List[int]] = None,
 ) -> List[str]:
     out: List[str] = [""]
+    for n in stay or []:  # pieces no sub-heading fits, above the sub-headings
+        out += [units[n - 1], ""]
     for heading, numbers in plan:
         out += [f"{'#' * (level + 1)} {heading}", ""]
         for n in numbers:
@@ -414,6 +443,7 @@ def split_long_sections(
     min_chars: Optional[int] = None,
     resplit: bool = False,
     refused: Optional[Dict[str, int]] = None,
+    place: Optional[Any] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     """Split each long section once (``resplit``: sub-sections too, see
     ``long_sections()``). Returns the new text and one report per long
@@ -422,7 +452,15 @@ def split_long_sections(
     ``refused``: heading -> size of a section whose split was refused on an
     earlier update; it is asked again only once it has grown by
     ``RETRY_GROWTH``. In a local replay al Nashiri's "November 2011
-    arraignment" was asked and refused at 9 updates in a row, the same way."""
+    arraignment" was asked and refused at 9 updates in a row, the same way.
+
+    ``place`` (a ``section_place`` asker): the split's sub-headings are kept
+    and its pieces filed again by the placement-only prompt
+    (``section_place.refile_split()``); for a top-level section a piece no
+    sub-heading fits stays above them. In 3 local replays of Spath, Trump
+    and Obama, 30 of Qwen's 40 wrong placements in a hand check were the
+    right top-level heading but the wrong sub-heading (Obama's BP oil-spill
+    remarks under "Closure Plans")."""
     sections = long_sections(text, min_chars, resplit)
     if not sections:
         return text, []
@@ -459,7 +497,7 @@ def split_long_sections(
             report.update(status="refused", reason=f"over {MAX_SIBLINGS} sub-sections")
             continue
         try:
-            reply = ask(messages(section, entity_type, entity_name, other))
+            reply = ask(messages(section, entity_type, entity_name, other, room))
         except Exception as e:  # keep the section as it is
             logger.warning(f"Section split call failed for {entity_name}: {e}")
             report.update(status="failed", reason=f"{type(e).__name__}: {e}")
@@ -472,11 +510,33 @@ def split_long_sections(
             report.update(status="refused", reason=why)
             continue
         level = section["level"] - 1 if sibling else section["level"]
-        new_lines = (
-            lines[: section["start"]]
-            + _render(level, section["units"], plan, section["tail"])
-            + lines[section["end"] :]
-        )
+        before_lines, after_lines = lines[: section["start"]], lines[section["end"] :]
+        units, tail = section["units"], section["tail"]
+        new_lines = before_lines + _render(level, units, plan, tail) + after_lines
+        if place is not None:
+            from src.engine.opening_sort import _claims
+            from src.engine.section_place import refile_split
+
+            covers = {_clean_heading(s.heading): s.covers for s in reply.subsections}
+            refiled, stay, refile = refile_split(
+                plan, covers, section["units"], section["parent"] or section["heading"],
+                entity_type, entity_name, place, stay=not sibling,
+            )  # fmt: skip
+            refiled_lines = (
+                before_lines + _render(level, units, refiled, tail, stay) + after_lines
+            )
+            # Uncited text above the section counts toward its first piece's
+            # citation, so a piece that stays above the sub-headings may not
+            # go before piece 1 and take that text's claim
+            if _claims("\n".join(refiled_lines)) == _claims("\n".join(lines)):
+                plan, new_lines = refiled, refiled_lines
+            else:
+                refile = {
+                    **refile,
+                    "status": "kept",
+                    "reason": "citation claims changed",
+                }
+            report["refile"] = refile
         if _sentences("\n".join(new_lines)) != _sentences("\n".join(lines)):
             report.update(status="refused", reason="sentences changed")
             continue
@@ -535,9 +595,15 @@ def split_profile(
     # starter headings, their sub-sections one level down
     resplit = profile.get("reorganised") == "done"
     refused = json.loads(profile.get(REFUSED_KEY) or "{}")
+    place = None
+    if ask is None:
+        from src.engine import section_place
+
+        if section_place.refile_enabled(local):
+            place = section_place.make_asker(model, local, step="profile.section_split")
     new_text, reports = split_long_sections(
         text, entity_type, entity_name, ask or make_asker(model, local),
-        resplit=resplit, refused=refused,
+        resplit=resplit, refused=refused, place=place,
     )  # fmt: skip
     for r in reports:
         level = "info" if r["status"] == "split" else "warning"

@@ -233,6 +233,7 @@ def test_update_profile_splits_after_the_edit_when_on(monkeypatch):
 
     monkeypatch.setenv("HINBOX_SECTION_SPLIT", "on")
     monkeypatch.setattr(section_split, "SPLIT_CHARS", 200)
+    monkeypatch.setenv("HINBOX_SPLIT_REFILE", "off")
     monkeypatch.setattr(
         section_split, "make_asker", lambda model, local: _asker(GOOD, [])
     )
@@ -399,6 +400,22 @@ def test_re_split_needs_resplit_and_stops_at_the_sibling_cap(monkeypatch):
     ]
     monkeypatch.setattr(section_split, "MAX_SIBLINGS", 2)
     assert long_sections(NESTED, min_chars=200, resplit=True) == []
+
+
+def test_the_split_call_asks_for_no_more_headings_than_fit(monkeypatch):
+    # r21 local replay: every refused Qwen split was a re-split asked for
+    # "2 to 5" headings with room for only 2 or 3 ("4 sub-sections")
+    seen: List[List[Dict[str, str]]] = []
+    monkeypatch.setattr(section_split, "MAX_SIBLINGS", 4)  # Arraignment + 3 more
+    split_long_sections(
+        NESTED, "person", "KSM", _asker(GOOD, seen), min_chars=200, resplit=True
+    )
+    assert "under 2 to 3 headings that replace it" in seen[0][0]["content"]
+    seen.clear()
+    monkeypatch.setattr(section_split, "MAX_SIBLINGS", 8)
+    split_long_sections(NESTED, "person", "KSM", _asker(GOOD, seen), min_chars=200,
+                        resplit=True)  # fmt: skip
+    assert "under 2 to 5 headings" in seen[0][0]["content"]
 
 
 def test_split_profile_re_splits_only_reorganised_profiles(monkeypatch):

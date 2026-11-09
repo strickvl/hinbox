@@ -104,6 +104,22 @@ def test_edit_profile_adds_the_article_to_sources(monkeypatch):
     assert seen["model"] == "openai/x" and "^[a9]" in seen["system"]
 
 
+def test_an_anchor_copied_without_its_citation_keeps_the_citation():
+    # In a local replay Qwen quoted sentences without their "^[id]", the add
+    # went in between, and the old sentence lost its citation
+    anchors = ["Nashiri was captured in Dubai in 2002", "He was arraigned in 2011."]
+    new, _ = apply_edits(
+        TEXT,
+        [
+            _edit("add", anchors[0], "One report says 2003.^[a9]"),
+            _edit("add", anchors[0], "Another says 2001.^[a8]"),
+            _edit("add", anchors[1], "He pleaded not guilty.^[a7]"),
+        ],
+    )
+    assert "2002.^[a1] One report says 2003.^[a9] Another says 2001.^[a8] He was" in new
+    assert "in 2011.^[a3] He pleaded not guilty.^[a7]\n" in new
+
+
 def test_adds_after_the_same_sentence_keep_their_order():
     anchor = "He was moved to Guantanamo in 2006.^[a2]"
     new, _ = apply_edits(

@@ -8,6 +8,7 @@ Examples::
     just eval profile-update --model openai/gpt-6-luna --prompt-variant local
     just eval profile-create --model openai/gpt-6-luna --limit 40 --grounding
     just eval profile-update --rescore <run file>   # re-score saved profiles
+    just eval placement --model ollama/local-qwen36-32k --split dev
     just eval show                       # print the scoreboard
     just eval show --grid                # latest score per model and prompt
 """
@@ -30,6 +31,7 @@ from src.evals.datasets import (
     load_relevance_items,
     stub_existing_profiles,
 )
+from src.evals.placement import run_placement
 from src.evals.profile_create import run_profile_create
 from src.evals.profile_update import (
     UPDATERS,
@@ -211,7 +213,8 @@ def main() -> None:
         description="Score models on hand-labelled gold sets"
     )
     parser.add_argument(
-        "task", choices=(*TASKS, "profile-update", "profile-create", "show")
+        "task",
+        choices=(*TASKS, "profile-update", "profile-create", "placement", "show"),
     )
     parser.add_argument(
         "--model", default=CLOUD_MODEL, help="e.g. ollama/qwen3.6:35b-a3b"
@@ -274,6 +277,17 @@ def main() -> None:
         action="store_true",
         help="also check each cited claim against the article (cloud model)",
     )
+    place = parser.add_argument_group("placement")
+    place.add_argument(
+        "--labels", default=None, help="default: {eval_dir}/placement_labels.jsonl"
+    )
+    place.add_argument("--batch", type=int, default=8, help="sentences per call")
+    place.add_argument(
+        "--placement-approaches",
+        default="reorganise,classify",
+        help="comma-separated: reorganise (the reorganise prompt), classify "
+        "(src/engine/section_place.py)",
+    )
     parser.add_argument(
         "--claim-labels",
         choices=("reviewed", "draft", "off"),
@@ -327,6 +341,9 @@ def main() -> None:
         return
     if args.task == "profile-create":
         run_profile_create(args, parser, domain_cfg, eval_dir)
+        return
+    if args.task == "placement":
+        run_placement(args, parser, domain_cfg, eval_dir)
         return
 
     if args.task == "relevance":

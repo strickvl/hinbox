@@ -210,6 +210,8 @@ def test_update_profile_reorganises_then_splits_when_on(monkeypatch):
     from src.engine import profiles
 
     monkeypatch.setenv("HINBOX_SECTION_REORGANISE", "on")
+    monkeypatch.setenv("HINBOX_REORGANISE_ASSIGN", "sections")  # the one-call prompt
+    monkeypatch.setenv("HINBOX_SPLIT_REFILE", "off")
     monkeypatch.delenv("HINBOX_SECTION_SPLIT", raising=False)
     monkeypatch.setattr(section_reorganise, "REORGANISE_CHARS", 100)
     seen: List[Any] = []
