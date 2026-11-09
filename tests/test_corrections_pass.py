@@ -481,3 +481,14 @@ def test_a_newer_strike_with_other_sources_changes_the_citation(tmp_path):
         report = cp.run_corrections_pass(entities, str(path))
     assert f"He refused food for several weeks.^[{A2}]" in person["profile"]["text"]
     assert report["counts"] == {"applied": 1}
+
+
+def test_a_chain_withdrawn_whole_goes_back_to_the_original():
+    one = _strike(FORCE_FED, [A3], "He refused food for several weeks.")
+    two = _strike("He refused food for several weeks.", [A3], "He refused food for six weeks.", cid="c-0002")  # fmt: skip
+    text, _, _ = _apply(TEXT, [one, two])
+    assert "six weeks" in text and "several weeks" not in text
+    undone, states, _ = _apply(text, [], withdrawn=[one, two])  # older one first
+    assert undone == TEXT
+    assert states == {"c-0001": ("undone", "your sentence swapped back for the original"),
+                      "c-0002": ("undone", "your sentence swapped back for the original")}  # fmt: skip

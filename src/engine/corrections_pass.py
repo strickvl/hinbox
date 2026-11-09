@@ -362,14 +362,25 @@ def apply_to_text(
     # First put back what withdrawn and replaced strikes changed, so the
     # strikes still active are carried out on the original text in this
     # same run (a withdrawn 2000 → 2002 brings back the older 2000 → 2001)
-    for rec in withdrawn:
-        text, swapped = _swap_back(text, rec)
-        if swapped:
-            states[rec["id"]] = (
-                "undone",
-                "your sentence swapped back for the original",
-            )
-        elif sentence_key(rec["sentence"]) not in {
+    # A chain (2000 → 2001, then 2001 → 2002) withdrawn whole unwinds from
+    # its last link: each round swaps back what it can, until none moves
+    waiting_back = list(withdrawn)
+    while waiting_back:
+        left = []
+        for rec in waiting_back:
+            text, swapped = _swap_back(text, rec)
+            if swapped:
+                states[rec["id"]] = (
+                    "undone",
+                    "your sentence swapped back for the original",
+                )
+            else:
+                left.append(rec)
+        if len(left) == len(waiting_back):
+            break
+        waiting_back = left
+    for rec in waiting_back:
+        if sentence_key(rec["sentence"]) not in {
             sentence_key(c.text) for c in parse_claims(text)[0]
         }:
             states[rec["id"]] = (
