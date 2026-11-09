@@ -66,12 +66,33 @@ def section_of(text: str, sentence: str) -> str:
     return " › ".join(t for _, t in path) or "(opening)"
 
 
-def added_sentences(old: str, new: str) -> List[str]:
-    from src.engine.section_split import _sentences
+def review_sentences(text: str) -> List[str]:
+    """The text's sentences in order, heading lines aside, with a sentence cut
+    after an abbreviation or initial ("Rear Adm.", "U.S.", "James L.") joined
+    to the rest: a fragment such as "Gen." can't be marked right or wrong."""
+    from src.engine.profile_stubs import _ends_with_abbreviation
+    from src.engine.profile_view import _SENTENCE_GAP
+    from src.engine.section_split import _HEADING_LINE, _paragraphs
 
-    before = Counter(_sentences(old))
+    out: List[str] = []
+    for para in _paragraphs(text, by_line=True):
+        joined = " ".join(para.split())
+        if not joined or _HEADING_LINE.match(joined):
+            continue
+        sentences: List[str] = []
+        for piece in _SENTENCE_GAP.split(joined):
+            if sentences and _ends_with_abbreviation(sentences[-1]):
+                sentences[-1] += " " + piece
+            elif piece:
+                sentences.append(piece)
+        out += sentences
+    return out
+
+
+def added_sentences(old: str, new: str) -> List[str]:
+    before = Counter(review_sentences(old))
     out = []
-    for s in _sentences(new):
+    for s in review_sentences(new):
         if before[s]:
             before[s] -= 1
         else:

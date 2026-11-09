@@ -686,6 +686,17 @@ def _split_sections(
                 _prompt_model(model_type, model), local,
             )  # fmt: skip
             annotate(section_place=report and report["status"])
+            from src.engine.section_subplace import subplace_profile
+
+            profile, report = subplace_profile(
+                profile, old_text, entity_type, entity_name,
+                _prompt_model(model_type, model), local,
+            )  # fmt: skip
+            annotate(
+                section_subplace=report and report["status"],
+                section_subplace_moved=report and sum(report.get("moved", {}).values()),
+                section_subplace_refused=report and report.get("refused"),
+            )
         profile, report = reorganise_profile(
             profile, entity_type, entity_name, kind, domain,
             _prompt_model(model_type, model), local,
