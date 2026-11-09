@@ -373,7 +373,7 @@ def test_a_grown_sub_section_is_re_split_beside_its_siblings():
     )
 
 
-def test_a_re_split_may_keep_the_old_name_but_not_a_sibling_one():
+def test_a_re_split_may_keep_the_old_name_and_join_a_sibling():
     keep = SectionSplit(subsections=[
         SubSection(heading="Legal proceedings", paragraphs=[1, 2, 3, 4, 5]),
         SubSection(heading="Plea negotiations", paragraphs=[6, 7, 8]),
@@ -386,10 +386,70 @@ def test_a_re_split_may_keep_the_old_name_but_not_a_sibling_one():
         SubSection(heading="Arraignment", paragraphs=[1, 2, 3]),
         SubSection(heading="Plea negotiations", paragraphs=[4, 5, 6, 7, 8]),
     ])  # fmt: skip
+    seen: List[List[Dict[str, str]]] = []
     out, reports = split_long_sections(
-        NESTED, "person", "KSM", _asker(clash, []), min_chars=200, resplit=True
+        NESTED, "person", "KSM", _asker(clash, seen), min_chars=200, resplit=True
+    )
+    # Paragraphs put under a sibling's name join that sibling, after its text
+    assert reports[0]["status"] == "split"
+    assert reports[0]["joined"] == [["Arraignment", [1, 2, 3]]]
+    assert reports[0]["subsections"] == [["Plea negotiations", [4, 5, 6, 7, 8]]]
+    assert out.count("#### Arraignment") == 1 and "#### Legal proceedings" not in out
+    arraignment = out.split("#### Arraignment")[1].split("####")[0]
+    assert arraignment.index("June 2008") < arraignment.index(PARAS[0])
+    assert all(p in arraignment for p in PARAS[:3])
+    assert section_split._sentences(out) == section_split._sentences(NESTED)
+    assert '("Arraignment") go under its exact name' in seen[0][0]["content"]
+    # Only new headings may be put under a sibling's name with it
+    only = SectionSplit(subsections=[
+        SubSection(heading="Arraignments", paragraphs=[1, 2, 3, 4, 5, 6, 7, 8]),
+    ])  # fmt: skip
+    out, reports = split_long_sections(
+        NESTED, "person", "KSM", _asker(only, []), min_chars=200, resplit=True
     )
     assert reports[0]["status"] == "refused" and out == NESTED
+
+
+def test_a_join_above_a_section_still_to_split_keeps_its_place():
+    # Bottom up: "Legal proceedings" joins "Arraignment", above "Hearings",
+    # which is split next from line numbers the join moved
+    hearings = [f"Hearing {i} was held in 201{i}.^[h{i}]" for i in range(6)]
+    text = (
+        "### Military commission\n\n#### Arraignment\n\nHe was arraigned.^[a1]\n\n"
+        "#### Hearings\n\n" + "\n\n".join(hearings) + "\n\n"
+        "#### Legal proceedings\n\n" + "\n\n".join(PARAS) + "\n\n"
+        "### Health\n\nHe has a heart condition.^[a3]\n"
+    )
+    replies = iter([
+        SectionSplit(subsections=[
+            SubSection(heading="Arraignment", paragraphs=[1, 2, 3]),
+            SubSection(heading="Plea talks", paragraphs=[4, 5, 6, 7, 8]),
+        ]),
+        SectionSplit(subsections=[
+            SubSection(heading="Early hearings", paragraphs=[1, 2, 3]),
+            SubSection(heading="Later hearings", paragraphs=[4, 5, 6]),
+        ]),
+    ])  # fmt: skip
+    out, reports = split_long_sections(
+        text, "person", "KSM", lambda m: next(replies), min_chars=150, resplit=True
+    )
+    assert [r["status"] for r in reports] == ["split", "split"]
+    assert section_split._sentences(out) == section_split._sentences(text)
+    early = out.split("#### Early hearings")[1].split("####")[0]
+    assert all(h in early for h in hearings[:3]) and PARAS[0] not in early
+    arraignment = out.split("#### Arraignment")[1].split("####")[0]
+    assert all(p in arraignment for p in PARAS[:3])
+
+
+def test_only_a_re_split_joins_a_heading_it_repeats():
+    clash = SectionSplit(subsections=[
+        SubSection(heading="Health", paragraphs=[1, 2, 3, 4]),
+        SubSection(heading="Plea talks", paragraphs=[5, 6, 7, 8]),
+    ])  # fmt: skip
+    assert plan_groups(clash, 8, ["Health"])[0] is None
+    assert plan_groups(clash, 8, ["Health"], siblings=["Health"])[0] == [
+        ("Health", [1, 2, 3, 4]), ("Plea talks", [5, 6, 7, 8]),
+    ]  # fmt: skip
 
 
 def test_re_split_needs_resplit_and_stops_at_the_sibling_cap(monkeypatch):

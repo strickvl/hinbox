@@ -106,7 +106,7 @@ apart. Group by topic; a period in brackets is fine, as in \
 "Plea negotiations (2017–2024)".
 - A sub-heading is 2 to 6 plain words: no "#", no citations, no quotes.
 - For each sub-heading, say in a few words what belongs under it.
-- Don't repeat {repeat_rule}: {other_headings}.
+- Don't repeat {repeat_rule}: {other_headings}.{join_rule}
 - You don't write or change any profile text; code moves the paragraphs."""
 
 
@@ -304,6 +304,8 @@ def long_sections(
                  "start": i if parent else i + 1, "end": end, "units": units,
                  "tail": tail, "parent": parent[2] if parent else None,
                  "siblings": len(siblings) if parent else 0,
+                 "sibling_names": [h[2] for h in siblings if h[0] != i]
+                 if parent else [],
                  "children": children}
             )  # fmt: skip
     return found
@@ -318,11 +320,14 @@ def messages(
     entity_name: str,
     other: List[str],
     most: int = PROMPT_MOST,
+    siblings: Optional[List[str]] = None,
 ) -> List[Dict[str, str]]:
     """The split call. ``most``: how many headings fit. Under a parent near
     ``MAX_SIBLINGS`` that is fewer than 5; in a local replay every refused
     Qwen split was a re-split asked for "2 to 5" with room for 2 or 3, and the
-    refused section then grew into a 9,332-character catch-all."""
+    refused section then grew into a 9,332-character catch-all. ``siblings``:
+    the other sub-sections beside a re-split one, which its paragraphs may
+    join (``plan_groups()``)."""
     parent = section.get("parent")
     system = INSTRUCTIONS.format(
         most=max(MIN_GROUPS, min(most, PROMPT_MOST)),
@@ -341,6 +346,13 @@ def messages(
             else "the section's own heading, or any heading the profile already has"
         ),
         other_headings="; ".join(f'"{h}"' for h in other) or "none",
+        join_rule=(
+            f"\n- Except: paragraphs that belong under one of the other sub-sections "
+            f'of "{parent}" ({names}) go under its exact name; code adds them to '
+            "the end of that sub-section. Use at least one new heading as well."
+            if parent and (names := "; ".join(f'"{h}"' for h in siblings or []))
+            else ""
+        ),
     )
     numbered = "\n\n".join(f"[{n}] {u}" for n, u in enumerate(section["units"], 1))
     return [
@@ -383,27 +395,47 @@ def _heading_problem(heading: str, taken: List[str]) -> Optional[str]:
     return None
 
 
+def _sibling_for(heading: str, siblings: List[str]) -> Optional[str]:
+    words = _heading_words(heading)
+    return next((s for s in siblings if words and _heading_words(s) == words), None)
+
+
 def plan_groups(
-    reply: SectionSplit, count: int, taken: List[str], max_groups: int = MAX_GROUPS
+    reply: SectionSplit,
+    count: int,
+    taken: List[str],
+    max_groups: int = MAX_GROUPS,
+    siblings: Optional[List[str]] = None,
 ) -> Tuple[Optional[List[Tuple[str, List[int]]]], str]:
     """Sub-headings and their paragraph numbers (1-based), in the order they
     go, or None and why the reply was refused. ``taken`` holds the profile's
-    headings, which a sub-heading may not repeat."""
+    headings, which a sub-heading may not repeat. A re-split's sub-heading
+    that is one of its ``siblings`` (in other words too) is kept under that
+    sibling's exact name: its paragraphs join it. In a Luna replay Spath's
+    "Al-Nashiri Proceedings (2014–2015)" reached 10,349 characters because
+    each re-split put its relocation-order paragraphs under "Relocation Order
+    Challenge", beside "Relocation Order Challenge (2015)", and was refused.
+    ``max_groups`` counts new sub-headings; at least one is needed."""
     groups: List[Tuple[str, List[int]]] = []
     placed: Dict[int, int] = {}
     seen = list(taken)
     for sub in reply.subsections:
         heading = _clean_heading(sub.heading)
-        problem = _heading_problem(heading, seen)
+        joined = _sibling_for(heading, siblings or [])
+        problem = None if joined else _heading_problem(heading, seen)
         if problem:
             return None, problem
-        seen.append(heading)
-        mine = []
+        heading = joined or heading
+        if not joined:
+            seen.append(heading)
+        k = next((i for i, (h, _) in enumerate(groups) if joined and h == joined), None)
+        if k is None:
+            k = len(groups)
+            groups.append((heading, []))
         for n in sub.paragraphs:
             if 1 <= n <= count and n not in placed:  # a repeat keeps its first place
-                placed[n] = len(groups)
-                mine.append(n)
-        groups.append((heading, mine))
+                placed[n] = k
+                groups[k][1].append(n)
     if len(placed) * 2 < count:
         return None, f"only {len(placed)} of {count} paragraphs placed"
     for n in range(1, count + 1):  # a missing one goes with its neighbour
@@ -413,7 +445,8 @@ def plan_groups(
             placed[n] = placed[near]
             groups[placed[n]][1].append(n)
     kept = [(h, sorted(ns)) for h, ns in groups if ns]
-    if not MIN_GROUPS <= len(kept) <= max_groups:
+    new = sum(h not in (siblings or []) for h, _ in kept)
+    if len(kept) < MIN_GROUPS or not 1 <= new <= max_groups:
         return None, f"{len(kept)} sub-sections"
     return sorted(kept, key=lambda g: g[1][0]), ""
 
@@ -433,6 +466,31 @@ def _render(
         for n in numbers:
             out += [units[n - 1], ""]
     return out + ([tail, ""] if tail else [])
+
+
+def _join(
+    lines: List[str], section: Dict[str, Any], joins: List[Tuple[str, List[int]]]
+) -> Tuple[Optional[List[str]], List[Tuple[int, int]]]:
+    """``lines`` with each joined group's pieces at the end of its sibling's
+    own text, and (line, count) of each insertion above the re-split section,
+    in order; None when a sibling heading isn't found once."""
+    shifts: List[Tuple[int, int]] = []
+    for heading, numbers in joins:
+        heads = _headings(lines)
+        mine = [k for k, h in enumerate(heads) if h[1:] == (section["level"], heading)]
+        if len(mine) != 1:
+            return None, []
+        k = mine[0]
+        end = heads[k + 1][0] if k + 1 < len(heads) else len(lines)
+        while end > heads[k][0] + 1 and not lines[end - 1].strip():
+            end -= 1
+        block = [""]
+        for n in numbers:
+            block += [section["units"][n - 1], ""]
+        lines = lines[:end] + block + lines[end:]
+        if end < section["start"]:
+            shifts.append((end, len(block)))
+    return lines, shifts
 
 
 def split_long_sections(
@@ -473,7 +531,8 @@ def split_long_sections(
     added: Dict[str, int] = {}
     # Bottom up, so earlier line numbers stay right (a parent comes after its
     # sub-sections)
-    for section in reversed(sections):
+    for at in range(len(sections) - 1, -1, -1):
+        section = sections[at]
         report: Dict[str, Any] = {
             "section": section["heading"],
             "chars": sum(len(u) for u in section["units"]),
@@ -497,17 +556,31 @@ def split_long_sections(
             report.update(status="refused", reason=f"over {MAX_SIBLINGS} sub-sections")
             continue
         try:
-            reply = ask(messages(section, entity_type, entity_name, other, room))
+            reply = ask(
+                messages(
+                    section, entity_type, entity_name, other, room,
+                    section.get("sibling_names"),
+                )
+            )  # fmt: skip
         except Exception as e:  # keep the section as it is
             logger.warning(f"Section split call failed for {entity_name}: {e}")
             report.update(status="failed", reason=f"{type(e).__name__}: {e}")
             continue
+        names = section.get("sibling_names") or []
         plan, why = plan_groups(
             reply, len(section["units"]), other if sibling else taken,
-            min(MAX_GROUPS, room),
+            min(MAX_GROUPS, room), names,
         )  # fmt: skip
         if plan is None:
             report.update(status="refused", reason=why)
+            continue
+        joins = [(h, ns) for h, ns in plan if h in names]
+        plan = [(h, ns) for h, ns in plan if h not in names]
+        # A sibling still to be split (above, as this runs bottom up) has its
+        # pieces already numbered: pieces added to it now would be lost
+        waiting = {s["heading"] for s in sections[:at]}
+        if any(h in waiting for h, _ in joins):
+            report.update(status="refused", reason="joins a section still to split")
             continue
         level = section["level"] - 1 if sibling else section["level"]
         before_lines, after_lines = lines[: section["start"]], lines[section["end"] :]
@@ -537,9 +610,27 @@ def split_long_sections(
                     "reason": "citation claims changed",
                 }
             report["refile"] = refile
+        shifts: List[Tuple[int, int]] = []
+        if joins:
+            joined_lines, shifts = _join(new_lines, section, joins)
+            if joined_lines is None:
+                report.update(status="refused", reason="joined sibling not found")
+                continue
+            new_lines = joined_lines
+            from src.engine.opening_sort import _claims
+
+            if _claims("\n".join(new_lines)) != _claims("\n".join(lines)):
+                report.update(status="refused", reason="citation claims changed")
+                continue
+            report["joined"] = [[h, ns] for h, ns in joins]
         if _sentences("\n".join(new_lines)) != _sentences("\n".join(lines)):
             report.update(status="refused", reason="sentences changed")
             continue
+        for at_line, by in shifts:  # pieces went into a sibling above
+            for pending in sections[:at]:
+                for key in ("line", "start", "end"):
+                    if pending[key] >= at_line:
+                        pending[key] += by
         lines = new_lines
         owner = section["parent"] if sibling else section["heading"]
         added[owner] = added.get(owner, 0) + len(plan) - (1 if sibling else 0)
