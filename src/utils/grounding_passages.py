@@ -54,9 +54,12 @@ _EDGE = " \t\n.,;:!?\"'()[]"
 _ELLIPSIS = re.compile(r"\s*(?:\[\s*(?:\.\s*){3}\]|\.\s*\.\s*\.|…)\s*")
 # A quoted run in a reasoning: double quotes of either kind, or single quotes
 # that don't touch a letter on the outside (so "Qadir's" isn't an opening)
+# An apostrophe between two letters ("Hamdan's", "don't") is part of a
+# single-quoted run, not its end: Qwen often quotes whole sentences that way
 _QUOTED = re.compile(
     r"\"([^\"\n]+?)\"|“([^”\n]+?)”"
-    r"|(?<![\w])'([^'\n]+?)'(?![\w])|(?<![\w])‘([^’\n]+?)’(?![\w])"
+    r"|(?<![\w])'((?:[^'\n]|(?<=\w)'(?=\w))+?)'(?![\w])"
+    r"|(?<![\w])‘((?:[^’\n]|(?<=\w)’(?=\w))+?)’(?![\w])"
 )
 
 # How candidates fared, for the bench: model_kept, model_rejected,
