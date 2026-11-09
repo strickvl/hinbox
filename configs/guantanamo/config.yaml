@@ -136,6 +136,10 @@ profiles:
         - Release or transfer: review board decisions, release, repatriation and resettlement
       default:
         - Background: who they are and their career before the events covered
+        # Was "from appointment to retirement, not the decisions or actions taken
+        # in them": local Qwen filed prior-career and others' news under Role. On
+        # 204 sure placement labels (2 seeds) this note took Qwen from 91.9% to
+        # 92.6% (Background 9-13 to 13-15 of 16), Luna level at about 94%
         - Role: the posts they hold or held, and their own appointment, firing, resignation or retirement; not the decisions or actions taken in a post, and not news about other people's posts
         - Cases and decisions: rulings, orders, actions and decisions they took, cases they worked on
     organizations:
