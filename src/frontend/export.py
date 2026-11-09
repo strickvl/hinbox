@@ -6,7 +6,7 @@ anywhere or open from disk, with no Python server.
 It starts at the home page, renders each page through the app exactly as the
 server would, follows every link to another page, and saves each one as a
 file (``people/Yusuf Qadir.html``, ``sources/<id>.html``; an older version is
-``people/<key>.v2.html``). Links are rewritten to relative file paths.
+``people/versions/<key>.v2.html``). Links are rewritten to relative file paths.
 
 What differs from the server:
 
@@ -36,6 +36,7 @@ from .data_access import SPECS, TABLES, load_store
 
 _LINK = re.compile(r'(href|src|action)="(/[^"]*)"')
 _SKIP = ("/search", "/panel", "/static/")
+_NAME_SAFE = " -_,'()&"
 
 
 def page_url(raw: str) -> Optional[str]:
@@ -63,10 +64,15 @@ def file_for(url: str) -> str:
     first, rest = segs[0], [unquote(s) for s in segs[1:]]
     if not rest:
         return f"{first}.html"
-    # A key may hold "/" or start with "."; keep it one safe file name
-    name = re.sub(r"^\.", "_", "/".join(rest).replace("/", "_"))
+    # Percent-encode everything but plain name characters, so two keys never
+    # share a file ("A/B" is "A%2FB", "A_B" stays "A_B") and no name starts with "."
+    name = quote("/".join(rest), safe=_NAME_SAFE)
+    if name.startswith("."):  # quote() never encodes "."
+        name = "%2E" + name[1:]
     version = parse_qs(parts.query).get("version", [""])[0]
-    return f"{first}/{name}{'.v' + version if version else ''}.html"
+    if version:  # its own folder, so "X?version=2" can't meet a key "X.v2"
+        return f"{first}/versions/{name}.v{version}.html"
+    return f"{first}/{name}.html"
 
 
 def _rel(target: str, current: str) -> str:
@@ -108,7 +114,7 @@ def _search_index(domain: str) -> List[Dict[str, object]]:
                     "n": ent.name,
                     "o": ent.other_names,
                     "t": spec.singular,
-                    "u": file_for(ent.url),
+                    "u": quote(file_for(ent.url)),
                     "c": len(ent.articles),
                 }
             )
@@ -118,7 +124,7 @@ def _search_index(domain: str) -> List[Dict[str, object]]:
                 {
                     "n": src.title or sid,
                     "t": "source",
-                    "u": file_for(f"/sources/{quote(sid, safe='')}"),
+                    "u": quote(file_for(f"/sources/{quote(sid, safe='')}")),
                 }
             )
     return rows

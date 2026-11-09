@@ -359,7 +359,9 @@ def test_static_export_writes_linked_files(client, tmp_path):
     counts = export_site(str(out))
     assert counts["broken_links"] == 0 and counts["pages"] > 5
     assert file_for("/people/Yusuf%20Qadir") == "people/Yusuf Qadir.html"
-    assert file_for("/people/a%2Fb?version=2") == "people/a_b.v2.html"
+    assert file_for("/people/a%2Fb?version=2") == "people/versions/a%2Fb.v2.html"
+    assert file_for("/people/a_b") == "people/a_b.html"  # never the same file
+    assert file_for("/people/.x") == "people/%2Ex.html"
     page = (out / "people" / "Yusuf Qadir.html").read_text()
     assert 'data-static="1"' in page and 'data-root="../"' in page
     assert 'href="/' not in page and 'action="/' not in page
