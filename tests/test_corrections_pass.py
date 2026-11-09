@@ -411,3 +411,14 @@ def test_your_sentence_in_a_list_item_is_found_again():
         "He arrived in 2001."
     ]
     assert rp.html.count("He arrived in 2001.") == 1
+
+
+def test_a_list_item_is_put_back_as_it_was():
+    listed = f"- He was born in Taiz.^[{A1}]\n- He arrived in 2000.^[{A1}]\n- He left.^[{A2}]\n"  # fmt: skip
+    rec = _strike("- He arrived in 2000.", [A1], "He arrived in 2001.")
+    text, _, _ = _apply(listed, [rec])
+    undone, states, _ = _apply(text, [], withdrawn=[rec])
+    assert undone == listed and states["c-0001"][0] == "undone"
+    new = _strike("- He arrived in 2000.", [A1], "He arrived in 2002.", cid="c-0002")
+    again, _, _ = cp.apply_to_text(text, cp._rules([new]), {"c-0001"}, [], [rec])
+    assert again == listed.replace(f"2000.^[{A1}]", f"2002.^[{A3}]")

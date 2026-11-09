@@ -118,7 +118,12 @@ def stored_key(text: str) -> str:
     arrived in 2001." is their "He arrived in 2001." once a run put it in a
     list), then ``md_literal()``'s escapes. A struck sentence, copied from
     the stored text, goes through this too."""
-    return sentence_key(md_plain(_LIST_ITEM.sub("", text or "", count=1)))
+    return sentence_key(md_plain(drop_list_mark(text)))
+
+
+def drop_list_mark(text: str) -> str:
+    """``text`` without a list item's leading marker ("- ", "1. ")."""
+    return _LIST_ITEM.sub("", text or "", count=1)
 
 
 def entity_ref(

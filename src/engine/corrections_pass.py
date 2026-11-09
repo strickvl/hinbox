@@ -47,6 +47,7 @@ from src.utils.corrections import (
     REPORT_LATEST,
     CorrectionSet,
     _report_dir,
+    drop_list_mark,
     last_states,
     load_corrections,
     md_literal,
@@ -312,7 +313,9 @@ def _yours(rec: Dict[str, Any]) -> str:
 
 def _original(rec: Dict[str, Any]) -> str:
     cites = rec.get("cites") or []
-    return rec["sentence"].strip() + (f"^[{', '.join(cites)}]" if cites else "")
+    # the list marker the reader copied stays in the text when a claim is cut
+    words = drop_list_mark(rec["sentence"]).strip()
+    return words + (f"^[{', '.join(cites)}]" if cites else "")
 
 
 def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
