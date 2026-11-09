@@ -9,6 +9,8 @@ Examples::
     just eval profile-create --model openai/gpt-6-luna --limit 40 --grounding
     just eval profile-update --rescore <run file>   # re-score saved profiles
     just eval placement --model ollama/local-qwen36-32k --split dev
+    just eval subplacement --model ollama/local-qwen36-32k --labels <file> \\
+        --placement-approaches names,examples --entities-dir <run>/entities
     just eval show                       # print the scoreboard
     just eval show --grid                # latest score per model and prompt
 """
@@ -48,6 +50,7 @@ from src.evals.runner import (
     save_run,
     summarize,
 )
+from src.evals.subplacement import run_subplacement
 from src.logging_config import console
 from src.utils.llm import configure_llm_concurrency
 from src.utils.tracing import configure_tracing
@@ -214,7 +217,14 @@ def main() -> None:
     )
     parser.add_argument(
         "task",
-        choices=(*TASKS, "profile-update", "profile-create", "placement", "show"),
+        choices=(
+            *TASKS,
+            "profile-update",
+            "profile-create",
+            "placement",
+            "subplacement",
+            "show",
+        ),  # fmt: skip
     )
     parser.add_argument(
         "--model", default=CLOUD_MODEL, help="e.g. ollama/qwen3.6:35b-a3b"
@@ -286,7 +296,7 @@ def main() -> None:
         "--placement-approaches",
         default="reorganise,classify",
         help="comma-separated: reorganise (the reorganise prompt), classify "
-        "(src/engine/section_place.py)",
+        "(src/engine/section_place.py); subplacement: names, examples",
     )
     parser.add_argument(
         "--claim-labels",
@@ -344,6 +354,9 @@ def main() -> None:
         return
     if args.task == "placement":
         run_placement(args, parser, domain_cfg, eval_dir)
+        return
+    if args.task == "subplacement":
+        run_subplacement(args, parser, eval_dir)
         return
 
     if args.task == "relevance":

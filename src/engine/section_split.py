@@ -638,7 +638,11 @@ def split_long_sections(
         owner = section["parent"] if sibling else section["heading"]
         added[owner] = added.get(owner, 0) + len(plan) - (1 if sibling else 0)
         taken = (other if sibling else taken) + [h for h, _ in plan]
-        report.update(status="split", subsections=[[h, ns] for h, ns in plan])
+        notes = {_clean_heading(s.heading): s.covers for s in reply.subsections}
+        report.update(
+            status="split", subsections=[[h, ns] for h, ns in plan],
+            covers={h: notes[h] for h, _ in plan if notes.get(h)},
+        )  # fmt: skip
     new_text = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip() + "\n"
     if not any(r["status"] == "split" for r in reports):
         return text, reports
@@ -666,6 +670,25 @@ def make_asker(model: str, local: bool, step: str = "profile.section_split") -> 
         return reply
 
     return ask
+
+
+def _keep_notes(
+    profile: Dict[str, Any], text: str, reports: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """``profile`` with what each new sub-heading covers, as the split said,
+    stored for ``section_subplace.py`` (notes of headings gone from ``text``
+    dropped)."""
+    from src.engine.section_subplace import SUB_NOTES_KEY, stored_notes
+
+    notes = stored_notes(profile)
+    for r in reports:
+        if r["status"] == "split":
+            notes.update(r.get("covers") or {})
+    present = {_clean_heading(t) for _, _, t in _headings(text.splitlines())}
+    notes = {h: c for h, c in notes.items() if h in present}
+    if not notes:
+        return profile
+    return {**profile, SUB_NOTES_KEY: json.dumps(notes, ensure_ascii=False)}
 
 
 def split_profile(
@@ -714,4 +737,5 @@ def split_profile(
         profile = {**profile, REFUSED_KEY: json.dumps(refused, ensure_ascii=False)}
     if new_text == text:
         return profile, reports
+    profile = _keep_notes(profile, new_text, reports)
     return {**profile, "text": new_text}, reports

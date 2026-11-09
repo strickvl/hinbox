@@ -686,6 +686,13 @@ def _split_sections(
                 _prompt_model(model_type, model), local,
             )  # fmt: skip
             annotate(section_place=report and report["status"])
+            from src.engine.section_subplace import subplace_profile
+
+            profile, report = subplace_profile(
+                profile, old_text, entity_type, entity_name,
+                _prompt_model(model_type, model), local,
+            )  # fmt: skip
+            annotate(section_subplace=report and report["status"])
         profile, report = reorganise_profile(
             profile, entity_type, entity_name, kind, domain,
             _prompt_model(model_type, model), local,
@@ -758,7 +765,7 @@ def update_profile(
     # The rewrite and fact-list updaters build a new dict: keep the marker
     # that stops a second reorganise and the sizes refused steps wait on
     keys = ("reorganised", "reorganise_refused_chars", "split_refused_json")
-    for key in keys + ("opening_sorted_chars",):
+    for key in keys + ("opening_sorted_chars", "sub_notes_json"):
         if existing_profile.get(key) and updated_profile:
             updated_profile.setdefault(key, existing_profile[key])
     updated_profile = _split_sections(
