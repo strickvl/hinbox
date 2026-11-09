@@ -130,3 +130,21 @@ def test_the_article_loop_stops_once_the_server_is_gone(tmp_path, monkeypatch):
             domain_config=config,
         )
     assert len(merged) == 1
+
+
+def test_grounding_fails_fast_once_the_server_is_gone():
+    """No call is tried; the checks are stored as errors and asked again later."""
+    from tests.test_grounding_recheck import _run
+
+    text = "First claim.^[a1] Second claim.^[a2]"
+    articles = {"a1": "First claim.", "a2": "Second claim."}
+    for _ in range(3):
+        record(_no_route())
+    first, calls = _run(text, articles)
+    assert calls == 0
+    assert [s.status for s in first.sources] == ["error", "error"]
+
+    server_health.reset()  # the server is back
+    second, calls = _run(text, articles, previous=first.model_dump())
+    assert calls == 2
+    assert [s.status for s in second.sources] == ["checked", "checked"]

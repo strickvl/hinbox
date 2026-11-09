@@ -85,3 +85,9 @@ def test_totals_over_all_stored_reports():
     assert totals["claims"] == 4
     assert totals["not_supported"] == 1 and totals["partial"] == 1
     assert totals["profiles_with_problems"] == 2
+    assert totals["profiles_with_failed_checks"] == 0
+
+    entities["events"]["d"] = {
+        "profile_grounding": {"sources": [{"article_id": "x", "status": "error"}]}
+    }
+    assert stored_claim_totals(entities)["profiles_with_failed_checks"] == 1

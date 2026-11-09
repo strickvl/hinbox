@@ -126,6 +126,8 @@ just frontend
    export OLLAMA_CONTEXT_LENGTH=32768
    ```
 
+   If the model server runs on another machine on your network and you run Hinbox on a Mac, macOS's Local Network privacy setting can block Python from reaching it for minutes at a time ("No route to host") while `curl` still gets through. Allow your terminal app under System Settings → Privacy & Security → Local Network, or reach the server through an SSH tunnel: `ssh -N -L 18080:127.0.0.1:8080 <server>` and `OLLAMA_API_URL=http://127.0.0.1:18080/v1`. If every model call fails to connect, the run saves what it has and stops; run the same command again to continue.
+
    You can override the default models without editing code by setting
    environment variables in your `.env` file:
    ```bash
