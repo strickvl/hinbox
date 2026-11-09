@@ -492,3 +492,43 @@ def test_a_chain_withdrawn_whole_goes_back_to_the_original():
     assert undone == TEXT
     assert states == {"c-0001": ("undone", "your sentence swapped back for the original"),
                       "c-0002": ("undone", "your sentence swapped back for the original")}  # fmt: skip
+
+
+def test_superseding_the_head_of_a_chain_replaces_its_last_sentence():
+    one = _strike(FORCE_FED, [A3], "He refused food for several weeks.")
+    two = _strike("He refused food for several weeks.", [A3], "He refused food for six weeks.", cid="c-0002")  # fmt: skip
+    text, _, _ = _apply(TEXT, [one, two])
+    three = _strike(FORCE_FED, [A3], "He refused food for two weeks.", cid="c-0003")
+    out, states, _ = cp.apply_to_text(text, cp._rules([two, three]), {"c-0001", "c-0002"}, [], [one])  # fmt: skip
+    assert f"He refused food for two weeks.^[{A3}] Sources disagree" in out
+    assert "six weeks" not in out and "several weeks" not in out
+    assert states["c-0003"] == ("applied", "") and states["c-0002"][0] == "held"
+    gone = {"He refused food for several weeks."}  # c-0001's sentence, replaced
+    again, states, _ = cp.apply_to_text(out, cp._rules([two, three]), {"c-0002", "c-0003"}, [], [], gone)  # fmt: skip
+    assert again == out and states["c-0003"] == ("held", "")
+
+
+def test_your_source_is_added_when_your_words_were_already_there():
+    text = f"Wrong.^[{A1}] Correct.^[{A1}]"
+    rec = _strike("Wrong.", [A1], "Correct.", A2)
+    out, states, _ = _apply(text, [rec])
+    assert out == f"Correct.^[{A1}]^[{A2}]" and states["c-0001"] == ("applied", "")
+    again, states, _ = _apply(out, [rec], done=["c-0001"])
+    assert again == out and states["c-0001"] == ("held", "")
+
+
+def test_a_run_supersedes_the_head_of_a_chain(tmp_path):
+    cp.configure_corrections(None)
+    path, person = tmp_path / "c.jsonl", _person()
+    entities = {"people": {"Yusuf Qadir": person}}
+    lines = [(FORCE_FED, "He refused food for several weeks."),
+             ("He refused food for several weeks.", "He refused food for six weeks."),
+             (FORCE_FED, "He refused food for two weeks.")]  # fmt: skip
+    for sentence, rep in lines:
+        _add(path, _strike(sentence, [A3], rep))
+        cp.run_corrections_pass(entities, str(path))
+    for _ in range(2):
+        report = cp.run_corrections_pass(entities, str(path))
+        text = person["profile"]["text"]
+        assert "two weeks" in text and "six weeks" not in text and "several" not in text
+    assert {r["id"]: r["state"] for r in report["rows"]} == {"c-0002": "held", "c-0003": "held"}  # fmt: skip

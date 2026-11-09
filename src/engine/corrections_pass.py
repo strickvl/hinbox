@@ -329,18 +329,40 @@ def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
     return _cut_claim(text, markers, rep, _original(rec)), True
 
 
+def _add_your_sources(text: str, rules: PageRules) -> str:
+    """Each historian's sentence in the text cites the source they chose: one
+    whose words were already in the profile ("Correct.^[a]", they cite b)
+    gets their citation added after its own ("Correct.^[a]^[b]")."""
+    claims, markers = parse_claims(text)
+    adds = []
+    for c in claims:
+        rec = rules.written.get(sentence_key(c.text))
+        cite = (rec or {}).get("replacement_cites")
+        if cite and cite not in c.articles:
+            adds.append((claim_end(markers, c.index), f"^[{cite}]"))
+    for pos, add in sorted(adds, reverse=True):
+        text = text[:pos] + add + text[pos:]
+    return text
+
+
+def _chain(rec: Dict[str, Any], rules: PageRules) -> List[Dict[str, Any]]:
+    """``rec`` and each active strike of the sentence before it in the list
+    (2000 → 2001, then 2001 → 2002: both)."""
+    out = [rec]
+    while rec.get("replacement"):
+        nxt = rules.struck.get(words_key(rec["replacement"]))
+        if nxt is None or any(r["id"] == nxt["id"] for r in out):
+            break
+        out.append(nxt)
+        rec = nxt
+    return out
+
+
 def _last_in_chain(rec: Dict[str, Any], rules: PageRules) -> Dict[str, Any]:
     """The strike whose sentence goes in for ``rec``: when the historian later
     struck their own sentence, the later strike's sentence (2000 → 2001, then
     2001 → 2002 writes 2002)."""
-    seen = {rec["id"]}
-    while rec.get("replacement"):
-        nxt = rules.struck.get(words_key(rec["replacement"]))
-        if nxt is None or nxt["id"] in seen:
-            break
-        seen.add(nxt["id"])
-        rec = nxt
-    return rec
+    return _chain(rec, rules)[-1]
 
 
 def apply_to_text(
@@ -349,6 +371,7 @@ def apply_to_text(
     done_before: Set[str],
     withdrawn: List[Dict[str, Any]],
     superseded: Sequence[Dict[str, Any]] = (),
+    gone: Set[str] = frozenset(),
 ) -> Tuple[str, Dict[str, Tuple[str, str]], List[Dict[str, str]]]:
     """Carry one page's corrections out in its profile text. Returns the new
     text, (state, why) per correction id, and claims that may say a struck
@@ -394,7 +417,23 @@ def apply_to_text(
         newer = rules.written.get(words_key(old.get("replacement") or ""))
         # same words but other sources: swapped too, so the new citation goes in
         if not newer or newer.get("replacement_cites") != old.get("replacement_cites"):
-            text, _ = _swap_back(text, old)
+            text, swapped = _swap_back(text, old)
+            chain = _chain(old, rules)
+            if not swapped and len(chain) > 1:
+                # its sentence was struck again (2000 → 2001 → 2002): the
+                # last one in the chain goes back to the original
+                last = {
+                    **chain[-1],
+                    "sentence": old["sentence"],
+                    "cites": old.get("cites"),
+                }
+                text, swapped = _swap_back(text, last)
+                for link in chain[1:] if swapped else []:
+                    states[link["id"]] = (
+                        "held",
+                        f"the sentence it struck went with {old['id']}, "
+                        "which a newer correction replaced",
+                    )
     claims, markers = parse_claims(text)
     keys = {sentence_key(c.text) for c in claims}
     present = {k for k in rules.written if k in keys}
@@ -422,12 +461,19 @@ def apply_to_text(
             states[rec["id"]] = ("re-applied", f"said again: “{c.text[:160]}”")
     for c, put in reversed(edits):  # back to front, so offsets hold
         text = _cut_claim(text, markers, c, put)
+    text = _add_your_sources(text, rules)
     for rec in {r["id"]: r for r in rules.struck.values()}.values():
         cid, rep = rec["id"], words_key(rec.get("replacement") or "")
         if cid in states:
             continue
         later = rules.struck.get(rep) if rep else None
-        if later is not None and later["id"] != cid:
+        if sentence_key(rec["sentence"]) in gone and (not rep or rep not in present):
+            # it struck a sentence of theirs that a newer correction replaced
+            states[cid] = (
+                "held",
+                "the sentence it struck was yours, and a newer correction replaced it",
+            )
+        elif later is not None and later["id"] != cid:
             # their own sentence, struck by a later correction of theirs
             states[cid] = ("held", f"your sentence was struck again by {later['id']}")
         elif rep and rep not in present and cid in done_before:
@@ -549,13 +595,16 @@ def run_corrections_pass(
     # An older strike a run carried out, replaced by a newer strike of the
     # same sentence: its sentence goes before the newer one is carried out
     superseded: Dict[Tuple[str, Any], List[Dict[str, Any]]] = {}
+    gone: Dict[Tuple[str, Any], Set[str]] = {}
     for cid in cs.replaced:
         rec = by_id.get(cid)
         if not rec or rec["kind"] != "strike" or not rec.get("replacement"):
             continue
+        page = where(rec)
+        if page is not None:
+            gone.setdefault(page, set()).add(words_key(rec["replacement"]))
         if before.get(cid) not in DONE:
             continue
-        page = where(rec)
         if page is not None and page in pages:
             superseded.setdefault(page, []).append(rec)
     changed = 0
@@ -569,6 +618,7 @@ def run_corrections_pass(
             done_before,
             withdrawn.get((table, pk), []),
             superseded.get((table, pk), []),
+            gone.get((table, pk), set()),
         )
         if text != (profile.get("text") or ""):
             entity["profile"] = {**profile, "text": text}
