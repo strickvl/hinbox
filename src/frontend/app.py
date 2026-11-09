@@ -29,7 +29,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DOMAIN = "guantanamo"
 templates = Jinja2Templates(directory=os.path.join(HERE, "templates"))
 templates.env.globals.update(
-    TABLES=TABLES, VERDICT_LABELS=VERDICT_LABELS, fmt_date=views.fmt_date
+    TABLES=TABLES,
+    VERDICT_LABELS=VERDICT_LABELS,
+    fmt_date=views.fmt_date,
+    static_site=False,  # `export.py` sets it while writing the static copy
 )
 templates.env.filters["fmt_date"] = views.fmt_date
 

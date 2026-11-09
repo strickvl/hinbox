@@ -41,6 +41,9 @@ a:hover { text-decoration-thickness: 2px; }
 .search { flex: 1 1 280px; min-width: 0; display: flex; }
 .search input { flex: 1; min-width: 0; font: inherit; font-size: 14px; color: var(--ink); background: var(--paper); border: 1px solid var(--rule-2); border-radius: 6px; padding: 7px 10px; }
 .search input::placeholder { color: var(--ink-3); }
+.search[data-static-search] { position: relative; }
+.sresults { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin: 4px 0 0; padding: 6px 0; list-style: none; background: var(--paper); border: 1px solid var(--rule-2); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.12); font-size: 14px; }
+.sresults li { padding: 5px 12px; }
 .nav { display: flex; gap: 4px 16px; font-size: 13.5px; flex-wrap: wrap; }
 .nav a { color: var(--ink-2); text-decoration: none; padding: 2px 0; border-bottom: 2px solid transparent; }
 .nav a:hover, .nav a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--primary); }

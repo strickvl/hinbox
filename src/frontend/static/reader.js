@@ -60,7 +60,8 @@
   }
   document.addEventListener("click", (ev) => {
     const link = ev.target.closest("sup.c a.cite");
-    if (!link || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+    // The static copy has no server to ask for the panel: citations open the source page
+    if (!link || document.body.dataset.static || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
     ev.preventDefault();
     open(link);
   });
