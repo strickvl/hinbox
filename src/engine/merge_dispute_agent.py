@@ -89,6 +89,14 @@ Profile: {existing_profile_text}
 Based on ALL available evidence, should these entities be merged, kept separate, or deferred for human review?"""
 
 
+FAILED_DISPUTE = "Dispute agent API error"
+
+
+def dispute_failed(decision: MergeDisputeDecision) -> bool:
+    """True when the model call failed, so the DEFER is not the agent's verdict."""
+    return decision.reason.startswith(FAILED_DISPUTE)
+
+
 @timed("dispute")
 def run_merge_dispute_agent(
     *,
@@ -113,8 +121,8 @@ def run_merge_dispute_agent(
     (similarity near threshold AND confidence below cutoff). The agent makes
     a more deliberate assessment using richer prompt context.
 
-    Returns a MergeDisputeDecision. On error, defaults to DEFER to prevent
-    false merges.
+    Returns a MergeDisputeDecision. On error, DEFER with a reason that
+    ``dispute_failed()`` recognises, so the merger retries the article.
     """
     user_content = _USER_TEMPLATE.format(
         match_decision="MATCH" if match_is_match else "NO MATCH",
@@ -150,7 +158,7 @@ def run_merge_dispute_agent(
         decision = MergeDisputeDecision(
             action=MergeDisputeAction.DEFER,
             confidence=0.0,
-            reason=f"Dispute agent API error: {str(e)}",
+            reason=f"{FAILED_DISPUTE}: {e}",
         )
 
     annotate(
@@ -167,7 +175,12 @@ def run_merge_dispute_agent(
         level="info",
     )
 
-    if decision.action == MergeDisputeAction.DEFER and review_queue_path:
+    # a failed call is not a case for human review; the article is retried
+    if (
+        decision.action == MergeDisputeAction.DEFER
+        and review_queue_path
+        and not dispute_failed(decision)
+    ):
         record = _build_review_record(
             entity_type=entity_type,
             new_name=new_name,

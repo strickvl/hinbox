@@ -116,3 +116,21 @@ def test_parse_reads_confidence_before_a_completed_marker_without_a_space():
 def test_parse_reads_a_decorated_confidence(written, expected):
     reply = REPLY.replace("0.92", written)
     assert parse_sectioned_reply(reply).confidence == pytest.approx(expected)
+
+
+def test_a_failed_call_is_flagged_and_not_remembered():
+    """A failed call is asked again, not remembered as "different" (9 Nov run)."""
+    match_checker.configure_match_check_memo(enabled=True)
+    down = RuntimeError("Connection error.")
+    try:
+        with (
+            patch.object(match_checker, "text_generation", side_effect=down) as text,
+            patch.object(match_checker, "local_generation", side_effect=down),
+        ):
+            for _ in range(2):
+                result = local_model_check_match("A", "B", "new", "old")
+                assert result.is_match is False
+                assert match_checker.check_failed(result)
+        assert text.call_count == 2
+    finally:
+        match_checker.reset_match_check_memo()

@@ -13,8 +13,13 @@ from src.constants import (
     MERGE_UNCERTAIN_CONFIDENCE_CUTOFF,
     SIMILARITY_THRESHOLD,
 )
+from src.engine.alternative_names import add_alternative_name
 from src.engine.later_updates import article_dates
-from src.engine.match_checker import cloud_model_check_match, local_model_check_match
+from src.engine.match_checker import (
+    check_failed,
+    cloud_model_check_match,
+    local_model_check_match,
+)
 from src.engine.merge_candidates import (
     find_similar_entity,
     next_candidate,
@@ -25,6 +30,7 @@ from src.engine.merge_candidates import (
 from src.engine.merge_dispute_agent import (
     REVIEW_QUEUE_FILENAME,
     MergeDisputeAction,
+    dispute_failed,
     run_merge_dispute_agent,
 )
 from src.engine.merge_evidence import batch_embed_texts, build_evidence_text
@@ -76,6 +82,9 @@ class MergeStats:
     # Profile create/update calls that failed (also counted in errors); the
     # article must be merged again for these entities to get its facts
     failed_profiles: int = 0
+    # Match/dispute calls that failed: the entity was neither merged nor
+    # created, and the article is retried next run
+    failed_checks: int = 0
 
     @property
     def total(self) -> int:
@@ -216,7 +225,8 @@ class EntityMerger:
         """Ask the match check (and dispute agent) about one candidate.
 
         Returns "merge", "skip" (a different entity, or a candidate with a junk
-        name) or "error" (no profile text to compare against).
+        name), "error" (no profile text to compare against) or "failed" (the
+        match or dispute call failed, so there is no verdict).
         """
         new_display = self._format_key_for_display(entity_key)
         similar_display = self._format_key_for_display(similar_key)
@@ -285,6 +295,8 @@ class EntityMerger:
             f"Match check result: {result.is_match} (confidence={result.confidence:.2f}) - {result.reason}",
             level="debug",
         )
+        if check_failed(result):
+            return self._failed_check(new_display, similar_display, stats)
 
         # Gray-band routing: when similarity is near the threshold AND the
         # match checker is uncertain, ask the dispute agent for a second opinion.
@@ -317,6 +329,8 @@ class EntityMerger:
                 article_id=article_id,
                 review_queue_path=review_queue_path,
             )
+            if dispute_failed(dispute_decision):
+                return self._failed_check(new_display, similar_display, stats)
             should_merge = dispute_decision.action == MergeDisputeAction.MERGE
 
         if not should_merge:
@@ -331,59 +345,30 @@ class EntityMerger:
             return "skip"
         return "merge"
 
+    def _failed_check(self, new: str, similar: str, stats: MergeStats) -> str:
+        # Not "different": creating it would add a duplicate of the candidate
+        log_decision(
+            DecisionKind.ERROR,
+            self.entity_type,
+            new,
+            f"match check vs '{similar}' failed; article retried next run",
+        )
+        stats.failed_checks += 1
+        return "failed"
+
     def _add_alternative_name(
         self,
         existing_entity: Dict[str, Any],
         new_key: Union[str, Tuple],
         source_entity: Optional[Dict[str, Any]] = None,
     ) -> bool:
-        """Add alternative name/title to existing entity if different.
-        Matches legacy shape:
-          • people: List[str]
-          • locations/orgs: List[{'name','type'}]
-          • events: List[{'title','start_date','event_type'}]
-        """
-        if self.alternative_field not in existing_entity:
-            existing_entity[self.alternative_field] = []
-
-        if self.entity_type == "people":
-            if new_key not in existing_entity[self.alternative_field]:
-                existing_entity[self.alternative_field].append(new_key)
-                log(f"Added alternative name: '{new_key}'", level="processing")
-                return True
-
-        elif self.entity_type == "events":
-            alt_entry = {
-                "title": new_key[0] if isinstance(new_key, tuple) else str(new_key),
-                "start_date": new_key[1]
-                if isinstance(new_key, tuple) and len(new_key) > 1
-                else "",
-                "event_type": (source_entity or {}).get("event_type", ""),
-            }
-            if alt_entry not in existing_entity[self.alternative_field]:
-                existing_entity[self.alternative_field].append(alt_entry)
-                log(
-                    f"Added alternative event: '{alt_entry['title']}'",
-                    level="processing",
-                )
-                return True
-
-        else:  # organizations, locations
-            alt_entry = {
-                "name": new_key[0] if isinstance(new_key, tuple) else str(new_key),
-                "type": new_key[1]
-                if isinstance(new_key, tuple) and len(new_key) > 1
-                else "",
-            }
-            if alt_entry not in existing_entity[self.alternative_field]:
-                existing_entity[self.alternative_field].append(alt_entry)
-                log(
-                    f"Added alternative {self.entity_type[:-1]}: '{alt_entry['name']}'",
-                    level="processing",
-                )
-                return True
-
-        return False
+        return add_alternative_name(
+            self.entity_type,
+            self.alternative_field,
+            existing_entity,
+            new_key,
+            source_entity,
+        )
 
     def merge_entities(
         self,
@@ -552,7 +537,7 @@ class EntityMerger:
                 rejected.append(similar_key)
                 if len(rejected) > 1 and (similarity_score or 0) < resolved_threshold:
                     break  # a name-variant candidate was the last one to try
-            if verdict == "error":
+            if verdict in ("error", "failed"):
                 stats.errors += 1
                 continue
             if verdict != "merge":

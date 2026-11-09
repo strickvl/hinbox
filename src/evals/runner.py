@@ -43,6 +43,7 @@ def make_pipeline_predictor(task: str, model: str, domain: str) -> Predictor:
 
     if task == "merge":
         from src.engine.match_checker import (
+            check_failed,
             cloud_model_check_match,
             local_model_check_match,
         )
@@ -53,7 +54,7 @@ def make_pipeline_predictor(task: str, model: str, domain: str) -> Predictor:
             result = check(model=model, **inputs)
             # The match checker swallows API errors and returns a "no" verdict;
             # surface them as errors so they aren't scored as correct rejections.
-            if result.reason.startswith("API error"):
+            if check_failed(result):
                 raise RuntimeError(result.reason)
             return bool(result.is_match)
 
