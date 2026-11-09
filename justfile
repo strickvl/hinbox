@@ -50,6 +50,11 @@ alias ui := frontend
 speed-baseline *args:
     uv run python -m scripts.speed_baseline {{args}}
 
+# Give a finished run's grounding verdicts the article passages their reasoning quotes, no model call
+# (e.g. `just grounding-passages --entities <run> --articles <parquet> --out <copy>`)
+grounding-passages *args:
+    uv run python -m scripts.grounding_passages {{args}}
+
 # ─── Evaluation ───────────────────────────────────────
 
 # Score a model on hand-labelled gold sets (e.g. `just eval relevance --model ollama/qwen3.6:35b-a3b`)

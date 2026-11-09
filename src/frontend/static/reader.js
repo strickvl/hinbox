@@ -85,6 +85,19 @@
     p.append(text.slice(0, at), el("mark", "", needle), text.slice(at + needle.length));
     return [p, true];
   }
+  // Marks the stored passages in paragraph n: spans are [paragraph, start,
+  // end], worked out by the server's passage_spans(), so nothing is searched
+  function withPassages(text, n, spans) {
+    const p = el("p");
+    let last = 0, hit = false;
+    spans.filter((x) => x[0] === n).forEach(([, a, b]) => {
+      if (a < last || b > text.length) return;
+      p.append(text.slice(last, a), el("mark", "passage", text.slice(a, b)));
+      last = b; hit = true;
+    });
+    p.append(text.slice(last));
+    return [p, hit];
+  }
   async function openStatic(link) {
     let doc, base;
     try {
@@ -143,13 +156,20 @@
       }
       const body = el("div", "pbody");
       const needle = (c.q || "").replace(/[.,;:\s]+$/, "");
-      let marked = false;
-      doc.querySelectorAll(".source-text p").forEach((sp) => {
-        const [p, hit] = sp.classList.contains("empty") ? [el("p", "empty", sp.textContent), false] : highlighted(sp.textContent, needle);
+      const old = Boolean(desk.dataset.version);
+      const pieces = old ? [] : (c.p || {})[aid] || [];
+      const verdict = old ? "" : (c.v || {})[aid] || "unchecked";
+      let marked = false, quoted = false;
+      doc.querySelectorAll(".source-text p").forEach((sp, n) => {
+        let p, hit = false;
+        if (sp.classList.contains("empty")) p = el("p", "empty", sp.textContent);
+        else if (pieces.length) { [p, hit] = withPassages(sp.textContent, n, pieces); quoted = quoted || hit; }
+        else [p, hit] = highlighted(sp.textContent, needle);
         marked = marked || hit;
         body.append(p);
       });
-      if (c.q && !marked && body.children.length) body.append(el("p", "note", "The checker doesn't yet save which words it relied on, so the whole source is shown. Sentences copied word for word are highlighted."));
+      if (c.q && quoted) body.append(el("p", "note", "Highlighted: the words the checker quoted when it judged this sentence, found word for word in the source. " + (verdict === "supported" ? "They are what it took as support." : "They are what it compared the sentence with; read around them, since the checker can be wrong.")));
+      else if (c.q && !marked && body.children.length && verdict !== "unchecked" && !old) body.append(el("p", "note", "The checker quoted nothing from this source that could be found in it word for word, so the whole source is shown with nothing highlighted."));
       box.append(body);
       const chips = [...doc.querySelectorAll(".side .chipl")].filter((a) => a.textContent !== (document.querySelector("h1") || {}).textContent);
       if (chips.length) {

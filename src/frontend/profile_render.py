@@ -85,6 +85,9 @@ class Claim:
     correction: str = ""
     checker: Dict[str, str] = field(default_factory=dict)  # verdicts overruled
     by: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # aid or "" -> line
+    # article id -> the article words the checker's verdict rests on, as
+    # stored (each already found word for word in the article)
+    passages: Dict[str, List[str]] = field(default_factory=dict)
 
     @property
     def verdict(self) -> str:
@@ -204,6 +207,9 @@ def attach_verdicts(claims: List[Claim], report: Optional[Dict[str, Any]]) -> bo
             claim.verdicts[aid] = str(v.get("support_level", "unchecked"))
             if v.get("reasoning"):
                 claim.reasons[aid] = str(v["reasoning"])
+            found = [str(p) for p in v.get("passages") or [] if p]
+            if found:
+                claim.passages[aid] = found
     return True
 
 

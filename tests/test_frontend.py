@@ -77,7 +77,17 @@ def _report() -> Dict[str, Any]:
         )
         if "shipping" in c["claim"] and c["article_id"] == A2:
             level, reason = "supported", ""
-        out.append(_verif(c["article_id"], c["claim"], level, reason))
+        v = _verif(c["article_id"], c["claim"], level, reason)
+        if "force-fed" in c["claim"]:
+            v["passages"] = ["More than 100 prisoners joined a hunger strike"]
+        if "shipping" in c["claim"]:
+            v["passages"] = {
+                # runs over a line break of the article
+                A1: ["arrested Yusuf Qadir in a dawn raid.\nNeighbours said Qadir"],
+                # not in the article: never marked
+                A2: ["He worked for a shipping firm in Aden"],
+            }[c["article_id"]]
+        out.append(v)
     return {"verifications": out, "model": "anthropic/claude-haiku-5-5"}
 
 
@@ -245,6 +255,29 @@ def test_panel_shows_verdict_reason_and_text(client):
     assert "<mark>Among them was Yusuf Qadir, a made-up detainee</mark>" in r.text
 
 
+def test_panel_marks_the_passage_the_checker_quoted(client):
+    claims, _ = parse_claims(TEXT)
+    idx = next(c.index for c in claims if "force-fed" in c.text)
+    r = client.get(
+        "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A3, "c": idx}
+    )
+    assert (
+        '<mark class="passage">More than 100 prisoners joined a hunger strike</mark>'
+        in r.text
+    )
+    assert "what it compared the sentence with" in r.text
+    idx = next(c.index for c in claims if "shipping" in c.text)
+    r = client.get(
+        "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A1, "c": idx}
+    )
+    assert '<mark class="passage">arrested Yusuf Qadir in a dawn raid.</mark>' in r.text
+    assert '<mark class="passage">Neighbours said Qadir</mark>' in r.text
+    r = client.get(
+        "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A2, "c": idx}
+    )
+    assert "<mark" not in r.text and "quoted nothing from this source" in r.text
+
+
 def test_panel_for_an_old_version_quotes_that_version(client):
     r = client.get(
         "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A1, "c": 0, "v": 1}
@@ -383,3 +416,33 @@ def test_static_export_writes_linked_files(client, tmp_path):
     cites = json.loads(data.group(1))
     assert any("partial" in c["v"].values() for c in cites.values())
     assert 'id="cite-data"' not in client.get("/people/Yusuf%20Qadir").text
+
+
+def test_static_copy_gets_passage_positions_not_words(client):
+    from src.frontend.views import cite_data, passage_spans
+
+    store = data_access.load_store()
+    rp = render_profile(TEXT, _report())
+    data = cite_data(rp, store)
+    shipping = next(v for v in data.values() if "shipping" in v["q"])
+    # A passage over a line break gives a piece in each paragraph
+    assert shipping["p"][A1] == [[0, 17, 53], [1, 0, 21]]
+    paras = store.source(A1).paragraphs()
+    assert paras[0][17:53] == "arrested Yusuf Qadir in a dawn raid."
+    assert shipping["p"][A2] == []  # not in the article: nothing to mark
+    # A short first line is never looked for on its own elsewhere
+    assert passage_spans(
+        ["He denied it.", "He", "was flown to the base with thirteen other men."],
+        ["He\nwas flown to the base with thirteen other men"],
+    ) == [(1, 0, 2), (2, 0, 45)]
+    assert (
+        cite_data(render_profile(TEXT, _report(), show_verdicts=False))["0"]["p"] == {}
+    )
+
+
+def test_reader_does_not_mark_a_passage_found_twice():
+    from src.frontend.views import passage_spans
+
+    paras = ["He went to the old harbour gate.", "They met at the old harbour gate."]
+    assert passage_spans(paras, ["the old harbour gate"]) == []
+    assert passage_spans(paras, ["They met at the old harbour gate"]) == [(1, 0, 32)]

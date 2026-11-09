@@ -35,6 +35,11 @@ it never calls a model. Run it with `just frontend`.
   stored report describes the current text only.
 - **Name the checker and its miss rate.** `CHECKER_MISSES` in `views.py`
   holds the hand-test numbers; update it when the grounding bench is rerun.
+- **Passages come from the checker, checked twice.** The panel marks a
+  verdict's stored `passages` (found word for word in the article when
+  grounding saved them) and looks each up again in the shown paragraphs;
+  one it can't find is not marked. With no passage it falls back to marking
+  a sentence copied word for word, and says the checker quoted nothing.
 - **Escape model text.** Profile text is HTML-escaped before Markdown;
   article text is escaped before `<mark>` is added.
 - **Every page works without JavaScript.** A citation is a link to

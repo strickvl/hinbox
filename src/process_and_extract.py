@@ -19,6 +19,7 @@ Concurrency model (Phase 2 speed audit):
 import argparse
 import contextvars
 import os
+import signal
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -40,7 +41,7 @@ from src.utils.embeddings.similarity import (
     reset_embedding_manager_cache,
 )
 from src.utils.extraction import configure_extraction_sidecar_cache
-from src.utils.file_ops import write_entities_table
+from src.utils.file_ops import load_existing_entities, write_entities_table
 from src.utils.grounding import describe_claim_counts
 from src.utils.letters_page import split_letters, stored_letters_text
 from src.utils.llm import configure_llm_concurrency
@@ -96,67 +97,6 @@ def ensure_dir(directory: str) -> None:
     """
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
-
-
-def load_existing_entities(base_dir: str) -> Dict[str, Dict]:
-    """Load existing entities from Parquet files if they exist.
-
-    Reads all existing entity Parquet files and loads them into memory for merging
-    with newly extracted entities. Handles different keying schemes for each entity type.
-
-    Returns:
-        Dictionary with keys 'people', 'events', 'locations', 'organizations', each
-        containing a dictionary of entities keyed by their unique identifiers:
-        - people: keyed by name (string)
-        - events: keyed by (title, start_date) tuple
-        - locations: keyed by (name, type) tuple
-        - organizations: keyed by (name, type) tuple
-
-    Note:
-        Missing Parquet files result in empty dictionaries for those entity types.
-        This allows the pipeline to work even when starting from scratch.
-    """
-    people = {}
-    events = {}
-    locations = {}
-    organizations = {}
-
-    # Build file paths under the domain's output directory
-    people_path = os.path.join(base_dir, "people.parquet")
-    events_path = os.path.join(base_dir, "events.parquet")
-    locations_path = os.path.join(base_dir, "locations.parquet")
-    orgs_path = os.path.join(base_dir, "organizations.parquet")
-
-    # People
-    if os.path.exists(people_path):
-        people_table = pq.read_table(people_path)
-        for p in people_table.to_pylist():
-            people[p["name"]] = p
-
-    # Events
-    if os.path.exists(events_path):
-        events_table = pq.read_table(events_path)
-        for e in events_table.to_pylist():
-            events[(e["title"], e.get("start_date", ""))] = e
-
-    # Locations
-    if os.path.exists(locations_path):
-        locations_table = pq.read_table(locations_path)
-        for loc in locations_table.to_pylist():
-            locations[(loc["name"], loc.get("type", ""))] = loc
-
-    # Organizations
-    if os.path.exists(orgs_path):
-        orgs_table = pq.read_table(orgs_path)
-        for o in orgs_table.to_pylist():
-            organizations[(o["name"], o.get("type", ""))] = o
-
-    return {
-        "people": people,
-        "events": events,
-        "locations": locations,
-        "organizations": organizations,
-    }
 
 
 def write_entities_to_files(entities: Dict[str, Dict], base_dir: str) -> None:
@@ -421,6 +361,22 @@ def write_results_and_statistics(
         skipped_relevance_cached=skipped_relevance_cached,
         skipped_incomplete=skipped_incomplete,
     )
+
+
+SAVE_EVERY_ENV = "HINBOX_SAVE_EVERY"
+SAVE_EVERY_DEFAULT = 25
+
+
+def save_every_articles() -> int:
+    """How many merged articles between saves of the entity tables during a
+    run (``HINBOX_SAVE_EVERY``, default 25; 0 saves only at the end or when
+    stopped). Before, a run saved only at its end, on Ctrl+C or when the
+    model server was gone, so a crash or shutdown lost every merge and
+    profile call made so far."""
+    try:
+        return max(0, int(os.getenv(SAVE_EVERY_ENV, SAVE_EVERY_DEFAULT)))
+    except ValueError:
+        return SAVE_EVERY_DEFAULT
 
 
 def save_entities_then_status(
@@ -765,6 +721,8 @@ def process_articles_batch(
             )
             return span, future
 
+        save_every = save_every_articles()
+        merged = 0
         try:
             # --- Consume results in submission (article) order ---
             for span, future in ordered_window(
@@ -784,6 +742,15 @@ def process_articles_batch(
                     )
 
                 progress.update(task_id, advance=1)
+                # Only articles that went through merging count: a resumed
+                # run skips its already-processed ones without saving
+                merged += bool(result.was_extracted)
+                if save_every and result.was_extracted and merged % save_every == 0:
+                    # A crash, kill or power cut keeps what is saved here;
+                    # without it a 30-hour run lost everything merged so far
+                    save_entities_then_status(
+                        entities, domain_cfg.get_output_dir(), status_tracker
+                    )
                 write_partial_report(
                     domain_cfg.get_output_dir(),
                     counters["processed_count"],
@@ -804,10 +771,16 @@ def process_articles_batch(
     return processed_rows, counters
 
 
+def _interrupt(signum: int, frame: Any) -> None:
+    raise KeyboardInterrupt
+
+
 def main():
     """Main processing function - orchestrates the entire article processing workflow."""
     log("Starting script...")
     run_start = time.perf_counter()
+    # A shutdown or `kill` stops the run like Ctrl+C: it saves what is merged
+    signal.signal(signal.SIGTERM, _interrupt)
 
     # Setup and initialization
     args = setup_arguments_and_config()
