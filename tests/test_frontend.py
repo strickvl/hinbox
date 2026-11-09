@@ -269,6 +269,25 @@ def test_wrapped_sentence_keeps_its_verdict():
     assert "Qadir studied engineering\nat a local college.</span>" in rp.html
 
 
+def test_sentence_that_grew_after_the_check_is_unchecked():
+    """A verdict on "X." must not cover "X. Y." saved later without a check."""
+    report = {
+        "verifications": [
+            {
+                "article_id": "a",
+                "claim": "Qadir was detained.",
+                "support_level": "supported",
+            }
+        ]
+    }
+    grown = render_profile("Qadir was detained. He was convicted in 2005.^[a]", report)
+    assert grown.claims[0].verdicts == {"a": "unchecked"}
+    long = "Qadir was detained. " + "word " * 200 + "end.^[a]"
+    stored = parse_claims(long)[0][0].text[:600] + " (stored text runs on)"
+    report["verifications"][0]["claim"] = stored
+    assert render_profile(long, report).claims[0].verdicts == {"a": "supported"}
+
+
 def test_source_page_lists_citing_sentences(client):
     html = client.get(f"/sources/{A3}").text
     assert "Hunger strike spreads" in html and "News article" in html

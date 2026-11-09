@@ -25,7 +25,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import markdown
 
-from src.utils.grounding import _HEADING_LINES, _claim_key
+from src.utils.grounding import (
+    GROUNDING_MAX_CLAIM_CHARS,
+    _HEADING_LINES,
+    _claim_key,
+)
 from src.utils.grounding import _LEADING_PUNCT as _GROUNDING_LEAD
 from src.utils.quality_controls import CITATION_RE, citation_ids
 
@@ -171,16 +175,17 @@ def attach_verdicts(claims: List[Claim], report: Optional[Dict[str, Any]]) -> bo
         known[(aid, key)] = v
         by_article.setdefault(aid, []).append((key, v))
     for claim in claims:
-        key = _claim_key(claim.text)
+        # Same rule as `_earlier_verdict()` in grounding: the judge saw (and the
+        # report stored) the claim's first GROUNDING_MAX_CLAIM_CHARS characters.
+        # A longer stored text only counts when this claim is itself that long,
+        # so a sentence that grew after the check stays unchecked.
+        key = _claim_key(claim.text[:GROUNDING_MAX_CLAIM_CHARS])
+        cut = len(claim.text) > GROUNDING_MAX_CLAIM_CHARS
         for aid in claim.articles:
             v = known.get((aid, key))
-            if v is None:  # stored claims are cut at the judge's limit
+            if v is None and cut:
                 v = next(
-                    (
-                        sv
-                        for sk, sv in by_article.get(aid, [])
-                        if sk and (key.startswith(sk) or sk.startswith(key))
-                    ),
+                    (sv for sk, sv in by_article.get(aid, []) if sk.startswith(key)),
                     None,
                 )
             if v is None:
