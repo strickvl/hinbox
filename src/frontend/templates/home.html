@@ -28,6 +28,7 @@
     <p class="small muted">Pages with sentences the checker found not supported by their source, most first.{% if totals.not_supported %} {{ totals.not_supported }} such sentences in all{% if totals.partial %}, and {{ totals.partial }} partly supported{% endif %}.{% endif %}</p>
     <ul class="elist tight">{% for a in attention %}{{ entity_row(a.summary, show_table=True) }}{% endfor %}</ul>
     {% else %}<p class="empty">Nothing marked as not supported.</p>{% endif %}
+    {% if corrections and not static_site %}<p class="small"><a href="{{ u('/corrections') }}">{{ corrections.active }} correction{{ 's' if corrections.active != 1 }}</a> in your corrections file{% if corrections.look %}, <span class="tone-look">{{ corrections.look }} need{{ 's' if corrections.look == 1 }} a look</span>{% endif %}.</p>{% endif %}
     {% if queue %}<p class="small">{{ queue }} merge decision{{ 's' if queue != 1 }} waiting for review in <code>merge_review_queue.jsonl</code>.</p>{% endif %}
   </section>
   <section>

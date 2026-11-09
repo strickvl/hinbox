@@ -11,6 +11,7 @@
     {% if event_dates %}<span>{{ event_dates }}</span>{% endif %}
     <span class="num">{{ s.n_articles }} article{{ 's' if s.n_articles != 1 }}{% if s.first %} · {{ s.first }}{% if s.last != s.first %}–{{ s.last }}{% endif %}{% endif %}</span>
     {% if s.last_date %}<span>Latest source {{ s.last_date|fmt_date }}</span>{% endif %}
+    {% if not static_site and not version %}<a class="small" href="{{ u('/correct/page', t=ent.spec.table, k=ent.key) }}">Correct this page</a>{% endif %}
   </div>
 </header>
 
@@ -27,6 +28,13 @@
     <span><b class="num">{{ n_claims }}</b> cited sentence{{ 's' if n_claims != 1 }}, <b>not checked yet</b> against their sources.</span>
   {% endif %}
 </div>
+
+{% if corrections and corrections.rows %}
+<div class="corr-box">
+  <b>Your corrections on this page</b>{% if corrections.look %} · <span class="tone-look">{{ corrections.look }} need{{ 's' if corrections.look == 1 }} a look</span>{% endif %}
+  <ul>{% for r in corrections.rows %}<li class="tone-{{ r.tone }}"><span class="cid">{{ r.rec.id }}</span> {{ r.label }}: {{ r.what }} <span class="muted small">{{ r.status }}</span></li>{% endfor %}</ul>
+</div>
+{% endif %}
 
 {% if kind == 'stub' %}
 <div class="banner"><b>Stub: sentences copied word for word from {% if first_source %}one article{% else %}the first article{% endif %}.</b> No model wrote this text. A full profile is written when a second article about this {{ ent.spec.singular }} is merged in.{% if s.n_articles > 1 %} It is linked to {{ s.n_articles }} articles; only the first is quoted.{% endif %}</div>

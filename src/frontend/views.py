@@ -12,6 +12,7 @@ from markupsafe import Markup
 
 from src.utils.grounding_passages import find_once, long_enough
 
+from . import corrections_view as cv
 from .data_access import SPECS, TABLES, Entity, Source, Store, pretty_type, to_date
 from .profile_render import (
     SEVERITY,
@@ -178,11 +179,13 @@ def entity_page(
     versions = _versions(ent)
     text, old, current = _version_text(ent, version)
     report = ent.row.get("profile_grounding") or {}
+    cs = cv.load(store)
     rp: RenderedProfile = render_profile(
         text,
         report,
         link="/sources/{article}" + domain_query,
         show_verdicts=old is None,
+        overlay=cv.overlay_for(store, cs, ent) if old is None else None,
     )
     counts = rp.counts()
     issues = [
@@ -268,6 +271,7 @@ def entity_page(
         "old_date": fmt_date(to_date(old.get("created_at"))) if old else "",
         "first_source": store.source(arts[0]["article_id"]) if arts else None,
         "cite_data": cite_data(rp, store),
+        "corrections": cv.entity_box(store, cs, ent, rp) if old is None else None,
     }
 
 
@@ -295,8 +299,14 @@ def cite_data(rp: RenderedProfile, store: Optional[Store] = None) -> Dict[str, A
     return {
         str(c.index): {
             "q": plain_claim(c.text),
-            "v": dict(c.verdicts) if rp.checked else {},
+            "v": {a: v for a, v in c.verdicts.items() if rp.checked or a in c.checker},
             "r": dict(c.reasons) if rp.checked else {},
+            # A historian's corrections, so the static panel can say whose
+            # verdict it shows: x = struck/mine/verdict, c = the checker's
+            # overruled verdicts, i = correction id per source ("" = sentence)
+            "x": c.correction,
+            "c": dict(c.checker),
+            "i": {k: r["id"] for k, r in c.by.items()},
             "p": {aid: where(aid, ps) for aid, ps in c.passages.items()}
             if rp.checked
             else {},
@@ -387,8 +397,12 @@ def source_panel(
     since the stored report describes the current text only."""
     src = store.source(article_id)
     text, old, _ = _version_text(ent, version)
+    cs = cv.load(store)
     rp = render_profile(
-        text, ent.row.get("profile_grounding"), show_verdicts=old is None
+        text,
+        ent.row.get("profile_grounding"),
+        show_verdicts=old is None,
+        overlay=cv.overlay_for(store, cs, ent) if old is None else None,
     )
     claim = (
         rp.claims[claim_index]
@@ -400,7 +414,7 @@ def source_panel(
     passages: List[str] = []
     if claim:
         quote = plain_claim(claim.text)
-        if rp.checked:
+        if rp.checked or article_id in claim.checker:
             verdict = claim.verdicts.get(article_id, "unchecked")
             reason = claim.reasons.get(article_id, "")
             passages = claim.passages.get(article_id, [])
@@ -422,6 +436,10 @@ def source_panel(
         "old_version": old is not None,
         "named": named_in(store, article_id),
         "ent": ent,
+        "index": claim.index if claim else None,
+        "correction": claim.correction if claim else "",
+        "mine": (claim.by.get(article_id) or claim.by.get("")) if claim else None,
+        "checker_said": claim.checker.get(article_id, "") if claim else "",
     }
 
 
@@ -491,6 +509,7 @@ def home_page(store: Store) -> Dict[str, Any]:
         "n_sources": sum(1 for s in store.sources if s in store.by_source),
         "latest": latest,
         "queue": store.review_queue_count(),
+        "corrections": cv.home_summary(store),
     }
 
 

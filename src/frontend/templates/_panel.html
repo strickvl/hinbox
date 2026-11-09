@@ -11,9 +11,13 @@
 </div>
 {% elif claim %}
 <div class="verdict v-{{ verdict }}">
-  {% if verdict %}<b>{{ verdict_label }}</b>{% else %}<b>Not checked yet</b>{% endif %}
+  {% if correction == 'mine' %}<b>Your sentence ({{ mine.id }})</b>{% elif checker_said %}<b>{{ verdict_label }} (your verdict, {{ mine.id }})</b>{% elif verdict %}<b>{{ verdict_label }}</b>{% else %}<b>Not checked yet</b>{% endif %}
   <span class="claim">“{{ claim }}”</span>
-  {% if reason %}<span>{{ reason }}</span>{% elif verdict == 'supported' %}<span>The checker found this in the source.</span>{% elif verdict == 'unchecked' or not verdict %}<span>No checker verdict is stored for this sentence and source.</span>{% endif %}
+  {% if correction == 'mine' %}<span>You wrote this in place of a struck sentence. The checker hasn't judged it yet.</span>
+  {% elif checker_said %}<span>The checker said {{ VERDICT_LABELS.get(checker_said, checker_said)|lower }}{% if reason %}: {{ reason }}{% else %}.{% endif %}</span>{% if mine.reason %}<span>Your reason: {{ mine.reason }}</span>{% endif %}
+  {% elif reason %}<span>{{ reason }}</span>{% elif verdict == 'supported' %}<span>The checker found this in the source.</span>{% elif verdict == 'unchecked' or not verdict %}<span>No checker verdict is stored for this sentence and source.</span>{% endif %}
+  {% if correction == 'struck' %}<span class="tone-look">You struck this sentence{% if mine and mine.reason %}: {{ mine.reason }}{% endif %}</span>{% endif %}
+  {% if index is not none and not static_site %}<a class="small" href="{{ u('/correct/sentence', t=ent.spec.table, k=ent.key, c=index, a=source.id) }}">Correct this sentence</a>{% endif %}
 </div>
 {% endif %}
 <div class="pbody">

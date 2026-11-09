@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import markdown
 
+from src.utils.corrections import sentence_key
 from src.utils.grounding import (
     _HEADING_LINES,
     GROUNDING_MAX_CLAIM_CHARS,
@@ -40,6 +41,7 @@ SEVERITY = {
     "unclear": 1,
     "partial": 2,
     "not_supported": 3,
+    "struck": 0,
 }
 VERDICT_LABELS = {
     "supported": "Supported",
@@ -48,6 +50,7 @@ VERDICT_LABELS = {
     "unclear": "Checker unsure",
     "unchecked": "Not checked yet",
     "missing_source": "Source text missing",
+    "struck": "Struck by you",
 }
 # No "^": it is matched at an offset with pattern.match(text, pos)
 _LEADING_PUNCT = re.compile(r"[\s.,;:!?)\]]+")
@@ -77,6 +80,11 @@ class Claim:
     articles: List[str] = field(default_factory=list)
     verdicts: Dict[str, str] = field(default_factory=dict)  # article id -> level
     reasons: Dict[str, str] = field(default_factory=dict)
+    # A historian's corrections (src/utils/corrections.py): "struck", "mine"
+    # (a sentence they wrote) or "verdict" (they overruled the checker)
+    correction: str = ""
+    checker: Dict[str, str] = field(default_factory=dict)  # verdicts overruled
+    by: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # aid or "" -> line
     # article id -> the article words the checker's verdict rests on, as
     # stored (each already found word for word in the article)
     passages: Dict[str, List[str]] = field(default_factory=dict)
@@ -84,6 +92,8 @@ class Claim:
     @property
     def verdict(self) -> str:
         """The verdict needing most attention across its sources."""
+        if self.correction == "struck":
+            return "struck"
         if not self.verdicts:
             return "unchecked"
         return max(self.verdicts.values(), key=lambda v: SEVERITY.get(v, 1))
@@ -236,6 +246,8 @@ class RenderedProfile:
     sections: List[Section]
     order: List[str]  # article ids by first citation
     checked: bool  # a grounding report exists
+    text: str = ""  # the text drawn: headings shifted, replacements put in
+    unmatched: List[Dict[str, Any]] = field(default_factory=list)  # not found
 
     def counts(self) -> Dict[str, int]:
         """Sentences per verdict; a sentence citing two sources counts once,
@@ -291,7 +303,9 @@ def _sup(
     parts = []
     for aid in articles:
         n = order.index(aid) + 1
-        v = claim.verdicts.get(aid, "unchecked") if checked else "supported"
+        # A historian's verdict shows even when no checker report exists
+        shown = checked or aid in claim.checker
+        v = claim.verdicts.get(aid, "unchecked") if shown else "supported"
         mark = ""
         if v != "supported":
             sym = {"partial": "?", "not_supported": "✕"}.get(v, "·")
@@ -305,21 +319,99 @@ def _sup(
     return f'<sup class="c">{",".join(parts)}</sup>'
 
 
+@dataclass
+class Overlay:
+    """The corrections drawn on one page, keyed by ``sentence_key()``:
+    sentences struck (some with the historian's own sentence to show after
+    them) and checker verdicts overruled (per sentence and source)."""
+
+    struck: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    verdicts: Dict[Tuple[str, str], Dict[str, Any]] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return bool(self.struck or self.verdicts)
+
+
+# A historian's sentence goes into the text as a placeholder, so Markdown
+# never reads it; the escaped words are put back after rendering
+_MINE = ""
+_MINE_RE = re.compile(f"{_MINE}(\\d+){_MINE}")
+
+
+def _insert_replacements(
+    text: str, overlay: Overlay
+) -> Tuple[str, Dict[str, Dict[str, Any]]]:
+    """Put each struck sentence's replacement right after it, with its own
+    citation, so it is drawn and numbered like any other sentence. Returns
+    the new text and the replacements by placeholder."""
+    claims, markers = parse_claims(text)
+    inserts: List[Tuple[int, str]] = []
+    mine: Dict[str, Dict[str, Any]] = {}
+    for c in claims:
+        rec = overlay.struck.get(sentence_key(c.text))
+        if not rec or not rec.get("replacement"):
+            continue
+        end = max(m.end for m in markers if m.claim == c.index)
+        token = f"{_MINE}{len(mine)}{_MINE}"
+        inserts.append((end, f" {token}^[{rec['replacement_cites']}]"))
+        mine[token] = rec
+    for pos, add in sorted(inserts, reverse=True):
+        text = text[:pos] + add + text[pos:]
+    return text, mine
+
+
+def _words(rec: Dict[str, Any]) -> str:
+    return " ".join(str(rec.get("replacement", "")).split())
+
+
+def _apply_overlay(
+    claims: List[Claim], overlay: Overlay, mine: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Mark struck, written and overruled sentences. Returns the corrections
+    whose sentence is not on the page any more."""
+    used: set = set()
+    for c in claims:
+        key = sentence_key(c.text)
+        if key in mine:
+            c.correction, c.by[""] = "mine", mine[key]
+            c.text = _words(mine[key])
+            continue
+        if key in overlay.struck:
+            c.correction, c.by[""] = "struck", overlay.struck[key]
+            used.add(overlay.struck[key]["id"])
+        for aid in c.articles:
+            rec = overlay.verdicts.get((key, aid))
+            if rec:
+                c.checker[aid] = c.verdicts.get(aid, "unchecked")
+                c.verdicts[aid] = rec["verdict"]
+                c.by[aid] = rec
+                c.correction = c.correction or "verdict"
+                used.add(rec["id"])
+    every = list(overlay.struck.values()) + list(overlay.verdicts.values())
+    return [r for r in every if r["id"] not in used]
+
+
 def render_profile(
     text: str,
     report: Optional[Dict[str, Any]] = None,
     link: str = "/sources/{article}",
     show_verdicts: bool = True,
+    overlay: Optional["Overlay"] = None,
 ) -> RenderedProfile:
     """Render a profile's Markdown with numbered citations and verdict marks.
 
     ``link`` is the citation's fallback URL (``{article}`` and ``{claim}``
     are filled in). ``show_verdicts=False`` renders an older version, whose
-    text the stored report doesn't describe.
+    text the stored report doesn't describe. ``overlay`` draws a historian's
+    corrections on top (pass it for the current version only).
     """
     text = shift_headings(text or "")
+    mine: Dict[str, Dict[str, Any]] = {}
+    if overlay:
+        text, mine = _insert_replacements(text, overlay)
     claims, markers = parse_claims(text)
     checked = show_verdicts and attach_verdicts(claims, report)
+    unmatched = _apply_overlay(claims, overlay, mine) if overlay else []
     order: List[str] = []
     for m in markers:
         for aid in m.articles:
@@ -333,8 +425,9 @@ def render_profile(
     edits: List[Tuple[int, int, int, str]] = []
     for c in claims:
         if c.end > c.start:
-            v = c.verdict if checked else "supported"
-            edits.append((c.start, 1, 0, f"{_OPEN}{c.index}|{v}{_MID}"))
+            shown = checked or c.checker or c.correction == "struck"
+            v = c.verdict if shown else "supported"
+            edits.append((c.start, 1, 0, f"{_OPEN}{c.index}|{v}|{c.correction}{_MID}"))
             edits.append((c.end, 0, 0, _CLOSE))
     subs: List[str] = []
     for m in markers:
@@ -349,11 +442,15 @@ def render_profile(
     )
     body = re.sub(f"{_CITE}(\\d+){_CITE}", lambda m: subs[int(m.group(1))], body)
     body = re.sub(
-        f"{_OPEN}(\\d+)\\|(\\w+){_MID}",
-        lambda m: f'<span class="s v-{m.group(2)}" id="claim-{m.group(1)}">',
+        f"{_OPEN}(\\d+)\\|(\\w+)\\|(\\w*){_MID}",
+        lambda m: (
+            f'<span class="s v-{m.group(2)}{" c-" + m.group(3) if m.group(3) else ""}"'
+            f' id="claim-{m.group(1)}">'
+        ),
         body,
     )
     body = body.replace(_CLOSE, "</span>")
+    body = _MINE_RE.sub(lambda m: html.escape(_words(mine[m.group(0)])), body)
     # Give headings the anchors the contents list links to
     it = iter(sections)
 
@@ -362,7 +459,7 @@ def render_profile(
         return f'<h{m.group(1)} id="{sec.anchor}">' if sec else m.group(0)
 
     body = re.sub(r"<h([2-6])>", anchor, body)
-    return RenderedProfile(body, claims, sections, order, checked)
+    return RenderedProfile(body, claims, sections, order, checked, text, unmatched)
 
 
 def plain_claim(text: str) -> str:

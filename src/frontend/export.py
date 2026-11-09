@@ -39,7 +39,7 @@ from .app import DEFAULT_DOMAIN, HERE, app, templates
 from .data_access import SPECS, TABLES, load_store
 
 _LINK = re.compile(r'(href|src|action)="(/[^"]*)"')
-_SKIP = ("/search", "/panel", "/static/")
+_SKIP = ("/search", "/panel", "/static/", "/correct")
 # Characters a file name can't hold safely (path, URL or Windows trouble);
 # "%" so the encoding can be undone, "~" so only a cut name has one
 _UNSAFE = re.compile(r'[%/\\?#:*"<>|~\x00-\x1f]')

@@ -214,3 +214,38 @@ table.tbl a:hover { text-decoration: underline; }
   .top, .toc, .panel, .trust .chip { display: none !important; }
   .desk { display: block; }
 }
+
+/* ── corrections ── */
+.s.c-struck { text-decoration: line-through; text-decoration-color: var(--ink-3); color: var(--ink-3); }
+.s.c-mine { background: var(--primary-wash); box-shadow: inset 0 -2px 0 var(--primary); text-decoration: none; }
+.s.c-verdict::after { content: "✎"; font-family: var(--sans); font-size: 11px; color: var(--primary); margin-left: 2px; }
+.dot.v-struck { background: var(--ink-3); }
+.corr-box { margin: 0 0 18px; padding: 10px 14px; border: 1px solid var(--rule); border-left: 3px solid var(--primary); border-radius: 0 8px 8px 0; background: var(--paper); font-size: 14px; }
+.corr-box ul, .corr-list { margin: 6px 0 0; padding-left: 18px; }
+.corr-list { list-style: none; padding: 0; display: grid; gap: 0; }
+.corr-list > li { padding: 12px 0; border-bottom: 1px solid var(--rule); display: grid; gap: 4px; }
+.corr-list .what { font-family: var(--serif); font-size: 16px; overflow-wrap: anywhere; }
+.cid { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.tone-look, .tone-look .status { color: var(--red); }
+.tone-off { opacity: .6; }
+.corr-error { padding: 10px 14px; border-radius: 6px; background: var(--red-wash); color: var(--ink); font-size: 14px; }
+.corr-quote { font-family: var(--serif); font-size: 19px; line-height: 1.55; margin: 8px 0 6px; padding-left: 14px; border-left: 3px solid var(--rule-2); max-width: 66ch; }
+.corr-quote.c-struck { text-decoration: line-through; color: var(--ink-3); }
+.corr-forms { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px 28px; margin: 20px 0 32px; }
+.corr-form { display: grid; gap: 10px; align-content: start; padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); min-width: 0; }
+.corr-form .section-title { margin: 0; }
+.corr-form p { margin: 0; }
+.corr-form label { display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.corr-form label.check { display: flex; gap: 6px; align-items: center; }
+.corr-form textarea, .corr-form input[type="text"], .corr-form select, .withdraw input { font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--rule-2); border-radius: 6px; padding: 6px 8px; min-width: 0; width: 100%; }
+.corr-form fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.corr-form button { justify-self: start; }
+.corr-ticks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 320px; overflow: auto; font-size: 13.5px; }
+.corr-ticks .dt { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.corr-claims { font-family: var(--serif); font-size: 16px; line-height: 1.5; display: grid; gap: 6px; max-width: 70ch; }
+.corr-claims a { color: var(--ink); text-decoration: none; }
+.corr-claims a:hover { text-decoration: underline; }
+.corr-claims .c-struck a { text-decoration: line-through; color: var(--ink-3); }
+.withdraw { display: flex; gap: 8px; max-width: 520px; }
+.filters a { color: var(--ink-2); text-decoration: none; border-bottom: 2px solid transparent; }
+.filters a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--primary); }

@@ -37,7 +37,7 @@ export-site out *args:
 # The reader on a small made-up corpus (data/demo), for trying it without a run
 demo-reader:
     uv run python -m scripts.demo_reader_data data/demo
-    HINBOX_OUTPUT_DIR=data/demo HINBOX_ARTICLES_PATH=data/demo/articles.parquet uv run python -m src.frontend
+    HINBOX_OUTPUT_DIR=data/demo HINBOX_ARTICLES_PATH=data/demo/articles.parquet HINBOX_CORRECTIONS_PATH=data/demo/corrections.jsonl uv run python -m src.frontend
 
 # Trace viewer: Phoenix on http://localhost:6006 (own uvx env, not in Hinbox's lockfile).
 # Then run the pipeline with OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:6006/v1/traces

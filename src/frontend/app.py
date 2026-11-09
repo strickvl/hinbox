@@ -11,8 +11,8 @@ every link by the ``u()`` template helper.
 """
 
 import os
-from typing import Any, Dict
-from urllib.parse import quote, unquote, urlencode
+from typing import Any, Dict, List
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -21,6 +21,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
+from . import corrections_view as cv
 from . import views
 from .data_access import SPECS, TABLES, available_domains, load_store
 from .profile_render import VERDICT_LABELS
@@ -49,7 +50,12 @@ def _render(
 
     def u(path: str, **params: Any) -> str:
         """A link that keeps the current domain."""
-        q = {k: v for k, v in params.items() if v not in (None, "", False)}
+        # `v is False`, not `v == False`: a claim index of 0 must stay in the link
+        q = {
+            k: v
+            for k, v in params.items()
+            if v is not None and v != "" and v is not False
+        }
         if domain != DEFAULT_DOMAIN:
             q["domain"] = domain
         return f"{path}?{urlencode(q)}" if q else path
@@ -145,6 +151,117 @@ async def source(request: Request) -> Response:
     return _render(request, "source.html", views.source_page(store, sid))
 
 
+# ── corrections ──────────────────────────────────────────────
+# A historian's corrections are appended to the corrections file
+# (src/utils/corrections.py) and drawn on top of the pages; the tables are
+# never edited here. Forms post url-encoded bodies, read without a
+# multipart library.
+
+
+def _same_origin(request: Request) -> bool:
+    """A form post must come from a page of this reader, so another web page
+    open in the same browser can't add corrections behind your back."""
+    host = request.headers.get("host", "")
+    for header in ("origin", "referer"):
+        value = request.headers.get(header)
+        if value:
+            return urlsplit(value).netloc == host
+    return False
+
+
+async def _form(request: Request) -> Dict[str, List[str]]:
+    body = (await request.body()).decode("utf-8", "replace")
+    return parse_qs(body, keep_blank_values=True)
+
+
+def _back(request: Request, url: str, anchor: str = "") -> Response:
+    domain = _domain(request)
+    q = f"?domain={quote(domain)}" if domain != DEFAULT_DOMAIN else ""
+    return RedirectResponse(f"{url}{q}{anchor}", status_code=303)
+
+
+def _entity_from(request: Request, store: Any) -> Any:
+    p = request.query_params
+    return store.get(p.get("t", ""), p.get("k", ""))
+
+
+async def correct_sentence(
+    request: Request, error: str = "", form: Any = None
+) -> Response:
+    store = load_store(_domain(request))
+    p = dict(request.query_params)
+    if form:  # re-showing a form that failed
+        p = {k: v[0] for k, v in form.items() if v}
+    ent = store.get(p.get("t", ""), p.get("k", ""))
+    try:
+        index = int(p.get("c", ""))
+    except ValueError:
+        index = -1
+    ctx = (
+        cv.sentence_form(store, cv.load(store), ent, index, p.get("a", ""))
+        if ent
+        else None
+    )
+    if ctx is None:
+        return _not_found(request, "sentence")
+    ctx.update(error=error, posted=p)
+    return _render(request, "correct_sentence.html", ctx, status=400 if error else 200)
+
+
+async def correct_page(request: Request, error: str = "", form: Any = None) -> Response:
+    store = load_store(_domain(request))
+    p = dict(request.query_params)
+    if form:
+        p = {k: v[0] for k, v in form.items() if v}
+    ent = store.get(p.get("t", ""), p.get("k", ""))
+    if ent is None:
+        return _not_found(request, "page")
+    ctx = cv.page_form(store, cv.load(store), ent)
+    ctx.update(error=error, posted=p, ticked=(form or {}).get("article_ids") or [])
+    return _render(request, "correct_page.html", ctx, status=400 if error else 200)
+
+
+async def corrections(request: Request) -> Response:
+    store = load_store(_domain(request))
+    if request.method == "POST":
+        if not _same_origin(request):
+            return HTMLResponse(
+                "Corrections can only be sent from the reader's own pages.", 403
+            )
+        form = await _form(request)
+        try:
+            _, ent, anchor = cv.save(store, cv.load(store), form)
+        except ValueError as e:
+            kind = (form.get("kind") or [""])[0]
+            again = (
+                correct_sentence
+                if kind in ("strike", "verdict", "heading")
+                else correct_page
+            )
+            return await again(request, error=str(e), form=form)
+        return _back(request, ent.url, anchor)
+    kind = request.query_params.get("kind", "")
+    return _render(
+        request, "corrections.html", cv.corrections_page(store, cv.load(store), kind)
+    )
+
+
+async def withdraw(request: Request) -> Response:
+    if not _same_origin(request):
+        return HTMLResponse(
+            "Corrections can only be sent from the reader's own pages.", 403
+        )
+    store = load_store(_domain(request))
+    cs = cv.load(store)
+    try:
+        cv.withdraw(store, cs, await _form(request))
+    except ValueError as e:
+        ctx = cv.corrections_page(store, cs)
+        ctx["error"] = str(e)
+        return _render(request, "corrections.html", ctx, status=400)
+    return _back(request, "/corrections")
+
+
 async def old_articles(request: Request) -> Response:
     return RedirectResponse(f"/sources/{quote(request.path_params['sid'])}", 301)
 
@@ -156,6 +273,10 @@ routes = [
     Route("/sources", sources),
     Route("/sources/{sid}", source),
     Route("/articles/{sid}", old_articles),
+    Route("/correct/sentence", correct_sentence),
+    Route("/correct/page", correct_page),
+    Route("/corrections", corrections, methods=["GET", "POST"]),
+    Route("/corrections/withdraw", withdraw, methods=["POST"]),
     Mount(
         "/static", StaticFiles(directory=os.path.join(HERE, "static")), name="static"
     ),
