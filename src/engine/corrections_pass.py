@@ -345,6 +345,26 @@ def apply_to_text(
     the original, so the newer strike is carried out on it like any other
     (2000 → 2001 by the old one, then 2001 → original → 2002)."""
     states: Dict[str, Tuple[str, str]] = {}
+    # First put back what withdrawn and replaced strikes changed, so the
+    # strikes still active are carried out on the original text in this
+    # same run (a withdrawn 2000 → 2002 brings back the older 2000 → 2001)
+    for rec in withdrawn:
+        text, swapped = _swap_back(text, rec)
+        if swapped:
+            states[rec["id"]] = (
+                "undone",
+                "your sentence swapped back for the original",
+            )
+        elif sentence_key(rec["sentence"]) not in {
+            sentence_key(c.text) for c in parse_claims(text)[0]
+        }:
+            states[rec["id"]] = (
+                "needs a look",
+                "withdrawn after a run cut the sentence; it is not put back "
+                "(its words are in the correction line)",
+            )
+        else:
+            states[rec["id"]] = ("undone", "")
     for old in superseded:
         if words_key(old.get("replacement") or "") not in rules.written:
             text, _ = _swap_back(text, old)
@@ -394,23 +414,6 @@ def apply_to_text(
             )
     claims, markers = parse_claims(text)
     by_key = {sentence_key(c.text): c for c in claims}
-    for rec in withdrawn:
-        text, swapped = _swap_back(text, rec)
-        if swapped:
-            claims, markers = parse_claims(text)
-            by_key = {sentence_key(c.text): c for c in claims}
-            states[rec["id"]] = (
-                "undone",
-                "your sentence swapped back for the original",
-            )
-        elif sentence_key(rec["sentence"]) not in by_key:
-            states[rec["id"]] = (
-                "needs a look",
-                "withdrawn after a run cut the sentence; it is not put back "
-                "(its words are in the correction line)",
-            )
-        else:
-            states[rec["id"]] = ("undone", "")
     for rec in rules.verdicts:
         c = by_key.get(sentence_key(rec["sentence"]))
         if c is not None and rec["article_id"] in c.articles:

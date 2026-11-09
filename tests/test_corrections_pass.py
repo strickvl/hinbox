@@ -371,6 +371,7 @@ def test_a_newer_strike_of_the_same_sentence_replaces_the_older_one():
 
 
 def test_a_run_carries_out_the_newer_strike(tmp_path):
+    cp.configure_corrections(None)  # no guard events from other tests
     path = tmp_path / "c.jsonl"
     person = {"name": "Yusuf Qadir", "type": "detainee",
               "articles": [{"article_id": a} for a in (A1, A2, A3)],
@@ -422,3 +423,21 @@ def test_a_list_item_is_put_back_as_it_was():
     new = _strike("- He arrived in 2000.", [A1], "He arrived in 2002.", cid="c-0002")
     again, _, _ = cp.apply_to_text(text, cp._rules([new]), {"c-0001"}, [], [rec])
     assert again == listed.replace(f"2000.^[{A1}]", f"2002.^[{A3}]")
+
+
+def test_withdrawing_the_newer_strike_brings_back_the_older_in_one_run(tmp_path):
+    cp.configure_corrections(None)  # no guard events from other tests
+    path = tmp_path / "c.jsonl"
+    person = {"name": "Yusuf Qadir", "type": "detainee",
+              "articles": [{"article_id": a} for a in (A1, A2, A3)],
+              "profile": {"text": TEXT}}  # fmt: skip
+    entities = {"people": {"Yusuf Qadir": person}}
+    for rep in ("He refused food for several weeks.", "He refused food for six weeks."):
+        append_correction(str(path), {k: v for k, v in _strike(FORCE_FED, [A3], rep).items() if k != "id"})  # fmt: skip
+        cp.run_corrections_pass(entities, str(path))
+    append_correction(str(path), {"kind": "withdraw", "withdraws": "c-0002"})
+    report = cp.run_corrections_pass(entities, str(path))
+    text = person["profile"]["text"]
+    assert "several weeks" in text and "six weeks" not in text and FORCE_FED not in text
+    states = {r["id"]: r["state"] for r in report["rows"]}
+    assert states == {"c-0001": "applied", "c-0002": "undone"}
