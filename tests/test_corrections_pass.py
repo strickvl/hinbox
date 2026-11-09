@@ -263,3 +263,50 @@ def test_the_history_names_a_corrections_version(client, corr, tmp_path, monkeyp
     _run(tmp_path, monkeypatch)
     page = client.get("/people/Yusuf%20Qadir").text
     assert "Your corrections c-0001, carried out" in page
+
+
+def test_a_claim_over_two_paragraphs_is_cut_whole():
+    # The uncited paragraph is part of the claim grounding judges, so a
+    # strike of it means both paragraphs, but not the heading between
+    text = f"Kept.^[{A1}]\n\nFirst wrong paragraph.\n\n### Later\n\nSecond wrong paragraph.^[{A2}]\n\nStays.^[{A3}]"
+    struck = "First wrong paragraph.\n\nSecond wrong paragraph."
+    out, states, _ = _apply(text, [_strike(struck, [A2])])
+    assert out == f"Kept.^[{A1}]\n\n### Later\n\nStays.^[{A3}]"
+    assert states["c-0001"][0] == "applied"
+
+
+def test_cuts_never_shift_the_text_before_them():
+    text = (
+        f"Kept.^[{A1}]\n\n\nFirst wrong.^[{A1}] Second wrong.^[{A1}] Final kept.^[{A1}]"
+    )
+    lines = [
+        _strike("First wrong.", [A1]),
+        _strike("Second wrong.", [A1], cid="c-0002"),
+    ]
+    out, _, _ = _apply(text, lines)
+    assert out == f"Kept.^[{A1}]\n\n\nFinal kept.^[{A1}]"
+    # A list item left with no words goes, and one blank line stays between paragraphs
+    listed = f"Intro.^[{A1}]\n\n- Wrong item.^[{A1}]\n- Kept item.^[{A1}]\n\nWrong paragraph.^[{A2}]\n\nEnd.^[{A3}]"
+    lines = [
+        _strike("- Wrong item.", [A1]),  # grounding keeps the list mark
+        _strike("Wrong paragraph.", [A2], cid="c-0002"),
+    ]
+    out, _, _ = _apply(listed, lines)
+    assert out == f"Intro.^[{A1}]\n\n- Kept item.^[{A1}]\n\nEnd.^[{A3}]"
+
+
+def test_a_replace_on_part_of_your_sentence_is_dropped(tmp_path):
+    rec = _strike(FORCE_FED, [A3], "He refused food. Guards logged it daily.")
+    cp.configure_corrections(_cs(tmp_path, rec))
+    text = f"Qadir was held.^[{A1}] He refused food. Guards logged it daily.^[{A3}]"
+    edit = ProfileEdit(
+        op="replace",
+        anchor="Guards logged it daily.",
+        text=f"Guards logged it weekly.^[{A3}]",
+    )
+    try:
+        with cp.correction_scope("people", {"name": "Yusuf Qadir"}):
+            kept, report = cp.guard_corrections(text, [edit])
+    finally:
+        cp.configure_corrections(None)
+    assert kept == [] and report["kept_yours"] == ["Guards logged it daily."]

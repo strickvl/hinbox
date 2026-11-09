@@ -165,14 +165,14 @@ def _cut_restated(text: str, rules: PageRules) -> Tuple[str, List[Tuple[str, str
     """``text`` without the cited claims that restate a struck sentence, and
     (correction id, claim) for each one cut."""
     claims, markers = parse_claims(text)
-    cuts: List[Tuple[int, int, str, str]] = []
+    cuts: List[Tuple[Any, str]] = []
     for c in claims:
         rec = _restated(c.text, rules)
         if rec:
-            cuts.append((c.start, claim_end(markers, c.index), rec["id"], c.text))
-    for start, end, _, _ in reversed(cuts):
-        text = _remove(text, start, end)
-    return text, [(i, t) for _, _, i, t in cuts]
+            cuts.append((c, rec["id"]))
+    for c, _ in reversed(cuts):
+        text = _cut_claim(text, markers, c)
+    return text, [(i, c.text) for c, i in cuts]
 
 
 def _note(cid: str, why: str) -> None:
@@ -190,12 +190,24 @@ def guard_corrections(text: str, edits: List[Any]) -> Tuple[List[Any], Dict[str,
     report: Dict[str, Any] = {"restated": [], "kept_yours": []}
     if not rules or not rules.struck:
         return edits, report
+    # Where each of the historian's own sentences sits in the text
+    claims, markers = parse_claims(text)
+    yours = [
+        (rng, rules.written[sentence_key(c.text)])
+        for c in claims
+        if sentence_key(c.text) in rules.written
+        for rng in _claim_ranges(text, markers, c)
+    ]
     kept = []
     for edit in edits:
         if edit.op == "replace":
             span = _find(text, edit.anchor.strip()) if edit.anchor.strip() else None
-            old = sentence_key(text[span[0] : span[1]]) if span else ""
-            hit = next((r for k, r in rules.written.items() if k and k in old), None)
+            # Any overlap: an anchor on one sentence of a two-sentence
+            # replacement would otherwise rewrite half of it
+            hit = next(
+                (r for (a, b), r in yours if span and span[0] < b and a < span[1]),
+                None,
+            )
             if hit:
                 report["kept_yours"].append(edit.anchor[:200])
                 _note(hit["id"], "the edit model tried to reword your sentence")
@@ -213,24 +225,65 @@ def guard_corrections(text: str, edits: List[Any]) -> Tuple[List[Any], Dict[str,
 # ── after merging: the pass over every page ──────────────────
 
 
+_EMPTY_LINE = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])?[ \t]*")
+_HEADING_LINE = re.compile(r"[ \t]*#")
+_LIST_MARK = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+|[ \t]+")
+
+
 def _remove(text: str, start: int, end: int, put: str = "") -> str:
     """``text`` with ``[start, end)`` replaced by ``put``, without leaving a
-    double space, a space before punctuation or an empty list item."""
+    double space, an empty list item or a run of blank lines there. Only the
+    text at the cut changes, never anything before the line it is on, so
+    cuts found in one pass can be made back to front."""
     before, after = text[:start], text[end:]
-    if not put:
-        if before.endswith((" ", "\t")) and after[:1] in (" ", "\t", "\n", ""):
-            before = before.rstrip(" \t")
-        elif after[:1] in (" ", "\t") and (not before or before.endswith("\n")):
-            after = after.lstrip(" \t")
-    out = before + put + after
-    if not put:  # a list item or paragraph left with no words
-        line_start = out.rfind("\n", 0, len(before)) + 1
-        line_end = out.find("\n", len(before))
-        line_end = len(out) if line_end < 0 else line_end
-        if re.fullmatch(r"[ \t]*(?:[-*+]|\d+[.)])?[ \t]*", out[line_start:line_end]):
-            out = out[:line_start] + out[line_end + 1 :]
-        out = re.sub(r"\n{3,}", "\n\n", out)
-    return out
+    if put:
+        return before + put + after
+    if before.endswith((" ", "\t")) and after[:1] in (" ", "\t", "\n", ""):
+        before = before.rstrip(" \t")
+    elif after[:1] in (" ", "\t") and (not before or before.endswith("\n")):
+        after = after.lstrip(" \t")
+    line_start = before.rfind("\n") + 1
+    line_end = after.find("\n")
+    line_end = len(after) if line_end < 0 else line_end
+    if _EMPTY_LINE.fullmatch(before[line_start:] + after[:line_end]):
+        before, after = before[:line_start], after[line_end + 1 :]
+        # the blank lines either side of a paragraph that is gone: keep one
+        if before.endswith("\n\n") and after.startswith("\n"):
+            after = after.lstrip("\n")
+        elif not before:
+            after = after.lstrip("\n")
+    return before + after
+
+
+def _claim_ranges(text: str, markers: List[Any], c: Any) -> List[Tuple[int, int]]:
+    """Where a claim's words are, to cut them all. The claim runs from the
+    previous claim's last marker to its own last marker, as grounding reads
+    it; ``c.start`` is only where its last block starts (the reader keeps its
+    highlight inside one paragraph), so an uncited paragraph before it is a
+    range of its own. Heading lines in between are not the claim's, and stay."""
+    prev = [m.end for m in markers if m.claim == c.index - 1]
+    lead = max(prev) if prev else 0
+    ranges: List[Tuple[int, int]] = []
+    pos = lead
+    for line in text[lead : c.start].splitlines(keepends=True):
+        body = line.rstrip("\n")
+        if body.strip() and not _HEADING_LINE.match(body):
+            skip = _LIST_MARK.match(body) if pos > lead or not prev else None
+            first = pos + (skip.end() if skip else 0)
+            if pos == lead and prev:  # the rest of the line after the marker
+                first = pos + len(body) - len(body.lstrip(" \t.,;:!?)]"))
+            if re.search(r"\w", text[first : pos + len(body)]):
+                ranges.append((first, pos + len(body)))
+        pos += len(line)
+    return ranges + [(c.start, claim_end(markers, c.index))]
+
+
+def _cut_claim(text: str, markers: List[Any], c: Any, put: str = "") -> str:
+    """``text`` without claim ``c``'s words, and ``put`` where its last block was."""
+    ranges = _claim_ranges(text, markers, c)
+    for n, (start, end) in enumerate(reversed(ranges)):
+        text = _remove(text, start, end, put if n == 0 else "")
+    return text
 
 
 def _yours(rec: Dict[str, Any]) -> str:
@@ -252,7 +305,7 @@ def apply_to_text(
     claims, markers = parse_claims(text)
     keys = {sentence_key(c.text) for c in claims}
     present = {k for k in rules.written if k in keys}
-    edits: List[Tuple[int, int, str]] = []
+    edits: List[Tuple[Any, str]] = []
     for c in claims:
         key = sentence_key(c.text)
         rec = _restated(c.text, rules)
@@ -264,15 +317,15 @@ def apply_to_text(
             put = ""  # their sentence is already in the profile
         elif put:
             present.add(rep_key)
-        edits.append((c.start, claim_end(markers, c.index), put))
+        edits.append((c, put))
         if rec["id"] not in done_before:
             states.setdefault(rec["id"], ("applied", ""))
         elif key == sentence_key(rec["sentence"]):
             states[rec["id"]] = ("re-applied", "the struck sentence was back")
         else:
             states[rec["id"]] = ("re-applied", f"said again: “{c.text[:160]}”")
-    for start, end, put in sorted(edits, reverse=True):
-        text = _remove(text, start, end, put)
+    for c, put in reversed(edits):  # back to front, so offsets hold
+        text = _cut_claim(text, markers, c, put)
     for rec in {r["id"]: r for r in rules.struck.values()}.values():
         cid, rep = rec["id"], sentence_key(rec.get("replacement") or "")
         if cid in states:
@@ -296,9 +349,7 @@ def apply_to_text(
     for rec in withdrawn:
         rep = by_key.get(sentence_key(rec.get("replacement") or ""))
         if rep is not None and sentence_key(rec["sentence"]) not in by_key:
-            text = _remove(
-                text, rep.start, claim_end(markers, rep.index), _original(rec)
-            )
+            text = _cut_claim(text, markers, rep, _original(rec))
             claims, markers = parse_claims(text)
             by_key = {sentence_key(c.text): c for c in claims}
             states[rec["id"]] = (
