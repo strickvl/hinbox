@@ -109,6 +109,18 @@ def md_plain(text: str) -> str:
     return _MD_ESCAPED.sub(r"\1", text)
 
 
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def stored_key(text: str) -> str:
+    """``sentence_key()`` of a claim as the stored text has it, to compare
+    with a historian's own words: a list item's marker dropped ("- He
+    arrived in 2001." is their "He arrived in 2001." once a run put it in a
+    list), then ``md_literal()``'s escapes. A struck sentence, copied from
+    the stored text, goes through this too."""
+    return sentence_key(md_plain(_LIST_ITEM.sub("", text or "", count=1)))
+
+
 def entity_ref(
     table: str, key: str, name: str, article_ids: Iterable[str]
 ) -> Dict[str, Any]:

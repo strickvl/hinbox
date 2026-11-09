@@ -27,7 +27,7 @@ import markdown
 
 from src.utils.claim_spans import Marker, claim_end
 from src.utils.claim_spans import parse_claims as _parse_claims
-from src.utils.corrections import md_plain, sentence_key
+from src.utils.corrections import sentence_key, stored_key
 from src.utils.grounding import GROUNDING_MAX_CLAIM_CHARS, _claim_key
 from src.utils.quality_controls import CITATION_RE
 
@@ -270,7 +270,7 @@ class Overlay:
             sentence_key(r["replacement"]): r
             for r in self.struck.values()
             if r.get("replacement")
-        }  # compared with sentence_key(md_plain(claim)): stored escaped
+        }  # compared with stored_key(claim): escaped, maybe a list item
 
 
 # A historian's sentence goes into the text as a placeholder, so Markdown
@@ -288,7 +288,7 @@ def _insert_replacements(
     claims, markers = parse_claims(text)
     inserts: List[Tuple[int, str]] = []
     mine: Dict[str, Dict[str, Any]] = {}
-    there = {sentence_key(md_plain(c.text)) for c in claims}  # a run put it in
+    there = {stored_key(c.text) for c in claims}  # a run put it in
     for c in claims:
         rec = overlay.struck.get(sentence_key(c.text))
         if not rec or not rec.get("replacement"):
@@ -321,7 +321,7 @@ def _apply_overlay(
             c.correction, c.by[""] = "mine", mine[key]
             c.text = _words(mine[key])
             continue
-        plain = sentence_key(md_plain(c.text))  # stored with Markdown escaped
+        plain = stored_key(c.text)  # stored escaped, maybe as a list item
         if plain in written:  # a run put their sentence into the stored text
             c.correction, c.by[""] = "mine", written[plain]
             c.text = _words(written[plain])

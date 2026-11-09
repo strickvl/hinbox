@@ -50,8 +50,8 @@ from src.utils.corrections import (
     last_states,
     load_corrections,
     md_literal,
-    md_plain,
     resolve_ref,
+    stored_key,
 )
 from src.utils.corrections import sentence_key as _raw_key
 from src.utils.entity_keys import KEY_FUNCS, NAME_FIELDS
@@ -60,10 +60,16 @@ VERSION_TRIGGER = "corrections:"  # a profile version made by this pass
 
 
 def sentence_key(text: str) -> str:
-    """``sentence_key()`` of the words as written: a historian's sentence is
-    stored with Markdown escaped (``md_literal()``), so both sides of every
-    comparison drop the escapes first."""
-    return _raw_key(md_plain(text))
+    """``sentence_key()`` of a claim read from the stored text (or a struck
+    sentence copied from it): a list item's own marker is dropped, then the
+    escapes of a historian's sentence (stored with ``md_literal()``), so
+    "- He arrived in 2001." in a list matches the words they wrote."""
+    return stored_key(text)
+
+
+def words_key(words: str) -> str:
+    """``sentence_key()`` of a historian's sentence as they wrote it."""
+    return _raw_key(words)
 
 
 _ACTIVE: Optional[CorrectionSet] = None
@@ -92,7 +98,7 @@ def _rules(lines: List[Dict[str, Any]]) -> PageRules:
         if r["kind"] == "strike":
             rules.struck[sentence_key(r["sentence"])] = r
             if r.get("replacement"):
-                rules.written[sentence_key(r["replacement"])] = r
+                rules.written[words_key(r["replacement"])] = r
         elif r["kind"] == "verdict":
             rules.verdicts.append(r)
         elif r["kind"] in NEEDS_RUN:
@@ -314,7 +320,7 @@ def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
     original sentence, if the replacement is there and the original isn't."""
     claims, markers = parse_claims(text)
     by_key = {sentence_key(c.text): c for c in claims}
-    rep = by_key.get(sentence_key(rec.get("replacement") or ""))
+    rep = by_key.get(words_key(rec.get("replacement") or ""))
     if rep is None or sentence_key(rec["sentence"]) in by_key:
         return text, False
     return _cut_claim(text, markers, rep, _original(rec)), True
@@ -337,7 +343,7 @@ def apply_to_text(
     (2000 → 2001 by the old one, then 2001 → original → 2002)."""
     states: Dict[str, Tuple[str, str]] = {}
     for old in superseded:
-        if sentence_key(old.get("replacement") or "") not in rules.written:
+        if words_key(old.get("replacement") or "") not in rules.written:
             text, _ = _swap_back(text, old)
     claims, markers = parse_claims(text)
     keys = {sentence_key(c.text) for c in claims}
@@ -349,7 +355,7 @@ def apply_to_text(
         if not rec:
             continue
         put = _yours(rec) if rec.get("replacement") else ""
-        rep_key = sentence_key(rec.get("replacement") or "")
+        rep_key = words_key(rec.get("replacement") or "")
         if put and rep_key in present:
             put = ""  # their sentence is already in the profile
         elif put:
@@ -364,7 +370,7 @@ def apply_to_text(
     for c, put in reversed(edits):  # back to front, so offsets hold
         text = _cut_claim(text, markers, c, put)
     for rec in {r["id"]: r for r in rules.struck.values()}.values():
-        cid, rep = rec["id"], sentence_key(rec.get("replacement") or "")
+        cid, rep = rec["id"], words_key(rec.get("replacement") or "")
         if cid in states:
             continue
         if rep and rep not in present and cid in done_before:

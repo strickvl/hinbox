@@ -384,3 +384,30 @@ def test_a_run_carries_out_the_newer_strike(tmp_path):
     assert "six weeks" in text and "several weeks" not in text
     report = cp.run_corrections_pass(entities, str(path))  # a third run: held
     assert report["counts"] == {"held": 1} and person["profile"]["text"] == text
+
+
+def test_your_sentence_in_a_list_item_is_found_again():
+    from src.frontend.profile_render import Overlay, render_profile
+
+    listed = f"## Life\n\n- He was born in Taiz.^[{A1}]\n- He arrived in 2000.^[{A1}]\n- He left.^[{A2}]\n"  # fmt: skip
+    # The reader copies a list item's claim with its marker
+    rec = _strike("- He arrived in 2000.", [A1], "He arrived in 2001.")
+    text, states, _ = _apply(listed, [rec])
+    assert f"- He arrived in 2001.^[{A3}]\n- He left." in text
+    assert states["c-0001"] == ("applied", "")
+    again, states, _ = _apply(text, [rec], done=["c-0001"])
+    assert again == text and states["c-0001"] == ("held", "")
+    # The edit guard knows it is theirs
+    edits = [ProfileEdit(op="replace", anchor="He arrived in 2001.", text="He came in 2003.")]  # fmt: skip
+    token = cp._CURRENT.set(cp._rules([rec]))
+    try:
+        kept, _ = cp.guard_corrections(text, edits)
+    finally:
+        cp._CURRENT.reset(token)
+    assert kept == []
+    # The reader marks it as theirs and doesn't show it twice
+    rp = render_profile(text, overlay=Overlay(struck={"x": rec}))
+    assert [c.text for c in rp.claims if c.correction == "mine"] == [
+        "He arrived in 2001."
+    ]
+    assert rp.html.count("He arrived in 2001.") == 1
