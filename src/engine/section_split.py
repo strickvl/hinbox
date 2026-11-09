@@ -509,22 +509,34 @@ def split_long_sections(
         if plan is None:
             report.update(status="refused", reason=why)
             continue
-        stay: List[int] = []
+        level = section["level"] - 1 if sibling else section["level"]
+        before_lines, after_lines = lines[: section["start"]], lines[section["end"] :]
+        units, tail = section["units"], section["tail"]
+        new_lines = before_lines + _render(level, units, plan, tail) + after_lines
         if place is not None:
+            from src.engine.opening_sort import _claims
             from src.engine.section_place import refile_split
 
             covers = {_clean_heading(s.heading): s.covers for s in reply.subsections}
-            plan, stay, refile = refile_split(
+            refiled, stay, refile = refile_split(
                 plan, covers, section["units"], section["parent"] or section["heading"],
                 entity_type, entity_name, place, stay=not sibling,
             )  # fmt: skip
+            refiled_lines = (
+                before_lines + _render(level, units, refiled, tail, stay) + after_lines
+            )
+            # Uncited text above the section counts toward its first piece's
+            # citation, so a piece that stays above the sub-headings may not
+            # go before piece 1 and take that text's claim
+            if _claims("\n".join(refiled_lines)) == _claims("\n".join(lines)):
+                plan, new_lines = refiled, refiled_lines
+            else:
+                refile = {
+                    **refile,
+                    "status": "kept",
+                    "reason": "citation claims changed",
+                }
             report["refile"] = refile
-        level = section["level"] - 1 if sibling else section["level"]
-        new_lines = (
-            lines[: section["start"]]
-            + _render(level, section["units"], plan, section["tail"], stay)
-            + lines[section["end"] :]
-        )
         if _sentences("\n".join(new_lines)) != _sentences("\n".join(lines)):
             report.update(status="refused", reason="sentences changed")
             continue

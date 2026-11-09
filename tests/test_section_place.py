@@ -292,6 +292,56 @@ def test_a_split_keeps_its_headings_and_files_pieces_again():
     assert "arraignment" in legal.split("#### Hearings")[1].split("####")[0]
 
 
+def test_a_stayed_piece_never_takes_the_uncited_text_above_the_section():
+    from src.engine.opening_sort import _claims
+    from src.engine.section_split import SectionSplit, SubSection, split_long_sections
+
+    paras = [
+        "He was charged in 2008 with planning the 9/11 attacks.^[a1]",
+        "At his 2008 arraignment he asked to be put to death.^[a1]",
+        "Prosecutors began plea talks in 2017.^[a4]",
+        "Pretrial hearings began in 2012 and dealt with CIA torture.^[a2]",
+        "A plea deal was signed in July 2024.^[a5]",
+        "He gave a hospital an award.^[a6]",
+    ]
+    # Grounding judges this uncited line with piece 1's citation (a1); the
+    # stayed piece 6 going first would hand it to a6
+    text = "### Background\n\nHe grew up in Kuwait.\n\n### Legal\n\n" + (
+        "\n\n".join(paras) + "\n\n### Health\n\nHe is ill.^[a3]\n"
+    )
+    split = SectionSplit(
+        subsections=[
+            SubSection(heading="Charges", covers="charges", paragraphs=[1, 2, 3]),
+            SubSection(heading="Plea talks", covers="plea talks", paragraphs=[4, 5, 6]),
+        ]
+    )
+
+    def place(msgs):
+        found = re.findall(r"^\[(\d+)\] (.*)$", msgs[1]["content"], re.M)
+        pick = lambda t: (  # noqa: E731
+            "None of these"
+            if "award" in t
+            else "Plea talks"
+            if "plea" in t
+            else "Charges"
+        )
+        return Placements(
+            placements=[
+                Placement(sentence=int(n), about="", heading=pick(t)) for n, t in found
+            ]
+        )
+
+    out, reports = split_long_sections(
+        text, "person", "KSM", lambda m: split, min_chars=100, place=place
+    )
+    assert reports[0]["status"] == "split"
+    assert reports[0]["refile"]["status"] == "kept"
+    assert reports[0]["refile"]["reason"] == "citation claims changed"
+    assert _claims(out) == _claims(text) and _sentences(out) == _sentences(text)
+    legal = out.split("### Legal")[1].split("### Health")[0]
+    assert legal.index("#### Charges") < legal.index("charged in 2008")
+
+
 def test_a_refiling_that_leaves_one_heading_keeps_the_split():
     from src.engine.section_place import refile_split
 
