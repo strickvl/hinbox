@@ -352,6 +352,33 @@ def messages(
     ]  # fmt: skip
 
 
+# A reply that leaves every paragraph under one heading is asked again once.
+# In the 9 Nov local control run, Qwen answered Trump's re-split of
+# "Campaign statements and policy" with one heading, "Guantanamo detention
+# policy", for every paragraph, at 6,900, 9,200 and 11,800 characters, and
+# the section grew to 14,440. Over 82 local runs 17 sections had such a
+# refusal; this was the only one refused more than once
+ONE_GROUP = ("0 sub-sections", "1 sub-sections")
+
+REASK = """Your answer leaves every paragraph under one heading ("{heading}"), \
+which doesn't split the section. (A paragraph listed under two headings \
+stays under the first.) Group the paragraphs under at least 2 headings, \
+each with its own paragraphs, so that a reader can find a topic quickly."""
+
+
+def reask(
+    msgs: List[Dict[str, str]], reply: SectionSplit, section: Dict[str, Any]
+) -> List[Dict[str, str]]:
+    """The split call again, with the one-heading answer and why it can't
+    be used."""
+    first = next((s.heading for s in reply.subsections if s.paragraphs), "")
+    heading = _clean_heading(first) or section["heading"]
+    return msgs + [
+        {"role": "assistant", "content": reply.model_dump_json()},
+        {"role": "user", "content": REASK.format(heading=heading)},
+    ]
+
+
 def _clean_heading(heading: str) -> str:
     return " ".join(heading.strip().lstrip("#").strip(" *_\"'“”:.").split())
 
@@ -568,17 +595,27 @@ def split_long_sections(
         if room < MIN_GROUPS:
             report.update(status="refused", reason=f"over {MAX_SIBLINGS} sub-sections")
             continue
+        msgs = messages(section, entity_type, entity_name, other, room)
         try:
-            reply = ask(messages(section, entity_type, entity_name, other, room))
+            reply = ask(msgs)
         except Exception as e:  # keep the section as it is
             logger.warning(f"Section split call failed for {entity_name}: {e}")
             report.update(status="failed", reason=f"{type(e).__name__}: {e}")
             continue
         names = section.get("sibling_names") or []
-        plan, why = plan_groups(
-            reply, len(section["units"]), other if sibling else taken,
+        limits = (
+            len(section["units"]), other if sibling else taken,
             min(MAX_GROUPS, room), names,
         )  # fmt: skip
+        plan, why = plan_groups(reply, *limits)
+        if plan is None and why in ONE_GROUP:
+            report["reasked"] = why
+            try:
+                reply = ask(reask(msgs, reply, section))
+                plan, why = plan_groups(reply, *limits)
+            except Exception as e:  # refused as the first answer was
+                logger.warning(f"Section split re-ask failed for {entity_name}: {e}")
+                why = f"{why}; re-ask failed: {type(e).__name__}"
         if plan is None:
             report.update(status="refused", reason=why)
             continue

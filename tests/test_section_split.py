@@ -676,3 +676,55 @@ def test_a_heading_that_repeats_another_in_other_words_is_refused():
     # Against a heading already in the profile too; fewer words is a new one
     assert plan_groups(other, 8, ["Appeal and judge authority"])[0] is None
     assert plan_groups(other, 8, ["Appeals", "Judge authority"])[0] is not None
+
+
+def test_a_one_heading_answer_is_asked_again_once():
+    # 9 Nov local control run: Qwen answered Trump's re-split with one
+    # heading for every paragraph three times, and the section grew to 14,440
+    one = SectionSplit(subsections=[
+        SubSection(heading="Court case", paragraphs=[1, 2, 3, 4, 5, 6, 7, 8]),
+        SubSection(heading="Plea talks", paragraphs=[6, 7]),  # all claimed first
+    ])  # fmt: skip
+    replies = iter([one, GOOD])
+    seen: List[List[Dict[str, str]]] = []
+
+    def ask(msgs):
+        seen.append(msgs)
+        return next(replies)
+
+    out, reports = split_long_sections(TEXT, "person", "KSM", ask, min_chars=200)
+    assert reports[0]["status"] == "split" and reports[0]["reasked"] == "1 sub-sections"
+    assert len(seen) == 2 and seen[1][:2] == seen[0]
+    assert seen[1][2]["role"] == "assistant"
+    assert '("Court case")' in seen[1][3]["content"]
+    assert "#### Pretrial hearings" in out
+    assert section_split._sentences(out) == section_split._sentences(TEXT)
+    # A second one-heading answer is refused as before; no third call
+    seen.clear()
+    replies = iter([one, one, GOOD])
+    out, reports = split_long_sections(TEXT, "person", "KSM", ask, min_chars=200)
+    assert (out, reports[0]["status"], len(seen)) == (TEXT, "refused", 2)
+    assert reports[0]["reason"] == "1 sub-sections"
+
+
+def test_other_refusals_and_a_failed_re_ask_are_not_asked_again():
+    clash = SectionSplit(subsections=[
+        SubSection(heading="Background", paragraphs=[1, 2, 3, 4]),
+        SubSection(heading="Plea talks", paragraphs=[5, 6, 7, 8]),
+    ])  # fmt: skip
+    out, reports, seen = _split(clash)
+    assert reports[0]["status"] == "refused" and len(seen) == 1
+    one = SectionSplit(
+        subsections=[SubSection(heading="All", paragraphs=list(range(1, 9)))]
+    )
+    calls = []
+
+    def ask(msgs):
+        calls.append(msgs)
+        if len(calls) > 1:
+            raise RuntimeError("down")
+        return one
+
+    out, reports = split_long_sections(TEXT, "person", "KSM", ask, min_chars=200)
+    assert out == TEXT and reports[0]["status"] == "refused"
+    assert reports[0]["reason"] == "1 sub-sections; re-ask failed: RuntimeError"
