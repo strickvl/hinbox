@@ -50,7 +50,7 @@ ARTICLES = [
 TEXT = (
     f"Yusuf Qadir is a made-up detainee held at the base.^[{A2}]\n\n"
     "### Background\n\n"
-    f"Qadir studied engineering at a local college.^[{A1}] "
+    f"Qadir studied engineering\nat a local college.^[{A1}] "
     f"He worked for a shipping firm^[{A1}, {A2}].\n\n"
     "### Detention\n\n"
     "#### Hunger strike\n\n"
@@ -243,6 +243,30 @@ def test_panel_shows_verdict_reason_and_text(client):
         "/panel", params={"t": "people", "k": "Miriam Hale", "a": A2, "c": 0}
     )
     assert "<mark>Among them was Yusuf Qadir, a made-up detainee</mark>" in r.text
+
+
+def test_panel_for_an_old_version_quotes_that_version(client):
+    r = client.get(
+        "/panel", params={"t": "people", "k": "Yusuf Qadir", "a": A1, "c": 0, "v": 1}
+    )
+    assert "Qadir was held." in r.text and "Older version" in r.text
+    assert "Not supported" not in r.text
+
+
+def test_citation_links_keep_the_domain(client):
+    from src.frontend import views
+
+    store = data_access.load_store()
+    ent = store.get("people", "Yusuf Qadir")
+    page = views.entity_page(store, ent, None, "?domain=other")
+    assert f"/sources/{A1}?domain=other" in str(page["body"])
+
+
+def test_wrapped_sentence_keeps_its_verdict():
+    rp = render_profile(TEXT, _report())
+    claim = next(c for c in rp.claims if "engineering" in c.text)
+    assert claim.verdicts == {A1: "supported"}  # matched despite the line break
+    assert "Qadir studied engineering\nat a local college.</span>" in rp.html
 
 
 def test_source_page_lists_citing_sentences(client):

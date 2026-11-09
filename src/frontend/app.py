@@ -101,7 +101,9 @@ async def entity(request: Request) -> Response:
         v = int(version) if version else None
     except ValueError:
         v = None
-    return _render(request, "entity.html", views.entity_page(store, ent, v))
+    domain = _domain(request)
+    dq = f"?domain={quote(domain)}" if domain != DEFAULT_DOMAIN else ""
+    return _render(request, "entity.html", views.entity_page(store, ent, v, dq))
 
 
 async def panel(request: Request) -> Response:
@@ -117,7 +119,11 @@ async def panel(request: Request) -> Response:
         claim = int(p.get("c", ""))
     except ValueError:
         claim = None
-    ctx = views.source_panel(store, ent, p.get("a", ""), claim)
+    try:
+        version = int(p.get("v", "")) if p.get("v") else None
+    except ValueError:
+        version = None
+    ctx = views.source_panel(store, ent, p.get("a", ""), claim, version)
     return _render(request, "_panel.html", ctx)
 
 

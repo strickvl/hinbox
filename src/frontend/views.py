@@ -152,21 +152,35 @@ def _event_dates(ent: Entity) -> str:
     return text
 
 
-def entity_page(store: Store, ent: Entity, version: Optional[int]) -> Dict[str, Any]:
-    profile = ent.profile
+def _version_text(
+    ent: Entity, version: Optional[int]
+) -> Tuple[str, Optional[Dict[str, Any]], int]:
+    """The profile text to show, the old version's record (None for the
+    current one) and the current version number."""
     versions = _versions(ent)
     current = (ent.row.get("profile_versions") or {}).get("current_version") or len(
         versions
     )
-    old = None
-    text = profile.get("text") or ""
     if version and versions and version != current:
         old = next((v for v in versions if v.get("version_number") == version), None)
         if old:
-            text = (old.get("profile_data") or {}).get("text") or ""
+            return (old.get("profile_data") or {}).get("text") or "", old, current
+    return ent.profile.get("text") or "", None, current
+
+
+def entity_page(
+    store: Store, ent: Entity, version: Optional[int], domain_query: str = ""
+) -> Dict[str, Any]:
+    """``domain_query`` ("?domain=x" or "") is added to citation links, so a
+    citation followed without the script stays in the same domain."""
+    versions = _versions(ent)
+    text, old, current = _version_text(ent, version)
     report = ent.row.get("profile_grounding") or {}
     rp: RenderedProfile = render_profile(
-        text, report, link="/sources/{article}", show_verdicts=old is None
+        text,
+        report,
+        link="/sources/{article}" + domain_query,
+        show_verdicts=old is None,
     )
     counts = rp.counts()
     issues = [
@@ -280,10 +294,20 @@ def named_in(store: Store, article_id: str) -> List[Dict[str, Any]]:
 
 
 def source_panel(
-    store: Store, ent: Entity, article_id: str, claim_index: Optional[int]
+    store: Store,
+    ent: Entity,
+    article_id: str,
+    claim_index: Optional[int],
+    version: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """The panel for one citation. ``claim_index`` counts claims in the
+    version the reader is looking at; an older version gets no verdict,
+    since the stored report describes the current text only."""
     src = store.source(article_id)
-    rp = render_profile(ent.profile.get("text") or "", ent.row.get("profile_grounding"))
+    text, old, _ = _version_text(ent, version)
+    rp = render_profile(
+        text, ent.row.get("profile_grounding"), show_verdicts=old is None
+    )
     claim = (
         rp.claims[claim_index]
         if claim_index is not None and 0 <= claim_index < len(rp.claims)
@@ -307,6 +331,7 @@ def source_panel(
         "reason": reason,
         "paragraphs": paras,
         "highlighted": any("<mark>" in p for p in paras),
+        "old_version": old is not None,
         "named": named_in(store, article_id),
         "ent": ent,
     }

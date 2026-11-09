@@ -3,7 +3,13 @@
   <div class="t">{{ source.title }}</div>
   <div class="d">{% if source.date %}{{ source.date|fmt_date }} · {% endif %}<a href="{{ u('/sources/' ~ source.id) }}">source page</a>{% if source.url %} · <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">original</a>{% endif %}</div>
 </div>
-{% if claim %}
+{% if claim and old_version %}
+<div class="verdict v-">
+  <b>Older version</b>
+  <span class="claim">“{{ claim }}”</span>
+  <span>The checker's verdicts describe the current version only.</span>
+</div>
+{% elif claim %}
 <div class="verdict v-{{ verdict }}">
   {% if verdict %}<b>{{ verdict_label }}</b>{% else %}<b>Not checked yet</b>{% endif %}
   <span class="claim">“{{ claim }}”</span>

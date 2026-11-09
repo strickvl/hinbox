@@ -36,7 +36,7 @@
 {% if description and kind != 'full' %}<p class="banner"><b>Extracted description:</b> {{ description }}</p>{% endif %}
 
 {% set has_toc = sections|length > 0 %}
-<div class="desk{% if not has_toc %} no-toc{% endif %}" id="desk" data-table="{{ ent.spec.table }}" data-key="{{ ent.key }}" data-domain="{{ domain }}">
+<div class="desk{% if not has_toc %} no-toc{% endif %}" id="desk" data-table="{{ ent.spec.table }}" data-key="{{ ent.key }}" data-domain="{{ domain }}" data-version="{{ version or '' }}">
   {% if has_toc %}
   <nav class="toc" aria-label="Contents"><details id="toc-details" open><summary class="label">Contents</summary>
     <ol>

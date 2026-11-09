@@ -25,7 +25,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import markdown
 
-from src.utils.grounding import _claim_key
+from src.utils.grounding import _HEADING_LINES, _claim_key
+from src.utils.grounding import _LEADING_PUNCT as _GROUNDING_LEAD
 from src.utils.quality_controls import CITATION_RE, citation_ids
 
 # Verdicts in order of how much they need the reader's attention
@@ -95,15 +96,39 @@ class Marker:
     claim: int  # index into the claims list
 
 
+# Lines that start a new Markdown block: a highlight span must not cross one
+_BLOCK_START = re.compile(r"\n[ \t]*(?:\n|#|[-*+][ \t]|\d+[.)][ \t])")
+
+
+def _claim_text(text: str, last_end: int, marker_start: int) -> str:
+    """The claim exactly as ``_extract_cited_claims()`` cuts it: everything
+    since the previous marker, heading lines dropped, leading punctuation
+    stripped. This text is what the stored verdict is keyed on."""
+    span = _HEADING_LINES.sub("", text[last_end:marker_start])
+    return _GROUNDING_LEAD.sub("", span.strip()).strip()
+
+
+_SKIP_LINE = re.compile(r"[ \t]*(?:#[^\n]*)?\n")  # blank or heading line
+_LIST_MARK = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
+
+
 def _claim_start(text: str, last_end: int, marker_start: int) -> int:
-    """Where the visible claim before a marker starts: after the previous
-    marker, but never before the start of the marker's own line, so a heading
-    or an uncited paragraph is not swept into it."""
-    line_start = text.rfind("\n", last_end, marker_start) + 1
-    start = max(last_end, line_start)
-    lead = _LEADING_PUNCT.match(text, start)
-    if lead:
-        start = lead.end()
+    """Where the highlight for a claim starts: after the previous marker, but
+    never before the start of the block (paragraph, heading, list item) the
+    marker sits in, so the span stays inside one HTML element. A sentence
+    wrapped over two lines of one paragraph is highlighted whole."""
+    start = last_end
+    for m in _BLOCK_START.finditer(text, last_end, marker_start):
+        start = m.start() + 1  # the line that opens the block
+    while True:  # step over blank and heading lines
+        skip = _SKIP_LINE.match(text, start)
+        if not skip or skip.end() > marker_start:
+            break
+        start = skip.end()
+    for pat in (_LIST_MARK, _LEADING_PUNCT):
+        m = pat.match(text, start)
+        if m and m.end() <= marker_start:
+            start = m.end()
     return min(start, marker_start)
 
 
@@ -116,9 +141,9 @@ def parse_claims(text: str) -> Tuple[List[Claim], List[Marker]]:
         ids = citation_ids(match.group(1))
         if not ids:
             continue
-        start = _claim_start(text, last_end, match.start())
-        span = text[start : match.start()].strip()
+        span = _claim_text(text, last_end, match.start())
         if _HAS_WORD.search(span) or not claims:
+            start = _claim_start(text, last_end, match.start())
             claims.append(Claim(len(claims), span, start, match.start()))
         claim = claims[-1]
         for aid in ids:

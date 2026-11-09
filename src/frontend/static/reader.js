@@ -31,6 +31,7 @@
   async function open(link) {
     const params = new URLSearchParams({ t: desk.dataset.table, k: desk.dataset.key, a: link.dataset.article, c: link.dataset.claim });
     if (desk.dataset.domain && desk.dataset.domain !== "guantanamo") params.set("domain", desk.dataset.domain);
+    if (desk.dataset.version) params.set("v", desk.dataset.version);
     let html;
     try {
       const res = await fetch("/panel?" + params.toString());
