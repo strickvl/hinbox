@@ -474,29 +474,34 @@ def refile_split(
 
     names = [h for h, _ in plan]
     first = {n: h for h, ns in plan for n in ns}
+    # Only the plan's pieces: a re-split's pieces that join a sibling
+    # (``section_split.plan_groups()``) are not in it
+    numbers = sorted(first)
+    answers: Dict[int, Optional[str]] = {}
     options = names + ([STAY] if stay else [])
-    answers: List[Optional[str]] = []
     try:
-        for i in range(0, len(units), batch):
-            chunk = units[i : i + batch]
+        for i in range(0, len(numbers), batch):
+            chunk = numbers[i : i + batch]
+            texts = [units[n - 1] for n in chunk]
             msgs = sub_messages(
-                chunk, [(h, covers.get(h, "")) for h in names], parent,
+                texts, [(h, covers.get(h, "")) for h in names], parent,
                 entity_type, entity_name, stay,
             )  # fmt: skip
-            answers += read_reply(ask(msgs), len(chunk), options, chunk)
+            got = read_reply(ask(msgs), len(chunk), options, texts)
+            answers.update(zip(chunk, got))
     except Exception as e:
         logger.warning(f"Split refiling failed for {entity_name}: {e}")
         return plan, [], {"status": "failed", "reason": f"{type(e).__name__}: {e}"}
     groups: Dict[str, List[int]] = {h: [] for h in names}
     stayed: List[int] = []
-    for n, answer in enumerate(answers, 1):
-        if answer == STAY:
+    for n in numbers:
+        if answers.get(n) == STAY:
             stayed.append(n)
         else:
-            groups[answer or first[n]].append(n)
+            groups[answers.get(n) or first[n]].append(n)
     kept = [(h, ns) for h, ns in groups.items() if ns]
     if len(kept) < MIN_GROUPS:
         return plan, [], {"status": "kept", "reason": f"{len(kept)} sub-sections"}
-    changed = sum(1 for n, a in enumerate(answers, 1) if a and a != first[n])
+    changed = sum(1 for n, a in answers.items() if a and a != first[n])
     report = {"status": "done", "refiled": changed, "stayed": len(stayed)}
     return sorted(kept, key=lambda g: g[1][0]), stayed, report
