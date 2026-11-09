@@ -532,3 +532,11 @@ def test_a_run_supersedes_the_head_of_a_chain(tmp_path):
         text = person["profile"]["text"]
         assert "two weeks" in text and "six weeks" not in text and "several" not in text
     assert {r["id"]: r["state"] for r in report["rows"]} == {"c-0002": "held", "c-0003": "held"}  # fmt: skip
+
+
+def test_undoing_keeps_your_words_that_were_there_before():
+    text = f"Wrong.^[{A1}] Correct.^[{A1}]"
+    rec = _strike("Wrong.", [A1], "Correct.", A2)
+    out, _, _ = _apply(text, [rec])
+    undone, states, _ = _apply(out, [], withdrawn=[rec])
+    assert undone == text and states["c-0001"][0] == "undone"
