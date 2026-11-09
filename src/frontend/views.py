@@ -283,7 +283,12 @@ def cite_data(rp: RenderedProfile) -> Dict[str, Any]:
             "q": plain_claim(c.text),
             "v": dict(c.verdicts) if rp.checked else {},
             "r": dict(c.reasons) if rp.checked else {},
+            # A historian's corrections, so the static panel can say whose
+            # verdict it shows: x = struck/mine/verdict, c = the checker's
+            # overruled verdicts, i = correction id per source ("" = sentence)
             "x": c.correction,
+            "c": dict(c.checker),
+            "i": {k: r["id"] for k, r in c.by.items()},
         }
         for c in rp.claims
     }

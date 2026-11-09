@@ -124,9 +124,21 @@
         const old = Boolean(desk.dataset.version);
         const v = old ? "" : (c.v || {})[aid] || "unchecked";
         const vd = el("div", "verdict v-" + v);
-        vd.append(el("b", "", old ? "Older version" : LABELS[v] || v), el("span", "claim", "“" + c.q + "”"));
-        const why = old ? "The checker's verdicts describe the current version only." : (c.r || {})[aid] || (v === "supported" ? "The checker found this in the source." : v === "unchecked" ? "No checker verdict is stored for this sentence and source." : "");
+        const ids = c.i || {};
+        const said = (c.c || {})[aid];  // the checker's verdict a historian overruled
+        let head = old ? "Older version" : LABELS[v] || v;
+        let why = old ? "The checker's verdicts describe the current version only." : (c.r || {})[aid] || (v === "supported" ? "The checker found this in the source." : v === "unchecked" ? "No checker verdict is stored for this sentence and source." : "");
+        if (!old && c.x === "mine") {
+          head = "Your sentence (" + (ids[""] || "") + ")";
+          why = "You wrote this in place of a struck sentence. The checker hasn't judged it yet.";
+        } else if (!old && said) {
+          head = LABELS[v] + " (your verdict, " + (ids[aid] || "") + ")";
+          const reason = (c.r || {})[aid];
+          why = "The checker said " + (LABELS[said] || said).toLowerCase() + (reason ? ": " + reason : ".");
+        }
+        vd.append(el("b", "", head), el("span", "claim", "“" + c.q + "”"));
         if (why) vd.append(el("span", "", why));
+        if (!old && c.x === "struck") vd.append(el("span", "tone-look", "You struck this sentence."));
         box.append(vd);
       }
       const body = el("div", "pbody");

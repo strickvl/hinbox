@@ -301,3 +301,30 @@ def test_static_copy_never_holds_the_file(client, corr, tmp_path):  # noqa: F811
     files = [p for p in out.rglob("*") if p.is_file()]
     assert not [p for p in files if "correction" in p.name]
     assert not any("private note" in p.read_text(errors="ignore") for p in files)
+
+
+def test_static_panel_data_says_whose_verdict_it_is(client, corr, tmp_path):  # noqa: F811
+    """The static copy builds its panel from `cite_data()`: an overruled
+    verdict must carry the checker's own verdict and the correction id, so
+    the panel can't show the historian's verdict beside the checker's
+    reasoning as if the checker had said it."""
+    from src.frontend.export import export_site
+
+    c = _index(client, FORCE_FED)
+    form = {
+        **_sentence_form(client, c),
+        "kind": "verdict",
+        "article_id": A3,
+        "verdict": "supported",
+    }
+    client.post("/corrections", data=form, headers=ORIGIN)
+    out = tmp_path / "site"
+    export_site(str(out))
+    page = (out / "people" / "Yusuf Qadir.html").read_text()
+    data = json.loads(re.search(r'id="cite-data">(.*?)</script>', page).group(1))[
+        str(c)
+    ]
+    assert data["v"][A3] == "supported" and data["c"][A3] == "not_supported"
+    assert data["x"] == "verdict" and data["i"][A3] == "c-0001"
+    js = (out / "static" / "reader.js").read_text()
+    assert "your verdict, " in js and "The checker said " in js
