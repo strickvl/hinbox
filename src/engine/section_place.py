@@ -63,6 +63,10 @@ _LEANS_ON_BEFORE = re.compile(
     re.IGNORECASE,
 )
 BATCH = 8  # pieces per call, as scored by the placement eval
+# Most pieces a split refiles hold 2 to 5 sentences. Listed as "Sentences",
+# Luna numbered each sentence and about 40% of the 9 Nov local run's refiled
+# pieces got no usable answer (Qwen: up to 22 of 143)
+ITEMS_LABEL = "Items"
 
 INSTRUCTIONS = """You file sentences from a profile of the {entity_type} \
 "{entity_name}", built from news articles, under the profile's headings.
@@ -71,12 +75,14 @@ Headings, each with what belongs under it:
 
 {listed}
 
-For each numbered sentence:
+For each numbered item (one sentence, or a few that stay together):
 1. Copy its first three words.
 2. Say in a few words what it mainly tells a reader about {entity_name}.
 3. Pick the one heading whose description fits that best.
 
 Rules:
+- Give exactly one answer per number. An item of several sentences gets one \
+answer, for the item as a whole: don't number the sentences inside it.
 - Go by each heading's description, not by which words appear in it.
 - What happens in or around a court case (a ruling, order, motion, hearing, \
 lawyers' argument, testimony or evidence request) goes under the legal \
@@ -97,8 +103,8 @@ def _starts_required(schema: Dict[str, Any]) -> None:
 class Placement(BaseModel):
     model_config = ConfigDict(json_schema_extra=_starts_required)
 
-    sentence: int = Field(description="the sentence number")
-    starts_with: str = Field("", description="the sentence's first three words")
+    sentence: int = Field(description="the item number")
+    starts_with: str = Field("", description="the item's first three words")
     about: str = Field(description="what it mainly tells about the entity")
     heading: str = Field(description="one heading name from the list")
 
@@ -126,7 +132,7 @@ def messages(
     numbered = "\n\n".join(f"[{n}] {s}" for n, s in enumerate(sentences, 1))
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"Sentences:\n\n{numbered}"},
+        {"role": "user", "content": f"{ITEMS_LABEL}:\n\n{numbered}"},
     ]
 
 
@@ -147,18 +153,34 @@ def read_reply(
     in the list); a repeated number keeps its first answer. With
     ``sentences``, an answer whose copied first words aren't its sentence's
     is dropped: in a local replay the "about" text of some answers described
-    another sentence of the batch, so the numbering had slipped."""
+    another sentence of the batch, so the numbering had slipped. A dropped
+    or extra answer whose copied words open exactly one unanswered item is
+    given to that item: a reply that numbered each sentence inside
+    multi-sentence items still answers every item's first sentence."""
     from src.engine.section_reorganise import _starter_for
-    from src.engine.section_split import _clean_heading
+    from src.engine.section_split import _clean_heading, _norm
 
     out: List[Optional[str]] = [None] * count
     seen = set()
+    spare: List[Placement] = []
     for p in reply.placements:
         if 1 <= p.sentence <= count and p.sentence not in seen:
             seen.add(p.sentence)
             if sentences and not _same_start(p.starts_with, sentences[p.sentence - 1]):
+                spare.append(p)
                 continue
             out[p.sentence - 1] = _starter_for(_clean_heading(p.heading), starter)
+        else:
+            spare.append(p)
+    # A reply that numbered the sentences inside the items still answered
+    # each item's first sentence: an answer whose copied words open exactly
+    # one item, still without an answer, is that item's
+    for p in spare if sentences else []:
+        if not _norm(p.starts_with).split():
+            continue
+        hits = [i for i, s in enumerate(sentences) if _same_start(p.starts_with, s)]
+        if len(hits) == 1 and out[hits[0]] is None:
+            out[hits[0]] = _starter_for(_clean_heading(p.heading), starter)
     return out
 
 
@@ -405,12 +427,14 @@ Sub-headings, each with what belongs under it:
 
 {listed}
 
-For each numbered sentence:
+For each numbered item (one sentence, or a few that stay together):
 1. Copy its first three words.
 2. Say in a few words what it is mainly about.
 3. Pick the one sub-heading whose description fits that best.{stay_rule}
 
 Rules:
+- Give exactly one answer per number. An item of several sentences gets one \
+answer, for the item as a whole: don't number the sentences inside it.
 - Go by each sub-heading's description, not by which words appear in it.
 - Answer with the sub-heading name only, spelled exactly as given, without \
 the description after the colon."""
@@ -450,7 +474,7 @@ def sub_messages(
     numbered = "\n\n".join(f"[{n}] {t}" for n, t in enumerate(sentences, 1))
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": f"Sentences:\n\n{numbered}"},
+        {"role": "user", "content": f"{ITEMS_LABEL}:\n\n{numbered}"},
     ]
 
 
