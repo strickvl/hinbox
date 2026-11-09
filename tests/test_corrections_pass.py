@@ -583,3 +583,11 @@ def test_same_words_with_a_new_source():
         )
     rp = render_profile(out, overlay=Overlay(struck={"Correct.": rec}))
     assert [c.correction for c in rp.claims] == ["", "mine"]
+
+
+def test_withdrawing_a_new_source_brings_the_old_one_back():
+    text = f"Kept.^[{A1}] Correct.^[{A1}]"
+    rec = _strike("Correct.", [A1], "Correct.", A2)
+    out, _, _ = _apply(text, [rec])
+    undone, states, _ = _apply(out, [], withdrawn=[rec])
+    assert undone == text and states["c-0001"] == ("undone", "your sentence swapped back for the original")  # fmt: skip

@@ -325,9 +325,16 @@ def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
     claims, markers = parse_claims(text)
     by_key = {sentence_key(c.text): c for c in claims}
     rep = by_key.get(words_key(rec.get("replacement") or ""))
-    if rep is None or sentence_key(rec["sentence"]) in by_key:
-        return text, False
     cite = rec.get("replacement_cites")
+    if rep is None:
+        return text, False
+    if words_key(rec.get("replacement") or "") == sentence_key(rec["sentence"]):
+        # same words, new source: undone by the citation, not the words
+        if rep.articles != [cite]:
+            return text, False
+        return _cut_claim(text, markers, rep, _original(rec)), True
+    if sentence_key(rec["sentence"]) in by_key:
+        return text, False
     if any(a != cite for a in rep.articles):
         # their words were in the profile already, citing other sources
         # ("Correct.^[a]^[b]"): that claim stays, without their citation,
