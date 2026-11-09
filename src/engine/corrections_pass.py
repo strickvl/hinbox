@@ -187,31 +187,34 @@ def guard_corrections(text: str, edits: List[Any]) -> Tuple[List[Any], Dict[str,
     from src.engine.profile_edits import _find
 
     rules = current_rules()
-    report: Dict[str, Any] = {"restated": [], "kept_yours": []}
+    report: Dict[str, Any] = {"restated": [], "kept_yours": [], "moved_after_yours": []}
     if not rules or not rules.struck:
         return edits, report
     # Where each of the historian's own sentences sits in the text
     claims, markers = parse_claims(text)
     yours = [
-        (rng, rules.written[sentence_key(c.text)])
+        (rng, rules.written[sentence_key(c.text)], c)
         for c in claims
         if sentence_key(c.text) in rules.written
         for rng in _claim_ranges(text, markers, c)
     ]
     kept = []
     for edit in edits:
-        if edit.op == "replace":
-            span = _find(text, edit.anchor.strip()) if edit.anchor.strip() else None
-            # Any overlap: an anchor on one sentence of a two-sentence
-            # replacement would otherwise rewrite half of it
-            hit = next(
-                (r for (a, b), r in yours if span and span[0] < b and a < span[1]),
-                None,
-            )
-            if hit:
-                report["kept_yours"].append(edit.anchor[:200])
-                _note(hit["id"], "the edit model tried to reword your sentence")
-                continue
+        span = _find(text, edit.anchor.strip()) if edit.anchor.strip() else None
+        # Any overlap: an anchor on one sentence of a two-sentence
+        # replacement would otherwise rewrite half of it
+        hit = next(
+            ((r, c) for (a, b), r, c in yours if span and span[0] < b and a < span[1]),
+            None,
+        )
+        if hit and edit.op == "replace":
+            report["kept_yours"].append(edit.anchor[:200])
+            _note(hit[0]["id"], "the edit model tried to reword your sentence")
+            continue
+        if hit and span[1] < hit[1].end:
+            # An add inside their sentence would split it: it goes after it
+            edit = edit.model_copy(update={"anchor": text[hit[1].start : hit[1].end]})
+            report["moved_after_yours"].append(edit.text[:200])
         new_text, cut = _cut_restated(edit.text, rules)
         for cid, claim in cut:
             report["restated"].append(claim[:200])
@@ -331,7 +334,9 @@ def apply_to_text(
         if cid in states:
             continue
         if rep and rep not in present and cid in done_before:
-            text = text.rstrip() + " " + _yours(rec) + "\n"
+            # its own paragraph: after a heading left empty it would
+            # otherwise become part of the heading line
+            text = text.rstrip() + "\n\n" + _yours(rec) + "\n"
             present.add(rep)
             states[cid] = (
                 "re-applied",

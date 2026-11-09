@@ -310,3 +310,32 @@ def test_a_replace_on_part_of_your_sentence_is_dropped(tmp_path):
     finally:
         cp.configure_corrections(None)
     assert kept == [] and report["kept_yours"] == ["Guards logged it daily."]
+
+
+def test_an_add_inside_your_sentence_goes_after_it(tmp_path):
+    from src.engine.profile_edits import apply_edits
+
+    rec = _strike(FORCE_FED, [A3], "He refused food. Guards logged it daily.")
+    cp.configure_corrections(_cs(tmp_path, rec))
+    text = f"Qadir was held.^[{A1}] He refused food. Guards logged it daily.^[{A3}]"
+    edit = ProfileEdit(
+        op="add", anchor="He refused food.", text=f"He lost weight.^[{A3}]"
+    )
+    try:
+        with cp.correction_scope("people", {"name": "Yusuf Qadir"}):
+            kept, report = cp.guard_corrections(text, [edit])
+    finally:
+        cp.configure_corrections(None)
+    out, _ = apply_edits(text, kept)
+    assert "He refused food. Guards logged it daily.^[" in out
+    assert out.index("He lost weight.") > out.index("Guards logged")
+    assert report["moved_after_yours"] == [f"He lost weight.^[{A3}]"]
+
+
+def test_a_sentence_put_back_after_an_empty_heading_is_its_own_paragraph():
+    rec = _strike(FORCE_FED, [A3], "He refused food for several weeks.")
+    text = f"Qadir was held.^[{A1}]\n\n## Later\n"
+    out, states, _ = _apply(text, [rec], done=["c-0001"])
+    assert out.endswith(f"## Later\n\nHe refused food for several weeks.^[{A3}]\n")
+    again, states, _ = _apply(out, [rec], done=["c-0001"])
+    assert again == out and states["c-0001"] == ("held", "")
