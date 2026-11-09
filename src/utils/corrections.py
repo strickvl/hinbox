@@ -15,9 +15,11 @@ folder still finds it. It quotes sentences written from articles, so it is
 article-derived data and must stay out of the public repository.
 
 The reader (``src/frontend/``) appends to it and draws the corrections on
-top of the page; the pipeline will read it at the start of each run.
+top of the page. Each pipeline run reads it after merging and carries out
+the strikes in the stored profiles (``src/engine/corrections_pass.py``).
 """
 
+import hashlib
 import json
 import os
 import re
@@ -26,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from src.utils.grounding import _LEADING_PUNCT
 from src.utils.quality_controls import CITATION_RE
 
 ENV_PATH = "HINBOX_CORRECTIONS_PATH"
@@ -59,6 +62,10 @@ TABLES = ("people", "organizations", "locations", "events")
 # Kinds that only a pipeline run can carry out (the reader just records them)
 NEEDS_RUN = ("heading", "rename", "wrong_table", "not_entity", "split", "join")
 MAX_TEXT = 2000
+# Each run's report sits beside the file; the latest under this name
+REPORT_LATEST = "last-run.json"
+# Report states that mean a run carried a strike out and it still holds
+DONE = ("applied", "held", "re-applied")
 
 _ID = re.compile(r"^c-(\d+)$")
 _LOCK = threading.Lock()
@@ -77,8 +84,51 @@ def corrections_path(domain: str, config: Optional[Dict[str, Any]] = None) -> st
 
 def sentence_key(text: str) -> str:
     """A sentence as corrections compare it: no citation markers, single
-    spaces. The same text whatever heading or line breaks surround it."""
-    return " ".join(CITATION_RE.sub("", text or "").split()).strip()
+    spaces, no leading punctuation (``claim_text()`` strips it from every
+    claim, so a historian's "... Correct." is the stored claim "Correct.").
+    The same text whatever heading or line breaks surround it."""
+    plain = " ".join(CITATION_RE.sub("", text or "").split())
+    return _LEADING_PUNCT.sub("", plain).strip()
+
+
+# A historian's sentence goes into a stored profile as literal text: the
+# characters Markdown would read are escaped, so "*not*" stays "*not*" and a
+# sentence starting "# " is not a heading
+_MD_ANY = re.compile(r"([\\`*_\[\]])")
+_MD_START = re.compile(r"^(\s*)([#>+-]|\d+(?=[.)]))")
+_MD_ESCAPED = re.compile(r"\\([\\`*_\[\]#>+\-.)])")
+
+
+def md_literal(text: str) -> str:
+    """``text`` escaped so Markdown shows it as written."""
+    out = _MD_ANY.sub(r"\\\1", text)
+    m = _MD_START.match(out)
+    if m and m.group(2)[0].isdigit():
+        end = m.end()
+        return out[:end] + "\\" + out[end:]
+    return _MD_START.sub(r"\1\\\2", out, count=1)
+
+
+def md_plain(text: str) -> str:
+    """``md_literal()`` undone: the words as the historian wrote them."""
+    return _MD_ESCAPED.sub(r"\1", text)
+
+
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+
+
+def stored_key(text: str) -> str:
+    """``sentence_key()`` of a claim as the stored text has it, to compare
+    with a historian's own words: a list item's marker dropped ("- He
+    arrived in 2001." is their "He arrived in 2001." once a run put it in a
+    list), then ``md_literal()``'s escapes. A struck sentence, copied from
+    the stored text, goes through this too."""
+    return sentence_key(md_plain(drop_list_mark(text)))
+
+
+def drop_list_mark(text: str) -> str:
+    """``text`` without a list item's leading marker ("- ", "1. ")."""
+    return _LIST_ITEM.sub("", text or "", count=1)
 
 
 def entity_ref(
@@ -92,6 +142,36 @@ def entity_ref(
         "name": name,
         "article_ids": sorted(set(article_ids)),
     }
+
+
+def resolve_ref(
+    ref: Any, candidates: Iterable[Tuple[str, str, Iterable[str], Any]]
+) -> Any:
+    """The page a correction names, among one table's ``(key, name,
+    linked article ids, page)`` candidates: the one with its key; else the
+    one with its name; among several with that name, the one sharing the
+    most linked articles with it, if one shares strictly more than the rest.
+    Keys change between runs (an organization retyped), names less often.
+    The reader and the pipeline both look pages up this way, so they agree
+    on which page a correction is about."""
+    if not isinstance(ref, dict):
+        return None
+    pool = list(candidates)
+    for key, _, _, page in pool:
+        if key == ref.get("key"):
+            return page
+    same = [
+        (set(arts), page) for _, name, arts, page in pool if name == ref.get("name")
+    ]
+    if len(same) == 1:
+        return same[0][1]
+    wanted = set(ref.get("article_ids") or [])
+    shared = sorted(
+        ((len(arts & wanted), page) for arts, page in same), key=lambda x: -x[0]
+    )
+    if len(shared) > 1 and shared[0][0] > shared[1][0]:
+        return shared[0][1]
+    return None
 
 
 def _bad_text(value: Any, what: str, required: bool = True) -> Optional[str]:
@@ -394,3 +474,44 @@ def append_correction(path: str, rec: Dict[str, Any]) -> Dict[str, Any]:
             f.flush()
             os.fsync(f.fileno())
     return out
+
+
+# ── the pipeline's report (src/engine/corrections_pass.py) ──
+
+
+def _report_dir(path: str) -> str:
+    return os.path.dirname(os.path.abspath(path))
+
+
+def latest_name(output_dir: str = "") -> str:
+    """The file beside the corrections file holding the last run's report for
+    one output folder (``last-run-<hash>.json``), or for any folder
+    (``last-run.json``). Runs into different folders share one corrections
+    file, so each folder's tables are compared with its own last run."""
+    if not output_dir:
+        return REPORT_LATEST
+    digest = hashlib.sha1(os.path.abspath(output_dir).encode("utf-8")).hexdigest()
+    return f"last-run-{digest[:12]}.json"
+
+
+def last_report(path: str, output_dir: str = "") -> Dict[str, Any]:
+    """The last run's report (for ``output_dir``'s tables when given), or {}."""
+    try:
+        with open(
+            os.path.join(_report_dir(path), latest_name(output_dir)), encoding="utf-8"
+        ) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def last_states(path: str, output_dir: str = "") -> Dict[str, str]:
+    """Each correction's state after the last run into ``output_dir`` (any
+    folder when not given), from its report."""
+    rows = last_report(path, output_dir).get("rows") or []
+    if not isinstance(rows, list):
+        return {}
+    return {
+        r["id"]: r.get("state", "") for r in rows if isinstance(r, dict) and r.get("id")
+    }

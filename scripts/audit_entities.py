@@ -88,13 +88,28 @@ def repeats_and_disputes(text: str) -> Tuple[List[str], List[str]]:
     return repeats, disputes
 
 
-def audit_history(texts: List[str]) -> Dict[str, Any]:
-    """Lost cited sentences and big shrinks across a profile's versions."""
+def corrected_versions(row: Dict[str, Any]) -> Set[int]:
+    """Version numbers a run's corrections pass made (a historian's strikes,
+    ``src/engine/corrections_pass.py``): what they cut is not lost."""
+    versions = (row.get("profile_versions") or {}).get("versions") or []
+    return {
+        v.get("version_number")
+        for v in versions
+        if str(v.get("trigger_article_id") or "").startswith("corrections:")
+    }
+
+
+def audit_history(
+    texts: List[str], corrected: Set[int] = frozenset()
+) -> Dict[str, Any]:
+    """Lost cited sentences and big shrinks across a profile's versions. A
+    sentence gone at a version in ``corrected`` was struck by a historian:
+    it is listed under ``struck``, not ``lost``."""
     final = texts[-1]
     final_pool = [w for _, w, _ in cited_facts(final)]
     final_ids = set(cited(final))
     later_pools = [[w for _, w, _ in cited_facts(t)] for t in texts]
-    lost, seen = [], set()
+    lost, struck, seen = [], [], set()
     for i, text in enumerate(texts[:-1]):
         for sentence, words, ids in cited_facts(text):
             key = frozenset(words)
@@ -110,7 +125,7 @@ def audit_history(texts: List[str]) -> Dict[str, Any]:
                 ),
                 len(texts) - 1,
             )
-            lost.append(
+            (struck if gone_at + 1 in corrected else lost).append(
                 {
                     "sentence": sentence.strip(),
                     "from_version": i + 1,
@@ -133,6 +148,7 @@ def audit_history(texts: List[str]) -> Dict[str, Any]:
         "peak_chars": peak,
         "final_chars": len(final),
         "lost": lost,
+        "struck": struck,
         "shrinks": shrinks,
     }
 
@@ -221,7 +237,10 @@ def build_report(
     lines: List[str] = []
     data: Dict[str, Any] = {}
     for etype, rows in tables.items():
-        hist = [(entity_name(r), audit_history(version_texts(r)), r) for r in rows]
+        hist = [
+            (entity_name(r), audit_history(version_texts(r), corrected_versions(r)), r)
+            for r in rows
+        ]
         multi = [h for h in hist if h[1]["versions"] > 1]
         cites = [(entity_name(r), audit_citations(r, corpus_ids)) for r in rows]
         lost = sum(len(h["lost"]) for _, h, _ in multi)

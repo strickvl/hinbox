@@ -31,11 +31,18 @@ import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
 from src.engine import ArticleProcessor, EntityMerger, configure_match_check_memo
+from src.engine.corrections_pass import (
+    configure_corrections,
+    describe_report,
+    run_corrections_pass,
+    write_report,
+)
 from src.engine.grounding_pass import run_profile_grounding_postprocess
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
 from src.utils.article_window import ordered_window
 from src.utils.cache_utils import sha256_text
+from src.utils.corrections import corrections_path, load_corrections
 from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
     reset_embedding_manager_cache,
@@ -862,6 +869,12 @@ def main():
             info["content"], status_tracker.get_metadata(info["id"])
         )
 
+    # A historian's corrections: the edit guard checks them during merging,
+    # and the pass after merging carries out the strikes
+    fixes_path = corrections_path(args.domain, config.load_config())
+    configure_corrections(load_corrections(fixes_path))
+    fixes = None
+
     # Process articles, then check grounding. Ctrl+C in either keeps the
     # articles merged so far (grounding is left for the next run)
     article_count = len(rows)
@@ -874,6 +887,14 @@ def main():
             domain_config=config,
             status_tracker=status_tracker,
         )
+        # Before grounding, so the checker judges the corrected text
+        with timed_step("corrections_pass"):
+            fixes = run_corrections_pass(entities, fixes_path, base_dir, write=False)
+        if fixes:
+            log(
+                describe_report(fixes),
+                level="warning" if fixes["counts"].get("needs a look") else "info",
+            )
         # Also on a run with nothing new: a report whose check failed last
         # time (the server went away) is asked again; current ones cost nothing
         if not args.skip_grounding:
@@ -913,6 +934,8 @@ def main():
     except KeyboardInterrupt:
         log("Interrupted: saving entities merged so far...", level="warning")
         save_entities_then_status(entities, base_dir, status_tracker)
+        if fixes:
+            write_report(fixes_path, fixes)
         sys.exit(130)
     except ModelServerUnreachable as e:
         # Going on would only mark every later article incomplete
@@ -922,6 +945,8 @@ def main():
             level="error",
         )
         save_entities_then_status(entities, base_dir, status_tracker)
+        if fixes:
+            write_report(fixes_path, fixes)
         sys.exit(1)
 
     # Write results and statistics
@@ -939,6 +964,8 @@ def main():
         skipped_relevance_cached=counters["skipped_relevance_cached"],
         skipped_incomplete=counters["skipped_incomplete"],
     )
+    if fixes:
+        write_report(fixes_path, fixes)
     save_timing_report(
         base_dir, counters["processed_count"], time.perf_counter() - run_start
     )

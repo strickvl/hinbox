@@ -25,14 +25,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import markdown
 
-from src.utils.corrections import sentence_key
-from src.utils.grounding import (
-    _HEADING_LINES,
-    GROUNDING_MAX_CLAIM_CHARS,
-    _claim_key,
-)
-from src.utils.grounding import _LEADING_PUNCT as _GROUNDING_LEAD
-from src.utils.quality_controls import CITATION_RE, citation_ids
+from src.utils.claim_spans import Marker, claim_end
+from src.utils.claim_spans import parse_claims as _parse_claims
+from src.utils.corrections import sentence_key, stored_key
+from src.utils.grounding import GROUNDING_MAX_CLAIM_CHARS, _claim_key
+from src.utils.quality_controls import CITATION_RE
 
 # Verdicts in order of how much they need the reader's attention
 SEVERITY = {
@@ -52,9 +49,6 @@ VERDICT_LABELS = {
     "missing_source": "Source text missing",
     "struck": "Struck by you",
 }
-# No "^": it is matched at an offset with pattern.match(text, pos)
-_LEADING_PUNCT = re.compile(r"[\s.,;:!?)\]]+")
-_HAS_WORD = re.compile(r"\w")
 _HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
 # Sentences where the profile says two sources differ ("Sources disagree on…",
 # "…2,974 people, rather than 2,976"), collected in one place on the page
@@ -103,72 +97,9 @@ class Claim:
         return bool(_DISPUTE.search(self.text))
 
 
-@dataclass
-class Marker:
-    """One ``^[...]`` marker: where it sits and which claim it closes."""
-
-    start: int
-    end: int
-    articles: List[str]
-    claim: int  # index into the claims list
-
-
-# Lines that start a new Markdown block: a highlight span must not cross one
-_BLOCK_START = re.compile(r"\n[ \t]*(?:\n|#|[-*+][ \t]|\d+[.)][ \t])")
-
-
-def _claim_text(text: str, last_end: int, marker_start: int) -> str:
-    """The claim exactly as ``_extract_cited_claims()`` cuts it: everything
-    since the previous marker, heading lines dropped, leading punctuation
-    stripped. This text is what the stored verdict is keyed on."""
-    span = _HEADING_LINES.sub("", text[last_end:marker_start])
-    return _GROUNDING_LEAD.sub("", span.strip()).strip()
-
-
-_SKIP_LINE = re.compile(r"[ \t]*(?:#[^\n]*)?\n")  # blank or heading line
-_LIST_MARK = re.compile(r"[ \t]*(?:[-*+]|\d+[.)])[ \t]+")
-
-
-def _claim_start(text: str, last_end: int, marker_start: int) -> int:
-    """Where the highlight for a claim starts: after the previous marker, but
-    never before the start of the block (paragraph, heading, list item) the
-    marker sits in, so the span stays inside one HTML element. A sentence
-    wrapped over two lines of one paragraph is highlighted whole."""
-    start = last_end
-    for m in _BLOCK_START.finditer(text, last_end, marker_start):
-        start = m.start() + 1  # the line that opens the block
-    while True:  # step over blank and heading lines
-        skip = _SKIP_LINE.match(text, start)
-        if not skip or skip.end() > marker_start:
-            break
-        start = skip.end()
-    for pat in (_LIST_MARK, _LEADING_PUNCT):
-        m = pat.match(text, start)
-        if m and m.end() <= marker_start:
-            start = m.end()
-    return min(start, marker_start)
-
-
 def parse_claims(text: str) -> Tuple[List[Claim], List[Marker]]:
     """Every cited claim and marker in a profile, in text order."""
-    claims: List[Claim] = []
-    markers: List[Marker] = []
-    last_end = 0
-    for match in CITATION_RE.finditer(text):
-        ids = citation_ids(match.group(1))
-        if not ids:
-            continue
-        span = _claim_text(text, last_end, match.start())
-        if _HAS_WORD.search(span) or not claims:
-            start = _claim_start(text, last_end, match.start())
-            claims.append(Claim(len(claims), span, start, match.start()))
-        claim = claims[-1]
-        for aid in ids:
-            if aid not in claim.articles:
-                claim.articles.append(aid)
-        markers.append(Marker(match.start(), match.end(), ids, claim.index))
-        last_end = match.end()
-    return claims, markers
+    return _parse_claims(text, Claim)
 
 
 def attach_verdicts(claims: List[Claim], report: Optional[Dict[str, Any]]) -> bool:
@@ -331,6 +262,16 @@ class Overlay:
     def __bool__(self) -> bool:
         return bool(self.struck or self.verdicts)
 
+    @property
+    def written(self) -> Dict[str, Dict[str, Any]]:
+        """Strikes by the key of the historian's own sentence, which a run
+        puts into the stored text in place of the struck one."""
+        return {
+            sentence_key(r["replacement"]): r
+            for r in self.struck.values()
+            if r.get("replacement")
+        }  # compared with stored_key(claim): escaped, maybe a list item
+
 
 # A historian's sentence goes into the text as a placeholder, so Markdown
 # never reads it; the escaped words are put back after rendering
@@ -347,17 +288,42 @@ def _insert_replacements(
     claims, markers = parse_claims(text)
     inserts: List[Tuple[int, str]] = []
     mine: Dict[str, Dict[str, Any]] = {}
+    # a run put it in (a struck claim is not theirs, unless it already
+    # cites only their source: same words, new source)
+    there = {
+        stored_key(c.text)
+        for c in claims
+        if sentence_key(c.text) not in overlay.struck or _theirs(c, overlay)
+    }
     for c in claims:
         rec = overlay.struck.get(sentence_key(c.text))
         if not rec or not rec.get("replacement"):
             continue
-        end = max(m.end for m in markers if m.claim == c.index)
+        if sentence_key(rec["replacement"]) in there:
+            continue
+        end = claim_end(markers, c.index)
         token = f"{_MINE}{len(mine)}{_MINE}"
         inserts.append((end, f" {token}^[{rec['replacement_cites']}]"))
         mine[token] = rec
     for pos, add in sorted(inserts, reverse=True):
         text = text[:pos] + add + text[pos:]
     return text, mine
+
+
+def _theirs(c: Any, overlay: Overlay) -> bool:
+    """The historian's own sentence, citing only their source, and not
+    struck again by a later correction of theirs."""
+    key = stored_key(c.text)
+    rec = overlay.written.get(key)
+    struck = overlay.struck.get(sentence_key(c.text))
+    if struck is not None and (rec is None or struck["id"] != rec["id"]):
+        return False
+    cites = {  # two strikes may share these words, each with its own source
+        r.get("replacement_cites")
+        for r in overlay.struck.values()
+        if r.get("replacement") and sentence_key(r["replacement"]) == key
+    }
+    return bool(rec) and bool(c.articles) and set(c.articles) <= cites
 
 
 def _words(rec: Dict[str, Any]) -> str:
@@ -370,13 +336,19 @@ def _apply_overlay(
     """Mark struck, written and overruled sentences. Returns the corrections
     whose sentence is not on the page any more."""
     used: set = set()
+    written = overlay.written
     for c in claims:
         key = sentence_key(c.text)
         if key in mine:
             c.correction, c.by[""] = "mine", mine[key]
             c.text = _words(mine[key])
             continue
-        if key in overlay.struck:
+        plain = stored_key(c.text)  # stored escaped, maybe as a list item
+        if plain in written:  # a run put their sentence into the stored text
+            c.correction, c.by[""] = "mine", written[plain]
+            c.text = _words(written[plain])
+            used.add(written[plain]["id"])
+        if key in overlay.struck and not _theirs(c, overlay):
             c.correction, c.by[""] = "struck", overlay.struck[key]
             used.add(overlay.struck[key]["id"])
         for aid in c.articles:

@@ -9,16 +9,21 @@ it). Corrections only a pipeline run can carry out (headings, names, tables,
 splits, joins) are recorded and listed as waiting.
 """
 
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.utils.corrections import (
+    DONE,
     KIND_LABELS,
     NEEDS_RUN,
     VERDICTS,
     CorrectionSet,
     append_correction,
     entity_ref,
+    last_report,
+    latest_name,
     load_corrections,
+    resolve_ref,
     sentence_key,
 )
 
@@ -74,19 +79,17 @@ def render_current(
 
 
 def find_entity(store: Store, ref: Any) -> Optional[Entity]:
-    """The page a correction names: by its key, else the one page in that
-    table with the same name (keys can change between runs)."""
+    """The page a correction names (``resolve_ref()``: by key, else by name,
+    else by shared sources), as the pipeline's corrections pass finds it."""
     if not isinstance(ref, dict):
         return None
     ent = store.get(str(ref.get("table")), str(ref.get("key")))
     if ent is not None:
         return ent
-    same = [
-        e
-        for e in store.entities.get(str(ref.get("table")), {}).values()
-        if e.name == ref.get("name")
-    ]
-    return same[0] if len(same) == 1 else None
+    pages = store.entities.get(str(ref.get("table")), {}).values()
+    return resolve_ref(
+        ref, ((e.key, e.name, [a["article_id"] for a in e.articles], e) for e in pages)
+    )
 
 
 def _source_title(store: Store, aid: str) -> str:
@@ -155,9 +158,51 @@ def status(
     key = (ent.spec.table, ent.key)
     if key not in cache:
         cache[key] = render_current(store, ent, cs)
-    if any(u["id"] == r["id"] for u in cache[key].unmatched):
+    from .views import fmt_date  # views imports this module
+
+    gone = any(u["id"] == r["id"] for u in cache[key].unmatched)
+    run = run_rows(store).get(r["id"])
+    when = fmt_date(str((run or {}).get("run", ""))[:10]) or "the last run"
+    if run and run["state"] == "needs a look":
+        return "look", f"Needs a look after the run of {when}: {run.get('why', '')}"
+    if r["kind"] == "strike" and run and run["state"] in DONE:
+        again = f" again ({run['why']})" if run["state"] == "re-applied" else ""
+        return "ok", f"Carried out in the tables{again} by the run of {when}"
+    if gone:
         return "look", "Needs a look: the sentence is no longer on the page"
+    if r["kind"] == "strike":
+        return "ok", "Shown on the page; the next run carries it out in the tables"
     return "ok", "Shown on the page"
+
+
+def run_rows(store: Store) -> Dict[str, Dict[str, Any]]:
+    """The last pipeline run's state for each correction (its report beside
+    the corrections file), each row with the run's time under ``run``."""
+    report = _last_report(store.corrections_path, store.output_dir)
+    return {
+        r["id"]: {**r, "run": report.get("run", "")}
+        for r in report.get("rows") or []
+        if isinstance(r, dict) and r.get("id")
+    }
+
+
+def _last_report(path: str, output_dir: str = "") -> Dict[str, Any]:
+    """The last run's report for the tables this reader shows."""
+    if not path:
+        return {}
+    where = os.path.join(
+        os.path.dirname(os.path.abspath(path)), latest_name(output_dir)
+    )
+    try:
+        stamp = os.path.getmtime(where)
+    except OSError:
+        return {}
+    if _REPORT_CACHE.get("key") != (where, stamp):
+        _REPORT_CACHE.update(key=(where, stamp), report=last_report(path, output_dir))
+    return _REPORT_CACHE["report"]
+
+
+_REPORT_CACHE: Dict[str, Any] = {}
 
 
 def row(

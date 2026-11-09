@@ -134,6 +134,10 @@ def _history(store: Store, ent: Entity) -> List[Dict[str, Any]]:
                 "n": v.get("version_number"),
                 "date": fmt_date(to_date(v.get("created_at"))),
                 "source": src,
+                # a version a run's corrections pass made (corrections_pass.py)
+                "corrections": str(trigger or "").removeprefix("corrections:")
+                if str(trigger or "").startswith("corrections:")
+                else "",
                 "added": added,
                 "removed": removed,
                 "chars": len(text),
