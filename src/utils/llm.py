@@ -44,6 +44,7 @@ from src.utils.logging import (
 )
 from src.utils.ollama_context import check_prompt_fits, thinking_settings
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
+from src.utils.server_health import watch_connections
 from src.utils.step_timing import record_llm_call, timed, timed_step
 from src.utils.tracing import instrument_client, request_span
 
@@ -173,7 +174,9 @@ def _new_raw_client(target: ProviderTarget) -> Any:
                 "The anthropic package is required for anthropic/* models. "
                 "Install it with: uv pip install 'hinbox[anthropic]'"
             ) from None
-        return instrument_client(Anthropic(api_key=target.api_key), target)
+        client = instrument_client(Anthropic(api_key=target.api_key), target)
+        client.messages.create = watch_connections(client.messages.create)
+        return client
 
     # OpenAI-compatible (OpenAI, Gemini, Ollama, OpenRouter, etc.).
     # For OpenAI itself, api_key=None lets the SDK read OPENAI_API_KEY.
@@ -183,7 +186,10 @@ def _new_raw_client(target: ProviderTarget) -> Any:
         if target.provider_label == "openai"
         else (target.api_key or "not-set"),
     )
-    return instrument_client(client, target)
+    client = instrument_client(client, target)
+    # counts connection failures, so a run stops when the server is gone
+    client.chat.completions.create = watch_connections(client.chat.completions.create)
+    return client
 
 
 def _create_instructor_client(

@@ -181,6 +181,14 @@ def _match_memo_key(
     return sha256_text(parts)
 
 
+FAILED_CHECK = "API error"
+
+
+def check_failed(result: "MatchCheckResult") -> bool:
+    """True when the model call failed, so ``is_match=False`` is not a verdict."""
+    return result.reason.startswith(FAILED_CHECK)
+
+
 class MatchCheckResult(BaseModel):
     is_match: bool
     confidence: float = Field(
@@ -374,11 +382,12 @@ def _check_match(
         except Exception as e2:
             log(f"Error with {backend} match check API", level="error", exception=e2)
             result = MatchCheckResult(
-                is_match=False, confidence=0.0, reason=f"API error: {str(e2)}"
+                is_match=False, confidence=0.0, reason=f"{FAILED_CHECK}: {e2}"
             )
 
     annotate(is_match=result.is_match, confidence=result.confidence)
-    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None:
+    # a failed call is asked again next time, not remembered as "different"
+    if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None and not check_failed(result):
         _MATCH_MEMO.set(memo_key, result)
     return result
 

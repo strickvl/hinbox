@@ -25,6 +25,7 @@ from src.engine.merge_dispute_agent import (
     MergeDisputeAction,
     MergeDisputeDecision,
     append_merge_dispute_review_queue,
+    dispute_failed,
     run_merge_dispute_agent,
 )
 
@@ -395,6 +396,35 @@ class TestDisputeAgentRouting:
             "Deferred entity should be created as new, not dropped"
         )
 
+    def test_failed_match_check_neither_merges_nor_creates(self):
+        """A match call that failed is no verdict: no duplicate, no dispute."""
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+
+        failed = MatchCheckResult(
+            is_match=False, confidence=0.0, reason="API error: No route to host"
+        )
+        dispute_mock = self._run_merge_with_mocks(entities, failed)
+
+        dispute_mock.assert_not_called()
+        assert set(entities["people"]) == {"Alice Smith"}
+        person = entities["people"]["Alice Smith"]
+        assert "art-002" not in [a["article_id"] for a in person["articles"]]
+
+    def test_failed_dispute_call_neither_merges_nor_creates(self):
+        entities = make_empty_entities()
+        entities["people"]["Alice Smith"] = _make_existing_entity("Alice Smith")
+
+        uncertain = MatchCheckResult(is_match=True, confidence=0.55, reason="unsure")
+        failed = MergeDisputeDecision(
+            action=MergeDisputeAction.DEFER,
+            confidence=0.0,
+            reason="Dispute agent API error: Connection error.",
+        )
+        self._run_merge_with_mocks(entities, uncertain, dispute_decision=failed)
+
+        assert set(entities["people"]) == {"Alice Smith"}
+
 
 # ── Rejected-match tests ──
 
@@ -685,7 +715,28 @@ class TestRunMergeDisputeAgentUnit:
             )
         assert result.action == MergeDisputeAction.DEFER
         assert result.confidence == 0.0
-        assert "API error" in result.reason
+        assert dispute_failed(result)
+
+    def test_failed_call_is_not_queued_for_review(self, tmp_path):
+        queue_path = tmp_path / "queue.jsonl"
+        with patch(
+            "src.engine.merge_dispute_agent.cloud_generation",
+            side_effect=RuntimeError("Connection error."),
+        ):
+            run_merge_dispute_agent(
+                entity_type="people",
+                new_name="Alice",
+                existing_name="Alice S.",
+                new_profile_text="P1",
+                existing_profile_text="P2",
+                similarity_score=0.76,
+                similarity_threshold=0.75,
+                match_is_match=True,
+                match_confidence=0.5,
+                match_reason="test",
+                review_queue_path=str(queue_path),
+            )
+        assert not queue_path.exists()
 
     def test_defer_writes_to_review_queue(self, tmp_path):
         """When decision is DEFER and review_queue_path is provided, write to queue."""

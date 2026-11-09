@@ -46,6 +46,7 @@ from src.utils.letters_page import split_letters, stored_letters_text
 from src.utils.llm import configure_llm_concurrency
 from src.utils.processing_status import ProcessingStatus
 from src.utils.run_summary import log_processing_summary
+from src.utils.server_health import ModelServerUnreachable, unreachable
 from src.utils.step_timing import (
     save_timing_report,
     timed_step,
@@ -350,6 +351,10 @@ def merge_all_entities(
                 processing_metadata[f"failed_profiles_{entity_type}"] = (
                     merge_stats.failed_profiles
                 )
+            if merge_stats.failed_checks:
+                processing_metadata[f"failed_checks_{entity_type}"] = (
+                    merge_stats.failed_checks
+                )
         except Exception as e:
             log(f"Error merging {entity_type}", level="error", exception=e)
             processing_metadata[f"error_{entity_type}"] = str(e)
@@ -383,7 +388,7 @@ def incomplete_reasons(processing_metadata: Dict) -> List[str]:
     return reasons + [
         key
         for key in processing_metadata
-        if key.startswith(("error_", "failed_profiles_"))
+        if key.startswith(("error_", "failed_profiles_", "failed_checks_"))
     ]
 
 
@@ -784,7 +789,10 @@ def process_articles_batch(
                     counters["processed_count"],
                     time.perf_counter() - batch_start,
                 )
-        except KeyboardInterrupt:
+                why = unreachable()
+                if why:
+                    raise ModelServerUnreachable(why)
+        except (KeyboardInterrupt, ModelServerUnreachable):
             # Drop queued extractions and don't wait for running ones
             pool.shutdown(wait=False, cancel_futures=True)
             raise
@@ -922,6 +930,15 @@ def main():
         log("Interrupted: saving entities merged so far...", level="warning")
         save_entities_then_status(entities, base_dir, status_tracker)
         sys.exit(130)
+    except ModelServerUnreachable as e:
+        # Going on would only mark every later article incomplete
+        log(
+            f"Stopping: {e}. Saving entities merged so far; check the model "
+            "server, then run the same command again to continue.",
+            level="error",
+        )
+        save_entities_then_status(entities, base_dir, status_tracker)
+        sys.exit(1)
 
     # Write results and statistics
     write_results_and_statistics(

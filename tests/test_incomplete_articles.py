@@ -1,7 +1,8 @@
 """Tests that an article is only marked done when nothing failed on the way.
 
 These tests verify:
-- A failed extraction, a crashed type merge, or a failed profile call leaves
+- A failed extraction, a crashed type merge, or a failed profile, match or
+  dispute call leaves
   the article unprocessed with reason "incomplete", so the next run retries it
 - merge_all_entities records crashed merges and failed profile calls
   (the merger's own failure tests live in test_entity_merger_merge_smoke.py)
@@ -69,6 +70,7 @@ class TestIncompleteArticlesAreRetried:
             (_result(failed_type="people"), "extract_people"),
             (_result(error_events="embedding down"), "error_events"),
             (_result(failed_profiles_people=1), "failed_profiles_people"),
+            (_result(failed_checks_events=2), "failed_checks_events"),
         ],
     )
     def test_failure_leaves_article_unprocessed(self, tmp_path, result, problem):
@@ -94,6 +96,8 @@ class TestMergeAllEntitiesRecordsFailures:
         def fake_merge(self, extracted, *args, **kwargs):
             if self.entity_type == "events":
                 raise RuntimeError("embedding down")
+            if self.entity_type == "locations":
+                return MergeStats(failed_checks=1)
             return MergeStats(failed_profiles=2 if self.entity_type == "people" else 0)
 
         processor = MagicMock(domain="guantanamo")
@@ -116,6 +120,7 @@ class TestMergeAllEntitiesRecordsFailures:
         assert metadata == {
             "error_events": "embedding down",
             "failed_profiles_people": 2,
+            "failed_checks_locations": 1,
         }
 
 
