@@ -50,7 +50,7 @@ import os
 import re
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.engine.profile_view import _SENTENCE_GAP, _blocks
 from src.logging_config import get_logger
@@ -72,7 +72,16 @@ _HEADING_LINE = re.compile(r"^(#{1,6})\s+(\S.*)$")
 _CITED_END = re.compile(r"\^\[[^\]]*\][.,;:!?\"”’)\s]*$")
 
 
+def _covers_required(schema: Dict[str, Any]) -> None:
+    # Optional for code and tests, but required in the schema the model sees:
+    # with a default, local Qwen (JSON schema mode) left it out for 89 of 107
+    # sub-headings, and the refiling saw bare heading names
+    schema.setdefault("required", []).append("covers")
+
+
 class SubSection(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_covers_required)
+
     heading: str = Field(description="Short plain-text sub-heading")
     covers: str = Field("", description="What belongs under it, in a few words")
     paragraphs: List[int] = Field(description="Numbers of its paragraphs")
@@ -578,7 +587,7 @@ def split_profile(
     if ask is None:
         from src.engine import section_place
 
-        if section_place.refile_enabled():
+        if section_place.refile_enabled(local):
             place = section_place.make_asker(model, local, step="profile.section_split")
     new_text, reports = split_long_sections(
         text, entity_type, entity_name, ask or make_asker(model, local),

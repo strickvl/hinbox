@@ -77,7 +77,7 @@ def test_the_reorganise_files_pieces_with_the_placement_prompt():
     )  # fmt: skip
     assert report["status"] == "done" and report["assign"] == "classify"
     assert len(seen) == 1  # 7 pieces: one call of up to 8
-    assert "1. Say in a few words" in seen[0][0]["content"]
+    assert "1. Copy its first three words." in seen[0][0]["content"]
     assert _sentences(out) == _sentences(FLAT)
     capture = out.split("### Capture and CIA custody")[1].split("###")[0]
     assert "Rawalpindi" in capture and "waterboarded" in capture
@@ -307,3 +307,47 @@ def test_a_refiling_that_leaves_one_heading_keeps_the_split():
         plan, {}, ["x", "y", "z"], "P", "person", "K", _by_keyword([], fail=True), True
     )
     assert out == plan and report["status"] == "failed"
+
+
+def test_an_answer_whose_copied_words_are_another_sentences_is_dropped():
+    from src.engine.section_place import read_reply
+
+    reply = Placements(
+        placements=[
+            Placement(
+                sentence=1, starts_with="He was born", about="", heading="Background"
+            ),
+            Placement(
+                sentence=2, starts_with="He was born", about="", heading="Background"
+            ),
+            Placement(
+                sentence=3, starts_with="", about="", heading="Health and treatment"
+            ),
+        ]
+    )
+    sentences = [
+        "He was born in Kuwait.^[a0]",
+        "“He was charged.”^[a1]",
+        "He is ill.^[a2]",
+    ]
+    assert read_reply(reply, 3, STARTER, sentences) == [
+        "Background", None, "Health and treatment",
+    ]  # fmt: skip
+
+
+def test_the_model_must_fill_the_alignment_and_covers_fields():
+    from src.engine.section_split import SubSection
+
+    assert "starts_with" in Placement.model_json_schema()["required"]
+    assert "covers" in SubSection.model_json_schema()["required"]
+    assert SubSection(heading="A", paragraphs=[1]).covers == ""  # code needn't
+
+
+def test_split_refiling_is_for_local_models_unless_turned_on(monkeypatch):
+    from src.engine.section_place import refile_enabled
+
+    assert refile_enabled(local=True) and not refile_enabled(local=False)
+    monkeypatch.setenv("HINBOX_SPLIT_REFILE", "on")
+    assert refile_enabled(local=False)
+    monkeypatch.setenv("HINBOX_SPLIT_REFILE", "off")
+    assert not refile_enabled(local=True)

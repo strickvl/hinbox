@@ -47,7 +47,7 @@ import os
 import re
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.logging_config import get_logger
 
@@ -72,8 +72,9 @@ Headings, each with what belongs under it:
 {listed}
 
 For each numbered sentence:
-1. Say in a few words what it mainly tells a reader about {entity_name}.
-2. Pick the one heading whose description fits that best.
+1. Copy its first three words.
+2. Say in a few words what it mainly tells a reader about {entity_name}.
+3. Pick the one heading whose description fits that best.
 
 Rules:
 - Go by each heading's description, not by which words appear in it.
@@ -89,8 +90,15 @@ and when, not for what they did in it.
 description after the colon."""
 
 
+def _starts_required(schema: Dict[str, Any]) -> None:
+    schema.setdefault("required", []).append("starts_with")
+
+
 class Placement(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_starts_required)
+
     sentence: int = Field(description="the sentence number")
+    starts_with: str = Field("", description="the sentence's first three words")
     about: str = Field(description="what it mainly tells about the entity")
     heading: str = Field(description="one heading name from the list")
 
@@ -122,11 +130,24 @@ def messages(
     ]
 
 
+def _same_start(copied: str, sentence: str) -> bool:
+    from src.engine.section_split import _norm
+
+    words = _norm(copied).split()[:3]
+    return not words or words == _norm(sentence).split()[: len(words)]
+
+
 def read_reply(
-    reply: Placements, count: int, starter: List[str]
+    reply: Placements,
+    count: int,
+    starter: List[str],
+    sentences: Optional[List[str]] = None,
 ) -> List[Optional[str]]:
     """The starter heading each sentence got (None: missing, or a heading not
-    in the list); a repeated number keeps its first answer."""
+    in the list); a repeated number keeps its first answer. With
+    ``sentences``, an answer whose copied first words aren't its sentence's
+    is dropped: in a local replay the "about" text of some answers described
+    another sentence of the batch, so the numbering had slipped."""
     from src.engine.section_reorganise import _starter_for
     from src.engine.section_split import _clean_heading
 
@@ -135,6 +156,8 @@ def read_reply(
     for p in reply.placements:
         if 1 <= p.sentence <= count and p.sentence not in seen:
             seen.add(p.sentence)
+            if sentences and not _same_start(p.starts_with, sentences[p.sentence - 1]):
+                continue
             out[p.sentence - 1] = _starter_for(_clean_heading(p.heading), starter)
     return out
 
@@ -176,7 +199,7 @@ def place_pieces(
     for i in range(0, len(pieces), batch):
         chunk = pieces[i : i + batch]
         reply = ask(messages(chunk, starter, notes, entity_type, entity_name))
-        out += read_reply(reply, len(chunk), starter)
+        out += read_reply(reply, len(chunk), starter, chunk)
     return out
 
 
@@ -383,8 +406,9 @@ Sub-headings, each with what belongs under it:
 {listed}
 
 For each numbered sentence:
-1. Say in a few words what it is mainly about.
-2. Pick the one sub-heading whose description fits that best.{stay_rule}
+1. Copy its first three words.
+2. Say in a few words what it is mainly about.
+3. Pick the one sub-heading whose description fits that best.{stay_rule}
 
 Rules:
 - Go by each sub-heading's description, not by which words appear in it.
@@ -397,8 +421,16 @@ STAY = "None of these"
 REFILE_ENV = "HINBOX_SPLIT_REFILE"
 
 
-def refile_enabled() -> bool:
-    return os.getenv(REFILE_ENV, "on").strip().lower() not in ("off", "0", "false")
+def refile_enabled(local: bool = True) -> bool:
+    """``HINBOX_SPLIT_REFILE``: ``local`` (default) refiles only with a local
+    model, ``on`` always, ``off`` never. In 40-article replays of Spath,
+    Trump and Obama it raised Qwen's hand-checked right placements from 44
+    to 59 of 90 (3 runs each, alternated), but Luna's went from 87 to 78 of
+    120 (4 runs each), all of it sub-heading misses in two runs."""
+    value = os.getenv(REFILE_ENV, "local").strip().lower()
+    if value in ("off", "0", "false"):
+        return False
+    return local or value in ("on", "1", "true")
 
 
 def sub_messages(
@@ -451,7 +483,7 @@ def refile_split(
                 chunk, [(h, covers.get(h, "")) for h in names], parent,
                 entity_type, entity_name, stay,
             )  # fmt: skip
-            answers += read_reply(ask(msgs), len(chunk), options)
+            answers += read_reply(ask(msgs), len(chunk), options, chunk)
     except Exception as e:
         logger.warning(f"Split refiling failed for {entity_name}: {e}")
         return plan, [], {"status": "failed", "reason": f"{type(e).__name__}: {e}"}

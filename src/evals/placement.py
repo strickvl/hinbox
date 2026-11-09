@@ -115,7 +115,7 @@ def _ask_batch(
     sentences = [r["sentence"] for r in batch]
     if approach == "classify":
         reply = ask(place_messages(sentences, starter, notes, tag, name))
-        return read_reply(reply, len(batch), starter)
+        return read_reply(reply, len(batch), starter, sentences)
     reply = ask(reorganise_messages(sentences, starter, tag, name, notes))
     out: List[Optional[str]] = [None] * len(batch)
     for sub in reply.subsections:
