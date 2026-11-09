@@ -6,6 +6,7 @@ under which sub-heading; code moves them word for word.
 """
 
 import json
+import re
 from typing import Any, Dict, List
 
 import pytest
@@ -469,6 +470,39 @@ def test_refiling_a_re_split_leaves_the_joined_pieces_alone():
     assert section_split._sentences(out) == section_split._sentences(NESTED)
     arraignment = out.split("#### Arraignment")[1].split("####")[0]
     assert PARAS[0] in arraignment and PARAS[1] in arraignment
+
+
+def test_a_re_split_with_a_join_can_still_be_refiled():
+    # Codex review: the refiled candidate was compared before the joined
+    # pieces were added back, so its claims never matched and it was dropped
+    from src.engine.section_place import Placement, Placements
+
+    reply = SectionSplit(subsections=[
+        SubSection(heading="Arraignment", paragraphs=[1, 2]),
+        SubSection(heading="Charges", paragraphs=[3, 4, 5]),
+        SubSection(heading="Plea negotiations", paragraphs=[6, 7, 8]),
+    ])  # fmt: skip
+
+    def place(msgs):
+        found = re.findall(r"^\[(\d+)\] (.*)$", msgs[1]["content"], re.M)
+        return Placements(placements=[
+            Placement(sentence=int(n), about="",
+                      heading="Plea negotiations" if "FBI" in t else
+                      "Charges" if int(n) <= 3 else "Plea negotiations")
+            for n, t in found
+        ])  # fmt: skip
+
+    out, reports = split_long_sections(
+        NESTED, "person", "KSM", _asker(reply, []), min_chars=200, resplit=True,
+        place=place,
+    )  # fmt: skip
+    assert reports[0]["status"] == "split"
+    assert reports[0]["refile"]["status"] == "done"
+    assert reports[0]["subsections"] == [
+        ["Charges", [3, 4]], ["Plea negotiations", [5, 6, 7, 8]],
+    ]  # fmt: skip
+    assert section_split._sentences(out) == section_split._sentences(NESTED)
+    assert PARAS[4] in out.split("#### Plea negotiations")[1]
 
 
 def test_only_a_re_split_joins_a_heading_it_repeats():

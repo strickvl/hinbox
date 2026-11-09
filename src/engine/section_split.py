@@ -485,6 +485,24 @@ def _join(
     return lines, shifts
 
 
+def _build(
+    lines: List[str],
+    section: Dict[str, Any],
+    level: int,
+    plan: List[Tuple[str, List[int]]],
+    joins: List[Tuple[str, List[int]]],
+    stay: Optional[List[int]] = None,
+) -> Tuple[Optional[List[str]], List[Tuple[int, int]]]:
+    """The whole profile's lines with the section rendered by ``plan``, and
+    the joined pieces added to their siblings (``_join()``)."""
+    body = (
+        lines[: section["start"]]
+        + _render(level, section["units"], plan, section["tail"], stay)
+        + lines[section["end"] :]
+    )
+    return _join(body, section, joins) if joins else (body, [])
+
+
 def split_long_sections(
     text: str,
     entity_type: str,
@@ -570,11 +588,17 @@ def split_long_sections(
             report.update(status="refused", reason="joins a section still to split")
             continue
         level = section["level"] - 1 if sibling else section["level"]
-        before_lines, after_lines = lines[: section["start"]], lines[section["end"] :]
-        units, tail = section["units"], section["tail"]
-        new_lines = before_lines + _render(level, units, plan, tail) + after_lines
+        new_lines, shifts = _build(lines, section, level, plan, joins)
+        if new_lines is None:
+            report.update(status="refused", reason="joined sibling not found")
+            continue
+        from src.engine.opening_sort import _claims
+
+        old_claims = _claims("\n".join(lines))
+        if joins and _claims("\n".join(new_lines)) != old_claims:
+            report.update(status="refused", reason="citation claims changed")
+            continue
         if place is not None:
-            from src.engine.opening_sort import _claims
             from src.engine.section_place import refile_split
 
             covers = {_clean_heading(s.heading): s.covers for s in reply.subsections}
@@ -582,14 +606,14 @@ def split_long_sections(
                 plan, covers, section["units"], section["parent"] or section["heading"],
                 entity_type, entity_name, place, stay=not sibling,
             )  # fmt: skip
-            refiled_lines = (
-                before_lines + _render(level, units, refiled, tail, stay) + after_lines
+            refiled_lines, refiled_shifts = _build(
+                lines, section, level, refiled, joins, stay
             )
             # Uncited text above the section counts toward its first piece's
             # citation, so a piece that stays above the sub-headings may not
             # go before piece 1 and take that text's claim
-            if _claims("\n".join(refiled_lines)) == _claims("\n".join(lines)):
-                plan, new_lines = refiled, refiled_lines
+            if refiled_lines and _claims("\n".join(refiled_lines)) == old_claims:
+                plan, new_lines, shifts = refiled, refiled_lines, refiled_shifts
             else:
                 refile = {
                     **refile,
@@ -597,18 +621,7 @@ def split_long_sections(
                     "reason": "citation claims changed",
                 }
             report["refile"] = refile
-        shifts: List[Tuple[int, int]] = []
         if joins:
-            joined_lines, shifts = _join(new_lines, section, joins)
-            if joined_lines is None:
-                report.update(status="refused", reason="joined sibling not found")
-                continue
-            new_lines = joined_lines
-            from src.engine.opening_sort import _claims
-
-            if _claims("\n".join(new_lines)) != _claims("\n".join(lines)):
-                report.update(status="refused", reason="citation claims changed")
-                continue
             report["joined"] = [[h, ns] for h, ns in joins]
         if _sentences("\n".join(new_lines)) != _sentences("\n".join(lines)):
             report.update(status="refused", reason="sentences changed")
