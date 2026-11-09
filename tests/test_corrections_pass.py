@@ -625,3 +625,15 @@ def test_withdrawing_one_of_two_strikes_with_the_same_words_drops_its_source():
     assert states["c-0001"][0] == "undone" and states["c-0002"] == ("held", "")
     again, states, _ = _apply(undone, [second], done=["c-0002"])
     assert again == undone and states["c-0002"] == ("held", "")
+
+
+def test_a_shared_sentence_put_back_cites_every_source():
+    recs = [
+        _strike("Wrong 1.", [A1], "Correct.", A1, cid="c-0001"),
+        _strike("Wrong 2.", [A2], "Correct.", A2, cid="c-0002"),
+    ]
+    out, states, _ = _apply(f"Kept.^[{A3}]", recs, done=["c-0001", "c-0002"])
+    assert out.endswith(f"Correct.^[{A1}]^[{A2}]\n")
+    assert states["c-0001"][0] == "re-applied" and states["c-0002"] == ("held", "")
+    again, states, _ = _apply(out, recs, done=["c-0001", "c-0002"])
+    assert again == out and {s[0] for s in states.values()} == {"held"}

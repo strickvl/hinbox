@@ -507,7 +507,6 @@ def apply_to_text(
             states[rec["id"]] = ("re-applied", f"said again: “{c.text[:160]}”")
     for c, put in reversed(edits):  # back to front, so offsets hold
         text = _cut_claim(text, markers, c, put)
-    text = _add_your_sources(text, rules)
     for rec in {r["id"]: r for r in rules.struck.values()}.values():
         cid, rep = rec["id"], words_key(rec.get("replacement") or "")
         if cid in states:
@@ -538,6 +537,8 @@ def apply_to_text(
                 "needs a look",
                 "the struck sentence is not in the profile (reworded by an earlier run?)",
             )
+    # last, so a sentence put back above also gets every strike's source
+    text = _add_your_sources(text, rules)
     claims, markers = parse_claims(text)
     by_key = {sentence_key(c.text): c for c in claims}
     for rec in rules.verdicts:
