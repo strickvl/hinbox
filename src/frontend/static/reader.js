@@ -28,7 +28,29 @@
     if (mark) mark.scrollIntoView({ block: "center" });
     else { const body = box.querySelector(".pbody"); if (body) body.scrollTop = 0; }
   }
+  // Show a panel's contents beside the profile (wide) or under the paragraph
+  function show(link, fill) {
+    clearActive();
+    link.classList.add("sel");
+    const claim = document.getElementById("claim-" + link.dataset.claim);
+    if (claim) claim.classList.add("active");
+    let box;
+    if (wide.matches && panel) {
+      if (inline) { inline.remove(); inline = null; }
+      box = panel;
+    } else {
+      if (inline) inline.remove();
+      inline = document.createElement("div");
+      inline.className = "inline-src";
+      const block = link.closest("p, li, h2, h3, h4") || link.parentElement;
+      block.after(inline);
+      box = inline;
+    }
+    fill(box);
+    wire(box);
+  }
   async function open(link) {
+    if (document.body.dataset.static) return openStatic(link);
     const params = new URLSearchParams({ t: desk.dataset.table, k: desk.dataset.key, a: link.dataset.article, c: link.dataset.claim });
     if (desk.dataset.domain && desk.dataset.domain !== "guantanamo") params.set("domain", desk.dataset.domain);
     if (desk.dataset.version) params.set("v", desk.dataset.version);
@@ -40,28 +62,95 @@
       window.location.href = link.href;
       return;
     }
-    clearActive();
-    link.classList.add("sel");
-    const claim = document.getElementById("claim-" + link.dataset.claim);
-    if (claim) claim.classList.add("active");
-    if (wide.matches && panel) {
-      if (inline) { inline.remove(); inline = null; }
-      panel.innerHTML = html;
-      wire(panel);
-    } else {
-      if (inline) inline.remove();
-      inline = document.createElement("div");
-      inline.className = "inline-src";
-      inline.innerHTML = html;
-      const block = link.closest("p, li, h2, h3, h4") || link.parentElement;
-      block.after(inline);
-      wire(inline);
+    show(link, (box) => { box.innerHTML = html; });
+  }
+
+  // The static copy (`just export-site`) has no /panel: build the same panel
+  // from the source's exported page and the verdicts the profile page carries.
+  // Browsers refuse this for a site opened from disk; the link then just
+  // opens the source page.
+  const LABELS = { supported: "Supported", partial: "Partly supported", not_supported: "Not supported", unclear: "Checker unsure", unchecked: "Not checked yet" };
+  let cites = null;
+  try { const el = document.getElementById("cite-data"); if (el) cites = JSON.parse(el.textContent); } catch (e) { cites = null; }
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text) n.textContent = text;
+    return n;
+  }
+  function highlighted(text, needle) {
+    const p = el("p");
+    const at = needle.length >= 25 ? text.indexOf(needle) : -1;
+    if (at < 0) { p.textContent = text; return [p, false]; }
+    p.append(text.slice(0, at), el("mark", "", needle), text.slice(at + needle.length));
+    return [p, true];
+  }
+  async function openStatic(link) {
+    let doc, base;
+    try {
+      const res = await fetch(link.href);
+      if (!res.ok) throw new Error(String(res.status));
+      base = res.url || link.href;
+      doc = new DOMParser().parseFromString(await res.text(), "text/html");
+    } catch (e) {
+      window.location.href = link.href;
+      return;
     }
+    const head = doc.querySelector("header.head");
+    const c = (cites || {})[link.dataset.claim] || {};
+    const aid = link.dataset.article;
+    show(link, (box) => {
+      box.textContent = "";
+      const ph = el("div", "ph");
+      const lbl = el("div", "lbl");
+      const kind = doc.querySelector("header.head .eyebrow span");
+      lbl.append(el("span", "", "Source " + link.textContent + (kind ? " · " + kind.textContent : "")));
+      const close = el("button", "close", "×");
+      close.type = "button"; close.setAttribute("data-close", ""); close.setAttribute("aria-label", "Close source");
+      lbl.append(close);
+      const h1 = doc.querySelector("h1");
+      const d = el("div", "d");
+      const date = head ? head.dataset.date : "";
+      if (date) d.append(date + " · ");
+      const page = el("a", "", "source page"); page.href = link.href; d.append(page);
+      if (head && head.dataset.url) {
+        const orig = el("a", "", "original");
+        orig.href = head.dataset.url; orig.target = "_blank"; orig.rel = "noopener noreferrer";
+        d.append(" · ", orig);
+      }
+      ph.append(lbl, el("div", "t", h1 ? h1.textContent : ""), d);
+      box.append(ph);
+      if (c.q) {
+        const old = Boolean(desk.dataset.version);
+        const v = old ? "" : (c.v || {})[aid] || "unchecked";
+        const vd = el("div", "verdict v-" + v);
+        vd.append(el("b", "", old ? "Older version" : LABELS[v] || v), el("span", "claim", "“" + c.q + "”"));
+        const why = old ? "The checker's verdicts describe the current version only." : (c.r || {})[aid] || (v === "supported" ? "The checker found this in the source." : v === "unchecked" ? "No checker verdict is stored for this sentence and source." : "");
+        if (why) vd.append(el("span", "", why));
+        box.append(vd);
+      }
+      const body = el("div", "pbody");
+      const needle = (c.q || "").replace(/[.,;:\s]+$/, "");
+      let marked = false;
+      doc.querySelectorAll(".source-text p").forEach((sp) => {
+        const [p, hit] = sp.classList.contains("empty") ? [el("p", "empty", sp.textContent), false] : highlighted(sp.textContent, needle);
+        marked = marked || hit;
+        body.append(p);
+      });
+      if (c.q && !marked && body.children.length) body.append(el("p", "note", "The checker doesn't yet save which words it relied on, so the whole source is shown. Sentences copied word for word are highlighted."));
+      box.append(body);
+      const chips = [...doc.querySelectorAll(".side .chipl")].filter((a) => a.textContent !== (document.querySelector("h1") || {}).textContent);
+      if (chips.length) {
+        const ents = el("div", "ents");
+        ents.append(el("span", "", "Named here:"));
+        chips.slice(0, 24).forEach((a) => { const x = el("a", "chipl", a.textContent); x.href = new URL(a.getAttribute("href"), base).href; ents.append(x); });
+        box.append(ents);
+      }
+    });
   }
   document.addEventListener("click", (ev) => {
     const link = ev.target.closest("sup.c a.cite");
-    // The static copy has no server to ask for the panel: citations open the source page
-    if (!link || document.body.dataset.static || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
+    if (!link || ev.metaKey || ev.ctrlKey || ev.shiftKey) return;
     ev.preventDefault();
     open(link);
   });

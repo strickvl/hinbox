@@ -350,6 +350,7 @@ def test_demo_corpus_renders(tmp_path, monkeypatch):
 
 def test_static_export_writes_linked_files(client, tmp_path):
     """`export_site()` writes every page with relative links and no server forms."""
+    import json
     import re
     from urllib.parse import quote, unquote
 
@@ -375,3 +376,10 @@ def test_static_export_writes_linked_files(client, tmp_path):
     home = (out / "index.html").read_text()
     assert "data-static-search" in home and "search-index.js" in home
     assert 'class="filters"' not in (out / "people.html").read_text()
+    # The panel's data rides on the page, since there is no /panel to ask
+    data = re.search(
+        r'<script type="application/json" id="cite-data">(.*?)</script>', page
+    )
+    cites = json.loads(data.group(1))
+    assert any("partial" in c["v"].values() for c in cites.values())
+    assert 'id="cite-data"' not in client.get("/people/Yusuf%20Qadir").text

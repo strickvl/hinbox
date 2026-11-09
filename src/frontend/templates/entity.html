@@ -125,4 +125,4 @@
   </aside>
 </div>
 {% endblock %}
-{% block scripts %}<script src="/static/reader.js" defer></script>{% endblock %}
+{% block scripts %}{% if static_site %}<script type="application/json" id="cite-data">{{ cite_data|tojson }}</script>{% endif %}<script src="/static/reader.js" defer></script>{% endblock %}

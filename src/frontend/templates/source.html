@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ source.title }}{% endblock %}
 {% block content %}
-<header class="head">
+<header class="head" data-date="{{ source.date|fmt_date if source.date else '' }}" data-url="{{ source.url }}">
   <div class="eyebrow"><span>{{ source.kind }}{% if source.outlet %} · {{ source.outlet }}{% endif %}</span></div>
   <h1>{{ source.title }}</h1>
   <div class="meta">{% if source.date %}<span>{{ source.date|fmt_date }}</span>{% endif %}{% if source.url %}<a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">Original</a>{% endif %}<span>Cited by {{ n_citing }} profile sentence{{ 's' if n_citing != 1 }}</span></div>

@@ -265,6 +265,22 @@ def entity_page(
         "current_version": current,
         "old_date": fmt_date(to_date(old.get("created_at"))) if old else "",
         "first_source": store.source(arts[0]["article_id"]) if arts else None,
+        "cite_data": cite_data(rp),
+    }
+
+
+def cite_data(rp: RenderedProfile) -> Dict[str, Any]:
+    """What the static copy's panel needs about each cited sentence (the
+    server's ``/panel`` works it out per click): its words and, per source,
+    the checker's verdict and reason. Empty verdicts when nothing was checked
+    or the page shows an older version."""
+    return {
+        str(c.index): {
+            "q": plain_claim(c.text),
+            "v": dict(c.verdicts) if rp.checked else {},
+            "r": dict(c.reasons) if rp.checked else {},
+        }
+        for c in rp.claims
     }
 
 

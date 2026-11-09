@@ -13,7 +13,10 @@ What differs from the server:
 - Search runs in the browser over ``static/search-index.js`` (names and other
   names of every page and source titles); there is no ``/search`` page.
 - The list filters and the domain picker need a server, so they are left out.
-- A citation opens the source page instead of the panel beside the profile.
+- The panel beside the profile is built in the browser: ``reader.js`` loads
+  the source's exported page and reads the verdicts the entity page carries
+  (``cite_data()``). Browsers refuse that for a site opened from disk, so
+  there a citation opens the source page; serve the folder to get the panel.
 
 The site holds the run's article text and profiles: share it only where the
 articles may be shared.

@@ -17,7 +17,7 @@ it never calls a model. Run it with `just frontend`.
 | `templates/_panel.html` | The source panel fragment (`/panel`), also shown under a paragraph on narrow screens |
 | `templates/_macros.html` | `entity_row`, `flags`, `kind_pill` (import them `with context`, or `u()` is undefined) |
 | `static/reader.js` | Opens sources in the panel, filters marks, folds contents on phones |
-| `export.py` | `just export-site <out>`: the static copy. Renders every page through the app, rewrites links to relative files, writes `static/search-index.js` |
+| `export.py` | `just export-site <out>`: the static copy. Renders every page through the app, rewrites links to relative files, writes `static/search-index.js`. Entity pages carry `cite_data()` as JSON so `reader.js` can build the panel without `/panel` (served folder only; from disk a citation opens the source page) |
 | `static/static-search.js` | Search in the static copy (loaded only there) |
 | `static/styles.css` | Tokens for light and dark, all layout |
 
