@@ -387,3 +387,10 @@ def test_append_after_a_hand_edit_without_a_final_newline(corr):
     append_correction(str(corr), {"kind": "rename", "entity": PAGE, "name": "Z"})
     cs = load_corrections(str(corr))
     assert not cs.problems and [r["id"] for r in cs.lines] == ["c-0001", "c-0002"]
+
+
+def test_the_first_sentence_can_be_corrected(client, corr):  # noqa: F811
+    page = client.get("/correct/page?t=people&k=Yusuf%20Qadir").text
+    assert "&amp;c=0" in page or "&c=0" in page  # 0 was dropped as if False
+    href = re.search(r'href="([^"]*c=0[^"]*)"', page).group(1)
+    assert client.get(unescape(href)).status_code == 200

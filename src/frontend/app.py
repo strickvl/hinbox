@@ -50,7 +50,12 @@ def _render(
 
     def u(path: str, **params: Any) -> str:
         """A link that keeps the current domain."""
-        q = {k: v for k, v in params.items() if v not in (None, "", False)}
+        # `v is False`, not `v == False`: a claim index of 0 must stay in the link
+        q = {
+            k: v
+            for k, v in params.items()
+            if v is not None and v != "" and v is not False
+        }
         if domain != DEFAULT_DOMAIN:
             q["domain"] = domain
         return f"{path}?{urlencode(q)}" if q else path
