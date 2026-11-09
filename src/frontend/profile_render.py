@@ -313,11 +313,17 @@ def _insert_replacements(
 def _theirs(c: Any, overlay: Overlay) -> bool:
     """The historian's own sentence, citing only their source, and not
     struck again by a later correction of theirs."""
-    rec = overlay.written.get(stored_key(c.text))
+    key = stored_key(c.text)
+    rec = overlay.written.get(key)
     struck = overlay.struck.get(sentence_key(c.text))
     if struck is not None and (rec is None or struck["id"] != rec["id"]):
         return False
-    return bool(rec) and list(c.articles) == [rec.get("replacement_cites")]
+    cites = {  # two strikes may share these words, each with its own source
+        r.get("replacement_cites")
+        for r in overlay.struck.values()
+        if r.get("replacement") and sentence_key(r["replacement"]) == key
+    }
+    return bool(rec) and bool(c.articles) and set(c.articles) <= cites
 
 
 def _words(rec: Dict[str, Any]) -> str:

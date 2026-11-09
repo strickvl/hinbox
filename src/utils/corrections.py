@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from src.utils.grounding import _LEADING_PUNCT
 from src.utils.quality_controls import CITATION_RE
 
 ENV_PATH = "HINBOX_CORRECTIONS_PATH"
@@ -83,8 +84,11 @@ def corrections_path(domain: str, config: Optional[Dict[str, Any]] = None) -> st
 
 def sentence_key(text: str) -> str:
     """A sentence as corrections compare it: no citation markers, single
-    spaces. The same text whatever heading or line breaks surround it."""
-    return " ".join(CITATION_RE.sub("", text or "").split()).strip()
+    spaces, no leading punctuation (``claim_text()`` strips it from every
+    claim, so a historian's "... Correct." is the stored claim "Correct.").
+    The same text whatever heading or line breaks surround it."""
+    plain = " ".join(CITATION_RE.sub("", text or "").split())
+    return _LEADING_PUNCT.sub("", plain).strip()
 
 
 # A historian's sentence goes into a stored profile as literal text: the

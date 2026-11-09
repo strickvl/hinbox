@@ -87,6 +87,9 @@ class PageRules:
 
     struck: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # key -> line
     written: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # key -> line
+    # every strike whose sentence has these words (two strikes may both be
+    # replaced by "Correct.", each citing its own source)
+    sharing: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
     verdicts: List[Dict[str, Any]] = field(default_factory=list)
     waiting: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -101,6 +104,7 @@ def _rules(lines: List[Dict[str, Any]]) -> PageRules:
             rules.struck[sentence_key(r["sentence"])] = r
             if r.get("replacement"):
                 rules.written[words_key(r["replacement"])] = r
+                rules.sharing.setdefault(words_key(r["replacement"]), []).append(r)
         elif r["kind"] == "verdict":
             rules.verdicts.append(r)
         elif r["kind"] in NEEDS_RUN:
@@ -354,7 +358,8 @@ def _is_theirs(c: Any, rules: PageRules) -> bool:
     struck = rules.struck.get(key)
     if struck is not None and (rec is None or struck["id"] != rec["id"]):
         return False  # they struck their own sentence again later
-    return bool(rec) and c.articles == [rec.get("replacement_cites")]
+    cites = {r.get("replacement_cites") for r in rules.sharing.get(key, [])}
+    return bool(rec) and bool(c.articles) and set(c.articles) <= cites
 
 
 def _add_your_sources(text: str, rules: PageRules) -> str:
@@ -364,10 +369,14 @@ def _add_your_sources(text: str, rules: PageRules) -> str:
     claims, markers = parse_claims(text)
     adds = []
     for c in claims:
-        rec = rules.written.get(sentence_key(c.text))
-        cite = (rec or {}).get("replacement_cites")
-        if cite and cite not in c.articles:
-            adds.append((claim_end(markers, c.index), f"^[{cite}]"))
+        missing = []
+        for rec in rules.sharing.get(sentence_key(c.text), []):
+            cite = rec.get("replacement_cites")
+            if cite and cite not in c.articles and cite not in missing:
+                missing.append(cite)
+        if missing:
+            add = "".join(f"^[{cite}]" for cite in missing)
+            adds.append((claim_end(markers, c.index), add))
     for pos, add in sorted(adds, reverse=True):
         text = text[:pos] + add + text[pos:]
     return text

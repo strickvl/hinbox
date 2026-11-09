@@ -591,3 +591,25 @@ def test_withdrawing_a_new_source_brings_the_old_one_back():
     out, _, _ = _apply(text, [rec])
     undone, states, _ = _apply(out, [], withdrawn=[rec])
     assert undone == text and states["c-0001"] == ("undone", "your sentence swapped back for the original")  # fmt: skip
+
+
+def test_your_sentence_starting_with_punctuation_is_put_in_once():
+    rec = _strike("Wrong.", [A1], "... Correct.", A2)
+    out, states, _ = _apply(f"Wrong.^[{A1}] Kept.^[{A1}]", [rec])
+    assert out.count("Correct.") == 1 and states["c-0001"][0] == "applied"
+    for _ in range(2):  # the stored claim is "Correct.": found, not added again
+        out, states, _ = _apply(out, [rec], done=["c-0001"])
+        assert out.count("Correct.") == 1 and states["c-0001"] == ("held", "")
+
+
+def test_two_strikes_with_the_same_words_each_add_their_source():
+    text = f"Wrong 1.^[{A1}] Wrong 2.^[{A2}] Correct.^[{A3}]"
+    recs = [
+        _strike("Wrong 1.", [A1], "Correct.", A1, cid="c-0001"),
+        _strike("Wrong 2.", [A2], "Correct.", A2, cid="c-0002"),
+    ]
+    out, states, _ = _apply(text, recs)
+    assert out == f"Correct.^[{A3}]^[{A1}]^[{A2}]"
+    assert {s[0] for s in states.values()} == {"applied"}
+    again, states, _ = _apply(out, recs, done=["c-0001", "c-0002"])
+    assert again == out and {s[0] for s in states.values()} == {"held"}
