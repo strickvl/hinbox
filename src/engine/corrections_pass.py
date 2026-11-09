@@ -329,6 +329,20 @@ def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
     return _cut_claim(text, markers, rep, _original(rec)), True
 
 
+def _last_in_chain(rec: Dict[str, Any], rules: PageRules) -> Dict[str, Any]:
+    """The strike whose sentence goes in for ``rec``: when the historian later
+    struck their own sentence, the later strike's sentence (2000 → 2001, then
+    2001 → 2002 writes 2002)."""
+    seen = {rec["id"]}
+    while rec.get("replacement"):
+        nxt = rules.struck.get(words_key(rec["replacement"]))
+        if nxt is None or nxt["id"] in seen:
+            break
+        seen.add(nxt["id"])
+        rec = nxt
+    return rec
+
+
 def apply_to_text(
     text: str,
     rules: PageRules,
@@ -366,7 +380,9 @@ def apply_to_text(
         else:
             states[rec["id"]] = ("undone", "")
     for old in superseded:
-        if words_key(old.get("replacement") or "") not in rules.written:
+        newer = rules.written.get(words_key(old.get("replacement") or ""))
+        # same words but other sources: swapped too, so the new citation goes in
+        if not newer or newer.get("replacement_cites") != old.get("replacement_cites"):
             text, _ = _swap_back(text, old)
     claims, markers = parse_claims(text)
     keys = {sentence_key(c.text) for c in claims}
@@ -377,8 +393,11 @@ def apply_to_text(
         rec = _restated(c.text, rules)
         if not rec:
             continue
-        put = _yours(rec) if rec.get("replacement") else ""
-        rep_key = words_key(rec.get("replacement") or "")
+        last = _last_in_chain(rec, rules)
+        put = _yours(last) if last.get("replacement") else ""
+        rep_key = words_key(last.get("replacement") or "")
+        if last is not rec and last["id"] not in done_before:
+            states.setdefault(last["id"], ("applied", ""))
         if put and rep_key in present:
             put = ""  # their sentence is already in the profile
         elif put:
@@ -396,7 +415,11 @@ def apply_to_text(
         cid, rep = rec["id"], words_key(rec.get("replacement") or "")
         if cid in states:
             continue
-        if rep and rep not in present and cid in done_before:
+        later = rules.struck.get(rep) if rep else None
+        if later is not None and later["id"] != cid:
+            # their own sentence, struck by a later correction of theirs
+            states[cid] = ("held", f"your sentence was struck again by {later['id']}")
+        elif rep and rep not in present and cid in done_before:
             # its own paragraph: after a heading left empty it would
             # otherwise become part of the heading line
             text = text.rstrip() + "\n\n" + _yours(rec) + "\n"

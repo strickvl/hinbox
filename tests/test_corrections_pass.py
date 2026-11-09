@@ -441,3 +441,43 @@ def test_withdrawing_the_newer_strike_brings_back_the_older_in_one_run(tmp_path)
     assert "several weeks" in text and "six weeks" not in text and FORCE_FED not in text
     states = {r["id"]: r["state"] for r in report["rows"]}
     assert states == {"c-0001": "applied", "c-0002": "undone"}
+
+
+def _person():
+    return {"name": "Yusuf Qadir", "type": "detainee",
+            "articles": [{"article_id": a} for a in (A1, A2, A3)],
+            "profile": {"text": TEXT}}  # fmt: skip
+
+
+def _add(path, rec):
+    append_correction(str(path), {k: v for k, v in rec.items() if k != "id"})
+
+
+def test_striking_your_own_sentence_later_is_never_undone(tmp_path):
+    cp.configure_corrections(None)
+    path, person = tmp_path / "c.jsonl", _person()
+    entities = {"people": {"Yusuf Qadir": person}}
+    _add(path, _strike(FORCE_FED, [A3], "He refused food for several weeks."))
+    cp.run_corrections_pass(entities, str(path))
+    _add(path, _strike("He refused food for several weeks.", [A3], "He refused food for six weeks."))  # fmt: skip
+    for _ in range(3):  # the later strike holds, run after run
+        report = cp.run_corrections_pass(entities, str(path))
+        text = person["profile"]["text"]
+        assert "six weeks" in text and "several weeks" not in text
+    assert {r["id"]: r["state"] for r in report["rows"]} == {"c-0001": "held", "c-0002": "held"}  # fmt: skip
+    # The struck sentence coming back writes the last one in the chain
+    back = cp.apply_to_text(TEXT, cp._rules(cp.load_corrections(str(path)).active), set(), [])[0]  # fmt: skip
+    assert "six weeks" in back and "several weeks" not in back
+
+
+def test_a_newer_strike_with_other_sources_changes_the_citation(tmp_path):
+    cp.configure_corrections(None)
+    path, person = tmp_path / "c.jsonl", _person()
+    entities = {"people": {"Yusuf Qadir": person}}
+    for cites in (A3, A2):
+        _add(
+            path, _strike(FORCE_FED, [A3], "He refused food for several weeks.", cites)
+        )
+        report = cp.run_corrections_pass(entities, str(path))
+    assert f"He refused food for several weeks.^[{A2}]" in person["profile"]["text"]
+    assert report["counts"] == {"applied": 1}
