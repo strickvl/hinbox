@@ -297,7 +297,9 @@ def _sup(
     parts = []
     for aid in articles:
         n = order.index(aid) + 1
-        v = claim.verdicts.get(aid, "unchecked") if checked else "supported"
+        # A historian's verdict shows even when no checker report exists
+        shown = checked or aid in claim.checker
+        v = claim.verdicts.get(aid, "unchecked") if shown else "supported"
         mark = ""
         if v != "supported":
             sym = {"partial": "?", "not_supported": "✕"}.get(v, "·")
@@ -417,7 +419,8 @@ def render_profile(
     edits: List[Tuple[int, int, int, str]] = []
     for c in claims:
         if c.end > c.start:
-            v = c.verdict if checked or c.correction == "struck" else "supported"
+            shown = checked or c.checker or c.correction == "struck"
+            v = c.verdict if shown else "supported"
             edits.append((c.start, 1, 0, f"{_OPEN}{c.index}|{v}|{c.correction}{_MID}"))
             edits.append((c.end, 0, 0, _CLOSE))
     subs: List[str] = []

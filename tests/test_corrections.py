@@ -353,3 +353,28 @@ def test_corrections_follow_a_page_whose_key_changed(client, corr, monkeypatch):
     data_access._CACHE.clear()
     page = client.get("/people/Yusuf%20Qadir").text
     assert "c-struck" in page and "Shown on the page" in page
+
+
+def test_your_verdict_shows_on_a_page_never_checked():
+    """A run with --skip-grounding stores no report; a historian's verdict
+    must still be drawn, not shown as an unmarked (supported) sentence."""
+    ov = Overlay()
+    ov.verdicts[(sentence_key(FORCE_FED), A3)] = _rec(
+        "c-0001",
+        kind="verdict",
+        sentence=FORCE_FED,
+        article_id=A3,
+        verdict="not_supported",
+    )
+    rp = render_profile(TEXT, None, overlay=ov)
+    assert not rp.checked
+    c = next(c for c in rp.claims if c.text == FORCE_FED)
+    assert c.verdict == "not_supported" and c.checker[A3] == "unchecked"
+    assert f'class="s v-not_supported c-verdict" id="claim-{c.index}"' in rp.html
+    assert "Not supported" in rp.html  # the citation's label
+    others = [x for x in rp.claims if x is not c]
+    assert all(
+        f'class="s v-supported" id="claim-{x.index}"' in rp.html
+        for x in others
+        if x.end > x.start
+    )
