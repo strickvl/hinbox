@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from src.logging_config import get_logger
 from src.utils.ollama_context import local_thinking
 from src.utils.quality_controls import CITATION_RE, citation_ids
+from src.utils.server_health import ModelServerUnreachable, unreachable
 from src.utils.step_timing import timed
 from src.utils.task_models import is_local_model, task_model
 
@@ -625,6 +626,11 @@ def judge_pending(
             for plan, a, i in batch
         ]
         try:
+            # Once the server is gone, fail the rest fast: a failed check is
+            # stored as an error and asked again on the next run
+            why = unreachable()
+            if why:
+                raise ModelServerUnreachable(why)
             verdicts = judge_claims(
                 article_id=aid,
                 article_text=article_texts[aid][:max_article_chars],

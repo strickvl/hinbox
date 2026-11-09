@@ -901,7 +901,9 @@ def main():
             domain_config=config,
             status_tracker=status_tracker,
         )
-        if counters["processed_count"] > 0 and not args.skip_grounding:
+        # Also on a run with nothing new: a report whose check failed last
+        # time (the server went away) is asked again; current ones cost nothing
+        if not args.skip_grounding:
             log("\nRunning profile grounding verification...", level="processing")
             with timed_step("grounding_pass"):
                 grounding_counts = run_profile_grounding_postprocess(
@@ -926,6 +928,15 @@ def main():
                 f"({grounding_counts['profiles_with_problems']} profiles affected)",
                 level="warning" if grounding_counts["not_supported"] else "info",
             )
+            if grounding_counts["profiles_with_failed_checks"]:
+                log(
+                    f"{grounding_counts['profiles_with_failed_checks']} profiles "
+                    "have a failed grounding check; the next run asks again",
+                    level="warning",
+                )
+            why = unreachable()
+            if why:
+                raise ModelServerUnreachable(f"during grounding, {why}")
     except KeyboardInterrupt:
         log("Interrupted: saving entities merged so far...", level="warning")
         save_entities_then_status(entities, base_dir, status_tracker)

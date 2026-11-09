@@ -144,15 +144,20 @@ def run_profile_grounding_postprocess(
 def stored_claim_totals(entities: Dict[str, Dict]) -> Dict[str, int]:
     """Claims per verdict summed over every entity's stored grounding report."""
     totals = {k: 0 for k in COUNTED_LEVELS}
-    problems = 0
+    problems = failed = 0
     for entity_dict in entities.values():
         for entity_data in entity_dict.values():
-            per = claim_counts(entity_data.get("profile_grounding"))
+            report = entity_data.get("profile_grounding")
+            per = claim_counts(report)
             for k, n in per.items():
                 totals[k] += n
             problems += any(n for k, n in per.items() if k != "supported")
+            sources = (report or {}).get("sources") or []
+            failed += any(src.get("status") == "error" for src in sources)
     return {
         **totals,
         "claims": sum(totals.values()),
         "profiles_with_problems": problems,
+        # checks that failed (server gone, bad reply): asked again next run
+        "profiles_with_failed_checks": failed,
     }
