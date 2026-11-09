@@ -267,25 +267,37 @@ def entity_page(
         "current_version": current,
         "old_date": fmt_date(to_date(old.get("created_at"))) if old else "",
         "first_source": store.source(arts[0]["article_id"]) if arts else None,
-        "cite_data": cite_data(rp),
+        "cite_data": cite_data(rp, store),
     }
 
 
-def cite_data(rp: RenderedProfile) -> Dict[str, Any]:
+def cite_data(rp: RenderedProfile, store: Optional[Store] = None) -> Dict[str, Any]:
     """What the static copy's panel needs about each cited sentence (the
     server's ``/panel`` works it out per click): its words and, per source,
-    the checker's verdict, reason and stored passages, the passages cut at
-    line breaks, since the source page shows one paragraph per line. Empty
-    verdicts when nothing was checked or the page shows an older version."""
+    the checker's verdict, reason and where its stored passages lie, as
+    [paragraph number, start, end] in the source page's paragraphs (worked
+    out here by ``passage_spans()``, so the script never searches for words
+    itself). Empty verdicts when nothing was checked or the page shows an
+    older version."""
+
+    def js(text: str, i: int) -> int:  # JavaScript counts UTF-16 units
+        return len(text[:i].encode("utf-16-le")) // 2
+
+    def where(aid: str, passages: List[str]) -> List[List[int]]:
+        if store is None:
+            return []
+        paras = store.source(aid).paragraphs()
+        return [
+            [n, js(paras[n], s), js(paras[n], e)]
+            for n, s, e in passage_spans(paras, passages)
+        ]
+
     return {
         str(c.index): {
             "q": plain_claim(c.text),
             "v": dict(c.verdicts) if rp.checked else {},
             "r": dict(c.reasons) if rp.checked else {},
-            "p": {
-                aid: [s.strip() for p in ps for s in p.split("\n") if s.strip()]
-                for aid, ps in c.passages.items()
-            }
+            "p": {aid: where(aid, ps) for aid, ps in c.passages.items()}
             if rp.checked
             else {},
         }
@@ -305,31 +317,47 @@ def _highlight(paragraph: str, needle: str) -> Markup:
     return Markup(esc)
 
 
-def _mark_passages(paragraphs: List[str], passages: List[str]) -> List[Markup]:
-    """The panel's paragraphs, escaped, with each stored passage marked where
-    it appears. Passages are looked up in the paragraphs joined by line
-    breaks, so one that runs over a paragraph break is marked in both."""
+def passage_spans(
+    paragraphs: List[str], passages: List[str]
+) -> List[Tuple[int, int, int]]:
+    """Where each stored passage lies in the shown paragraphs, as
+    (paragraph number, start, end). Each passage is looked up whole in the
+    paragraphs joined by line breaks, so one that runs over a paragraph
+    break gives a piece in each, and a short piece is never searched for on
+    its own. A passage not found gives nothing."""
     joined = "\n".join(paragraphs)
     spans: List[Tuple[int, int]] = []
     for passage in passages:
         span = find_passage(joined, passage) if long_enough(passage) else None
         if span and not any(s < span[1] and span[0] < e for s, e in spans):
             spans.append(span)
-    out: List[Markup] = []
+    out: List[Tuple[int, int, int]] = []
     offset = 0
-    for para in paragraphs:
+    for n, para in enumerate(paragraphs):
         end = offset + len(para)
-        parts, last = [], 0
         for s, e in sorted(spans):
             s, e = max(s, offset) - offset, min(e, end) - offset
-            if s >= e:
-                continue
+            if s < e:
+                out.append((n, s, e))
+        offset = end + 1
+    return out
+
+
+def _mark_passages(paragraphs: List[str], passages: List[str]) -> List[Markup]:
+    """The panel's paragraphs, escaped, with each stored passage marked where
+    ``passage_spans()`` finds it."""
+    by_para: Dict[int, List[Tuple[int, int]]] = {}
+    for n, s, e in passage_spans(paragraphs, passages):
+        by_para.setdefault(n, []).append((s, e))
+    out: List[Markup] = []
+    for n, para in enumerate(paragraphs):
+        parts, last = [], 0
+        for s, e in by_para.get(n, []):
             parts.append(html.escape(para[last:s]))
             parts.append(f'<mark class="passage">{html.escape(para[s:e])}</mark>')
             last = e
         parts.append(html.escape(para[last:]))
         out.append(Markup("".join(parts)))
-        offset = end + 1
     return out
 
 

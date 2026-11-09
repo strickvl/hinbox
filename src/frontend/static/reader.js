@@ -85,20 +85,18 @@
     p.append(text.slice(0, at), el("mark", "", needle), text.slice(at + needle.length));
     return [p, true];
   }
-  // Marks each stored passage piece (the article's own words, cut at line
-  // breaks) where it appears in a paragraph; a piece not found is not marked
-  function withPassages(text, pieces) {
-    const spans = [];
-    pieces.forEach((s) => {
-      const at = text.indexOf(s);
-      if (at >= 0 && !spans.some(([a, b]) => a < at + s.length && at < b)) spans.push([at, at + s.length]);
-    });
-    spans.sort((x, y) => x[0] - y[0]);
+  // Marks the stored passages in paragraph n: spans are [paragraph, start,
+  // end], worked out by the server's passage_spans(), so nothing is searched
+  function withPassages(text, n, spans) {
     const p = el("p");
-    let last = 0;
-    spans.forEach(([a, b]) => { p.append(text.slice(last, a), el("mark", "passage", text.slice(a, b))); last = b; });
+    let last = 0, hit = false;
+    spans.filter((x) => x[0] === n).forEach(([, a, b]) => {
+      if (a < last || b > text.length) return;
+      p.append(text.slice(last, a), el("mark", "passage", text.slice(a, b)));
+      last = b; hit = true;
+    });
     p.append(text.slice(last));
-    return [p, spans.length > 0];
+    return [p, hit];
   }
   async function openStatic(link) {
     let doc, base;
@@ -150,10 +148,10 @@
       const pieces = old ? [] : (c.p || {})[aid] || [];
       const verdict = old ? "" : (c.v || {})[aid] || "unchecked";
       let marked = false, quoted = false;
-      doc.querySelectorAll(".source-text p").forEach((sp) => {
+      doc.querySelectorAll(".source-text p").forEach((sp, n) => {
         let p, hit = false;
         if (sp.classList.contains("empty")) p = el("p", "empty", sp.textContent);
-        else if (pieces.length) { [p, hit] = withPassages(sp.textContent, pieces); quoted = quoted || hit; }
+        else if (pieces.length) { [p, hit] = withPassages(sp.textContent, n, pieces); quoted = quoted || hit; }
         else [p, hit] = highlighted(sp.textContent, needle);
         marked = marked || hit;
         body.append(p);

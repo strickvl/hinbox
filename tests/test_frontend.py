@@ -418,16 +418,23 @@ def test_static_export_writes_linked_files(client, tmp_path):
     assert 'id="cite-data"' not in client.get("/people/Yusuf%20Qadir").text
 
 
-def test_static_copy_gets_passages_cut_at_line_breaks():
-    from src.frontend.views import cite_data
+def test_static_copy_gets_passage_positions_not_words(client):
+    from src.frontend.views import cite_data, passage_spans
 
+    store = data_access.load_store()
     rp = render_profile(TEXT, _report())
-    data = cite_data(rp)
+    data = cite_data(rp, store)
     shipping = next(v for v in data.values() if "shipping" in v["q"])
-    assert shipping["p"][A1] == [
-        "arrested Yusuf Qadir in a dawn raid.",
-        "Neighbours said Qadir",
-    ]
+    # A passage over a line break gives a piece in each paragraph
+    assert shipping["p"][A1] == [[0, 17, 53], [1, 0, 21]]
+    paras = store.source(A1).paragraphs()
+    assert paras[0][17:53] == "arrested Yusuf Qadir in a dawn raid."
+    assert shipping["p"][A2] == []  # not in the article: nothing to mark
+    # A short first line is never looked for on its own elsewhere
+    assert passage_spans(
+        ["He denied it.", "He", "was flown to the base with thirteen other men."],
+        ["He\nwas flown to the base with thirteen other men"],
+    ) == [(1, 0, 2), (2, 0, 45)]
     assert (
         cite_data(render_profile(TEXT, _report(), show_verdicts=False))["0"]["p"] == {}
     )
