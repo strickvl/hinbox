@@ -233,5 +233,6 @@ def subplace_profile(
     logger.info(
         f"Sub-heading placement for {entity_name}: {report['status']} "
         f"{report.get('reason') or report.get('moved') or ''}"
+        + (f" ({report['refused']} moves undone)" if report.get("refused") else "")
     )
     return ({**profile, "text": new_text} if new_text != text else profile), report
