@@ -343,10 +343,11 @@ def _swap_back(text: str, rec: Dict[str, Any]) -> Tuple[str, bool]:
         # their words were in the profile already, citing other sources
         # ("Correct.^[a]^[b]"): that claim stays, without their citation,
         # and the original goes back in front of it
-        end = claim_end(markers, rep.index)
-        mine = f"^[{cite}]"
-        if cite and text[:end].endswith(mine):
-            text = text[: end - len(mine)] + text[end:]
+        # (the pass writes their citation as a marker of its own, wherever
+        # it sits among the claim's markers: "^[c]^[a]^[b]" loses "^[a]")
+        mine = [m for m in markers if m.claim == rep.index and m.articles == [cite]]
+        if cite and mine:
+            text = text[: mine[-1].start] + text[mine[-1].end :]
         return text[: rep.start] + _original(rec) + " " + text[rep.start :], True
     return _cut_claim(text, markers, rep, _original(rec)), True
 
