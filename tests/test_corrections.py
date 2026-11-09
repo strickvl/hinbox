@@ -378,3 +378,12 @@ def test_your_verdict_shows_on_a_page_never_checked():
         for x in others
         if x.end > x.start
     )
+
+
+def test_append_after_a_hand_edit_without_a_final_newline(corr):
+    corr.parent.mkdir(parents=True)
+    first = {"id": "c-0001", "kind": "rename", "entity": PAGE, "name": "Y"}
+    corr.write_text(json.dumps(first))  # no line end
+    append_correction(str(corr), {"kind": "rename", "entity": PAGE, "name": "Z"})
+    cs = load_corrections(str(corr))
+    assert not cs.problems and [r["id"] for r in cs.lines] == ["c-0001", "c-0002"]

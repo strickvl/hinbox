@@ -352,6 +352,20 @@ def _next_id(path: str) -> str:
     return f"c-{top + 1:04d}"
 
 
+def _newline_needed(path: str) -> str:
+    """ "\n" when the file's last line has no line end (a hand edit), so a
+    new line never runs on into it and spoils both."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            if f.tell() == 0:
+                return ""
+            f.seek(-1, os.SEEK_END)
+            return "" if f.read(1) == b"\n" else "\n"
+    except FileNotFoundError:
+        return ""
+
+
 def append_correction(path: str, rec: Dict[str, Any]) -> Dict[str, Any]:
     """Give the correction an id, a time and the reviewer's name, check it,
     and add it as one line at the end of the file (written to disk before
@@ -376,7 +390,7 @@ def append_correction(path: str, rec: Dict[str, Any]) -> Dict[str, Any]:
         }
         line = json.dumps(out, ensure_ascii=False, sort_keys=False)
         with open(path, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+            f.write(_newline_needed(path) + line + "\n")
             f.flush()
             os.fsync(f.fileno())
     return out
