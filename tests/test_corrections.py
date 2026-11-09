@@ -277,3 +277,27 @@ def test_static_copy_shows_corrections_without_buttons(client, corr, tmp_path): 
         and "correct/" not in page
         and 'method="post"' not in page
     )
+
+
+def test_corrections_files_are_never_committed(tmp_path):
+    """The file quotes sentences written from articles and the repo is public."""
+    import subprocess
+
+    for path in (
+        "data/guantanamo/corrections/corrections.jsonl",
+        "elsewhere/corrections.jsonl",
+    ):
+        r = subprocess.run(["git", "check-ignore", "-q", path], capture_output=True)
+        assert r.returncode == 0, f"{path} is not gitignored"
+
+
+def test_static_copy_never_holds_the_file(client, corr, tmp_path):  # noqa: F811
+    from src.frontend.export import export_site
+
+    form = {**_sentence_form(client, 0), "kind": "strike", "reason": "private note"}
+    client.post("/corrections", data=form, headers=ORIGIN)
+    out = tmp_path / "site"
+    export_site(str(out))
+    files = [p for p in out.rglob("*") if p.is_file()]
+    assert not [p for p in files if "correction" in p.name]
+    assert not any("private note" in p.read_text(errors="ignore") for p in files)

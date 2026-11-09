@@ -179,6 +179,8 @@ data/hinbox.db
 drafts/
 # Ignore everything in the data folder and all subfolders
 data/
+# A historian's corrections quote article-derived text, wherever they are kept
+corrections*.jsonl
 .sesskey
 discovery_do_not_commit/
 
