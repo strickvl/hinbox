@@ -41,4 +41,5 @@ it never calls a model. Run it with `just frontend`.
   books, reports and translations can be added without a new page.
 - The server listens on 127.0.0.1 unless `HINBOX_FRONTEND_HOST` is set.
 - The repository is public: tests use made-up tables only. Never commit
-  screenshots or fixtures from a real run.
+  screenshots or fixtures from a real run. README screenshots come from
+  `just demo-reader` (`scripts/demo_reader_data.py`, all invented).

@@ -36,19 +36,21 @@ through a simple configuration system.
 </figure>
 
 <figure>
-  <img src="assets/frontpage.png" alt="Front page" width="800">
-  <figcaption><em>Main dashboard displaying research domains and extracted entity statistics</em></figcaption>
+  <img src="assets/reader-profile.png" alt="A profile in the web reader with a source open beside it" width="800">
+  <figcaption><em>A profile in the web reader. Clicking a citation opens its source beside the text, with the checker's verdict; sentences the checker doubted are underlined (amber: partly supported, red: not supported)</em></figcaption>
 </figure>
 
 <figure>
-  <img src="assets/organizations-view.png" alt="Organizations View" width="800">
-  <figcaption><em>Organizations listing with search and filtering capabilities for research analysis</em></figcaption>
+  <img src="assets/reader-home.png" alt="Reader home page" width="800">
+  <figcaption><em>Home page: search, the most-covered entries in each table, and pages that need attention</em></figcaption>
 </figure>
 
 <figure>
-  <img src="assets/organization-profile.png" alt="Sample Organization Profile" width="800">
-  <figcaption><em>Detailed organization profile showing extracted information, sources, and version history</em></figcaption>
+  <img src="assets/reader-source.png" alt="A source page" width="800">
+  <figcaption><em>A source page: the stored text, who it names, and every profile sentence that cites it</em></figcaption>
 </figure>
+
+The reader screenshots use a small made-up corpus (every name and article is invented). Run `just demo-reader` to open it yourself, or `just frontend` for your own run.
 
 ## 🚀 Quick Start
 
@@ -217,7 +219,7 @@ just frontend
 ```
 Read the profiles at http://localhost:5001. The server listens on 127.0.0.1 only, so a private corpus is not shared on your network; set `HINBOX_FRONTEND_HOST=0.0.0.0` to share it on purpose.
 
-On an entity page, a sentence the grounding checker did not fully confirm is underlined (amber: partly supported, red: not supported, grey dots: not checked), and the line above the profile counts them and names the checker with its known miss rate. Click a citation number to read that source beside the profile. Point the reader at another run with `HINBOX_OUTPUT_DIR=<entities folder> just frontend`.
+On an entity page, a sentence the grounding checker did not fully confirm is underlined (amber: partly supported, red: not supported, grey dots: not checked), and the line above the profile counts them and names the checker with its known miss rate. Click a citation number to read that source beside the profile. Point the reader at another run with `HINBOX_OUTPUT_DIR=<entities folder> just frontend`, or try it on a made-up corpus with `just demo-reader`.
 
 ### Traces of every model call
 Every run records each pipeline step and each model call (the prompt sent, the reply or tool-call arguments, any reasoning the model returned, token counts, finish reason) as OpenTelemetry spans. One trace per article: `article #3` → `extraction` → `extract.people` → `chat qwen3.6:35b`, and `merge.people` → `match_check` → `chat …`, with each NEW/MERGE/SKIP decision as an event on its merge step.
