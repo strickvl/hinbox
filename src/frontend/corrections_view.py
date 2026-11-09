@@ -16,12 +16,12 @@ from src.utils.corrections import (
     DONE,
     KIND_LABELS,
     NEEDS_RUN,
-    REPORT_LATEST,
     VERDICTS,
     CorrectionSet,
     append_correction,
     entity_ref,
     last_report,
+    latest_name,
     load_corrections,
     resolve_ref,
     sentence_key,
@@ -178,7 +178,7 @@ def status(
 def run_rows(store: Store) -> Dict[str, Dict[str, Any]]:
     """The last pipeline run's state for each correction (its report beside
     the corrections file), each row with the run's time under ``run``."""
-    report = _last_report(store.corrections_path)
+    report = _last_report(store.corrections_path, store.output_dir)
     return {
         r["id"]: {**r, "run": report.get("run", "")}
         for r in report.get("rows") or []
@@ -186,16 +186,19 @@ def run_rows(store: Store) -> Dict[str, Dict[str, Any]]:
     }
 
 
-def _last_report(path: str) -> Dict[str, Any]:
+def _last_report(path: str, output_dir: str = "") -> Dict[str, Any]:
+    """The last run's report for the tables this reader shows."""
     if not path:
         return {}
-    where = os.path.join(os.path.dirname(os.path.abspath(path)), REPORT_LATEST)
+    where = os.path.join(
+        os.path.dirname(os.path.abspath(path)), latest_name(output_dir)
+    )
     try:
         stamp = os.path.getmtime(where)
     except OSError:
         return {}
     if _REPORT_CACHE.get("key") != (where, stamp):
-        _REPORT_CACHE.update(key=(where, stamp), report=last_report(path))
+        _REPORT_CACHE.update(key=(where, stamp), report=last_report(path, output_dir))
     return _REPORT_CACHE["report"]
 
 

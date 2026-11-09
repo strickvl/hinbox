@@ -19,6 +19,7 @@ top of the page. Each pipeline run reads it after merging and carries out
 the strikes in the stored profiles (``src/engine/corrections_pass.py``).
 """
 
+import hashlib
 import json
 import os
 import re
@@ -478,27 +479,35 @@ def _report_dir(path: str) -> str:
     return os.path.dirname(os.path.abspath(path))
 
 
-def last_states(path: str) -> Dict[str, str]:
-    """Each correction's state after the last run, from its report."""
-    try:
-        with open(
-            os.path.join(_report_dir(path), REPORT_LATEST), encoding="utf-8"
-        ) as f:
-            rows = json.load(f).get("rows") or []
-    except (OSError, ValueError, AttributeError):
-        return {}
-    return {
-        r["id"]: r.get("state", "") for r in rows if isinstance(r, dict) and r.get("id")
-    }
+def latest_name(output_dir: str = "") -> str:
+    """The file beside the corrections file holding the last run's report for
+    one output folder (``last-run-<hash>.json``), or for any folder
+    (``last-run.json``). Runs into different folders share one corrections
+    file, so each folder's tables are compared with its own last run."""
+    if not output_dir:
+        return REPORT_LATEST
+    digest = hashlib.sha1(os.path.abspath(output_dir).encode("utf-8")).hexdigest()
+    return f"last-run-{digest[:12]}.json"
 
 
-def last_report(path: str) -> Dict[str, Any]:
-    """The last run's report, or {}."""
+def last_report(path: str, output_dir: str = "") -> Dict[str, Any]:
+    """The last run's report (for ``output_dir``'s tables when given), or {}."""
     try:
         with open(
-            os.path.join(_report_dir(path), REPORT_LATEST), encoding="utf-8"
+            os.path.join(_report_dir(path), latest_name(output_dir)), encoding="utf-8"
         ) as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def last_states(path: str, output_dir: str = "") -> Dict[str, str]:
+    """Each correction's state after the last run into ``output_dir`` (any
+    folder when not given), from its report."""
+    rows = last_report(path, output_dir).get("rows") or []
+    if not isinstance(rows, list):
+        return {}
+    return {
+        r["id"]: r.get("state", "") for r in rows if isinstance(r, dict) and r.get("id")
+    }

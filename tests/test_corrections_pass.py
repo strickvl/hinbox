@@ -540,3 +540,23 @@ def test_undoing_keeps_your_words_that_were_there_before():
     out, _, _ = _apply(text, [rec])
     undone, states, _ = _apply(out, [], withdrawn=[rec])
     assert undone == text and states["c-0001"][0] == "undone"
+
+
+def test_each_output_folder_keeps_its_own_last_run(tmp_path):
+    cp.configure_corrections(None)
+    path = tmp_path / "fixes" / "c.jsonl"
+    path.parent.mkdir()
+    a, b = _person(), _person()
+    _add(path, _strike(FORCE_FED, [A3], "He refused food for several weeks."))
+    cp.run_corrections_pass(
+        {"people": {"Yusuf Qadir": a}}, str(path), str(tmp_path / "A")
+    )
+    _add(path, {"kind": "withdraw", "withdraws": "c-0001"})
+    # A fresh folder runs first: it never had the strike carried out
+    cp.run_corrections_pass(
+        {"people": {"Yusuf Qadir": b}}, str(path), str(tmp_path / "B")
+    )
+    assert b["profile"]["text"] == TEXT
+    report = cp.run_corrections_pass({"people": {"Yusuf Qadir": a}}, str(path), str(tmp_path / "A"))  # fmt: skip
+    assert a["profile"]["text"] == TEXT
+    assert {r["id"]: r["state"] for r in report["rows"]} == {"c-0001": "undone"}

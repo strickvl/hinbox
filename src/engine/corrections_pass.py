@@ -49,6 +49,7 @@ from src.utils.corrections import (
     _report_dir,
     drop_list_mark,
     last_states,
+    latest_name,
     load_corrections,
     md_literal,
     resolve_ref,
@@ -569,7 +570,7 @@ def run_corrections_pass(
     if not os.path.exists(path):
         return None
     cs = load_corrections(path)
-    before = last_states(path)
+    before = last_states(path, output_dir)
     done_before = {i for i, s in before.items() if s in DONE}
     by_id = cs.by_id()
     rows: List[Dict[str, Any]] = []
@@ -680,7 +681,9 @@ def write_report(path: str, report: Dict[str, Any]) -> None:
     folder = _report_dir(path)
     stamp = report["run"].replace(":", "").replace("-", "")
     body = json.dumps(report, ensure_ascii=False, indent=1)
-    for name in (f"report-{stamp}.json", REPORT_LATEST):
+    names = {f"report-{stamp}.json", REPORT_LATEST}
+    names.add(latest_name(report.get("output_dir") or ""))
+    for name in sorted(names):
         tmp = os.path.join(folder, name + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(body)
