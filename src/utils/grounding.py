@@ -241,9 +241,12 @@ A claim saying that sources disagree ("one report says X; this article says Y") 
 For each claim, first write the reasoning: quote or name the article passage you compared it with, and say which detail, if any, differs (at most 40 words). Then give the support_level. Return one verdict for every claim, with its claim_number. Do not repeat the claim text."""
 
 # HINBOX_GROUNDING_PASSAGE=on: the judge also copies the passage its verdict
-# rests on into a field of its own, after the verdict. Off by default until it
-# is shown not to change verdicts on the hand-labelled claims; either way the
-# quotes in the reasoning are looked up (``passages_for()``)
+# rests on into a field of its own, after the verdict. Off by default: on the
+# 64 hand-labelled claims (10 Nov) it changed 35% of Haiku's verdicts (labels
+# matched 39 -> 33, good claims rejected 12 -> 16) and made local Qwen's check
+# 70% slower with no better verdicts (25 -> 24 matched, bad claims passed
+# 18 -> 20). Either way the quotes in the reasoning are looked up
+# (``passages_for()``)
 GROUNDING_PASSAGE = os.getenv("HINBOX_GROUNDING_PASSAGE", "off").strip().lower() in (
     "on",
     "1",
