@@ -575,13 +575,15 @@ class ArticleProcessor:
         }
 
     def initialize_processing_metadata(self, row: Dict) -> Dict[str, Any]:
-        """Initialize processing metadata from existing row, preserving 'processed'."""
-        meta = row.get("processing_metadata") or {}
-        if not isinstance(meta, dict):
-            meta = {}
-        # Preserve any prior processed flag if present
-        meta.setdefault("processed", False)
-        return meta
+        """Start an article's processing metadata empty.
+
+        A ``processing_metadata`` column left in the articles file by the old
+        in-Parquet status is ignored: only the sidecar (``ProcessingStatus``)
+        says whether an article was processed. In the 12 Nov full run, 13
+        articles whose column still said ``processed: True`` from an old run
+        were skipped as already processed and never extracted.
+        """
+        return {"processed": False}
 
     def finalize_processing_metadata(
         self,
