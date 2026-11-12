@@ -23,12 +23,14 @@ import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
 from src.engine import ArticleProcessor
+from src.engine.corrections_pass import configure_corrections
 from src.engine.hub_profiles import is_hub
 from src.engine.kind_twins import TWIN_TABLES, donor_articles, find_twins, join_pair
 from src.engine.merge_evidence import batch_embed_texts
 from src.engine.profile_view import embedding_text
 from src.logging_config import log
 from src.process_and_extract import load_and_validate_articles
+from src.utils.corrections import corrections_path, load_corrections
 from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
     get_embedding_manager,
@@ -127,6 +129,10 @@ def main() -> int:
 
     texts = _article_texts(
         args.domain, args.articles or config.get_data_path(), args.run
+    )
+    # The edit guard keeps a historian's strikes and sentences, as in a run
+    configure_corrections(
+        load_corrections(corrections_path(args.domain, config.load_config()))
     )
     joined = failed = 0
     for table in TWIN_TABLES:

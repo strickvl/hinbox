@@ -135,8 +135,12 @@ def _script_run(tmp_path, monkeypatch, *flags: str):
         script, "join_pair",
         lambda *a, **kw: join_pair(*a, **kw, update=_fake_update(calls)),
     )  # fmt: skip
+    loaded: List[Any] = []
+    monkeypatch.setattr(script, "load_corrections", lambda path: "fixes")
+    monkeypatch.setattr(script, "configure_corrections", loaded.append)
     monkeypatch.setattr("sys.argv", ["x", "--run", str(tmp_path), *flags])
     code = script.main()
+    assert loaded == ["fixes"]  # the edit guard knows the corrections
     return (
         code,
         calls,
