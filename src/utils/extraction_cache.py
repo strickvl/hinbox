@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from src.logging_config import get_logger
 from src.utils.cache_utils import sha256_jsonable, sha256_text
+from src.utils.entity_keys import plain_kinds
 
 logger = get_logger(__name__)
 
@@ -203,9 +204,11 @@ def build_cache_record(
     serialized: List[Dict[str, Any]] = []
     for item in output or []:
         if isinstance(item, dict):
-            serialized.append(item)
+            serialized.append(plain_kinds(item))
         elif hasattr(item, "model_dump"):
-            serialized.append(item.model_dump())
+            # mode="json" writes an enum as its value ("military_base"), not
+            # str() of it ("LocationType.MILITARY_BASE")
+            serialized.append(item.model_dump(mode="json"))
         elif hasattr(item, "dict"):
             serialized.append(item.dict())
         else:
