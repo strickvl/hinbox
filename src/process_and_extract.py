@@ -441,9 +441,7 @@ def extract_single_article_only(
 
     # Skip if already processed (use snapshot — no thread-safety issue)
     prior = status_snapshot.get(article_id, {})
-    already_processed = prior.get("processed", False) or processing_metadata.get(
-        "processed"
-    )
+    already_processed = prior.get("processed", False)
     if already_processed and not args.force_reprocess:
         # If skip_if_unchanged is active and we have a stored hash, check it
         prior_hash = prior.get("content_hash")
