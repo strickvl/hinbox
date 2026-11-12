@@ -8,12 +8,14 @@ that points to the current domain's output directory (typically from
 import copy
 import os
 import tempfile
-from typing import Any, Dict, List
+from enum import Enum
+from typing import Any, Dict, List, Tuple
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from src.logging_config import get_logger
+from src.utils.entity_keys import plain_kind, plain_kinds
 
 # Get logger for this module
 logger = get_logger("utils.file_ops")
@@ -96,10 +98,11 @@ def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
     for field in enum_fields:
         if field in sanitized and sanitized[field] is not None:
             # If it's an enum or has a value attribute, extract the string value
-            if hasattr(sanitized[field], "value"):
-                sanitized[field] = sanitized[field].value
-            else:
-                sanitized[field] = str(sanitized[field])
+            # An Enum is saved as its value. A saved enum repr string is left
+            # as it is: the merger plains new kinds, and an old row kept apart
+            # from its twin (`_keyed_rows()`) must keep its own spelling.
+            value = sanitized[field]
+            sanitized[field] = value.value if isinstance(value, Enum) else str(value)
 
     # Handle datetime fields - convert to string
     datetime_fields = ["start_date", "end_date"]
@@ -397,44 +400,52 @@ def load_existing_entities(base_dir: str) -> Dict[str, Dict]:
         Missing Parquet files result in empty dictionaries for those entity types.
         This allows the pipeline to work even when starting from scratch.
     """
-    people = {}
-    events = {}
-    locations = {}
-    organizations = {}
-
-    # Build file paths under the domain's output directory
-    people_path = os.path.join(base_dir, "people.parquet")
-    events_path = os.path.join(base_dir, "events.parquet")
-    locations_path = os.path.join(base_dir, "locations.parquet")
-    orgs_path = os.path.join(base_dir, "organizations.parquet")
-
-    # People
-    if os.path.exists(people_path):
-        people_table = pq.read_table(people_path)
-        for p in people_table.to_pylist():
-            people[p["name"]] = p
-
-    # Events
-    if os.path.exists(events_path):
-        events_table = pq.read_table(events_path)
-        for e in events_table.to_pylist():
-            events[(e["title"], e.get("start_date", ""))] = e
-
-    # Locations
-    if os.path.exists(locations_path):
-        locations_table = pq.read_table(locations_path)
-        for loc in locations_table.to_pylist():
-            locations[(loc["name"], loc.get("type", ""))] = loc
-
-    # Organizations
-    if os.path.exists(orgs_path):
-        orgs_table = pq.read_table(orgs_path)
-        for o in orgs_table.to_pylist():
-            organizations[(o["name"], o.get("type", ""))] = o
-
     return {
-        "people": people,
-        "events": events,
-        "locations": locations,
-        "organizations": organizations,
+        t: _keyed_rows(t, os.path.join(base_dir, f"{t}.parquet")) for t in _KEY_FIELDS
     }
+
+
+_KEY_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "people": ("name",),
+    "events": ("title", "start_date"),
+    "locations": ("name", "type"),
+    "organizations": ("name", "type"),
+}
+
+
+def _keyed_rows(table: str, path: str) -> Dict[Any, Dict[str, Any]]:
+    """One saved table keyed the way the merger keys it, kinds as plain strings.
+
+    A kind saved as "LocationType.MILITARY_BASE" (from a cached extraction)
+    keys the same as "military_base", so the next merge finds it. Tables
+    written before that fix can hold the same entity twice under the two
+    spellings; both rows are kept, the second exactly as saved (its kind
+    unchanged, under its saved key, or a numbered one), so it still saves and
+    shows in the reader as its own page. The count is logged.
+    """
+    if not os.path.exists(path):
+        return {}
+    fields, out, kept_apart = _KEY_FIELDS[table], {}, 0
+    for raw in pq.read_table(path).to_pylist():
+        row = plain_kinds(raw)
+        key = _key(row, fields)
+        if key in out:
+            # Keep the second row exactly as saved: with its plain kind it
+            # would save, and show in the reader, under the first row's key.
+            kept_apart += 1
+            row, key, n = raw, tuple(raw.get(f, "") for f in fields), 2
+            while key in out:
+                key, n = (*tuple(raw.get(f, "") for f in fields), n), n + 1
+        out[key] = row
+    if kept_apart:
+        logger.warning(
+            f"{table}: {kept_apart} saved rows share a name and kind with "
+            "another row; kept both (duplicates from before kinds were plain)"
+        )
+    return out
+
+
+def _key(row: Dict[str, Any], fields: Tuple[str, ...]) -> Any:
+    if len(fields) == 1:
+        return row.get(fields[0]) or ""
+    return tuple(plain_kind(row.get(f, "")) for f in fields)

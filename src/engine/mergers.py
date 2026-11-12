@@ -47,6 +47,7 @@ from src.logging_config import (
 )
 from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import get_embedding_manager
+from src.utils.entity_keys import plain_kinds
 from src.utils.name_variants import (
     is_low_quality_name,
     score_canonical_name,
@@ -437,6 +438,7 @@ class EntityMerger:
         # ── Phase 1: Build evidence texts for all valid entities ──
         work_items: List[_EvidenceWorkItem] = []
         for idx, entity_dict in enumerate(extracted_entities):
+            entity_dict = plain_kinds(entity_dict)  # one spelling per kind
             entity_key = self._extract_key(entity_dict)
             if (
                 not entity_key
