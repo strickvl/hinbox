@@ -2,6 +2,8 @@
 
 from typing import Any, Dict, List
 
+import pyarrow.parquet as pq
+
 from src.engine import kind_twins, profile_stubs
 from src.engine.kind_twins import donor_articles, find_twins, join_pair
 
@@ -104,20 +106,28 @@ def test_join_pair_only_links_a_country(monkeypatch):
     assert joined["profile"]["sources"] == ["a1", "a2", "a3"]
 
 
-def test_script_joins_saves_and_drops_the_donor(tmp_path, monkeypatch):
-    import pyarrow.parquet as pq
-
+def _script_run(tmp_path, monkeypatch, *flags: str):
     from scripts import join_kind_twins as script
     from src.utils.file_ops import write_entities_table
 
-    write_entities_table("locations", [
-        _row("Camp X", "detention_facility", ["a1", "a2"]),
-        _row("Camp X", "LocationType.DETENTION_FACILITY", ["a3"]),
-        _row("Havana", "city", ["a4"]),
-    ], str(tmp_path))  # fmt: skip
-    write_entities_table("organizations", [_row("ACLU", "ngo", ["a5"])], str(tmp_path))
+    if not (tmp_path / "locations.parquet").exists():
+        write_entities_table("locations", [
+            _row("Camp X", "LocationType.DETENTION_FACILITY", ["a3"]),
+            _row("Havana", "city", ["a4"]),
+            _row("Camp X", "detention_facility", ["a1", "a2"]),
+            _row("Delta", "LocationType.CITY", ["a6"]),
+            _row("Delta", "city", ["a7", "a8"]),
+            _row("Cuba", "country", ["a9", "a10"]),
+            _row("Cuba", "LocationType.COUNTRY", ["a11"]),
+            _row("Bad", "city", ["b1", "b2"]),
+            _row("Bad", "LocationType.CITY", ["b3"]),
+        ], str(tmp_path))  # fmt: skip
+        write_entities_table(
+            "organizations", [_row("ACLU", "ngo", ["a5"])], str(tmp_path)
+        )
     calls: List[str] = []
-    monkeypatch.setattr(script, "_article_texts", lambda *a: {"a3": "Three."})
+    texts = {"a3": "Three.", "a6": "Six.", "a11": "Eleven."}  # no text for b3
+    monkeypatch.setattr(script, "_article_texts", lambda *a: texts)
     monkeypatch.setattr(
         script, "_embed", lambda row: row.update(profile_embedding=[1.0])
     )
@@ -125,10 +135,36 @@ def test_script_joins_saves_and_drops_the_donor(tmp_path, monkeypatch):
         script, "join_pair",
         lambda *a, **kw: join_pair(*a, **kw, update=_fake_update(calls)),
     )  # fmt: skip
-    monkeypatch.setattr("sys.argv", ["x", "--run", str(tmp_path)])
-    assert script.main() == 0
-    rows = pq.read_table(tmp_path / "locations.parquet").to_pylist()
-    assert [r["name"] for r in rows] == ["Camp X", "Havana"]
-    assert rows[0]["type"] == "detention_facility" and calls == ["a3"]
-    assert rows[0]["profile"]["sources"] == ["a1", "a2", "a3"]
-    assert script.main() == 0 and calls == ["a3"]  # a rerun has nothing left
+    monkeypatch.setattr("sys.argv", ["x", "--run", str(tmp_path), *flags])
+    code = script.main()
+    return (
+        code,
+        calls,
+        {
+            (r["name"], r["type"]): r["profile"]["sources"]
+            for r in pq.read_table(tmp_path / "locations.parquet").to_pylist()
+        },
+    )
+
+
+def test_script_joins_each_pair_after_earlier_rows_are_dropped(tmp_path, monkeypatch):
+    code, calls, rows = _script_run(tmp_path, monkeypatch)
+    assert code == 1  # "Bad" has no text for b3, so it is left as two rows
+    assert sorted(calls) == ["a11", "a3", "a6"]
+    assert rows == {
+        ("Havana", "city"): ["a4"],
+        ("Camp X", "detention_facility"): ["a1", "a2", "a3"],
+        ("Delta", "city"): ["a7", "a8", "a6"],
+        ("Cuba", "country"): ["a9", "a10", "a11"],
+        ("Bad", "city"): ["b1", "b2"],
+        ("Bad", "LocationType.CITY"): ["b3"],
+    }
+    code, calls, again = _script_run(tmp_path, monkeypatch)
+    assert calls == [] and again == rows  # a rerun only retries "Bad"
+
+
+def test_script_hubs_only_joins_only_the_country(tmp_path, monkeypatch):
+    code, calls, rows = _script_run(tmp_path, monkeypatch, "--hubs-only")
+    assert code == 0 and calls == ["a11"]
+    assert rows[("Cuba", "country")] == ["a9", "a10", "a11"]
+    assert ("Camp X", "LocationType.DETENTION_FACILITY") in rows
