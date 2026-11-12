@@ -158,21 +158,30 @@ def status(
     key = (ent.spec.table, ent.key)
     if key not in cache:
         cache[key] = render_current(store, ent, cs)
-    from .views import fmt_date  # views imports this module
-
     gone = any(u["id"] == r["id"] for u in cache[key].unmatched)
     run = run_rows(store).get(r["id"])
-    when = fmt_date(str((run or {}).get("run", ""))[:10]) or "the last run"
+    when = _when(str((run or {}).get("run", "")))
+    done_at = _when(str((run or {}).get("since") or (run or {}).get("run", "")))
     if run and run["state"] == "needs a look":
         return "look", f"Needs a look after the run of {when}: {run.get('why', '')}"
     if r["kind"] == "strike" and run and run["state"] in DONE:
         again = f" again ({run['why']})" if run["state"] == "re-applied" else ""
-        return "ok", f"Carried out in the tables{again} by the run of {when}"
+        return "ok", f"Carried out in the tables{again} by the run of {done_at}"
     if gone:
         return "look", "Needs a look: the sentence is no longer on the page"
     if r["kind"] == "strike":
         return "ok", "Shown on the page; the next run carries it out in the tables"
     return "ok", "Shown on the page"
+
+
+def _when(stamp: str) -> str:
+    """ "12 Nov 2026, 17:21 UTC" from a report's "2026-11-12T17:21:28Z"."""
+    from .views import fmt_date  # views imports this module
+
+    day = fmt_date(stamp[:10])
+    if not day:
+        return "the last run"
+    return f"{day}, {stamp[11:16]} UTC" if len(stamp) >= 16 else day
 
 
 def run_rows(store: Store) -> Dict[str, Dict[str, Any]]:

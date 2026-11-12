@@ -153,6 +153,15 @@ def test_the_edit_model_cant_bring_a_strike_back_or_reword_yours(tmp_path):
     assert [e.text for e in kept] == [f"He lost weight.^[{A3}]"]
     assert len(report["restated"]) == 2 and len(report["kept_yours"]) == 1
     assert cs_.active[0]["id"] in cp._GUARDED
+    # and the run report can list what it did, page by page
+    did = cp.guard_log()
+    assert [d["did"] for d in did] == [
+        "cut a sentence saying a struck one again",
+        "dropped an edit rewording your sentence",
+        "cut a sentence saying a struck one again",
+    ]
+    assert {d["page"] for d in did} == {"Yusuf Qadir"}
+    assert "stepped in 3 times" in cp.describe_report({"guarded": did})
     # Another page is not guarded
     with cp.correction_scope("people", {"name": "Miriam Hale"}):
         assert cp.guard_corrections(text, edits)[0] == edits
@@ -637,3 +646,33 @@ def test_a_shared_sentence_put_back_cites_every_source():
     assert states["c-0001"][0] == "re-applied" and states["c-0002"] == ("held", "")
     again, states, _ = _apply(out, recs, done=["c-0001", "c-0002"])
     assert again == out and {s[0] for s in states.values()} == {"held"}
+
+
+def test_a_full_stop_after_the_citation_goes_with_the_sentence():
+    # the model often writes the stop after the marker: "Leeds^[a]. She …"
+    text = f"Ann Lee was born in Leeds^[{A1}]. She moved^[{A2}]."
+    born = "Ann Lee was born in Leeds"
+    for words, want in (
+        ("Ann Lee was born in Hull.", f"Ann Lee was born in Hull.^[{A3}] She"),
+        ("Ann Lee was born in Hull", f"Ann Lee was born in Hull^[{A3}]. She"),
+    ):
+        rec = _strike(born, [A1], words)
+        out, _, _ = _apply(text, [rec])
+        assert out.startswith(want) and ".^[" not in out.replace(f"Hull.^[{A3}]", "")
+        undone, _, _ = _apply(out, [], done=["c-0001"], withdrawn=[rec])
+        assert undone == text  # the original comes back with its stop
+    out, _, _ = _apply(text, [_strike(born, [A1])])
+    assert out == f"She moved^[{A2}]."  # no stray stop left in front
+
+
+def test_a_held_strike_keeps_the_time_of_the_run_that_carried_it_out():
+    from src.frontend.corrections_view import _when
+
+    first = [{"id": "c-0001", "state": "applied"}, {"id": "c-0002", "state": "waiting"}]
+    cp._since(first, {}, "2026-11-12T17:21:28Z")
+    last = {"run": "2026-11-12T17:21:28Z", "rows": first}
+    later = [{"id": "c-0001", "state": "held"}, {"id": "c-0002", "state": "waiting"}]
+    cp._since(later, last, "2026-11-12T20:20:00Z")
+    assert later[0]["since"] == "2026-11-12T17:21:28Z"  # not the latest run
+    assert later[1]["since"] == "2026-11-12T20:20:00Z"
+    assert _when(later[0]["since"]) == "12 Nov 2026, 17:21 UTC"

@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 from src.engine.edit_guards import is_repeat
+from src.logging_config import log
 from src.utils.claim_spans import claim_end, parse_claims
 from src.utils.corrections import (
     DONE,
@@ -48,6 +49,7 @@ from src.utils.corrections import (
     CorrectionSet,
     _report_dir,
     drop_list_mark,
+    last_report,
     last_states,
     latest_name,
     load_corrections,
@@ -78,6 +80,9 @@ _ACTIVE: Optional[CorrectionSet] = None
 _CURRENT: contextvars.ContextVar = contextvars.ContextVar("corrections", default=None)
 # Strikes the edit guard had to defend during this run: id -> why
 _GUARDED: Dict[str, str] = {}
+# Everything the edit guard did during this run, for the run report
+_GUARD_LOG: List[Dict[str, Any]] = []
+_PAGE: contextvars.ContextVar = contextvars.ContextVar("corrections_page", default=None)
 _LOCK = threading.Lock()
 
 
@@ -135,6 +140,7 @@ def configure_corrections(cs: Optional[CorrectionSet]) -> None:
     _ACTIVE = cs if cs and cs.active else None
     with _LOCK:
         _GUARDED.clear()
+        _GUARD_LOG.clear()
 
 
 def _names(ref: Any, table: str, entity: Dict[str, Any]) -> bool:
@@ -156,10 +162,12 @@ def correction_scope(table: str, entity: Dict[str, Any]) -> Iterator[None]:
         if _names(r.get("entity"), table, entity)
     ]
     token = _CURRENT.set(_rules(lines) if lines else None)
+    page = _PAGE.set((table, entity.get(NAME_FIELDS[table]) or ""))
     try:
         yield
     finally:
         _CURRENT.reset(token)
+        _PAGE.reset(page)
 
 
 def current_rules() -> Optional[PageRules]:
@@ -197,9 +205,24 @@ def _cut_restated(text: str, rules: PageRules) -> Tuple[str, List[Tuple[str, str
     return text, [(i, c.text) for c, i in cuts]
 
 
-def _note(cid: str, why: str) -> None:
+def _note(cid: str, why: str, action: str = "", text: str = "") -> None:
+    """Record that the guard stepped in for correction ``cid``: its state
+    becomes re-applied (``why``), and the run report lists what it did."""
+    table, name = _PAGE.get() or ("", "")
     with _LOCK:
-        _GUARDED.setdefault(cid, why)
+        if why:
+            _GUARDED.setdefault(cid, why)
+        _GUARD_LOG.append(
+            {"correction": cid, "table": table, "page": name, "did": action,
+             "text": text[:200]}
+        )  # fmt: skip
+    log(f"Corrections guard on {name or '?'} ({cid}): {action}", level="info")
+
+
+def guard_log() -> List[Dict[str, Any]]:
+    """What the edit guard did during this run (see ``configure_corrections``)."""
+    with _LOCK:
+        return list(_GUARD_LOG)
 
 
 def guard_corrections(text: str, edits: List[Any]) -> Tuple[List[Any], Dict[str, Any]]:
@@ -231,16 +254,29 @@ def guard_corrections(text: str, edits: List[Any]) -> Tuple[List[Any], Dict[str,
         )
         if hit and edit.op == "replace":
             report["kept_yours"].append(edit.anchor[:200])
-            _note(hit[0]["id"], "the edit model tried to reword your sentence")
+            _note(
+                hit[0]["id"],
+                "the edit model tried to reword your sentence",
+                "dropped an edit rewording your sentence",
+                edit.text,
+            )
             continue
         if hit and span[1] < hit[1].end:
             # An add inside their sentence would split it: it goes after it
             edit = edit.model_copy(update={"anchor": text[hit[1].start : hit[1].end]})
             report["moved_after_yours"].append(edit.text[:200])
+            _note(
+                hit[0]["id"], "", "moved an addition to after your sentence", edit.text
+            )
         new_text, cut = _cut_restated(edit.text, rules)
         for cid, claim in cut:
             report["restated"].append(claim[:200])
-            _note(cid, f"an update wrote it again: “{claim[:160]}”")
+            _note(
+                cid,
+                f"an update wrote it again: “{claim[:160]}”",
+                "cut a sentence saying a struck one again",
+                claim,
+            )
         if cut and not re.search(r"\w", re.sub(r"\^\[[^\]]*\]", "", new_text)):
             continue
         kept.append(edit.model_copy(update={"text": new_text}) if cut else edit)
@@ -303,9 +339,32 @@ def _claim_ranges(text: str, markers: List[Any], c: Any) -> List[Tuple[int, int]
     return ranges + [(c.start, claim_end(markers, c.index))]
 
 
+# a sentence's own full stop, when the model put it after the citation
+# ("born in Leeds^[a1]. She moved"): it goes with the sentence
+_STOP_AFTER = re.compile(r"[.!?]+(?=\s|$)")
+_STOP_IN = re.compile(r"[.!?]+(?=[\"'”’)]*\s*$)")
+_TRAILING_MARKERS = re.compile(r"(?:\^\[[^\]]*\])+$")
+
+
+def _ends_a_sentence(words: str) -> bool:
+    return bool(_STOP_IN.search(words))
+
+
 def _cut_claim(text: str, markers: List[Any], c: Any, put: str = "") -> str:
-    """``text`` without claim ``c``'s words, and ``put`` where its last block was."""
+    """``text`` without claim ``c``'s words, and ``put`` where its last block
+    was. The sentence's full stop goes with it, before or after its citation,
+    and ``put`` gets one if its own words have none: "Leeds^[a1]." becomes
+    "Hull.^[a1]" for "Hull.", and "Hull^[a1]." for "Hull"."""
     ranges = _claim_ranges(text, markers, c)
+    start, end = ranges[-1]
+    stop = ""
+    if m := _STOP_AFTER.match(text, end):
+        stop, end = m.group(), m.end()
+    elif m := _STOP_IN.search(text[start:end].split("^[")[0]):
+        stop = m.group()  # inside: kept by the cut, lent to ``put``
+    ranges[-1] = (start, end)
+    if put and stop and not _ends_a_sentence(_TRAILING_MARKERS.sub("", put)):
+        put += stop
     for n, (start, end) in enumerate(reversed(ranges)):
         text = _remove(text, start, end, put if n == 0 else "")
     return text
@@ -684,16 +743,19 @@ def run_corrections_pass(
                 state, why = "re-applied", guarded
             rows.append(_row(by_id[cid], state, why))
         maybe += again
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _since(rows, last_report(path, output_dir), now)
     counts: Dict[str, int] = {}
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
     report = {
-        "run": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "run": now,
         "output_dir": output_dir,
         "counts": counts,
         "profiles_changed": changed,
         "rows": rows,
         "maybe_again": maybe,
+        "guarded": guard_log(),
         "problems": cs.problems,
         "contradictions": cs.contradictions,
     }
@@ -711,6 +773,19 @@ def _row(rec: Dict[str, Any], state: str, why: str) -> Dict[str, Any]:
         "state": state,
         "why": why,
     }
+
+
+def _since(rows: List[Dict[str, Any]], last: Dict[str, Any], now: str) -> None:
+    """Give each row ``since``: when a run last changed the tables for it.
+    A held strike keeps the time of the run that carried it out, so the
+    reader can say which run did it, not only which ran last."""
+    old = {r.get("id"): r for r in last.get("rows") or [] if isinstance(r, dict)}
+    for r in rows:
+        prev = old.get(r["id"]) or {}
+        if r["state"] == "held" and prev.get("state") in DONE:
+            r["since"] = prev.get("since") or last.get("run") or now
+        else:
+            r["since"] = now
 
 
 def write_report(path: str, report: Dict[str, Any]) -> None:
@@ -734,6 +809,8 @@ def describe_report(report: Dict[str, Any]) -> str:
     line = "Corrections: " + (", ".join(parts) or "none active")
     if report.get("maybe_again"):
         line += f"; {len(report['maybe_again'])} sentences may say a struck thing again"
+    if report.get("guarded"):
+        line += f"; the edit guard stepped in {len(report['guarded'])} times"
     if report.get("problems"):
         line += f"; {len(report['problems'])} unreadable lines"
     if report.get("contradictions"):
