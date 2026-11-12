@@ -52,11 +52,11 @@ def test_cache_records_store_the_kind_value_not_its_repr():
     assert [o["type"] for o in stored["output"]] == ["detention_facility"] * 2
 
 
-def test_parquet_writer_saves_the_plain_kind():
-    for value in (_fresh().model_dump()["type"], "LocationType.DETENTION_FACILITY"):
-        assert sanitize_for_parquet({"name": "x", "type": value})["type"] == (
-            "detention_facility"
-        )
+def test_parquet_writer_saves_an_enum_as_its_value():
+    value = _fresh().model_dump()["type"]
+    assert sanitize_for_parquet({"name": "x", "type": value})["type"] == (
+        "detention_facility"
+    )
 
 
 def _write(tmp_path, rows):
@@ -79,6 +79,24 @@ def test_rows_saved_twice_under_two_spellings_are_both_kept(tmp_path):
     loaded = _write(tmp_path, rows)
     assert sorted(e["n"] for e in loaded.values()) == [1, 2, 3]
     assert loaded[("Pentagon", "building")]["n"] == 1
+    # The second row keeps its saved spelling, so saving and the reader still
+    # tell it from the first; only an exact repeat (already one key) can't be.
+    assert loaded[("Pentagon", "building", 2)]["type"] == "building"
+    assert loaded[("Pentagon", "building")]["type"] == "building"
+
+
+def test_a_kept_apart_row_still_has_its_own_reader_key_after_saving(tmp_path):
+    from src.utils.entity_keys import KEY_FUNCS
+    from src.utils.file_ops import write_entities_table
+
+    rows = [
+        {"name": "Pentagon", "type": "building", "n": 1},
+        {"name": "Pentagon", "type": "LocationType.BUILDING", "n": 2},
+    ]
+    loaded = _write(tmp_path, rows)
+    write_entities_table("locations", list(loaded.values()), str(tmp_path))
+    saved = pq.read_table(tmp_path / "locations.parquet").to_pylist()
+    assert len({KEY_FUNCS["locations"](r) for r in saved}) == 2
 
 
 def test_a_cached_and_a_fresh_extraction_of_one_place_make_one_entity():

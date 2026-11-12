@@ -8,6 +8,7 @@ that points to the current domain's output directory (typically from
 import copy
 import os
 import tempfile
+from enum import Enum
 from typing import Any, Dict, List, Tuple
 
 import pyarrow as pa
@@ -97,8 +98,11 @@ def sanitize_for_parquet(entity: Dict[str, Any]) -> Dict[str, Any]:
     for field in enum_fields:
         if field in sanitized and sanitized[field] is not None:
             # If it's an enum or has a value attribute, extract the string value
-            kind = plain_kind(sanitized[field])
-            sanitized[field] = kind if isinstance(kind, str) else str(kind)
+            # An Enum is saved as its value. A saved enum repr string is left
+            # as it is: the merger plains new kinds, and an old row kept apart
+            # from its twin (`_keyed_rows()`) must keep its own spelling.
+            value = sanitized[field]
+            sanitized[field] = value.value if isinstance(value, Enum) else str(value)
 
     # Handle datetime fields - convert to string
     datetime_fields = ["start_date", "end_date"]
@@ -415,8 +419,9 @@ def _keyed_rows(table: str, path: str) -> Dict[Any, Dict[str, Any]]:
     A kind saved as "LocationType.MILITARY_BASE" (from a cached extraction)
     keys the same as "military_base", so the next merge finds it. Tables
     written before that fix can hold the same entity twice under the two
-    spellings; both rows are kept (the second under its saved spelling, or a
-    numbered key), never one dropped, and the count is logged.
+    spellings; both rows are kept, the second exactly as saved (its kind
+    unchanged, under its saved key, or a numbered one), so it still saves and
+    shows in the reader as its own page. The count is logged.
     """
     if not os.path.exists(path):
         return {}
@@ -425,11 +430,12 @@ def _keyed_rows(table: str, path: str) -> Dict[Any, Dict[str, Any]]:
         row = plain_kinds(raw)
         key = _key(row, fields)
         if key in out:
+            # Keep the second row exactly as saved: with its plain kind it
+            # would save, and show in the reader, under the first row's key.
             kept_apart += 1
-            key = _key(raw, fields)
-            n = 2
+            row, key, n = raw, tuple(raw.get(f, "") for f in fields), 2
             while key in out:
-                key, n = (*_key(raw, fields), n), n + 1
+                key, n = (*tuple(raw.get(f, "") for f in fields), n), n + 1
         out[key] = row
     if kept_apart:
         logger.warning(
