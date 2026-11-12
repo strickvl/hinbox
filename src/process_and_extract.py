@@ -31,6 +31,7 @@ import pyarrow.parquet as pq
 
 from src.config_loader import DomainConfig
 from src.engine import ArticleProcessor, EntityMerger, configure_match_check_memo
+from src.engine.corrections_merges import carry_out_merges
 from src.engine.corrections_pass import (
     configure_corrections,
     describe_report,
@@ -42,7 +43,12 @@ from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
 from src.utils.article_window import ordered_window
 from src.utils.cache_utils import sha256_text
-from src.utils.corrections import corrections_path, load_corrections
+from src.utils.corrections import (
+    DONE,
+    corrections_path,
+    last_states,
+    load_corrections,
+)
 from src.utils.embeddings.similarity import (
     ensure_local_embeddings_available,
     reset_embedding_manager_cache,
@@ -877,6 +883,15 @@ def main():
     # articles merged so far (grounding is left for the next run)
     article_count = len(rows)
     try:
+        # Splits and joins first, so merging meets the pages as corrected
+        with timed_step("corrections_merges"):
+            early = carry_out_merges(
+                entities,
+                processor.article_texts,
+                model_type,
+                args.domain,
+                {i for i, s in last_states(fixes_path, base_dir).items() if s in DONE},
+            )
         processed_rows, counters = process_articles_batch(
             rows,
             processor,
@@ -887,7 +902,9 @@ def main():
         )
         # Before grounding, so the checker judges the corrected text
         with timed_step("corrections_pass"):
-            fixes = run_corrections_pass(entities, fixes_path, base_dir, write=False)
+            fixes = run_corrections_pass(
+                entities, fixes_path, base_dir, write=False, early=early
+            )
         if fixes:
             log(
                 describe_report(fixes),

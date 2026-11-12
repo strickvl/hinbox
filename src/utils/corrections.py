@@ -59,8 +59,10 @@ KIND_LABELS = {
 }
 VERDICTS = ("supported", "partial", "not_supported")
 TABLES = ("people", "organizations", "locations", "events")
-# Kinds that only a pipeline run can carry out (the reader just records them)
-NEEDS_RUN = ("heading", "rename", "wrong_table", "not_entity", "split", "join")
+# Kinds no pipeline run carries out yet (the reader just records them)
+NEEDS_RUN = ("heading", "rename", "wrong_table", "not_entity")
+# Kinds a run carries out before merging (src/engine/corrections_merges.py)
+MERGE_KINDS = ("split", "join")
 MAX_TEXT = 2000
 # Each run's report sits beside the file; the latest under this name
 REPORT_LATEST = "last-run.json"

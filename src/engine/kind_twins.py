@@ -19,7 +19,7 @@ from src.engine.corrections_pass import correction_scope
 from src.engine.later_updates import article_dates
 from src.engine.profile_stubs import is_stub, update_or_fill
 from src.engine.profiles import VersionedProfile
-from src.utils.entity_keys import plain_kind
+from src.utils.entity_keys import NAME_FIELDS, plain_kind
 from src.utils.task_models import task_model
 
 TWIN_TABLES = ("locations", "organizations")
@@ -57,9 +57,19 @@ def donor_articles(keeper: Dict[str, Any], donor: Dict[str, Any]) -> List[Dict]:
     return sorted(new, key=lambda a: str(a.get("article_published_date") or ""))
 
 
-def _alternatives(keeper: Dict[str, Any], donor: Dict[str, Any]) -> List[Any]:
-    names = list(keeper.get("alternative_names") or [])
-    for entry in donor.get("alternative_names") or []:
+# Where each table keeps its other names (events: other titles)
+ALT_FIELDS = {"events": "alternative_titles"}
+
+
+def alt_field(table: str) -> str:
+    return ALT_FIELDS.get(table, "alternative_names")
+
+
+def _alternatives(
+    keeper: Dict[str, Any], donor: Dict[str, Any], field: str = "alternative_names"
+) -> List[Any]:
+    names = list(keeper.get(field) or [])
+    for entry in donor.get(field) or []:
         if entry not in names:
             names.append(entry)
     return names
@@ -76,12 +86,14 @@ def join_pair(
 ) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     """The keeper with the donor's articles fed in, or None if a step failed.
 
-    The keeper passed in is never changed.
+    The keeper passed in is never changed. Any table: a historian's join
+    (``src/engine/corrections_merges.py``) feeds people and events this way too.
     """
     work = copy.deepcopy(keeper)
-    work["type"] = plain_kind(work.get("type"))
-    singular, name = ENTITY_SINGULAR[table], work.get("name") or ""
-    report: Dict[str, Any] = {"name": name, "type": work["type"], "updated": 0}
+    if "type" in work:
+        work["type"] = plain_kind(work.get("type"))
+    singular, name = ENTITY_SINGULAR[table], work.get(NAME_FIELDS[table]) or ""
+    report: Dict[str, Any] = {"name": name, "type": work.get("type"), "updated": 0}
     for entry in donor_articles(keeper, donor):
         article_id = entry.get("article_id")
         text = article_texts.get(article_id)
@@ -111,5 +123,5 @@ def join_pair(
         work.setdefault("articles", []).append(entry)
         work.setdefault("reflection_history", []).extend(history or [])
         report["updated"] += 1
-    work["alternative_names"] = _alternatives(work, donor)
+    work[alt_field(table)] = _alternatives(work, donor, alt_field(table))
     return work, report

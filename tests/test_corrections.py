@@ -255,7 +255,8 @@ def test_page_corrections_wait_for_a_run_and_can_be_withdrawn(client, corr):  # 
     assert kinds == ["split", "join", "not_entity", "rename"]
     assert _lines(corr)[1]["other"]["key"] == "Miriam Hale"
     listing = client.get("/corrections").text
-    assert listing.count("carry out this kind yet") == 4
+    assert listing.count("carry out this kind yet") == 2
+    assert listing.count("The next pipeline run carries it out") == 2
     r = client.post(
         "/corrections/withdraw", data={"id": "c-0004", "reason": "typo"}, headers=ORIGIN
     )

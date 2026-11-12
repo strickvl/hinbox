@@ -44,6 +44,7 @@ from src.logging_config import log
 from src.utils.claim_spans import claim_end, parse_claims
 from src.utils.corrections import (
     DONE,
+    MERGE_KINDS,
     NEEDS_RUN,
     REPORT_LATEST,
     CorrectionSet,
@@ -134,8 +135,14 @@ def _candidates(table: str, pages: Dict[Any, Dict[str, Any]]) -> Iterator[Tuple]
 # ── during the run: the edit guard ───────────────────────────
 
 
+def active_corrections() -> Optional[CorrectionSet]:
+    """The corrections loaded for this run (None with none active)."""
+    return _ACTIVE
+
+
 def configure_corrections(cs: Optional[CorrectionSet]) -> None:
-    """Load the corrections the edit guard checks during this run."""
+    """Load the corrections the edit guard and the merge rules check during
+    this run."""
     global _ACTIVE
     _ACTIVE = cs if cs and cs.active else None
     with _LOCK:
@@ -656,9 +663,12 @@ def run_corrections_pass(
     path: str,
     output_dir: str = "",
     write: bool = True,
+    early: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Carry out the corrections file's strikes in every profile and return
-    the report (None with no file). With ``write``, the report is written
+    the report (None with no file). ``early`` is what the start of the run
+    did with splits and joins (``carry_out_merges()``); without it they are
+    reported as waiting for a run. With ``write``, the report is written
     beside the file at once; a run passes False and writes it with
     ``write_report()`` once the tables are saved, so the report never says a
     strike was carried out in tables that were not written."""
@@ -681,8 +691,13 @@ def run_corrections_pass(
         pk = resolve_ref(ref, _candidates(table, entities[table]))
         return None if pk is None else (table, pk)
 
+    early = early or {}
     for rec in cs.active:
-        if rec["kind"] in ("withdraw",):
+        if rec["kind"] in MERGE_KINDS:  # carried out before merging
+            state, why = (early.get("states") or {}).get(
+                rec["id"], ("waiting", "a pipeline run carries it out")
+            )
+            rows.append(_row(rec, state, why))
             continue
         page = where(rec)
         if page is None:
@@ -755,6 +770,7 @@ def run_corrections_pass(
         "profiles_changed": changed,
         "rows": rows,
         "maybe_again": maybe,
+        "split_mixed": early.get("mixed") or [],
         "guarded": guard_log(),
         "problems": cs.problems,
         "contradictions": cs.contradictions,
@@ -809,6 +825,11 @@ def describe_report(report: Dict[str, Any]) -> str:
     line = "Corrections: " + (", ".join(parts) or "none active")
     if report.get("maybe_again"):
         line += f"; {len(report['maybe_again'])} sentences may say a struck thing again"
+    if report.get("split_mixed"):
+        line += (
+            f"; {len(report['split_mixed'])} sentences cite sources a split moved "
+            "and others (kept, to check)"
+        )
     if report.get("guarded"):
         line += f"; the edit guard stepped in {len(report['guarded'])} times"
     if report.get("problems"):

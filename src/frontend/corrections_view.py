@@ -5,8 +5,9 @@ The reader never edits the entity tables. A correction is appended to the
 file, and every page draws the file on top of the stored profile: a struck
 sentence is shown struck through, the historian's own sentence follows it,
 and an overruled verdict replaces the checker's (which stays visible beside
-it). Corrections only a pipeline run can carry out (headings, names, tables,
-splits, joins) are recorded and listed as waiting.
+it). Splits and joins are carried out by the next pipeline run
+(``src/engine/corrections_merges.py``), and each says what that run did;
+headings, names and tables are recorded and listed as waiting.
 """
 
 import os
@@ -15,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.utils.corrections import (
     DONE,
     KIND_LABELS,
+    MERGE_KINDS,
     NEEDS_RUN,
     VERDICTS,
     CorrectionSet,
@@ -142,6 +144,8 @@ def status(
         )
     if state == "replaced":
         return "off", f"Replaced by {cs.replaced[r['id']]}"
+    if r["kind"] in MERGE_KINDS:
+        return _merge_status(store, r)
     ent = find_entity(store, r.get("entity"))
     if ent is None:
         return (
@@ -172,6 +176,26 @@ def status(
     if r["kind"] == "strike":
         return "ok", "Shown on the page; the next run carries it out in the tables"
     return "ok", "Shown on the page"
+
+
+def _merge_status(store: Store, r: Dict[str, Any]) -> Tuple[str, str]:
+    """A split or join: what the last run did with it. After a join the
+    smaller page is gone, so the run's report says, not the tables."""
+    run = run_rows(store).get(r["id"])
+    if not run:
+        if find_entity(store, r.get("entity")) is None or (
+            r["kind"] == "join" and find_entity(store, r.get("other")) is None
+        ):
+            return "look", "Needs a look: a page it names can't be found"
+        return "wait", "Saved. The next pipeline run carries it out."
+    when = _when(str(run.get("run", "")))
+    done_at = _when(str(run.get("since") or run.get("run", "")))
+    why = f": {run['why']}" if run.get("why") else ""
+    if run["state"] in DONE:
+        return "ok", f"Carried out by the run of {done_at}{why}"
+    if run["state"] == "waiting":
+        return "wait", f"Not carried out by the run of {when}{why}"
+    return "look", f"Needs a look after the run of {when}{why}"
 
 
 def _when(stamp: str) -> str:
@@ -420,6 +444,7 @@ def build_record(
         rec["article_ids"] = sorted(set(form.get("article_ids") or []))
         if not rec["article_ids"]:
             raise ValueError("Tick the sources that are about someone else.")
+        rec["name"] = " ".join(_one(form, "name").split())  # the new page's
     elif kind == "join":
         value = _one(form, "other")
         table = store.entities.get(ent.spec.table, {})

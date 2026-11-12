@@ -14,7 +14,13 @@ from src.constants import (
     SIMILARITY_THRESHOLD,
 )
 from src.engine.alternative_names import add_alternative_name
+from src.engine.corrections_merges import (
+    join_target,
+    split_block,
+    split_create_key,
+)
 from src.engine.corrections_pass import correction_scope
+from src.engine.entity_rows import new_entity_row
 from src.engine.later_updates import article_dates
 from src.engine.match_checker import (
     check_failed,
@@ -45,7 +51,6 @@ from src.logging_config import (
     log,
     log_decision,
 )
-from src.utils.embeddings.manager import EmbeddingManager
 from src.utils.embeddings.similarity import get_embedding_manager
 from src.utils.entity_keys import plain_kinds
 from src.utils.name_variants import (
@@ -501,9 +506,19 @@ class EntityMerger:
             # Try candidates above the threshold closest first (up to
             # MERGE_MAX_SIMILAR_CHECKS), then the best name-variant one once
             # ("Guantánamo Bay" may lose to "Guantanamo Bay Navy Base" on cosine).
+            # A historian's join sends the joined-in page's name straight to
+            # the kept page; a split passes over a page before any model call
+            # (src/engine/corrections_merges.py)
+            display = self._format_key_for_display(entity_key)
             rejected: List[Union[str, Tuple]] = []
+            blocked: List[Union[str, Tuple]] = []
             verdict, similar_key = "skip", None
-            while len(rejected) <= MERGE_MAX_SIMILAR_CHECKS:
+            forced = join_target(self.entity_type, display, entities[self.entity_type])
+            if forced:
+                (similar_key, joined_by), similarity_score = forced, 1.0
+                verdict = "merge"
+                log(f"'{display}' joined by {joined_by}: no match check", level="info")
+            while not forced and len(rejected) <= MERGE_MAX_SIMILAR_CHECKS:
                 similar_key, similarity_score = next_candidate(
                     self.entity_type,
                     self.alternative_field,
@@ -511,7 +526,8 @@ class EntityMerger:
                     evidence_embedding,
                     entities,
                     resolved_threshold,
-                    rejected,
+                    rejected + blocked,
+                    max_similar=MERGE_MAX_SIMILAR_CHECKS + len(blocked),
                     embedding_model=emb_model_name,
                     embedding_dim=emb_dim,
                     lexical_blocking_config=lexical_blocking_cfg,
@@ -520,6 +536,23 @@ class EntityMerger:
                 )
                 if not similar_key:
                     break
+                split_by = split_block(
+                    self.entity_type,
+                    article_id,
+                    display,
+                    entities[self.entity_type][similar_key],
+                )
+                if split_by:
+                    log_decision(
+                        DecisionKind.SKIP,
+                        self.entity_type,
+                        display,
+                        f"kept off '{self._format_key_for_display(similar_key)}' "
+                        f"by {split_by}",
+                    )
+                    blocked.append(similar_key)
+                    similar_key = None
+                    continue
                 verdict = self._check_candidate(
                     entity_key,
                     similar_key,
@@ -806,6 +839,12 @@ class EntityMerger:
                 # HINBOX_PROFILE_STUBS=off (src/engine/profile_stubs.py) ---
                 # Never overwrite an existing entity that shares this key (e.g.
                 # an exact-name entity whose similarity was below threshold).
+                free = split_create_key(
+                    self.entity_type, article_id, entity_key, entities[self.entity_type]
+                )
+                stub_key = entity_key  # the name the article uses
+                if free is not None:  # a split keeps it off the same-named page
+                    entity_key = free
                 if entity_key in entities[self.entity_type]:
                     log_decision(
                         DecisionKind.SKIP,
@@ -821,7 +860,7 @@ class EntityMerger:
                         ({}, VersionedProfile(), []),
                         first_profile,
                         self.entity_type,
-                        entity_key,
+                        stub_key,
                         entity_dict,
                         article_content,
                         article_id,
@@ -911,79 +950,6 @@ class EntityMerger:
         )
         return stats
 
-    def _create_new_entity(
-        self,
-        entity_dict: Dict[str, Any],
-        entity_key: Union[str, Tuple],
-        profile: Dict[str, Any],
-        versioned_profile: VersionedProfile,
-        profile_embedding: List[float],
-        reflection_history: List[Any],
-        article_id: str,
-        article_title: str,
-        article_url: str,
-        article_published_date: Any,
-        extraction_timestamp: str,
-        *,
-        embedding_model: Optional[str] = None,
-        embedding_dim: Optional[int] = None,
-        embedding_fingerprint: Optional[str] = None,
-        search_embedding: Optional[List[float]] = None,
-        search_embedding_model: Optional[str] = None,
-        search_embedding_dim: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """Create a new entity dictionary with appropriate structure for each entity type."""
-        resolved_dim = embedding_dim or (
-            len(profile_embedding) if profile_embedding else None
-        )
-        search_dim = search_embedding_dim or (
-            len(search_embedding) if search_embedding else None
-        )
-        base_entity: Dict[str, Any] = {
-            "profile": profile,
-            "profile_versions": versioned_profile.model_dump()
-            if ENABLE_PROFILE_VERSIONING
-            else None,
-            "articles": [
-                {
-                    "article_id": article_id,
-                    "article_title": article_title,
-                    "article_url": article_url,
-                    "article_published_date": article_published_date,
-                }
-            ],
-            "profile_embedding": profile_embedding,
-            "profile_embedding_model": embedding_model,
-            "profile_embedding_dim": resolved_dim,
-            "profile_embedding_fingerprint": embedding_fingerprint
-            or EmbeddingManager.make_fingerprint(embedding_model, resolved_dim),
-            "search_embedding": search_embedding or [],
-            "search_embedding_model": search_embedding_model,
-            "search_embedding_dim": search_dim,
-            "search_embedding_fingerprint": EmbeddingManager.make_fingerprint(
-                search_embedding_model, search_dim
-            )
-            if search_embedding
-            else None,
-            "extraction_timestamp": extraction_timestamp,
-            self.alternative_field: [],
-            "aliases": entity_dict.get("aliases", []),
-            "reflection_history": reflection_history or [],
-        }
-
-        if self.entity_type == "people":
-            base_entity["name"] = entity_key
-            base_entity["type"] = entity_dict.get("type", "")  # picks starter headings
-        elif self.entity_type in ("organizations", "locations"):
-            base_entity["name"] = entity_key[0]
-            base_entity["type"] = entity_key[1]
-        elif self.entity_type == "events":
-            base_entity["title"] = entity_key[0]
-            base_entity["start_date"] = entity_key[1]
-            base_entity["description"] = entity_dict.get("description", "")
-            base_entity["event_type"] = entity_dict.get("event_type", "")
-            base_entity["end_date"] = entity_dict.get("end_date", "")
-            base_entity["is_fuzzy_date"] = entity_dict.get("is_fuzzy_date", False)
-            base_entity["tags"] = entity_dict.get("tags", [])
-
-        return base_entity
+    def _create_new_entity(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """A new entity row (``new_entity_row()``)."""
+        return new_entity_row(self.entity_type, self.alternative_field, *args, **kwargs)
