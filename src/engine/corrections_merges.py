@@ -34,6 +34,7 @@ from src.engine.corrections_pass import (
     _linked,
     _new_version,
     active_corrections,
+    joined_refs,
 )
 from src.engine.entity_rows import new_entity_row
 from src.engine.kind_twins import _rank, alt_field, join_pair
@@ -89,6 +90,28 @@ def _family(rec: Dict[str, Any], rules: List[Dict]) -> Set[str]:
             keys.add(str(r["entity"].get("key")))
         left = [r for r in left if r not in more]
     return names
+
+
+def split_family(ref: Any, table: str) -> Set[str]:
+    """Names of the pages the usable splits made of this page (and the page's
+    own), empty when no split is about it. A strike made on "Ann Lee" may be
+    about "Ann Lee (reporter)" once its sources moved there."""
+    rules = _usable(active_corrections(), "split", table)
+    if not isinstance(ref, dict) or ref.get("table") != table or not rules:
+        return set()
+    names = _family({"entity": ref}, rules)
+    return names if len(names) > 1 else set()
+
+
+def _find(table: str, ref: Any, pages: Pages) -> Any:
+    """The page a join's side names, else the page other joins put it into:
+    with "A is B" and "A is C" both waiting, "A" is gone after the first, and
+    the second joins B and C."""
+    for r in (ref, *joined_refs(ref, active_corrections())):
+        pk = resolve_ref(r, _candidates(table, pages))
+        if pk is not None:
+            return pk
+    return None
 
 
 def _base(name: str) -> str:
@@ -216,7 +239,7 @@ def join_target(table: str, incoming: str, pages: Pages) -> Optional[Tuple]:
         found = {
             pk
             for ref in (r["entity"], r["other"])
-            if (pk := resolve_ref(ref, _candidates(table, pages))) is not None
+            if (pk := _find(table, ref, pages)) is not None
         }
         if len(found) == 1:
             return found.pop(), r["id"]
@@ -372,8 +395,8 @@ class _Run:
     def join(self, rec: Dict[str, Any]) -> Tuple[str, str]:
         table = rec["entity"]["table"]
         pages = self.entities.get(table, {})
-        a = resolve_ref(rec["entity"], _candidates(table, pages))
-        b = resolve_ref(rec["other"], _candidates(table, pages))
+        a = _find(table, rec["entity"], pages)
+        b = _find(table, rec["other"], pages)
         if a is None and b is None:
             return "needs a look", "neither page can be found"
         if a is None or b is None or a == b:

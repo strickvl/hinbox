@@ -534,3 +534,62 @@ def test_a_strike_made_on_the_joined_in_page_holds_on_the_kept_page(tmp_path):
     assert states == {"join": "applied", "strike": "applied"}, report["rows"]
     text = entities["people"]["Jane Lee"]["profile"]["text"]
     assert "again" not in text and "J. Lee was named in a filing.^[j1]" in text
+
+
+def test_a_strike_follows_its_sources_to_the_page_a_split_made(tmp_path):
+    """A strike on "Ann Lee" replaced a sentence citing a3. A later split
+    moves a3 away: the historian's sentence goes with it, and is not put back
+    on the old page citing an article that page no longer holds."""
+    strike = {
+        "kind": "strike",
+        "entity": entity_ref("people", "Ann Lee", "Ann Lee", ["a1", "a2", "a3", "a4"]),
+        "sentence": "She wrote about the camp.",
+        "cites": ["a3"],
+        "replacement": "She reported from the camp.",
+        "replacement_cites": "a3",
+    }
+    path = _file(tmp_path, strike)
+    entities = _ann_entities()
+    first = run_corrections_pass(entities, path, str(tmp_path))
+    assert first["counts"] == {"applied": 1}
+    append_correction(path, _split())
+    configure_corrections(load_corrections(path))
+    seen: List[Any] = []
+
+    def update(singular, name, profile, *a, **kw):
+        seen.append((name, current_rules()))
+        return fake_update(singular, name, profile, *a, **kw)
+
+    early = carry_out_merges(
+        entities, TEXTS, "gemini", "guantanamo", {"c-0001"}, update=update, embed=_no_embed
+    )  # fmt: skip
+    assert seen and all(rules is not None for _, rules in seen)  # guarded
+    report = run_corrections_pass(entities, path, str(tmp_path), early=early)
+    people = entities["people"]
+    old, new = people["Ann Lee"]["profile"]["text"], people["Ann Lee (reporter)"]["profile"]["text"]  # fmt: skip
+    assert "a3" not in old and "reported from the camp" not in old
+    assert "She reported from the camp.^[a3]" in new
+    assert {r["kind"]: r["state"] for r in report["rows"]}["strike"] in ("held", "re-applied")  # fmt: skip
+
+
+def test_two_joins_of_one_page_put_all_three_together(tmp_path):
+    """ "J. Lee is Jane Lee" and "J. Lee is Jan Lee" both wait for a run. The
+    first removes "J. Lee"; the second then joins the two pages left, and a
+    later "J. Lee" goes to the one page."""
+    other = {
+        "kind": "join",
+        "entity": entity_ref("people", "J. Lee", "J. Lee", ["j1"]),
+        "other": entity_ref("people", "Jan Lee", "Jan Lee", ["a9"]),
+    }
+    _file(tmp_path, _join(), other)
+    entities = _lee_entities()
+    entities["people"]["Jan Lee"] = _person("Jan Lee", ["a9"], "Jan Lee spoke.^[a9]")
+    out = _carry(entities)
+    assert {s for s, _ in out["states"].values()} == {"applied"}, out["states"]
+    people = entities["people"]
+    assert set(people) == {"Jane Lee"}
+    assert {a["article_id"] for a in people["Jane Lee"]["articles"]} == {"b1", "b2", "b3", "j1", "a9"}  # fmt: skip
+    assert join_target("people", "J. Lee", people)[0] == "Jane Lee"
+    assert join_target("people", "Jan Lee", people)[0] == "Jane Lee"
+    again = _carry(entities, done={"c-0001", "c-0002"})
+    assert {s for s, _ in again["states"].values()} == {"held"}

@@ -158,6 +158,23 @@ def _names(ref: Any, table: str, entity: Dict[str, Any]) -> bool:
     return bool(ref.get("name")) and ref.get("name") == entity.get(NAME_FIELDS[table])
 
 
+def _split_kin(ref: Any, table: str, name: str) -> bool:
+    """Is ``name`` a page that a split made of the page ``ref`` names (or the
+    other way round)? Such a page is guarded by the other's strikes, and a
+    strike whose sources a split moved is about it."""
+    from src.engine.corrections_merges import split_family  # imports this module
+
+    names = split_family(ref, table)
+    return bool(names) and name.split(" (")[0] in {n.split(" (")[0] for n in names}
+
+
+def _sources(rec: Dict[str, Any]) -> Set[str]:
+    """The articles a sentence correction is about."""
+    ids = set(rec.get("cites") or [])
+    ids |= {rec[f] for f in ("replacement_cites", "article_id") if rec.get(f)}
+    return ids
+
+
 def joined_refs(ref: Any, cs: Optional[CorrectionSet]) -> List[Dict[str, Any]]:
     """The pages a historian's joins put this one together with. A strike
     made on "J. Lee" is about "Jane Lee" once the two are joined and the
@@ -205,6 +222,7 @@ def correction_scope(table: str, entity: Dict[str, Any]) -> Iterator[None]:
             _names(ref, table, entity)
             for ref in (r.get("entity"), *joined_refs(r.get("entity"), _ACTIVE))
         )
+        or _split_kin(r.get("entity"), table, entity.get(NAME_FIELDS[table]) or "")
     ]
     token = _CURRENT.set(_rules(lines) if lines else None)
     page = _PAGE.set((table, entity.get(NAME_FIELDS[table]) or ""))
@@ -727,11 +745,26 @@ def run_corrections_pass(
         if table not in entities:
             return None
         # The page itself, else the page a join put it into
+        found = None
         for r in (ref, *joined_refs(ref, cs)):
-            pk = resolve_ref(r, _candidates(table, entities[table]))
-            if pk is not None:
-                return (table, pk)
-        return None
+            found = resolve_ref(r, _candidates(table, entities[table]))
+            if found is not None:
+                break
+        # A sentence whose sources a split moved is about the page they are
+        # on now: put back on the old page, the historian's sentence would
+        # cite an article that page no longer holds.
+        srcs = _sources(rec)
+        held = set(_linked(entities[table][found])) if found is not None else set()
+        if srcs and not srcs & held:
+            homes = [
+                pk
+                for pk, e in entities[table].items()
+                if srcs <= set(_linked(e))
+                and _split_kin(ref, table, e.get(NAME_FIELDS[table]) or "")
+            ]
+            if len(homes) == 1:
+                found = homes[0]
+        return None if found is None else (table, found)
 
     early = early or {}
     for rec in cs.active:
