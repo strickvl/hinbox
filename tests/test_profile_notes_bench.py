@@ -53,6 +53,7 @@ def test_only_replies_with_a_note_are_taken_and_the_note_is_rewritten(tmp_path):
     assert old == NOTE and how == "note, plain"
     assert new == "A report notes 41 captives at the camp.^[a9]"
     assert "still naming the profile afterwards: 0" in bench.tally([[old, how, new]])
+    assert bench.before(call, {}) == {NOTE: "kept as written"}
 
 
 def test_published_dates_date_a_count_that_changes(tmp_path):

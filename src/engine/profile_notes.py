@@ -23,7 +23,10 @@ profile is handled as that kind of sentence (``guard_edits()``):
   and a real conflict is kept with "the profile" reworded as "another report"
   (``reworded()``);
 - without that call, the article's half is kept as a plain sentence
-  (``plain_side()``), and a note with no half that stands alone is dropped.
+  (``plain_side()``); a note that says outright that sources disagree, or
+  has no half that stands alone, stays, reworded;
+- a note with no fact from the article ("The article does not mention his
+  age, whereas the profile ...") is dropped (``is_empty_note()``).
 """
 
 import datetime as dt
@@ -44,9 +47,38 @@ _NOW = re.compile(
 )
 
 
+# The half opens with a word that pointed at the half now gone
+_LEANS = re.compile(r"^(?:it|this|that|they|these|those|both|such)\b", re.I)
+# The note says the article has nothing to add, or is the model thinking
+_EMPTY = re.compile(
+    r"\b(?:article|report|story|source)\s+(?:does\s+not|doesn't|did\s+not|never)\s+"
+    r"(?:mention|state|specify|say|give|address|confirm|include|provide|report)"
+    r"|\bno (?:conflict|edit|change)(?:\s+is)?(?:\s+needed)?\b[,)]"
+    r"|\(no conflict|\bno edit needed\b",
+    re.I,
+)
+# It says outright that sources disagree: kept as a dispute, not as a fact
+_SAYS_DISAGREE = re.compile(
+    r"\b(?:sources?|reports?|accounts?|records?)\s+(?:disagree|differ|conflict|vary)"
+    r"|\bconflicting (?:accounts|reports|dates|figures|sources)\b"
+    r"|\bdiscrepanc|\bdisagree(?:ment)?\b.{0,40}\b(?:exists?|on|about|regarding)\b",
+    re.I,
+)
+
+
 def is_profile_note(claim: str) -> bool:
     """The sentence talks about the profile it is being added to."""
     return bool(_ABOUT_PROFILE.search(claim))
+
+
+def is_empty_note(claim: str) -> bool:
+    """A note with no fact from the article in it: "The article does not
+    mention his age, whereas the profile ...", "(no conflict, ...)"."""
+    return bool(_EMPTY.search(claim))
+
+
+def says_disagree(claim: str) -> bool:
+    return bool(_SAYS_DISAGREE.search(claim))
 
 
 def reworded(sentence: str) -> str:
@@ -72,12 +104,14 @@ def plain_side(sentence: str, article_date: Optional[dt.date] = None) -> Optiona
     if found is None:
         return None
     verb, side, dated = found
+    if _LEANS.match(side):
+        return None
     cites = "".join(dict.fromkeys(_CITATION.findall(sentence)))
     held_then = verb == "notes" or is_time_varying(side) or _NOW.search(side)
     if article_date and held_then:
         return as_update(verb, side, dated, article_date, cites)
     if verb != "says" or dated:
-        month = f"{dated} " if dated else ""
+        month = f"{dated} " if dated and dated.lower() not in side.lower() else ""
         article = "An" if re.match(r"[AEIOU]|8|1[18]\b", month) else "A"
         says = "states that" if verb == "says" else verb
         text = f"{article} {month}report {says} {side}"

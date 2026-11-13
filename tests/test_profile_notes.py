@@ -5,8 +5,14 @@ from typing import List
 
 from src.engine.dispute_check import DisputeVerdict, DisputeVerdicts
 from src.engine.edit_guards import guard_edits
+from src.engine.later_updates import as_update
 from src.engine.profile_edits import ProfileEdit
-from src.engine.profile_notes import is_profile_note, plain_side, reworded
+from src.engine.profile_notes import (
+    is_empty_note,
+    is_profile_note,
+    plain_side,
+    reworded,
+)
 
 COUNT = "As of January 2016, the camp held 93 captives.^[old]"
 RULING = "Judge Hale ordered the two officials to testify.^[old]"
@@ -171,7 +177,8 @@ def test_a_failed_check_keeps_the_articles_half():
 
     edits, report = guard_edits(PROFILE, [_add(EVENT)], "2016-03-08", DATES, ask=ask)
     assert edits[0].text == "The hearing was a formal arraignment of the five men.^[a9]"
-    assert report["profile_notes"][0][1] == "unchecked"
+    assert report["profile_notes"][0][1] == "plain"
+    assert report["dispute_check"][0][1] == "unchecked"
 
 
 def test_a_model_sentence_that_still_names_the_profile_is_dropped():
@@ -200,3 +207,68 @@ def test_a_half_that_is_not_a_sentence_keeps_a_source_in_front():
         "profile's date.^[a9]"
     )
     assert plain_side(moved) == "The hearing was moved to June.^[a9]"
+
+
+def test_the_half_ends_where_the_comparison_starts():
+    figure = (
+        "The article states that 41 of the last 60 captives were cleared, a "
+        "figure that differs from the profile's count of 43.^[a9]"
+    )
+    assert plain_side(figure) == "41 of the last 60 captives were cleared.^[a9]"
+    two = (
+        "The article reports that Judge Hale suspended the fine and that the "
+        "ruling was not vacated, contradicting the profile's claim.^[a9]"
+    )
+    assert plain_side(two) == (
+        "Judge Hale suspended the fine and the ruling was not vacated.^[a9]"
+    )
+    both = (
+        "The article states Hale was appointed in May 2015, which is consistent "
+        "with the profile's first sentence but conflicts with the profile's "
+        "statement that he was appointed in June 2015.^[a9]"
+    )
+    assert plain_side(both) == "Hale was appointed in May 2015.^[a9]"
+    # "which conflicts with" is not "sources disagree": the half stands alone
+    edits, report = guard_edits(PROFILE, [_add(both)])
+    assert "profile" not in edits[0].text and report["profile_notes"][0][1] == "plain"
+
+
+def test_a_half_that_leans_on_the_other_half_is_not_cut_loose():
+    leans = "The article states that it took place in May, unlike the profile.^[a9]"
+    assert plain_side(leans) is None
+    edits, report = guard_edits(PROFILE, [_add(leans)])
+    assert edits[0].text == reworded(leans)
+    assert report["profile_notes"][0][1] == "reworded"
+
+
+def test_a_note_with_no_fact_from_the_article_is_dropped():
+    silent = (
+        "The article does not mention the judge's age, whereas the profile "
+        "gives two ages.^[a9]"
+    )
+    thinking = (
+        "The article states the camp holds 93 captives, which conflicts with "
+        "the profile's figure of 93 (no conflict, so no edit needed).^[a9]"
+    )
+    assert is_empty_note(silent) and is_empty_note(thinking)
+    assert not is_empty_note(MORE)
+    for note in (silent, thinking):
+        edits, report = guard_edits(PROFILE, [_add(note)], ask=_asker([], []))
+        assert edits == [] and report["profile_notes"][0][1] == "empty"
+
+
+def test_a_date_the_half_already_gives_is_not_said_twice():
+    when = dt.date(2017, 1, 9)
+    side = "a January 2017 transfer of four captives left 55 at the camp"
+    assert as_update("says", side, None, when, "^[a9]") == (
+        "A January 2017 transfer of four captives left 55 at the camp.^[a9]"
+    )
+    early = "in early 2017 he had lost 30 pounds"
+    assert as_update("says", early, None, when, "^[a9]") == (
+        "In early 2017 he had lost 30 pounds.^[a9]"
+    )
+    noted = "Hale claimed the power to excuse the lawyers in January 2017"
+    assert as_update("notes", noted, None, when, "^[a9]") == (
+        "A report notes Hale claimed the power to excuse the lawyers in January "
+        "2017.^[a9]"
+    )

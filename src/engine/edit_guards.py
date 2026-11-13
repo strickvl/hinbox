@@ -50,7 +50,13 @@ from src.engine.later_updates import (
     to_date,
 )
 from src.engine.profile_edits import ProfileEdit, apply_edits
-from src.engine.profile_notes import is_profile_note, plain_side, reworded
+from src.engine.profile_notes import (
+    is_empty_note,
+    is_profile_note,
+    plain_side,
+    reworded,
+    says_disagree,
+)
 from src.evals.profile_cases import _sentences
 
 MIN_STEMS = 3  # shorter lines (headings, "Tags:") aren't checked
@@ -326,15 +332,19 @@ def disputed_sentences(
     # is when it was written: on dev, Luna's two kept false disputes differed
     # from the profile only in that year
     # A note about the profile quotes the profile's value too ("... 104
-    # captives, conflicting with the profile's count of 93"): only the
-    # article's half says what an old sentence must differ from
+    # captives, conflicting with the profile's count of 93"), so an old
+    # sentence may also differ from the article's half alone
     side = article_side(claim) if is_profile_note(claim) else None
-    topic = side[1] if side else claim
-    topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", _PUBLISHED.sub(" ", topic)))
+    topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", _PUBLISHED.sub(" ", claim)))
     # "... 2,974 people, rather than 2,976": the second value is the old one
     rather = re.search(r"\brather than\b(.*)$", topic, flags=re.I)
     topic = topic[: rather.start()] if rather else topic
-    found = [o for o in known if _disputes_value(topic, _PUBLISHED.sub(" ", _claim(o)))]
+    topics = [topic] + ([_PUBLISHED.sub(" ", side[1])] if side else [])
+    found = [
+        o
+        for o in known
+        if any(_disputes_value(t, _PUBLISHED.sub(" ", _claim(o))) for t in topics)
+    ]
     if found or not rather:
         return found
     # The value topic words can't link ("death toll" against "killed"): the
@@ -502,6 +512,8 @@ def guard_edits(
             note = is_profile_note(claim)
             if is_repeat(sentence, known):
                 report["repeats"].append(sentence[:200])
+            elif note and is_empty_note(claim):
+                report["profile_notes"].append([sentence[:200], "empty", ""])
             elif is_invented_dispute(sentence, known) and not (
                 ask and _anchor_differs(sentence, profile, edit.anchor)
             ):
@@ -511,13 +523,7 @@ def guard_edits(
                 facts_left[n] += 1
                 known.append(new)
             elif note and not (ask and span):
-                # No model to say what it is. Worded "sources disagree", it
-                # stays a dispute; otherwise the article's half alone
-                plain = None if _NARRATOR.search(claim) else plain_side(sentence, when)
-                new = plain or reworded(sentence)
-                if is_repeat(new, known):
-                    new = ""
-                how = "plain" if plain else "reworded"
+                how, new = _unjudged_note(sentence, when, known)
                 report["profile_notes"].append([sentence[:200], how, new[:200]])
                 if new:
                     facts_left[n] += 1
@@ -605,10 +611,28 @@ def _keep_note(
     call failed) as the article's half alone, else reworded too."""
     sentence = item["sentence"]
     known.remove(sentence)
-    new = reworded(sentence)
-    if how != "conflict" and not _NARRATOR.search(_claim(sentence)):
-        plain = plain_side(sentence, when)
-        new = plain if plain and not is_repeat(plain, known) else new
-    known.append(new)
+    if how == "conflict":
+        new = reworded(sentence)
+    else:
+        how, new = _unjudged_note(sentence, when, known)
+    if new:
+        known.append(new)
+    else:
+        facts_left[item["edit"]] -= 1
     report["profile_notes"].append([sentence[:200], how, new[:200]])
     swaps[item["edit"]].append((item["span"], new))
+
+
+def _unjudged_note(
+    sentence: str, when: Optional[dt.date], known: List[str]
+) -> Tuple[str, str]:
+    """(how, new text) for a note about the profile no model has judged.
+
+    One that says outright that sources disagree stays a dispute, with "the
+    profile" reworded as "another report". Any other becomes the article's
+    half alone ("" when the profile already has it); with no half that
+    stands alone it is reworded too."""
+    plain = None if says_disagree(_claim(sentence)) else plain_side(sentence, when)
+    if plain is None:
+        return "reworded", reworded(sentence)
+    return ("repeat", "") if is_repeat(plain, known) else ("plain", plain)

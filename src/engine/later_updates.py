@@ -170,9 +170,14 @@ _PROFILE_SIDE = re.compile(
 # with the profile's count of 93", "B, contradicting the profile's claim that
 # ...", "B, rather than the unspecified timing in the profile"
 _PROFILE_TAIL = re.compile(
-    r",?\s*(?:\b(?:thereby|thus|which|this|and|but)\s+)?\b(?:conflict\w*"
-    r"|contradict\w*|differ\w*|disagree\w*|inconsistent|at odds|unlike"
-    r"|contrary to|in contrast (?:to|with)|rather than|instead of|whereas|while)\b"
+    r",?\s*(?:\b(?:thereby|thus|and|but)\s+)?"
+    # "..., a figure that differs from the profile's count", "which is at odds"
+    r"(?:\b(?:which|this|that|an?\s+(?:\w+\s+){1,2}(?:that|which))\s+)?"
+    r"(?:\b(?:is|are|was|were|also|directly|therefore)\s+)*"
+    r"\b(?:conflict\w*|contradict\w*|differ\w*|disagree\w*|inconsistent|at odds"
+    r"|unlike|contrary to|in contrast (?:to|with)|rather than|instead of|whereas"
+    # "..., which is consistent with the profile's X but conflicts with ..."
+    r"|while|consistent with|in line with|match\w*|agree\w*|confirm\w*)\b"
     r"(?:(?!\b(?:whereas|while)\b)[^.;]){0,80}?"
     r"\bthe\s+(?:existing\s+|current\s+|earlier\s+)?profile\b.*$",
     re.I | re.S,
@@ -268,6 +273,9 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     verb, side = found[0].lower(), _PROFILE_SIDE.sub("", found[1]).strip()
     side = _PROFILE_TAIL.sub("", side).strip()
     side = side.rstrip(".;, ")
+    if subject and _took_that(subject):
+        # "reports that A and that B": the second "that" has lost its verb
+        side = re.sub(r"\b(and|but)\s+that\b", r"\1", side)
     if len(side.split()) < 4 or _COMPARES.search(side):
         return None
     if verb in _NAMES:
@@ -288,12 +296,16 @@ _FINITE = re.compile(
 _RELATIVE = re.compile(r"\b(?:who|whom|whose|which|that)\b.*$", re.I | re.S)
 
 
+def _took_that(subject: "re.Match[str]") -> bool:
+    return subject.group(0).rstrip().lower().endswith("that")
+
+
 def _object_only(subject: "re.Match[str]", side: str) -> bool:
     """The side may be only what the verb reports ("The article reports 41
     captives at the camp"), not a sentence: no "that" before it and no
     "is/was/has/will" in it. Such a side keeps a source in front ("A report
     notes 41 captives at the camp"), which reads right either way."""
-    if subject.group(0).rstrip().lower().endswith("that"):
+    if _took_that(subject):
         return False
     return not _FINITE.search(_RELATIVE.sub("", side))
 
@@ -333,7 +345,8 @@ _MONTH = (
 _STARTS_DATED = re.compile(
     rf"^(?:(?:on|in|by|as of|since|during|prior to|before|after)\s+(?:early |late "
     rf"|mid-)?(?:the\s+\w+\s+\d{{4}}\s+\w+|{_MONTH}\s+(?:\d{{1,2}},?\s+)?\d{{4}})"
-    rf"|{_MONTH}\s+\d{{1,2}},\s+\d{{4}})",
+    rf"|{_MONTH}\s+\d{{1,2}},\s+\d{{4}}"
+    rf"|(?:in|by|during|since)\s+(?:early |late |mid-)?(?:19|20)\d\d\b)",
     re.I,
 )
 _AS_OF = re.compile(r"\bas of\b", re.I)
@@ -371,9 +384,11 @@ def as_update(
     month unless the sentence dated the source itself (``dated``)."""
     month = dated or f"{article_date:%B %Y}"
     if verb != "says":
+        # "A report notes ... in October 2017", not "An October 2017 report"
+        month = "" if month.lower() in side.lower() else f"{month} "
         article = "An" if re.match(r"[AEIOU]|8|1[18]\b", month) else "A"
-        text = f"{article} {month} report {verb} {side}"
-    elif _says_when(side):
+        text = f"{article} {month}report {verb} {side}"
+    elif _says_when(side) or month.lower() in side.lower():
         text = side[0].upper() + side[1:]
     else:
         first, _, rest = side.partition(" ")

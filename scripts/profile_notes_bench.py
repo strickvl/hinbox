@@ -11,7 +11,9 @@ go through ``guard_edits()`` against the profile its prompt showed, with the
 articles' published dates when ``--articles`` is given:
 
 - without a model (the code path): how many notes become a dated later
-  state, the article's half alone, a reworded dispute, or are dropped;
+  state, the article's half alone, a reworded dispute, or are dropped,
+  beside what the guards did with the same sentences before they knew
+  notes about the profile;
 - with ``--ask N``: for N of those replies, also with the dispute check's
   model call (the pipeline's default path), and what it answered.
 
@@ -92,16 +94,24 @@ def published_dates(path: Optional[str]) -> Dict[str, Any]:
     return dict(zip(table["id"], table["published_date"]))
 
 
-def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> List[Row]:
-    """A row for each note of a reply, after ``guard_edits()``."""
+def _report(call: Dict[str, Any], dates: Dict[str, Any], ask: Any) -> Tuple:
+    """(the reply, its guarded edits, the guard report) for a recorded call."""
     user = call["messages"][-1]["content"]
     found = _PROFILE.search(user)
     article = _ARTICLE_ID.search(user)
     reply = parse_reply(call["reply"])
     if not found or reply is None:
-        return []
+        return None, [], {}
     when = dates.get(article.group(1)) if article else None
     kept, report = guard_edits(found.group(1), reply.edits, when, dates, ask=ask)
+    return reply, kept, report
+
+
+def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> List[Row]:
+    """A row for each note of a reply, after ``guard_edits()``."""
+    reply, kept, report = _report(call, dates, ask)
+    if reply is None:
+        return []
     rows = [[old, "later state", new] for old, new in report["later_updates"]]
     rows += [[old, f"note, {how}", new] for old, how, new in report["profile_notes"]]
     rows += [[old, "repeat, dropped", ""] for old in report["repeats"]]
@@ -116,6 +126,24 @@ def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> Lis
     return [
         [notes[old], how, after.get(new, new)] for old, how, new in rows if old in notes
     ]
+
+
+def before(call: Dict[str, Any], dates: Dict[str, Any]) -> Dict[str, str]:
+    """What the guards did with each note before they knew notes about the
+    profile (no model): only "sources disagree" wordings were looked at."""
+    import src.engine.edit_guards as guards
+
+    knows, guards.is_profile_note = guards.is_profile_note, lambda claim: False
+    try:
+        reply, _, report = _report(call, dates, None)
+    finally:
+        guards.is_profile_note = knows
+    if reply is None:
+        return {}
+    how = {old: "later state" for old, _ in report["later_updates"]}
+    how.update({old: "repeat, dropped" for old in report["repeats"]})
+    how.update({old: "invented dispute, dropped" for old in report["disputes"]})
+    return {n: how.get(n[:200], "kept as written") for n in _notes_in(reply)}
 
 
 def _asker(call: Dict[str, Any], model: str) -> Any:
@@ -159,11 +187,17 @@ def main() -> int:
     os.makedirs(args.out, exist_ok=True)
     rng = random.Random(args.seed)
     rows: List[Row] = []
+    moved: Counter = Counter()  # (before this guard, with it)
     # In batches, so the prompts of a whole run are never all in memory
     for start in range(0, len(places), 200):
         for call in load(places[start : start + 200]):
-            rows += guarded(call, dates)
+            got, was = guarded(call, dates), before(call, dates)
+            rows += got
+            moved.update((was.get(old, "?"), how) for old, how, _ in got)
     print(f"without a model, {len(rows)} notes:\n{tally(rows)}")
+    print("before this guard -> with it:")
+    for (was_how, how), n in sorted(moved.items(), key=lambda kv: (kv[0][0], -kv[1])):
+        print(f"  {was_how} -> {how}: {n}")
     write(
         os.path.join(args.out, "rewrites.md"),
         "Notes about the profile, without a model",
