@@ -31,14 +31,12 @@ import re
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from scripts.export_training_data import (
-    _context,
     _input_messages,
     _json_or_text,
     _without_retry_turns,
-    load_spans,
 )
 from scripts.export_training_data import _messages as _span_messages
 from src.constants import OLLAMA_MODEL
@@ -47,43 +45,104 @@ from src.engine.edit_limits import LimitedEditList, without_cut_off
 from src.engine.profile_edits import ProfileEditList, apply_edits
 
 SCHEMA_NAMES = ("ProfileEditList", "LimitedEditList")
+_NOTE_KEYS = ("hinbox.entity_name", "hinbox.article_id")
 _CITATION = re.compile(r"\^\[[^\]]*\]")
 _PROFILE = re.compile(
     r"Existing profile:\n-{16}\n(.*)\n\nNew article \(ID: ", re.DOTALL
 )
 
 
-def edit_calls(spans: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """One row per profile-edit request in the traces."""
-    by_id = {s["context"]["span_id"]: s for s in spans}
-    rows = []
-    for s in spans:
-        attrs = s.get("attributes") or {}
-        params = _json_or_text(attrs.get("llm.invocation_parameters"))
-        if not isinstance(params, dict):
-            continue
-        fmt = params.get("response_format") or {}
-        if (fmt.get("json_schema") or {}).get("name") not in SCHEMA_NAMES:
-            continue
-        # The prompt as first sent: a retry turn would hold a whole cut reply
-        messages = _without_retry_turns(_input_messages(attrs))
-        reply = _span_messages(attrs, "output")
-        meta = _context(s, by_id)
-        rows.append(
-            {
-                "key": hashlib.sha256(
-                    json.dumps(messages, sort_keys=True).encode()
-                ).hexdigest()[:16],
-                "messages": messages,
-                "params": params,
-                "finish": list(attrs.get("gen_ai.response.finish_reasons") or []),
-                "reply": (reply[0].get("content") if reply else "") or "",
-                "step": attrs.get("hinbox.step"),
-                "entity": meta.get("entity_name"),
-                "article": meta.get("article_id"),
-            }
-        )
-    return rows
+def edit_call(span: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The request and reply of a profile-edit span, or None for another span."""
+    attrs = span.get("attributes") or {}
+    params = _json_or_text(attrs.get("llm.invocation_parameters"))
+    if not isinstance(params, dict):
+        return None
+    fmt = params.get("response_format") or {}
+    if (fmt.get("json_schema") or {}).get("name") not in SCHEMA_NAMES:
+        return None
+    # The prompt as first sent: a retry turn would hold a whole cut reply
+    messages = _without_retry_turns(_input_messages(attrs))
+    reply = _span_messages(attrs, "output")
+    return {
+        "key": hashlib.sha256(
+            json.dumps(messages, sort_keys=True).encode()
+        ).hexdigest()[:16],
+        "messages": messages,
+        "params": params,
+        "finish": list(attrs.get("gen_ai.response.finish_reasons") or []),
+        "reply": (reply[0].get("content") if reply else "") or "",
+        "step": attrs.get("hinbox.step"),
+    }
+
+
+def _group(call: Dict[str, Any]) -> Optional[str]:
+    if "length" in call["finish"]:
+        return "runaway"
+    old = parse_reply(call["reply"])
+    return "long" if old is not None and over_limits(old) else None
+
+
+def scan(paths: Iterable[str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """(edit calls in a group, notes) from trace files, one line at a time.
+
+    A full run's traces are too big to hold in memory, so a call keeps only
+    its prompt's key, its group and where its line is; ``notes`` has each
+    span's parent and ``hinbox.*`` values, to name the entity and article."""
+    calls: List[Dict[str, Any]] = []
+    notes: Dict[str, Any] = {}
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            for number, line in enumerate(f):
+                if not line.strip():
+                    continue
+                span = json.loads(line)
+                attrs = span.get("attributes") or {}
+                kept = {k: attrs[k] for k in _NOTE_KEYS if k in attrs}
+                span_id = span["context"]["span_id"]
+                notes[span_id] = (span.get("parent_id"), kept)
+                call = edit_call(span)
+                group = _group(call) if call else None
+                if call and group:
+                    where = (path, number)
+                    calls.append(
+                        {
+                            "key": call["key"],
+                            "group": group,
+                            "span": span_id,
+                            "where": where,
+                        }  # fmt: skip
+                    )
+    return calls, notes
+
+
+def _note(notes: Dict[str, Any], span_id: Optional[str], key: str) -> Any:
+    """``key`` from the span or its nearest ancestor that has it."""
+    while span_id in notes:
+        span_id, kept = notes[span_id]
+        if key in kept:
+            return kept[key]
+    return None
+
+
+def load(picked: List[Dict[str, Any]], notes: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The picked calls in full, read again from their lines."""
+    wanted = {c["where"]: c for c in picked}
+    full: Dict[Tuple[str, int], Dict[str, Any]] = {}
+    for path in sorted({where[0] for where in wanted}):
+        with open(path, encoding="utf-8") as f:
+            for number, line in enumerate(f):
+                slim = wanted.get((path, number))
+                if slim is None:
+                    continue
+                full[(path, number)] = {
+                    **(edit_call(json.loads(line)) or {}),
+                    "group": slim["group"],
+                    "of": slim["of"],
+                    "entity": _note(notes, slim["span"], "hinbox.entity_name"),
+                    "article": _note(notes, slim["span"], "hinbox.article_id"),
+                }
+    return [full[c["where"]] for c in picked]
 
 
 def parse_reply(text: str) -> Optional[ProfileEditList]:
@@ -116,19 +175,15 @@ def pick(
     calls: List[Dict[str, Any]], runaway: int, long: int, seed: int = 0
 ) -> List[Dict[str, Any]]:
     """Up to ``runaway`` and ``long`` distinct prompts, the same for a seed."""
-    groups: Dict[str, Dict[str, Dict[str, Any]]] = {"runaway": {}, "long": {}}
-    for call in calls:
-        if "length" in call["finish"]:
-            groups["runaway"].setdefault(call["key"], call)
-            continue
-        old = parse_reply(call["reply"])
-        if old is not None and over_limits(old):
-            groups["long"].setdefault(call["key"], call)
     picked = []
     for group, size in (("runaway", runaway), ("long", long)):
-        found = [groups[group][k] for k in sorted(groups[group])]
+        first: Dict[str, Dict[str, Any]] = {}
+        for call in calls:
+            if call["group"] == group:
+                first.setdefault(call["key"], call)
+        found = [first[k] for k in sorted(first)]
         chosen = random.Random(seed).sample(found, min(size, len(found)))
-        picked += [{**c, "group": group, "of": len(found)} for c in chosen]
+        picked += [{**c, "of": len(found)} for c in chosen]
     return picked
 
 
@@ -277,16 +332,13 @@ def main() -> int:
     ap.add_argument("--list", action="store_true", help="count the groups, no calls")
     args = ap.parse_args()
 
-    picked = pick(
-        edit_calls(load_spans(args.traces)), args.runaway, args.long, args.seed
-    )
+    calls, notes = scan(args.traces)
     for group in ("runaway", "long"):
-        got = [c for c in picked if c["group"] == group]
-        print(
-            f"{group}: {got[0]['of'] if got else 0} distinct prompts, {len(got)} picked"
-        )
+        keys = {c["key"] for c in calls if c["group"] == group}
+        print(f"{group}: {len(keys)} distinct prompts")
     if args.list:
         return 0
+    picked = load(pick(calls, args.runaway, args.long, args.seed), notes)
     os.makedirs(args.out, exist_ok=True)
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
         rows = list(

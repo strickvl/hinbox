@@ -51,19 +51,27 @@ def _spans() -> List[Dict]:
     ]
 
 
-def test_edit_calls_and_pick_find_the_two_groups():
-    calls = bench.edit_calls(_spans())
-    assert len(calls) == 4 and calls[0]["entity"] == "Camp 1"
+def _picked(tmp_path, runaway: int, long: int) -> List[Dict]:
+    path = tmp_path / "run-1.jsonl"
+    path.write_text("".join(json.dumps(s) + "\n" for s in _spans()))
+    calls, notes = bench.scan([str(path)])
+    assert [c["group"] for c in calls] == ["runaway", "runaway", "long"]
     assert calls[0]["key"] == calls[1]["key"] != calls[2]["key"]
-    picked = bench.pick(calls, runaway=5, long=5)
-    assert [(c["group"], c["entity"], c["of"]) for c in picked] == [
-        ("runaway", "Camp 1", 1),
-        ("long", "Camp 3", 1),
+    return bench.load(bench.pick(calls, runaway, long), notes)
+
+
+def test_scan_pick_and_load_find_the_two_groups(tmp_path):
+    picked = _picked(tmp_path, 5, 5)
+    assert [(c["group"], c["entity"], c["article"], c["of"]) for c in picked] == [
+        ("runaway", "Camp 1", "a9", 1),
+        ("long", "Camp 3", "a9", 1),
     ]
+    assert picked[0]["messages"][0] == {"role": "system", "content": "Edit."}
+    assert picked[0]["params"]["max_tokens"] == 16384
 
 
-def test_compare_counts_what_the_limits_left():
-    call = bench.pick(bench.edit_calls(_spans()), 0, 5)[0]
+def test_compare_counts_what_the_limits_left(tmp_path):
+    call = _picked(tmp_path, 0, 5)[0]
     cut = LONG[: el.TEXT_CHARS]
     row = bench.compare(call, _reply(cut, "Later fact.^[a9]"))
     assert row["parsed"] and row["edits"] == 2 and row["edits_kept"] == 2
@@ -79,7 +87,9 @@ def test_compare_counts_what_the_limits_left():
     }
 
 
-def test_replay_sends_the_recorded_request_with_the_limited_schema(monkeypatch):
+def test_replay_sends_the_recorded_request_with_the_limited_schema(
+    tmp_path, monkeypatch
+):
     sent: Dict[str, Any] = {}
 
     def create(**kwargs: Any) -> Any:
@@ -94,7 +104,7 @@ def test_replay_sends_the_recorded_request_with_the_limited_schema(monkeypatch):
         chat=SimpleNamespace(completions=SimpleNamespace(create=create))
     )
     monkeypatch.setattr("src.utils.llm._create_raw_client", lambda target: client)
-    call = bench.pick(bench.edit_calls(_spans()), 5, 0)[0]
+    call = _picked(tmp_path, 5, 0)[0]
     row = bench.replay(call, "ollama/test", limits=True)
     assert sent["messages"] == call["messages"] and sent["max_tokens"] == 16384
     schema = sent["response_format"]["json_schema"]["schema"]
