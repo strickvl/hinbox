@@ -130,6 +130,9 @@ def join_pair(
         work.setdefault("reflection_history", []).extend(history or [])
         report["updated"] += 1
     if failed:
+        # Still two rows: under one spelling of the kind they would share a
+        # key, and the reader would show only one of them
+        work["type"] = keeper.get("type")
         return work, {**report, "failed": "; ".join(failed)}
     work["alternative_names"] = _alternatives(work, donor)
     return work, report
