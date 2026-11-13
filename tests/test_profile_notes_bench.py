@@ -55,7 +55,16 @@ def test_only_replies_with_a_note_are_taken_and_the_note_is_rewritten(tmp_path):
     assert old == NOTE and how == "note, plain"
     assert new == "A report notes 41 captives at the camp.^[a9]"
     assert "still naming the profile afterwards: 0" in bench.tally([[old, how, new]])
-    assert bench.before(call, {}) == {NOTE: "kept as written"}
+    was = bench.before(call, {})
+    assert was == {NOTE: ["kept as written"]}
+    assert bench.moves([[old, how, new]], was) == [("kept as written", "note, plain")]
+    # The same note twice: before, the second was a repeat of the first
+    twice = {NOTE: ["kept as written", "repeat, dropped"]}
+    got = [[NOTE, "repeat, dropped", ""], [NOTE, "note, plain", new]]
+    assert bench.moves(got, twice) == [
+        ("kept as written", "note, plain"),
+        ("repeat, dropped", "repeat, dropped"),
+    ]
 
 
 def test_published_dates_date_a_count_that_changes(tmp_path):

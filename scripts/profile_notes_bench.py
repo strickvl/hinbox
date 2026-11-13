@@ -27,6 +27,7 @@ import os
 import random
 import re
 from collections import Counter
+from itertools import zip_longest
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from scripts.edit_limits_bench import _PROFILE, edit_call, parse_reply
@@ -38,6 +39,7 @@ from src.evals.profile_cases import _sentences
 _ARTICLE_ID = re.compile(r"\n\nNew article \(ID: ([^)]+)\):\n")
 _ENTITY = re.compile(r'profile of the ([\w ]+?) "(.+?)"\. ')
 Row = List[str]  # [the note, what happened to it, what took its place]
+_REPEAT = "repeat, dropped"
 
 
 def _notes_in(reply: Any) -> List[str]:
@@ -121,7 +123,7 @@ def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> Lis
         return []
     rows = [[old, "later state", new] for old, new in report["later_updates"]]
     rows += [[old, f"note, {how}", new] for old, how, new in report["profile_notes"]]
-    rows += [[old, "repeat, dropped", ""] for old in report["repeats"]]
+    rows += [[old, _REPEAT, ""] for old in report["repeats"]]
     rows += [[old, "invented dispute, dropped", ""] for old in report["disputes"]]
     done = {r[0] for r in rows}
     for row in report.get("dispute_check") or []:
@@ -137,9 +139,10 @@ def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> Lis
     return [[notes[old], how, full(new)] for old, how, new in rows if old in notes]
 
 
-def before(call: Dict[str, Any], dates: Dict[str, Any]) -> Dict[str, str]:
+def before(call: Dict[str, Any], dates: Dict[str, Any]) -> Dict[str, List[str]]:
     """What the guards did with each note before they knew notes about the
-    profile (no model): only "sources disagree" wordings were looked at."""
+    profile (no model): only "sources disagree" wordings were looked at.
+    One entry per time the note is in the reply, a dropped repeat last."""
     import src.engine.edit_guards as guards
 
     knows, guards.is_profile_note = guards.is_profile_note, lambda claim: False
@@ -150,9 +153,27 @@ def before(call: Dict[str, Any], dates: Dict[str, Any]) -> Dict[str, str]:
     if reply is None:
         return {}
     how = {old: "later state" for old, _ in report["later_updates"]}
-    how.update({old: "repeat, dropped" for old in report["repeats"]})
     how.update({old: "invented dispute, dropped" for old in report["disputes"]})
-    return {n: how.get(n[:200], "kept as written") for n in _notes_in(reply)}
+    repeats = Counter(report["repeats"])
+    was: Dict[str, List[str]] = {}
+    for note, times in Counter(_notes_in(reply)).items():
+        again = min(times, repeats[note[:200]])
+        first = how.get(note[:200], "kept as written")
+        was[note] = [first] * (times - again) + [_REPEAT] * again
+    return was
+
+
+def moves(got: List[Row], was: Dict[str, List[str]]) -> List[Tuple[str, str]]:
+    """(before, with the guard) for each note of a reply; a note that is in
+    the reply twice is paired in order, its dropped repeat last."""
+    now: Dict[str, List[str]] = {}
+    for old, how, _ in got:
+        now.setdefault(old, []).append(how)
+    pairs: List[Tuple[str, str]] = []
+    for old, hows in now.items():
+        hows.sort(key=lambda how: how in (_REPEAT, "note, repeat"))
+        pairs += zip_longest(was.get(old, []), hows, fillvalue="?")
+    return pairs
 
 
 def _asker(call: Dict[str, Any], model: str) -> Any:
@@ -202,7 +223,7 @@ def main() -> int:
         for call in load(places[start : start + 200]):
             got, was = guarded(call, dates), before(call, dates)
             rows += got
-            moved.update((was.get(old, "?"), how) for old, how, _ in got)
+            moved.update(moves(got, was))
     print(f"without a model, {len(rows)} notes:\n{tally(rows)}")
     print("before this guard -> with it:")
     for (was_how, how), n in sorted(moved.items(), key=lambda kv: (kv[0][0], -kv[1])):
