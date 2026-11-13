@@ -338,7 +338,7 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     # "as of Friday (January 11, 2013)": the date alone
     side = _WEEKDAY_DATE.sub(r"\1", side)
     # "(of the current year, implied 2018)": the model's own working
-    side = re.sub(r"\s*\([^()]*\bimplied\b[^()]*\)", "", side)
+    side = re.sub(r"\s*\([^()]*\b(?:implied|published)\b[^()]*\)", "", side)
     # "the 116 captives here, ...": here was where the article was written
     side = re.sub(r"\s+here(?=,|$)", "", side)
     if _LEANS.search(side):
