@@ -15,7 +15,7 @@ from src.constants import (
 )
 from src.engine.alternative_names import add_alternative_name
 from src.engine.corrections_merges import (
-    join_target,
+    forced_target,
     split_block,
     split_create_key,
 )
@@ -513,11 +513,13 @@ class EntityMerger:
             rejected: List[Union[str, Tuple]] = []
             blocked: List[Union[str, Tuple]] = []
             verdict, similar_key = "skip", None
-            forced = join_target(self.entity_type, display, entities[self.entity_type])
+            forced = forced_target(
+                self.entity_type, article_id, display, entities[self.entity_type]
+            )
             if forced:
                 (similar_key, joined_by), similarity_score = forced, 1.0
                 verdict = "merge"
-                log(f"'{display}' joined by {joined_by}: no match check", level="info")
+                log(f"'{display}' placed by {joined_by}: no match check", level="info")
             while not forced and len(rejected) <= MERGE_MAX_SIMILAR_CHECKS:
                 similar_key, similarity_score = next_candidate(
                     self.entity_type,

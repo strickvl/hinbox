@@ -15,6 +15,7 @@ from src.engine.corrections_merges import (
     join_target,
     split_block,
     split_create_key,
+    split_home,
 )
 from src.engine.corrections_pass import (
     configure_corrections,
@@ -376,3 +377,35 @@ def test_reader_says_what_the_run_did_with_a_split(client, corr, tmp_path):  # n
     assert "Carried out by the run of" in listing and "1 sources moved" in listing
     page = client.get("/people/Yusuf%20Qadir%20(trader)")
     assert page.status_code == 200 and "a trader" in page.text
+
+
+def test_a_ticked_article_seen_again_lands_on_the_new_page(tmp_path):
+    """On the full-run copy the match check could turn the new page away and
+    a third page, "... (test) (2)", was created."""
+    _file(tmp_path, _split())
+    entities = _ann_entities()
+    _carry(entities)
+    asked: List[str] = []
+
+    def check(new, existing, *a, **kw):
+        asked.append(existing)
+        return MatchCheckResult(is_match=False, confidence=0.9, reason="stub")
+
+    def merge(aid: str):
+        with (
+            patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
+            patch(
+                "src.engine.mergers.get_embedding_manager",
+                return_value=StubEmbeddingManager(vec=[1.0, 0.0, 0.0]),
+            ),
+            patch("src.engine.mergers.cloud_model_check_match", side_effect=check),
+        ):
+            return EntityMerger("people").merge_entities(
+                [{"name": "Ann Lee", "type": "journalist"}], entities, aid, "t", "u",
+                "2012-01-01", TEXTS[aid], "x", similarity_threshold=0.8,
+            )  # fmt: skip
+
+    assert merge("a3").merged == 1 and merge("a1").merged == 1
+    assert asked == []  # each side goes home without a match check
+    assert set(entities["people"]) == {"Ann Lee", "Ann Lee (reporter)"}
+    assert split_home("people", "a9", "Ann Lee", entities["people"]) is None

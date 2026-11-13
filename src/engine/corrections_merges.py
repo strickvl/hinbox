@@ -121,6 +121,45 @@ def split_create_key(table: str, article_id: str, key: Any, pages: Pages) -> Any
     return None
 
 
+def split_home(
+    table: str, article_id: str, incoming: str, pages: Pages
+) -> Optional[Tuple]:
+    """(key, correction id) of the page on this mention's own side of a split.
+
+    The historian said which side each of the split's sources is on, so a
+    mention under the split's name from one of them goes to the one page that
+    holds sources of that side and none of the other, with no match check.
+    Example: "Ann Lee" from a ticked article goes to "Ann Lee (reporter)",
+    which holds the other ticked article; without this the match check could
+    turn it away and a third page, "Ann Lee (reporter) (2)", was created.
+    """
+    for r in _usable(active_corrections(), "split", table):
+        names = split_names(r)
+        ticked, rest = _sides(r)
+        if incoming not in names or article_id not in ticked | rest:
+            continue
+        mine, other = (ticked, rest) if article_id in ticked else (rest, ticked)
+        homes = [
+            pk
+            for pk, e in pages.items()
+            if _name(table, e).split(" (")[0] in {n.split(" (")[0] for n in names}
+            and set(_linked(e)) & mine
+            and not set(_linked(e)) & other
+        ]
+        if len(homes) == 1:
+            return homes[0], r["id"]
+    return None
+
+
+def forced_target(
+    table: str, article_id: str, incoming: str, pages: Pages
+) -> Optional[Tuple]:
+    """Where a split or join sends this mention without a match check."""
+    return split_home(table, article_id, incoming, pages) or join_target(
+        table, incoming, pages
+    )
+
+
 def join_target(table: str, incoming: str, pages: Pages) -> Optional[Tuple]:
     """(key, correction id) of the page a join put this mention's name into.
 
