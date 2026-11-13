@@ -178,9 +178,27 @@ _PROFILE_TAIL = re.compile(
     r"|unlike|contrary to|in contrast (?:to|with)|rather than|instead of|whereas"
     # "..., which is consistent with the profile's X but conflicts with ..."
     r"|while|consistent with|in line with|match\w*|agree\w*|confirm\w*)\b"
-    r"(?:(?!\b(?:whereas|while)\b)[^.;]){0,80}?"
+    r"(?:(?!\b(?:whereas|while)\b)[^.;]){0,160}?"
     r"\bthe\s+(?:existing\s+|current\s+|earlier\s+)?profile\b.*$",
     re.I | re.S,
+)
+# What is left of the comparison inside the article's side: "..., but does
+# not specify the staff count", "..., without explicitly confirming it"
+_RESIDUE = re.compile(
+    r",?\s+(?:but|and|though|although)\s+(?:it\s+)?(?:does\s+not|doesn't|did\s+not)"
+    r"\s+(?:specify|mention|state|say|give|confirm|address|link)\b.*$"
+    r"|,?\s+without\s+(?:explicitly\s+)?(?:confirming|mentioning|specifying|stating"
+    r"|saying|linking)\b.*$",
+    re.I | re.S,
+)
+# "... in 2006, not 2008, and ...": the second value is the profile's
+_NOT_VALUE = re.compile(r",\s+not\s+(?:in\s+|on\s+)?(?:19|20)\d\d\b(,?)")
+# The side points at the half now gone: "it was reduced to 149", "earmarked
+# this amount"
+_LEANS = re.compile(
+    r"^(?:it|this|that|they|these|those|both|such)\b"
+    r"|\b(?:this|that|the same)\s+(?:amount|figure|number|sum|total|count|date)\b",
+    re.I,
 )
 _OPENER = re.compile(r"^(?:however|but|yet|conversely|in contrast)[,\s]+", re.I)
 # A side that still compares the two versions isn't the article's alone
@@ -228,6 +246,7 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     ("identifies", "Pohl as the judge", None), by the verb that introduced
     it, with the date the sentence gives the source, if any. The verb is
     "notes" when the side may not be a sentence of its own (``_object_only()``).
+    None too when the side points at the other half ("it was reduced to 149").
 
     ``claim`` has no citations. None when no known wording fits or what is
     left still compares the two versions.
@@ -272,7 +291,11 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
         return None
     verb, side = found[0].lower(), _PROFILE_SIDE.sub("", found[1]).strip()
     side = _PROFILE_TAIL.sub("", side).strip()
-    side = side.rstrip(".;, ")
+    side = _NOT_VALUE.sub(r"\1", _RESIDUE.sub("", side))
+    # 'a decent young man,' -> 'a decent young man'
+    side = re.sub(r""",(['"”’])$""", r"\1", side.rstrip(".;, "))
+    if _LEANS.search(side):
+        return None
     if subject and _took_that(subject):
         # "reports that A and that B": the second "that" has lost its verb
         side = re.sub(r"\b(and|but)\s+that\b", r"\1", side)
@@ -371,6 +394,15 @@ def _says_when(side: str) -> bool:
     return bool(_ENDS_DATED.search(side)) and not _TARGET.search(side)
 
 
+def _earlier(side: str, month: str) -> bool:
+    """The side is about an earlier year than its source's ("was due to
+    retire in November 2014", from a 2016 article): not how things stood
+    as of the article."""
+    years = [int(y) for y in re.findall(r"\b((?:19|20)\d\d)\b", side)]
+    when = re.search(r"(?:19|20)\d\d", month)
+    return bool(years and when) and max(years) < int(when.group())
+
+
 def as_update(
     verb: str,
     side: str,
@@ -388,7 +420,7 @@ def as_update(
         month = "" if month.lower() in side.lower() else f"{month} "
         article = "An" if re.match(r"[AEIOU]|8|1[18]\b", month) else "A"
         text = f"{article} {month}report {verb} {side}"
-    elif _says_when(side) or month.lower() in side.lower():
+    elif _says_when(side) or month.lower() in side.lower() or _earlier(side, month):
         text = side[0].upper() + side[1:]
     else:
         first, _, rest = side.partition(" ")

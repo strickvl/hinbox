@@ -51,8 +51,11 @@ def _notes_in(reply: Any) -> List[str]:
 
 
 def scan(paths: Iterable[str]) -> Tuple[List[Tuple[str, int]], Counter]:
-    """(where each reply with a note is, totals), one trace line at a time."""
+    """(where each reply with a note is, totals), one trace line at a time.
+
+    The same prompt answered again (a retry, a replay) is counted once."""
     places: List[Tuple[str, int]] = []
+    seen: set = set()
     totals: Counter = Counter()
     for path in paths:
         with open(path, encoding="utf-8") as f:
@@ -61,6 +64,10 @@ def scan(paths: Iterable[str]) -> Tuple[List[Tuple[str, int]], Counter]:
                 reply = parse_reply(call["reply"]) if call else None
                 if not call or reply is None or "length" in call["finish"]:
                     continue
+                if call["key"] in seen:
+                    totals["replies to a prompt already counted"] += 1
+                    continue
+                seen.add(call["key"])
                 found = _notes_in(reply)
                 totals["replies"] += 1
                 totals["new sentences"] += sum(
@@ -122,10 +129,12 @@ def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> Lis
             rows.append([row[0], f"model: {row[1]}", row[2] if len(row) > 2 else ""])
     # The report keeps 200 characters of each sentence; show them whole
     notes = {n[:200]: n for n in _notes_in(reply)}
-    after = {s[:200]: s for e in kept if e.op == "add" for s in _sentences(e.text)}
-    return [
-        [notes[old], how, after.get(new, new)] for old, how, new in rows if old in notes
-    ]
+    whole = [s for e in kept if e.op == "add" for s in _sentences(e.text)]
+
+    def full(new: str) -> str:
+        return next((s for s in whole if new and s.startswith(new)), new)
+
+    return [[notes[old], how, full(new)] for old, how, new in rows if old in notes]
 
 
 def before(call: Dict[str, Any], dates: Dict[str, Any]) -> Dict[str, str]:

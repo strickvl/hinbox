@@ -37,18 +37,42 @@ from src.engine.later_updates import article_side, as_update, is_time_varying
 
 _CITATION = re.compile(r"\^\[[^\]]*\]")
 # "the profile of the detainees" and "a high-profile case" are not notes
-_ABOUT_PROFILE = re.compile(
-    r"\bthe\s+(?:existing\s+|current\s+|earlier\s+)?profile(?P<s>['’]s)?\b(?!\s+of\b)",
+_PROFILE = (
+    r"the\s+(?:existing\s+|current\s+|earlier\s+)?profile(?P<s>['’]s)?\b(?!\s+of\b)"
+)
+_ABOUT_PROFILE = re.compile(rf"\b{_PROFILE}", re.I)
+# ... and neither is a sentence about a document called a profile ("The
+# profile also acknowledged that he answered the debriefers", of a review
+# board's file on a captive). A note sets the profile against the article:
+# "conflicting with the profile's count", "aligns with the profile", ...
+_AGAINST = re.compile(
+    r"\b(?:conflict\w*|contradict\w*|differ\w*|disagree\w*|inconsistent|at odds"
+    r"|unlike|contrary to|in contrast (?:to|with)|rather than|instead of"
+    r"|consistent with|in line with|match\w*|agree\w*|align\w*|distinct from"
+    r"|compared (?:to|with)|versus)\b[^.;]{0,160}?\b" + _PROFILE.replace("?P<s>", "?:"),
     re.I,
 )
+# ... or names it beside a source in a contrast: "the article states X,
+# whereas the profile states Y"
+_SOURCE = re.compile(
+    r"\b(?:the|this|an?|new|another)\s+(?:[\w.,]+\s+){0,3}?(?:article|report|story)\b"
+    r"|\bsources?\b",
+    re.I,
+)
+# ... or says what it lacks: "The profile omits that Reed led the camp"
+_LACKS = re.compile(
+    r"\b" + _PROFILE.replace("?P<s>", "?:") + r"\s+(?:omits|lacks|leaves\s+out"
+    r"|is\s+missing|(?:does\s+not|doesn't|did\s+not|fails\s+to)\s+(?:mention"
+    r"|include|state|note|say|specify|give|reflect))\s+(?P<that>that\s+)?(?P<side>.+)$",
+    re.I | re.S,
+)
+_CONTRAST = re.compile(r"\b(?:while|whereas|but|although|though|however)\b|[;:]", re.I)
 # The article's half says how things stand, not what happened
 _NOW = re.compile(
     r"\b(?:is|are|has|have|holds|houses|remains?|commands|consists|leads|heads)\b"
 )
 
 
-# The half opens with a word that pointed at the half now gone
-_LEANS = re.compile(r"^(?:it|this|that|they|these|those|both|such)\b", re.I)
 # The note says the article has nothing to add, or is the model thinking
 _EMPTY = re.compile(
     r"\b(?:article|report|story|source)\s+(?:does\s+not|doesn't|did\s+not|never)\s+"
@@ -67,8 +91,13 @@ _SAYS_DISAGREE = re.compile(
 
 
 def is_profile_note(claim: str) -> bool:
-    """The sentence talks about the profile it is being added to."""
-    return bool(_ABOUT_PROFILE.search(claim))
+    """The sentence talks about the profile it is being added to, setting
+    it against the article."""
+    if not _ABOUT_PROFILE.search(claim):
+        return False
+    if _AGAINST.search(claim) or _LACKS.search(claim):
+        return True
+    return bool(_SOURCE.search(claim) and _CONTRAST.search(claim))
 
 
 def is_empty_note(claim: str) -> bool:
@@ -100,18 +129,22 @@ def plain_side(sentence: str, article_date: Optional[dt.date] = None) -> Optiona
     when its date is known ("As of March 2016, there are 104 captives."),
     since it held then, not always; so is a half that needs a source in
     front ("An April 2013 report notes 41 captives at the camp.")."""
-    found = article_side(_CITATION.sub("", sentence).strip())
+    claim = _CITATION.sub("", sentence).strip()
+    found = article_side(claim)
+    if found is None and (m := _LACKS.search(claim)):
+        # What the profile lacks is the article's fact
+        side = m.group("side").rstrip(".;, ")
+        found = ("says" if m.group("that") else "notes", side, None)
     if found is None:
         return None
     verb, side, dated = found
-    if _LEANS.match(side):
-        return None
     cites = "".join(dict.fromkeys(_CITATION.findall(sentence)))
     held_then = verb == "notes" or is_time_varying(side) or _NOW.search(side)
     if article_date and held_then:
         return as_update(verb, side, dated, article_date, cites)
-    if verb != "says" or dated:
-        month = f"{dated} " if dated and dated.lower() not in side.lower() else ""
+    said = bool(dated) and dated.lower() not in side.lower()
+    if verb != "says" or said:
+        month = f"{dated} " if said else ""
         article = "An" if re.match(r"[AEIOU]|8|1[18]\b", month) else "A"
         says = "states that" if verb == "says" else verb
         text = f"{article} {month}report {says} {side}"

@@ -40,6 +40,17 @@ def _asker(verdicts: List[DisputeVerdict], calls: List[str]):
 def test_a_note_names_the_profile_as_a_source():
     assert is_profile_note(MORE) and is_profile_note(EVENT)
     assert is_profile_note("This contradicts the existing profile's account.")
+    assert is_profile_note(
+        "Sources disagree on his age; the profile states he is 41, while a 2014 "
+        "report lists him as 38."
+    )
+    # A document called a profile (a review board's file on a captive)
+    assert not is_profile_note(
+        "The profile also acknowledged that he answered the debriefers' questions."
+    )
+    assert not is_profile_note(
+        "The board released the profile, which called him a low-level fighter."
+    )
     assert not is_profile_note("The ruling raised the profile of the case.")
     assert not is_profile_note("He was a high-profile captive at the camp.")
     assert not is_profile_note("Sources disagree on the year of his capture.")
@@ -133,14 +144,11 @@ def test_without_a_model_the_articles_half_is_kept():
     )
     edits, _ = guard_edits(PROFILE, [_add(again)], "2016-03-08", DATES)
     assert edits == []
-    # No half stands alone: the sentence stays, without "the profile"
-    bare = "The profile omits that Colonel Reed led the camp in 2015.^[a9]"
-    edits, report = guard_edits(PROFILE, [_add(bare)], "2016-03-08", DATES)
-    assert (
-        edits[0].text
-        == "Another report omits that Colonel Reed led the camp in 2015.^[a9]"
-    )
-    assert report["profile_notes"][0][1] == "reworded"
+    # What the profile is said to lack is the article's fact
+    lacks = "The profile omits that Colonel Reed led the camp in 2015.^[a9]"
+    edits, report = guard_edits(PROFILE, [_add(lacks)], "2016-03-08", DATES)
+    assert edits[0].text == "Colonel Reed led the camp in 2015.^[a9]"
+    assert report["profile_notes"][0][1] == "plain"
 
 
 def test_the_model_decides_what_a_note_is():
@@ -272,3 +280,46 @@ def test_a_date_the_half_already_gives_is_not_said_twice():
         "A report notes Hale claimed the power to excuse the lawyers in January "
         "2017.^[a9]"
     )
+
+
+def test_the_same_note_twice_in_a_reply_is_rewritten_once():
+    again = MORE.replace("count of 93 captives", "count of 92 captives")
+    edits, report = guard_edits(PROFILE, [_add(f"{MORE} {again} {MORE}")])
+    assert edits[0].text == "There are 104 captives.^[a9]"
+    assert [how for _, how, _ in report["profile_notes"]] == ["plain", "repeat"]
+    assert report["repeats"] == [MORE]
+    # ... and the same later state is written once
+    edits, report = guard_edits(
+        PROFILE, [_add(f"{MORE} {again}", anchor=COUNT)], "2016-03-08", DATES
+    )
+    assert edits[0].text.count("104 captives") == 1
+
+
+def test_what_is_left_of_the_comparison_is_cut_from_the_half():
+    silent = (
+        "The article states that the base has about 5,500 residents, but does "
+        "not specify the number of guards as 1,500, conflicting with the "
+        "profile's guard count of 1,700.^[a9]"
+    )
+    assert plain_side(silent) == "The base has about 5,500 residents.^[a9]"
+    year = (
+        "The article states that the five men arrived in 2006, not 2008, and "
+        "were held apart, contradicting the profile's claim.^[a9]"
+    )
+    assert plain_side(year) == "The five men arrived in 2006, and were held apart.^[a9]"
+    # A half about an earlier year is not "as of" the article
+    past = (
+        "The article states that Colonel Reed was due to retire in May 2014 "
+        "and has an extension, unlike the profile.^[a9]"
+    )
+    assert plain_side(past, dt.date(2016, 7, 1)) == (
+        "Colonel Reed was due to retire in May 2014 and has an extension.^[a9]"
+    )
+    far = (
+        "The article states that the camp holds 79 captives, with 26 cleared "
+        "for release with security assurances that satisfy the defense "
+        "secretary, conflicting with the 31 cleared for release with security "
+        "assurances that satisfy the defense secretary cited in the profile.^[a9]"
+    )
+    assert plain_side(far).startswith("The camp holds 79 captives, with 26 cleared")
+    assert "31" not in plain_side(far)

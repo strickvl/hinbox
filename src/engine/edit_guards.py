@@ -493,6 +493,8 @@ def guard_edits(
     swaps: List[List[Tuple[Tuple[int, int], str]]] = []
     facts_left: List[int] = []
     pending: List[Dict[str, Any]] = []  # disputes for the model check
+    # Sentences this call rewrote: the same one again in the reply is a repeat
+    rewritten: List[str] = []
     for n, edit in enumerate(edits):
         swaps.append([])
         facts_left.append(0)
@@ -510,7 +512,7 @@ def guard_edits(
             new = ""
             claim = _claim(sentence)
             note = is_profile_note(claim)
-            if is_repeat(sentence, known):
+            if is_repeat(sentence, known) or is_repeat(sentence, rewritten):
                 report["repeats"].append(sentence[:200])
             elif note and is_empty_note(claim):
                 report["profile_notes"].append([sentence[:200], "empty", ""])
@@ -519,10 +521,15 @@ def guard_edits(
             ):
                 report["disputes"].append(sentence[:200])
             elif new := later_update(sentence, profile, when, dates, edit.anchor) or "":
+                rewritten.append(sentence)
+                if _has(known, new):  # two notes with one later state
+                    new = ""
                 report["later_updates"].append([sentence[:200], new[:200]])
-                facts_left[n] += 1
-                known.append(new)
+                if new:
+                    facts_left[n] += 1
+                    known.append(new)
             elif note and not (ask and span):
+                rewritten.append(sentence)
                 how, new = _unjudged_note(sentence, when, known)
                 report["profile_notes"].append([sentence[:200], how, new[:200]])
                 if new:
@@ -585,7 +592,7 @@ def _apply_dispute_check(
         known.remove(sentence)
         cites = own_citations(sentence, item["olds"])
         new = replacement(verdict, sentence, cites)
-        if new and is_repeat(new, known):
+        if new and _has(known, new):
             new = None
         report["dispute_check"].append(
             [sentence[:200], verdict.verdict, (new or "")[:200]]
@@ -611,16 +618,26 @@ def _keep_note(
     call failed) as the article's half alone, else reworded too."""
     sentence = item["sentence"]
     known.remove(sentence)
-    if how == "conflict":
-        new = reworded(sentence)
-    else:
+    if how != "conflict":
         how, new = _unjudged_note(sentence, when, known)
+    elif _has(known, new := reworded(sentence)):
+        how, new = "repeat", ""  # the same conflict twice in one reply
     if new:
         known.append(new)
     else:
         facts_left[item["edit"]] -= 1
     report["profile_notes"].append([sentence[:200], how, new[:200]])
     swaps[item["edit"]].append((item["span"], new))
+
+
+def _has(known: List[str], new: str) -> bool:
+    """A rewritten sentence is already there: a repeat, or the same words (a
+    short one, "There are 104 captives.", is never a repeat by
+    ``is_repeat()``'s rules)."""
+    same = " ".join(_claim(new).lower().split())
+    return is_repeat(new, known) or any(
+        " ".join(_claim(k).lower().split()) == same for k in known
+    )
 
 
 def _unjudged_note(
@@ -634,5 +651,6 @@ def _unjudged_note(
     stands alone it is reworded too."""
     plain = None if says_disagree(_claim(sentence)) else plain_side(sentence, when)
     if plain is None:
-        return "reworded", reworded(sentence)
-    return ("repeat", "") if is_repeat(plain, known) else ("plain", plain)
+        new = reworded(sentence)
+        return ("repeat", "") if _has(known, new) else ("reworded", new)
+    return ("repeat", "") if _has(known, plain) else ("plain", plain)

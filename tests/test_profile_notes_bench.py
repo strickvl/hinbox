@@ -37,11 +37,13 @@ def _span(n: int, *texts: str, finish: str = "stop") -> Dict[str, Any]:
 
 
 def _places(tmp_path) -> List:
-    spans = [_span(1, PLAIN), _span(2, f"{PLAIN} {NOTE}"), _span(3, NOTE, finish="length")]  # fmt: skip
+    spans = [_span(1, PLAIN), _span(2, f"{PLAIN} {NOTE}"), _span(3, NOTE, finish="length"),
+             _span(2, f"{PLAIN} {NOTE}")]  # fmt: skip
     path = tmp_path / "run-1.jsonl"
     path.write_text("".join(json.dumps(s) + "\n" for s in spans))
     places, totals = bench.scan([str(path)])
-    assert totals == {"replies": 2, "new sentences": 3, "notes": 1, "replies with a note": 1}  # fmt: skip
+    assert totals == {"replies": 2, "new sentences": 3, "notes": 1, "replies with a note": 1,
+                      "replies to a prompt already counted": 1}  # fmt: skip
     return places
 
 
