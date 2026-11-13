@@ -44,17 +44,20 @@ from src.logging_config import log
 from src.utils.claim_spans import claim_end, parse_claims
 from src.utils.corrections import (
     DONE,
+    MERGE_KINDS,
     NEEDS_RUN,
     REPORT_LATEST,
     CorrectionSet,
     _report_dir,
     drop_list_mark,
+    is_split_kin,
+    joined_refs,
     last_report,
     last_states,
     latest_name,
     load_corrections,
     md_literal,
-    resolve_ref,
+    resolve_correction,
     stored_key,
 )
 from src.utils.corrections import sentence_key as _raw_key
@@ -134,8 +137,14 @@ def _candidates(table: str, pages: Dict[Any, Dict[str, Any]]) -> Iterator[Tuple]
 # ── during the run: the edit guard ───────────────────────────
 
 
+def active_corrections() -> Optional[CorrectionSet]:
+    """The corrections loaded for this run (None with none active)."""
+    return _ACTIVE
+
+
 def configure_corrections(cs: Optional[CorrectionSet]) -> None:
-    """Load the corrections the edit guard checks during this run."""
+    """Load the corrections the edit guard and the merge rules check during
+    this run."""
     global _ACTIVE
     _ACTIVE = cs if cs and cs.active else None
     with _LOCK:
@@ -155,11 +164,22 @@ def _names(ref: Any, table: str, entity: Dict[str, Any]) -> bool:
 def correction_scope(table: str, entity: Dict[str, Any]) -> Iterator[None]:
     """While a profile update runs, the guard knows this page's strikes. A
     page is matched by key or by name; two pages sharing a name both get the
-    other's strikes guarded, which can only keep a struck sentence out."""
+    other's strikes guarded, which can only keep a struck sentence out. So
+    does a page a join put it together with: while "J. Lee"'s articles are
+    fed into "Jane Lee", the strikes made on "J. Lee" are guarded."""
     lines = [
         r
         for r in (_ACTIVE.active if _ACTIVE else [])
-        if _names(r.get("entity"), table, entity)
+        if any(
+            _names(ref, table, entity)
+            for ref in (r.get("entity"), *joined_refs(r.get("entity"), _ACTIVE))
+        )
+        or (
+            (r.get("entity") or {}).get("table") == table
+            and is_split_kin(
+                r.get("entity"), entity.get(NAME_FIELDS[table]) or "", _ACTIVE
+            )
+        )
     ]
     token = _CURRENT.set(_rules(lines) if lines else None)
     page = _PAGE.set((table, entity.get(NAME_FIELDS[table]) or ""))
@@ -656,9 +676,12 @@ def run_corrections_pass(
     path: str,
     output_dir: str = "",
     write: bool = True,
+    early: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Carry out the corrections file's strikes in every profile and return
-    the report (None with no file). With ``write``, the report is written
+    the report (None with no file). ``early`` is what the start of the run
+    did with splits and joins (``carry_out_merges()``); without it they are
+    reported as waiting for a run. With ``write``, the report is written
     beside the file at once; a run passes False and writes it with
     ``write_report()`` once the tables are saved, so the report never says a
     strike was carried out in tables that were not written."""
@@ -678,11 +701,16 @@ def run_corrections_pass(
         table = ref.get("table")
         if table not in entities:
             return None
-        pk = resolve_ref(ref, _candidates(table, entities[table]))
+        pk = resolve_correction(rec, cs, _candidates(table, entities[table]))
         return None if pk is None else (table, pk)
 
+    early = early or {}
     for rec in cs.active:
-        if rec["kind"] in ("withdraw",):
+        if rec["kind"] in MERGE_KINDS:  # carried out before merging
+            state, why = (early.get("states") or {}).get(
+                rec["id"], ("waiting", "a pipeline run carries it out")
+            )
+            rows.append(_row(rec, state, why))
             continue
         page = where(rec)
         if page is None:
@@ -713,7 +741,7 @@ def run_corrections_pass(
             continue
         if page is not None and page in pages:
             superseded.setdefault(page, []).append(rec)
-    changed = 0
+    changed = int(early.get("changed") or 0)  # pages a split or join rewrote
     for (table, pk), lines in pages.items():
         entity = entities[table][pk]
         profile = entity.get("profile") or {}
@@ -755,6 +783,7 @@ def run_corrections_pass(
         "profiles_changed": changed,
         "rows": rows,
         "maybe_again": maybe,
+        "split_mixed": early.get("mixed") or [],
         "guarded": guard_log(),
         "problems": cs.problems,
         "contradictions": cs.contradictions,
@@ -809,6 +838,11 @@ def describe_report(report: Dict[str, Any]) -> str:
     line = "Corrections: " + (", ".join(parts) or "none active")
     if report.get("maybe_again"):
         line += f"; {len(report['maybe_again'])} sentences may say a struck thing again"
+    if report.get("split_mixed"):
+        line += (
+            f"; {len(report['split_mixed'])} sentences cite sources a split moved "
+            "and others (kept, to check)"
+        )
     if report.get("guarded"):
         line += f"; the edit guard stepped in {len(report['guarded'])} times"
     if report.get("problems"):
