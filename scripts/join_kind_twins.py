@@ -8,8 +8,8 @@ linked without a model call.
 
 Works on the run folder in place, so point it at a copy. The tables are saved
 after each pair, so a stopped run loses at most one pair, and running the same
-command again carries on (joined pairs are gone; a pair whose update kept
-failing keeps the articles already fed in and is asked for the rest).
+command again carries on (joined pairs are gone; a pair with an article
+whose update failed keeps the articles that went in and is asked for the rest).
 Afterwards, run the pipeline on the folder (``HINBOX_OUTPUT_DIR=<dir> just
 process --local --relevance-check --limit 0``): it reads no articles and only
 checks the citations of the changed profiles.
