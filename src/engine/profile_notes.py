@@ -33,7 +33,12 @@ import datetime as dt
 import re
 from typing import List, Optional
 
-from src.engine.later_updates import article_side, as_update, is_time_varying
+from src.engine.later_updates import (
+    article_side,
+    as_update,
+    is_time_varying,
+    relative_time,
+)
 
 _CITATION = re.compile(r"\^\[[^\]]*\]")
 # "the profile of the detainees" and "a high-profile case" are not notes
@@ -143,7 +148,12 @@ def is_empty_note(claim: str, cited: bool = True) -> bool:
     contradicts the profile's claim that ...", the model thinking aloud, or
     the profile alone with no article ("The profile has 116 and 122."; with
     no citation, also "The profile states that Reed led the camp.")."""
+    claim = _CITATION.sub("", claim).strip()
     if _EMPTY.search(claim):
+        return True
+    # "the profile states there are 172 captives, while the article states
+    # there are 172 captives": both halves say the same
+    if (found := article_side(claim)) and claim.lower().count(found[1].lower()) > 1:
         return True
     if not _OURS_FIRST.match(claim) or _OTHER_SOURCE.search(claim):
         return False
@@ -249,7 +259,7 @@ def plain_side(sentence: str, article_date: Optional[dt.date] = None) -> Optiona
         verb, side = m.group("verb"), side[m.end() :]
     cites = "".join(dict.fromkeys(_own_citations(sentence)))
     held_then = verb == "notes" or is_time_varying(side) or _NOW.search(side)
-    if article_date and held_then:
+    if article_date and (held_then or relative_time(side)):
         return as_update(verb, side, dated, article_date, cites)
     said = bool(dated) and dated.lower() not in side.lower()
     if verb != "says" or said:

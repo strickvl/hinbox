@@ -492,6 +492,22 @@ _PLANNED = re.compile(
 )
 
 
+# A time only the article's own date explains: "on Monday", "this month"
+_RELATIVE_TIME = re.compile(
+    r"\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b"
+    r"|\b(?:this|last|next)\s+(?:week|month|year)\b|\byesterday\b|\btomorrow\b",
+    re.I,
+)
+
+
+def relative_time(side: str) -> bool:
+    """The side says when only by the article's own day ("on Monday", "this
+    month") and gives no year."""
+    return bool(_RELATIVE_TIME.search(side)) and not re.search(
+        r"\b(?:19|20)\d\d\b", side
+    )
+
+
 def _with_year(side: str, month: str) -> str:
     """ "on Dec. 12" with the year of the article's month when it is that
     month ("December 2017"): the side then says when by itself."""
@@ -523,6 +539,10 @@ def as_update(
         month = "" if month.lower() in side.lower() else f"{month} "
         article = "An" if re.match(r"[AEIOU]|8|1[18]\b", month) else "A"
         text = f"{article} {month}report {verb} {side}"
+    elif relative_time(side):
+        # "as of Monday", "this month's hearings": only the source says when
+        article = "An" if re.match(r"[AEIOU]|8|1[18]\b", month) else "A"
+        text = f"{article} {month} report states that {side}"
     elif _says_when(side) or month.lower() in side.lower() or _earlier(side, month):
         text = side[0].upper() + side[1:]
     else:
@@ -530,6 +550,7 @@ def as_update(
         side = re.sub(
             r",?\s+(?:today|currently|at present|at (?:that|the) time)$", "", side
         )
+        side = re.sub(r"\b(is|are)\s+(?:currently|now)\b", r"\1", side)
         # "the trial was ..." stays lower case; a name keeps its capital
         text = f"As of {month}, {side}"
     unique = "".join(dict.fromkeys(_CITATION.findall(citations)))

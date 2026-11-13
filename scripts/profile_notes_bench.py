@@ -137,9 +137,10 @@ def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> Lis
     reply, kept, report = _report(call, dates, ask)
     if reply is None:
         return []
-    # A later state the profile already has adds nothing
+    # The same later state again, mostly from a copy of the note earlier
+    # in the reply, adds nothing
     rows = [
-        [old, "later state" if new else "later state, already there", new]
+        [old, "later state" if new else "later state, said already", new]
         for old, new in report["later_updates"]
     ]
     rows += [[old, f"note, {how}", new] for old, how, new in report["profile_notes"]]

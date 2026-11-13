@@ -573,3 +573,37 @@ def test_a_day_gets_its_year_and_a_weekday_its_date():
     assert plain_side(friday, dt.date(2013, 1, 12)) == (
         "As of January 11, 2013, the base was holding 166 captives.^[a9]"
     )
+
+
+def test_a_relative_day_keeps_the_dated_source():
+    when = dt.date(2013, 3, 20)
+    monday = "as of Monday, 44 captives were fed by tube"
+    assert as_update("says", monday, None, when, "^[a9]") == (
+        "A March 2013 report states that as of Monday, 44 captives were fed "
+        "by tube.^[a9]"
+    )
+    office = (
+        "The article reports that the office counted 19 deaths on Monday, "
+        "contradicting the profile's count of 12.^[a9]"
+    )
+    assert plain_side(office, when) == (
+        "A March 2013 report states that the office counted 19 deaths on Monday.^[a9]"
+    )
+    # A weekday with its full date says when by itself
+    full = "17 captives were on hunger strike on Wednesday, October 9, 2013"
+    assert as_update("says", full, None, when, "^[a9]").startswith("17 captives")
+    now = "a second team is currently carrying out a survey"
+    assert as_update("says", now, None, when, "^[a9]") == (
+        "As of March 2013, a second team is carrying out a survey.^[a9]"
+    )
+
+
+def test_two_halves_that_say_the_same_are_dropped():
+    same = (
+        "Sources disagree on the count; the profile states there are 172 "
+        "captives at the camp, while the article states there are 172 captives "
+        "at the camp.^[a9]"
+    )
+    assert is_empty_note(same)
+    edits, report = guard_edits(PROFILE, [_add(same)], "2016-03-08", DATES)
+    assert edits == [] and report["profile_notes"][0][1] == "empty"
