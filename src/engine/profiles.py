@@ -583,7 +583,17 @@ def _edit_profile_update(
         edits_appended=report["appended"],
         edits_skipped=len(report["skipped"]),
         disagreements=len(edited["disagreements"]),
+        fields_cut=len(report.get("cut_off") or []),
     )
+    if report.get("cut_off"):
+        log(
+            f"Edit reply for {entity_name} hit a length limit: "
+            + ", ".join(
+                c["field"] + (" (edit dropped)" if c.get("dropped") else "")
+                for c in report["cut_off"]
+            ),
+            level="warning",
+        )
     log(
         f"Edited profile for {entity_name}: {report['applied']} applied, "
         f"{report['appended']} appended, {len(report['skipped'])} skipped, "
