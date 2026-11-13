@@ -81,9 +81,11 @@ def test_compare_counts_what_the_limits_left(tmp_path):
     assert row["old_sentences"] == 80
     assert 50 < row["old_sentences_kept"] < 80
     assert row["placed"] == {"applied": 2, "appended": 0, "skipped": 0}
+    assert row["edits_after_guards"] == 2 and row["notes"] == 0
     assert bench.compare(call, '{"edits": [{"op"') == {
         "parsed": False,
         "old_parsed": True,
+        "reply_text": '{"edits": [{"op"',
     }
 
 
