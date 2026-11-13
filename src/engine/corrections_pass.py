@@ -728,7 +728,7 @@ def run_corrections_pass(
             continue
         if page is not None and page in pages:
             superseded.setdefault(page, []).append(rec)
-    changed = 0
+    changed = int(early.get("changed") or 0)  # pages a split or join rewrote
     for (table, pk), lines in pages.items():
         entity = entities[table][pk]
         profile = entity.get("profile") or {}

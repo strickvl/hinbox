@@ -185,6 +185,33 @@ def test_a_failed_join_changes_nothing(tmp_path):
     state, why = out["states"]["c-0001"]
     assert state == "waiting" and "no text for article j1" in why
     assert set(entities["people"]) == {"Jane Lee", "J. Lee"}
+    assert out["changed"] == 0 and len(entities["people"]["Jane Lee"]["articles"]) == 3
+
+
+def test_a_join_keeps_the_articles_that_went_in_when_one_fails(tmp_path):
+    """One of the smaller page's two articles has no text: the other is fed
+    in and kept, both pages stay, and the next run asks only for the rest."""
+    _file(tmp_path, _join())
+    entities = _lee_entities()
+    j = entities["people"]["J. Lee"]
+    j["articles"].append(_art("j2"))
+    j["profile"]["sources"].append("j2")
+    out = _carry(entities)
+    state, why = out["states"]["c-0001"]
+    assert state == "waiting" and "1 articles fed in" in why and "j2" in why
+    jane = entities["people"]["Jane Lee"]
+    assert [a["article_id"] for a in jane["articles"]] == ["b1", "b2", "b3", "j1"]
+    assert "J. Lee" in entities["people"] and out["changed"] == 1
+    assert "J. Lee" not in jane["alternative_names"]
+    # with the text there, the next run feeds in only j2 and finishes the join
+    texts = {**TEXTS, "j2": "J. Lee was mentioned twice."}
+    out = carry_out_merges(
+        entities, texts, "gemini", "guantanamo", set(),
+        update=fake_update, embed=_no_embed,
+    )  # fmt: skip
+    assert out["states"]["c-0001"][0] == "applied"
+    assert "1 articles fed in" in out["states"]["c-0001"][1]
+    assert set(entities["people"]) == {"Jane Lee"}
 
 
 def test_joined_name_goes_straight_to_the_kept_page(tmp_path):

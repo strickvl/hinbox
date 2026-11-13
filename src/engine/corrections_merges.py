@@ -297,7 +297,7 @@ def _build_page(
         row, report = join_pair(
             table, row, {"articles": entries[1:]}, texts, model_type, domain, update
         )
-        if row is None:
+        if report.get("failed"):
             return None, report["failed"]
     return row, ""
 
@@ -326,6 +326,7 @@ class _Run:
         self.model_type, self.domain, self.done = model_type, domain, done
         self.update, self.embed = update, embed
         self.mixed: List[Dict[str, str]] = []
+        self.changed = 0  # pages rewritten, for the report's profiles_changed
 
     def state(self, rec: Dict[str, Any]) -> str:
         return "re-applied" if rec["id"] in self.done else "applied"
@@ -348,10 +349,16 @@ class _Run:
         work, report = join_pair(
             table, keeper, donor, self.texts, self.model_type, self.domain, self.update
         )
-        if work is None:
+        if report.get("failed"):
+            # Keep what went in, so the next run asks only for the rest
+            if report["updated"]:
+                self.embed([work], self.domain)
+                pages[keep_k] = work
+                self.changed += 1
             return (
                 "waiting",
-                f"not joined yet ({report['failed']}); the next run tries again",
+                f"not joined yet: {report['updated']} articles fed in, the rest "
+                f"failed ({report['failed']}); the next run tries those again",
             )
         add_alternative_name(table, alt_field(table), work, give_k, donor)
         for alias in donor.get("aliases") or []:
@@ -360,6 +367,7 @@ class _Run:
         self.embed([work], self.domain)
         pages[keep_k] = work
         del pages[give_k]
+        self.changed += 1
         why = (
             f"“{_name(table, donor)}” joined into “{_name(table, work)}”, "
             f"{report['updated']} articles fed in"
@@ -426,6 +434,7 @@ class _Run:
                 rest[f] = list(page.get(f) or [])
         self.embed([rest, new], self.domain)
         pages[pk], pages[new_key] = rest, new
+        self.changed += 2
         shown = new_key[0] if isinstance(new_key, tuple) else new_key
         for s in mixed:
             self.mixed.append(
@@ -452,10 +461,11 @@ def carry_out_merges(
     embed: Callable = _embed_rows,
 ) -> Dict[str, Any]:
     """Carry out every active split and join in the loaded tables, before
-    merging. Returns ``{"states": {id: (state, why)}, "mixed": [...]}`` for the
+    merging. Returns ``{"states": {id: (state, why)}, "mixed": [...],
+    "changed": pages rewritten}`` for the
     run's corrections report (``run_corrections_pass(early=...)``)."""
     cs = active_corrections()
-    out: Dict[str, Any] = {"states": {}, "mixed": []}
+    out: Dict[str, Any] = {"states": {}, "mixed": [], "changed": 0}
     if not cs:
         return out
     recs = [r for r in cs.active if r["kind"] in MERGE_KINDS]
@@ -475,5 +485,5 @@ def carry_out_merges(
                 "waiting",
                 f"failed ({type(e).__name__}); the next run tries again",
             )
-    out["mixed"] = run.mixed
+    out["mixed"], out["changed"] = run.mixed, run.changed
     return out

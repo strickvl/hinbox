@@ -68,25 +68,54 @@ def test_join_pair_feeds_each_missing_article_in_and_keeps_the_input():
     assert len(keeper["articles"]) == 2
 
 
-def test_join_pair_fails_when_an_update_does_not_link_the_article():
+def test_join_pair_leaves_out_a_failed_article_and_feeds_in_the_rest():
     keeper = _row("Camp X", "detention_facility", ["a1"])
-    donor = _row("Camp X", "LocationType.DETENTION_FACILITY", ["a2", "a3"])
+    donor = _row("Camp X", "LocationType.DETENTION_FACILITY", ["a2", "a3", "a4"])
     calls: List[str] = []
-    texts = {"a2": "Two.", "a3": "Three."}
-    joined, report = join_pair(
+    texts = {"a2": "Two.", "a3": "Three.", "a4": "Four."}
+    part, report = join_pair(
         "locations", keeper, donor, texts, "ollama", "guantanamo",
-        update=_fake_update(calls, fail_on="a2"),
+        update=_fake_update(calls, fail_on="a3"),
     )  # fmt: skip
-    assert joined is None and "a2" in report["failed"] and calls == ["a2"]
+    assert "a3" in report["failed"] and report["updated"] == 2
+    assert calls == ["a2", "a3", "a4"]  # a3 asked once, a4 still fed in
+    assert part["profile"]["sources"] == ["a1", "a2", "a4"]
+    assert len(keeper["articles"]) == 1
+    # the next run asks only for what is still missing
+    assert [a["article_id"] for a in donor_articles(part, donor)] == ["a3"]
+    done, report = join_pair(
+        "locations", part, donor, texts, "ollama", "guantanamo",
+        update=_fake_update(calls),
+    )  # fmt: skip
+    assert "failed" not in report and report["updated"] == 1
+    assert done["profile"]["sources"] == ["a1", "a2", "a4", "a3"]
+
+
+def test_join_pair_keeps_going_after_a_reply_that_raises():
+    keeper, donor = _row("Y", "city", ["a1"]), _row("Y", "city", ["a2", "a3"])
+    calls: List[str] = []
+    ok = _fake_update(calls)
+
+    def flaky(*a: Any, **kw: Any):
+        if a[5] == "a2":
+            raise ValueError("the output is incomplete")
+        return ok(*a, **kw)
+
+    part, report = join_pair(
+        "locations", keeper, donor, {"a2": "Two.", "a3": "Three."}, "ollama",
+        "guantanamo", update=flaky,
+    )  # fmt: skip
+    assert "a2 (ValueError)" in report["failed"] and calls == ["a3"]
+    assert part["profile"]["sources"] == ["a1", "a3"]
 
 
 def test_join_pair_fails_without_the_article_text():
     keeper, donor = _row("Y", "city", ["a1"]), _row("Y", "city", ["a2"])
-    joined, report = join_pair(
+    part, report = join_pair(
         "locations", keeper, donor, {}, "ollama", "guantanamo",
         update=_fake_update([]),
     )  # fmt: skip
-    assert joined is None and "no text" in report["failed"]
+    assert "no text" in report["failed"] and part["profile"]["sources"] == ["a1"]
 
 
 def test_join_pair_only_links_a_country(monkeypatch):
@@ -106,12 +135,12 @@ def test_join_pair_only_links_a_country(monkeypatch):
     assert joined["profile"]["sources"] == ["a1", "a2", "a3"]
 
 
-def _script_run(tmp_path, monkeypatch, *flags: str):
+def _script_run(tmp_path, monkeypatch, *flags: str, rows=None, texts=None):
     from scripts import join_kind_twins as script
     from src.utils.file_ops import write_entities_table
 
     if not (tmp_path / "locations.parquet").exists():
-        write_entities_table("locations", [
+        write_entities_table("locations", rows or [
             _row("Camp X", "LocationType.DETENTION_FACILITY", ["a3"]),
             _row("Havana", "city", ["a4"]),
             _row("Camp X", "detention_facility", ["a1", "a2"]),
@@ -126,7 +155,8 @@ def _script_run(tmp_path, monkeypatch, *flags: str):
             "organizations", [_row("ACLU", "ngo", ["a5"])], str(tmp_path)
         )
     calls: List[str] = []
-    texts = {"a3": "Three.", "a6": "Six.", "a11": "Eleven."}  # no text for b3
+    # no text for b3
+    texts = texts or {"a3": "Three.", "a6": "Six.", "a11": "Eleven."}
     monkeypatch.setattr(script, "_article_texts", lambda *a: texts)
     monkeypatch.setattr(
         script, "_embed", lambda row: row.update(profile_embedding=[1.0])
@@ -172,3 +202,23 @@ def test_script_hubs_only_joins_only_the_country(tmp_path, monkeypatch):
     assert code == 0 and calls == ["a11"]
     assert rows[("Cuba", "country")] == ["a9", "a10", "a11"]
     assert ("Camp X", "LocationType.DETENTION_FACILITY") in rows
+
+
+def test_script_saves_what_was_fed_in_and_a_rerun_finishes(tmp_path, monkeypatch):
+    rows = [
+        _row("Half", "city", ["h0", "h1", "h4"]),
+        _row("Half", "LocationType.CITY", ["h2", "h3"]),
+    ]
+    code, calls, saved = _script_run(
+        tmp_path, monkeypatch, rows=rows, texts={"h2": "Two."}
+    )
+    assert code == 1 and calls == ["h2"]
+    assert saved == {
+        ("Half", "city"): ["h0", "h1", "h4", "h2"],  # h2 kept, h3 had no text
+        ("Half", "LocationType.CITY"): ["h2", "h3"],
+    }
+    code, calls, saved = _script_run(
+        tmp_path, monkeypatch, texts={"h2": "Two.", "h3": "Three."}
+    )
+    assert code == 0 and calls == ["h3"]
+    assert saved == {("Half", "city"): ["h0", "h1", "h4", "h2", "h3"]}

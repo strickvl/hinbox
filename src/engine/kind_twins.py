@@ -7,12 +7,13 @@ them (251 and 156 sources). A pair is joined the way the pipeline would have
 built one page: the row with more sources is kept, and each article only the
 other row has is fed to it in date order with the pipeline's own profile update
 (``update_or_fill()``; a country or region is only linked, no model call). If
-any update fails, both rows stay as they were.
+an article's update fails, both rows stay, and the kept row holds the articles
+that did go in, so the next run asks only for the rest.
 """
 
 import copy
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 from src.constants import ENTITY_SINGULAR
 from src.engine.corrections_pass import correction_scope
@@ -20,6 +21,7 @@ from src.engine.later_updates import article_dates
 from src.engine.profile_stubs import is_stub, update_or_fill
 from src.engine.profiles import VersionedProfile
 from src.utils.entity_keys import NAME_FIELDS, plain_kind
+from src.utils.server_health import ModelServerUnreachable
 from src.utils.task_models import task_model
 
 TWIN_TABLES = ("locations", "organizations")
@@ -83,45 +85,63 @@ def join_pair(
     model_type: str,
     domain: str,
     update: Callable = update_or_fill,
-) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
-    """The keeper with the donor's articles fed in, or None if a step failed.
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """The keeper with the donor's articles fed in, and a report.
 
-    The keeper passed in is never changed. Any table: a historian's join
+    An article whose update fails is left out and the next one is tried, as
+    the pipeline does when a profile update fails; it is not asked twice,
+    since a local model at temperature 0 gives the same reply again (on the
+    12 Nov run's copy, one article sent Qwen past its length limit the same
+    way in two passes). The report then lists it under ``failed`` and the
+    returned row holds every article that did go in, so the caller can save
+    them and a later run asks only for the rest. The keeper passed in is
+    never changed. Any table: a historian's join
     (``src/engine/corrections_merges.py``) feeds people and events this way too.
     """
     work = copy.deepcopy(keeper)
     if "type" in work:
         work["type"] = plain_kind(work.get("type"))
     singular, name = ENTITY_SINGULAR[table], work.get(NAME_FIELDS[table]) or ""
+    failed: List[str] = []
     report: Dict[str, Any] = {"name": name, "type": work.get("type"), "updated": 0}
     for entry in donor_articles(keeper, donor):
         article_id = entry.get("article_id")
         text = article_texts.get(article_id)
         if not text:
-            return None, {**report, "failed": f"no text for article {article_id}"}
+            failed.append(f"no text for article {article_id}")
+            continue
         versions = work.get("profile_versions")
         versioned = VersionedProfile(**versions) if versions else VersionedProfile()
         dates = article_dates(work, article_id, entry.get("article_published_date"))
-        with correction_scope(table, work):
-            profile, versioned, history = update(
-                singular,
-                name,
-                work["profile"],
-                versioned,
-                text,
-                article_id,
-                model_type,
-                domain,
-                article_texts=article_texts,
-                model=task_model("profile", model_type),
-                article_dates=dates,
-                entity=work,
-            )
+        try:
+            with correction_scope(table, work):
+                profile, versioned, history = update(
+                    singular,
+                    name,
+                    work["profile"],
+                    versioned,
+                    text,
+                    article_id,
+                    model_type,
+                    domain,
+                    article_texts=article_texts,
+                    model=task_model("profile", model_type),
+                    article_dates=dates,
+                    entity=work,
+                )
+        except ModelServerUnreachable:
+            raise
+        except Exception as e:  # one bad reply must not lose the pair
+            failed.append(f"profile update for {article_id} ({type(e).__name__})")
+            continue
         if article_id not in (profile.get("sources") or []):
-            return None, {**report, "failed": f"profile update for {article_id}"}
+            failed.append(f"profile update for {article_id} (article not linked)")
+            continue
         work["profile"], work["profile_versions"] = profile, versioned.model_dump()
         work.setdefault("articles", []).append(entry)
         work.setdefault("reflection_history", []).extend(history or [])
         report["updated"] += 1
+    if failed:
+        return work, {**report, "failed": "; ".join(failed)}
     work[alt_field(table)] = _alternatives(work, donor, alt_field(table))
     return work, report
