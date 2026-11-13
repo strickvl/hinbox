@@ -519,7 +519,23 @@ def guard_edits(
             elif is_invented_dispute(sentence, known) and not (
                 ask and _anchor_differs(sentence, profile, edit.anchor)
             ):
-                report["disputes"].append(sentence[:200])
+                # No old sentence gives another value, so nothing is
+                # disputed; a note's article half may still be news ("...
+                # the profile states the team found nothing, while the
+                # article reports that a survey is under way")
+                # ... when it is a sentence of its own: "A report notes
+                # $800,000 a year" has lost what the dispute was about
+                side = article_side(claim) if note else None
+                whole = side is not None and side[0] != "notes"
+                new = (plain_side(sentence, when) if whole else None) or ""
+                if new and not _has(known, new):
+                    rewritten.append(sentence)
+                    report["profile_notes"].append([sentence[:200], "plain", new[:200]])
+                    facts_left[n] += 1
+                    known.append(new)
+                else:
+                    new = ""
+                    report["disputes"].append(sentence[:200])
             elif new := later_update(sentence, profile, when, dates, edit.anchor) or "":
                 rewritten.append(sentence)
                 if _has(known, new):  # two notes with one later state

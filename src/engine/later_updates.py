@@ -205,6 +205,9 @@ _NOT_VALUE = re.compile(
     r"(?:,?\s+(?:19|20)\d\d\b)?|(?:19|20)\d\d\b)(,?)",
     re.I,
 )
+_WEEKDAY_DATE = re.compile(
+    rf"\b\w+day\s+\(({_MONTH}\s+\d{{1,2}},\s+(?:19|20)\d\d)\)", re.I
+)
 # The profile named in brackets: "(implied by the profile's earlier mention
 # of the order)"
 _PROFILE_ASIDE = re.compile(r"\s*\([^()]*\bthe\s+(?:\w+\s+)?profile\b[^()]*\)", re.I)
@@ -332,6 +335,8 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     side = _NOT_VALUE.sub(r"\1", _RESIDUE.sub("", side))
     # 'a decent young man,' -> 'a decent young man'
     side = re.sub(r""",(['"”’])$""", r"\1", side.rstrip(".;, "))
+    # "as of Friday (January 11, 2013)": the date alone
+    side = _WEEKDAY_DATE.sub(r"\1", side)
     # "(of the current year, implied 2018)": the model's own working
     side = re.sub(r"\s*\([^()]*\bimplied\b[^()]*\)", "", side)
     # "the 116 captives here, ...": here was where the article was written
@@ -475,6 +480,31 @@ def _earlier(side: str, month: str) -> bool:
     return bool(years and when) and max(years) < int(when.group())
 
 
+# A day with no year, of something that happened ("the statement on Dec. 12
+# referenced ..."), not of a plan ("set to begin on Dec. 12")
+_DAY_NO_YEAR = re.compile(
+    rf"\bon\s+(?P<mon>{_MONTH})\s+\d{{1,2}}\b(?!,?\s+(?:19|20)\d\d)", re.I
+)
+_PLANNED = re.compile(
+    r"\b(?:begin|start|open|resume|scheduled|set|slated|due|until|expected"
+    r"|planned|will|would|to\s+be)\b[^,;]{0,40}$",
+    re.I,
+)
+
+
+def _with_year(side: str, month: str) -> str:
+    """ "on Dec. 12" with the year of the article's month when it is that
+    month ("December 2017"): the side then says when by itself."""
+    m = _DAY_NO_YEAR.search(side)
+    year = re.search(r"(?:19|20)\d\d", month)
+    if not m or not year or _PLANNED.search(side[: m.start()]):
+        return side
+    if m.group("mon")[:3].lower() != month[:3].lower():
+        return side
+    comma = "," if side[m.end() : m.end() + 1] == " " else ""
+    return f"{side[: m.end()]}, {year.group()}{comma}{side[m.end() :]}"
+
+
 def as_update(
     verb: str,
     side: str,
@@ -487,6 +517,7 @@ def as_update(
     2018 report identifies Pohl as the judge.^[id]". Dated by the article's
     month unless the sentence dated the source itself (``dated``)."""
     month = dated or f"{article_date:%B %Y}"
+    side = _with_year(side, month)
     if verb != "says":
         # "A report notes ... in October 2017", not "An October 2017 report"
         month = "" if month.lower() in side.lower() else f"{month} "

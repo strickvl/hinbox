@@ -173,7 +173,26 @@ def _own_fact(claim: str) -> Optional[str]:
     return side
 
 
+# All the note says of the profile is what it lacks: "while the profile
+# does not specify a cost, the article states ...". Nothing disagrees
+_ONLY_LACKS = re.compile(
+    r"\bprofile\s+(?:does\s+not|doesn't|did\s+not|fails\s+to)\s+(?:mention"
+    r"|include|state|note|say|specify|give|reflect|address)\b",
+    re.I,
+)
+_PROFILE_HAS = re.compile(
+    r"\bprofile(?:['’]s\b|\s+(?:\w+ly\s+)?(?:states|says|notes|claims|cites"
+    r"|reports|gives|lists|describes|identifies|mentions|indicates|puts|has"
+    r"|asserts|implies|records)\b)",
+    re.I,
+)
+
+
 def says_disagree(claim: str) -> bool:
+    """The note says outright that sources disagree, and gives the profile
+    a side of its own."""
+    if _ONLY_LACKS.search(claim) and not _PROFILE_HAS.search(claim):
+        return False
     return bool(_SAYS_DISAGREE.search(claim))
 
 

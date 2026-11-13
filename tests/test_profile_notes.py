@@ -507,3 +507,69 @@ def test_a_doubled_profile_is_reworded_once():
     assert reworded(doubled) == (
         "The article reports the charge, whereas another report notes this fact.^[a9]"
     )
+
+
+def test_a_profile_that_only_lacks_something_disputes_nothing():
+    lacks = (
+        "The sources disagree on the cost of the camp; while the profile does "
+        "not specify a cost, the article states that the government put the "
+        "cost at $800,000 per captive a year.^[a9]"
+    )
+    edits, report = guard_edits(PROFILE, [_add(lacks)])
+    assert edits[0].text == (
+        "The government put the cost at $800,000 per captive a year.^[a9]"
+    )
+    assert report["profile_notes"][0][1] == "plain"
+    # With a side of its own for the profile it is a dispute; an invented
+    # one here (the profile gives no cost), and a bare value is not news
+    both = (
+        "The sources disagree on the cost of the camp; the profile states "
+        "$700,000 a year, while the article states $800,000 a year for each "
+        "captive.^[a9]"
+    )
+    edits, report = guard_edits(PROFILE, [_add(both)])
+    assert edits == [] and report["disputes"]
+
+
+def test_an_invented_dispute_keeps_the_articles_news():
+    """No old sentence gives another value, so nothing is disputed, but the
+    article's half is still a new fact."""
+    old = "A health team found no record of contamination at the camp.^[old]"
+    note = (
+        "Sources disagree on the status of the inquiry: while the profile "
+        "states a health team found no record of contamination, the article "
+        "reports that a second team is carrying out a full survey of the "
+        "camp.^[a9]"
+    )
+    edits, report = guard_edits(f"{old}\n", [_add(note)], "2016-03-08", DATES)
+    assert edits[0].text == (
+        "As of March 2016, a second team is carrying out a full survey of the "
+        "camp.^[a9]"
+    )
+    assert report["profile_notes"][0][1] == "plain" and not report["disputes"]
+    # A half that leans on the other half is dropped with the dispute
+    leans = (
+        "The sources disagree on the nurse's status: the profile states he "
+        "went back to work, while the article reports he is facing a board^[a9]."
+    )
+    edits, report = guard_edits(f"{old}\n", [_add(leans)], "2016-03-08", DATES)
+    assert edits == [] and report["disputes"]
+
+
+def test_a_day_gets_its_year_and_a_weekday_its_date():
+    when = dt.date(2017, 12, 14)
+    signed = "the statement on Dec. 12 referenced a bill for $124 million"
+    assert as_update("says", signed, None, when, "^[a9]") == (
+        "The statement on Dec. 12, 2017, referenced a bill for $124 million.^[a9]"
+    )
+    # A planned day is not when the value held
+    planned = "the trial is set to begin on Dec. 12"
+    assert as_update("says", planned, None, when, "^[a9]").startswith("As of December")
+    friday = (
+        "The article reports that as of Friday (January 11, 2013), the base "
+        "was holding 166 captives, which conflicts with the profile's "
+        "statement that this number was recorded in April.^[a9]"
+    )
+    assert plain_side(friday, dt.date(2013, 1, 12)) == (
+        "As of January 11, 2013, the base was holding 166 captives.^[a9]"
+    )
