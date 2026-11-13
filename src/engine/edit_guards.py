@@ -24,6 +24,10 @@ here:
   strikers."), next to the old sentence (``later_update()``,
   ``later_updates.py``). Needs the articles' published dates.
 
+- **Note about the profile**: it compares the article with "the profile"
+  ("..., conflicting with the profile's count of 93"). Never kept as written:
+  handled like a "sources disagree" sentence, see ``profile_notes.py``.
+
 ``replace`` edits are left alone: they rewrite one sentence and keep its
 citations. New sentences are checked against the profile as the
 replacements leave it. An edit whose sentences are all dropped is removed.
@@ -46,6 +50,7 @@ from src.engine.later_updates import (
     to_date,
 )
 from src.engine.profile_edits import ProfileEdit, apply_edits
+from src.engine.profile_notes import is_profile_note, plain_side, reworded
 from src.evals.profile_cases import _sentences
 
 MIN_STEMS = 3  # shorter lines (headings, "Tags:") aren't checked
@@ -300,6 +305,12 @@ def _disputes_value(claim: str, other: str) -> bool:
     return swapped or bool(undated and counts - o_counts and o_counts)
 
 
+def _compares(claim: str) -> bool:
+    """The sentence sets two sources against each other in the profile's own
+    voice: "sources disagree", or a note about what "the profile" says."""
+    return bool(_NARRATOR.search(claim)) or is_profile_note(claim)
+
+
 def disputed_sentences(
     sentence: str, known: List[str], soft: bool = False
 ) -> List[str]:
@@ -308,13 +319,18 @@ def disputed_sentences(
     another name, for something it mentions. Empty for any other sentence;
     with ``soft``, a ``_SOFT_DISPUTE`` wording ("rather than 2,976") counts too."""
     claim = _claim(sentence)
-    if not (_NARRATOR.search(claim) or (soft and _SOFT_DISPUTE.search(claim))):
+    if not (_compares(claim) or (soft and _SOFT_DISPUTE.search(claim))):
         return []
     # The dispute wording itself says nothing about what is disputed, and a
     # source's own date ("the August 14, 2009 article describes Khadr as 22")
     # is when it was written: on dev, Luna's two kept false disputes differed
     # from the profile only in that year
-    topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", _PUBLISHED.sub(" ", claim)))
+    # A note about the profile quotes the profile's value too ("... 104
+    # captives, conflicting with the profile's count of 93"): only the
+    # article's half says what an old sentence must differ from
+    side = article_side(claim) if is_profile_note(claim) else None
+    topic = side[1] if side else claim
+    topic = _SOURCES.sub(" ", _DISPUTE.sub(" ", _PUBLISHED.sub(" ", topic)))
     # "... 2,974 people, rather than 2,976": the second value is the old one
     rather = re.search(r"\brather than\b(.*)$", topic, flags=re.I)
     topic = topic[: rather.start()] if rather else topic
@@ -354,7 +370,7 @@ def later_update(
     asks for the dispute right after it).
     """
     claim = _claim(sentence)
-    if not _NARRATOR.search(claim):
+    if not _compares(claim):
         return None
     if article_date is None or not is_time_varying(claim):
         return None
@@ -426,7 +442,7 @@ def _to_check(sentence: str, profile: List[str], anchor: str) -> bool:
     disagree, or it compares them more softly ("rather than 2,976", "a later
     report ... instead") and there is an old sentence to set it against."""
     claim = _claim(sentence)
-    if _NARRATOR.search(claim):
+    if _compares(claim):
         return True
     if not _SOFT_DISPUTE.search(claim):
         return False
@@ -461,6 +477,7 @@ def guard_edits(
     known = [s for s in _sentences(replaced) if not s.startswith("#")]
     profile = list(known)
     report: Dict[str, Any] = {"repeats": [], "disputes": [], "later_updates": []}
+    report["profile_notes"] = []
     cited = paragraph_citations(replaced) if ask else {}
     # Per edit: (span, new text) swaps and how many facts stay
     swaps: List[List[Tuple[Tuple[int, int], str]]] = []
@@ -481,6 +498,8 @@ def guard_edits(
             if sentence.startswith("#"):
                 continue
             new = ""
+            claim = _claim(sentence)
+            note = is_profile_note(claim)
             if is_repeat(sentence, known):
                 report["repeats"].append(sentence[:200])
             elif is_invented_dispute(sentence, known) and not (
@@ -491,6 +510,18 @@ def guard_edits(
                 report["later_updates"].append([sentence[:200], new[:200]])
                 facts_left[n] += 1
                 known.append(new)
+            elif note and not (ask and span):
+                # No model to say what it is. Worded "sources disagree", it
+                # stays a dispute; otherwise the article's half alone
+                plain = None if _NARRATOR.search(claim) else plain_side(sentence, when)
+                new = plain or reworded(sentence)
+                if is_repeat(new, known):
+                    new = ""
+                how = "plain" if plain else "reworded"
+                report["profile_notes"].append([sentence[:200], how, new[:200]])
+                if new:
+                    facts_left[n] += 1
+                    known.append(new)
             else:
                 facts_left[n] += 1
                 known.append(sentence)  # a later edit can't add it again
@@ -539,9 +570,10 @@ def _apply_dispute_check(
     for i, item in enumerate(pending):
         verdict = verdicts.get(i)
         if verdict is None or verdict.verdict == "conflict":
-            report["dispute_check"].append(
-                [item["sentence"][:200], verdict.verdict if verdict else "unchecked"]
-            )
+            how = verdict.verdict if verdict else "unchecked"
+            report["dispute_check"].append([item["sentence"][:200], how])
+            if is_profile_note(_claim(item["sentence"])):
+                _keep_note(item, how, when, known, swaps, facts_left, report)
             continue
         sentence = item["sentence"]
         known.remove(sentence)
@@ -557,3 +589,26 @@ def _apply_dispute_check(
         else:
             facts_left[item["edit"]] -= 1
         swaps[item["edit"]].append((item["span"], new or ""))
+
+
+def _keep_note(
+    item: Dict[str, Any],
+    how: str,
+    when: Optional[dt.date],
+    known: List[str],
+    swaps: List[List[Tuple[Tuple[int, int], str]]],
+    facts_left: List[int],
+    report: Dict[str, Any],
+) -> None:
+    """A note about the profile that stays: a real conflict with "the
+    profile" reworded as "another report"; one the model never judged (the
+    call failed) as the article's half alone, else reworded too."""
+    sentence = item["sentence"]
+    known.remove(sentence)
+    new = reworded(sentence)
+    if how != "conflict" and not _NARRATOR.search(_claim(sentence)):
+        plain = plain_side(sentence, when)
+        new = plain if plain and not is_repeat(plain, known) else new
+    known.append(new)
+    report["profile_notes"].append([sentence[:200], how, new[:200]])
+    swaps[item["edit"]].append((item["span"], new))

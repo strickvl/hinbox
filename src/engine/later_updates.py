@@ -137,7 +137,7 @@ _DATE_WORDS = (
 _NEWER = r"(?:new|later|subsequent|newer|more recent|recent|latest)"
 _SOURCE = r"(?:article|report|source|account|story)"
 _SUBJECT = (
-    rf"(?:the|this|a|an)?\s*(?:{_NEWER}\s+)?(?:(?P<d1>{_DATE_WORDS})\s+)?"
+    rf"(?:the|this|a|an|another)?\s*(?:{_NEWER}\s+)?(?:(?P<d1>{_DATE_WORDS})\s+)?"
     rf"{_SOURCE}s?,?\s+(?:(?P<d2>{_DATE_WORDS}),?\s+)?{_VERB}\s+(?:that\s+)?"
 )
 # "..., while the profile states A, the article reports that B." The article's
@@ -166,6 +166,18 @@ _PROFILE_SIDE = re.compile(
     r"|prior|existing|other|older|another|one|some)\b.*$",
     re.I | re.S,
 )
+# The profile's side as a trailing clause without "while": "B, conflicting
+# with the profile's count of 93", "B, contradicting the profile's claim that
+# ...", "B, rather than the unspecified timing in the profile"
+_PROFILE_TAIL = re.compile(
+    r",?\s*(?:\b(?:thereby|thus|which|this|and|but)\s+)?\b(?:conflict\w*"
+    r"|contradict\w*|differ\w*|disagree\w*|inconsistent|at odds|unlike"
+    r"|contrary to|in contrast (?:to|with)|rather than|instead of|whereas|while)\b"
+    r"(?:(?!\b(?:whereas|while)\b)[^.;]){0,80}?"
+    r"\bthe\s+(?:existing\s+|current\s+|earlier\s+)?profile\b.*$",
+    re.I | re.S,
+)
+_OPENER = re.compile(r"^(?:however|but|yet|conversely|in contrast)[,\s]+", re.I)
 # A side that still compares the two versions isn't the article's alone
 _COMPARES = re.compile(
     r"\b(?:the profile|earlier report|previous report|prior report|rather than"
@@ -209,16 +221,19 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     """What the article says, without the profile's side or the dispute
     wording: ("says", "the trial was pushed to Dec. 4", None) or
     ("identifies", "Pohl as the judge", None), by the verb that introduced
-    it, with the date the sentence gives the source, if any.
+    it, with the date the sentence gives the source, if any. The verb is
+    "notes" when the side may not be a sentence of its own (``_object_only()``).
 
     ``claim`` has no citations. None when no known wording fits or what is
     left still compares the two versions.
     """
     found = None
+    subject = None  # the "the article reports (that)" in front of the side
     if m := _WITH.search(claim):
         # The side ends where another source's clause starts
         nxt = _TAIL.search(claim, m.end())
         found = (m.group("verb"), claim[m.end() : nxt.start() if nxt else None], None)
+        subject = m
     elif tails := [m for i in range(len(claim)) if (m := _TAIL.match(claim, i))]:
         # One per "reports that", the longest, so "a March 4, 2014 report"
         # keeps its whole date
@@ -232,19 +247,55 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
         # The side ends where another source's clause starts
         stop = min((c.start() for c in clauses if c.start() > m.end()), default=None)
         found = (m.group("verb"), claim[m.end() : stop], _subject_date(m))
+        subject = m
     elif m := _LEAD.match(claim):
         side = m.group("side").strip()
         if s := _LEAD_SUBJECT.match(side):
             found = (s.group("verb"), side[s.end() :], _subject_date(s))
+            subject = s
+        else:
+            found = ("says", side, None)
+    elif _PROFILE_TAIL.search(claim):
+        # "The article states B, conflicting with the profile's count of A"
+        side = _OPENER.sub("", _PROFILE_TAIL.sub("", claim).strip())
+        if s := _LEAD_SUBJECT.match(side):
+            found = (s.group("verb"), side[s.end() :], _subject_date(s))
+            subject = s
         else:
             found = ("says", side, None)
     if not found:
         return None
     verb, side = found[0].lower(), _PROFILE_SIDE.sub("", found[1]).strip()
+    side = _PROFILE_TAIL.sub("", side).strip()
     side = side.rstrip(".;, ")
     if len(side.split()) < 4 or _COMPARES.search(side):
         return None
-    return ("says" if verb not in _NAMES else _NAMES[verb]), side, found[2]
+    if verb in _NAMES:
+        return _NAMES[verb], side, found[2]
+    return (
+        ("notes" if subject and _object_only(subject, side) else "says"),
+        side,
+        found[2],
+    )
+
+
+# A word that makes the side a sentence of its own, outside a "who ..." clause
+_FINITE = re.compile(
+    r"\b(?:is|are|was|were|has|have|had|will|would|can|could|did|does|must|may"
+    r"|might|should)\b",
+    re.I,
+)
+_RELATIVE = re.compile(r"\b(?:who|whom|whose|which|that)\b.*$", re.I | re.S)
+
+
+def _object_only(subject: "re.Match[str]", side: str) -> bool:
+    """The side may be only what the verb reports ("The article reports 41
+    captives at the camp"), not a sentence: no "that" before it and no
+    "is/was/has/will" in it. Such a side keeps a source in front ("A report
+    notes 41 captives at the camp"), which reads right either way."""
+    if subject.group(0).rstrip().lower().endswith("that"):
+        return False
+    return not _FINITE.search(_RELATIVE.sub("", side))
 
 
 def to_date(value: Any) -> Optional[dt.date]:
