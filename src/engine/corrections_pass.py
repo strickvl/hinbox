@@ -158,15 +158,53 @@ def _names(ref: Any, table: str, entity: Dict[str, Any]) -> bool:
     return bool(ref.get("name")) and ref.get("name") == entity.get(NAME_FIELDS[table])
 
 
+def joined_refs(ref: Any, cs: Optional[CorrectionSet]) -> List[Dict[str, Any]]:
+    """The pages a historian's joins put this one together with. A strike
+    made on "J. Lee" is about "Jane Lee" once the two are joined and the
+    "J. Lee" page is gone. No joins count while any contradict a split."""
+    if not isinstance(ref, dict) or not cs or cs.contradictions:
+        return []
+
+    def same(x: Dict[str, Any], y: Dict[str, Any]) -> bool:
+        return x.get("key") == y.get("key") or (
+            bool(x.get("name")) and x.get("name") == y.get("name")
+        )
+
+    joins = [
+        r
+        for r in cs.active
+        if r["kind"] == "join" and r["entity"].get("table") == ref.get("table")
+    ]
+    group, out = [ref], []
+    while True:  # a chain: A joined to B, B joined to C
+        more = [
+            (r, other)
+            for r in joins
+            for one, other in ((r["entity"], r["other"]), (r["other"], r["entity"]))
+            if any(same(one, g) for g in group)
+            and not any(same(other, g) for g in group)
+        ]
+        if not more:
+            break
+        group.append(more[0][1])
+        out.append(more[0][1])
+    return out
+
+
 @contextmanager
 def correction_scope(table: str, entity: Dict[str, Any]) -> Iterator[None]:
     """While a profile update runs, the guard knows this page's strikes. A
     page is matched by key or by name; two pages sharing a name both get the
-    other's strikes guarded, which can only keep a struck sentence out."""
+    other's strikes guarded, which can only keep a struck sentence out. So
+    does a page a join put it together with: while "J. Lee"'s articles are
+    fed into "Jane Lee", the strikes made on "J. Lee" are guarded."""
     lines = [
         r
         for r in (_ACTIVE.active if _ACTIVE else [])
-        if _names(r.get("entity"), table, entity)
+        if any(
+            _names(ref, table, entity)
+            for ref in (r.get("entity"), *joined_refs(r.get("entity"), _ACTIVE))
+        )
     ]
     token = _CURRENT.set(_rules(lines) if lines else None)
     page = _PAGE.set((table, entity.get(NAME_FIELDS[table]) or ""))
@@ -688,8 +726,12 @@ def run_corrections_pass(
         table = ref.get("table")
         if table not in entities:
             return None
-        pk = resolve_ref(ref, _candidates(table, entities[table]))
-        return None if pk is None else (table, pk)
+        # The page itself, else the page a join put it into
+        for r in (ref, *joined_refs(ref, cs)):
+            pk = resolve_ref(r, _candidates(table, entities[table]))
+            if pk is not None:
+                return (table, pk)
+        return None
 
     early = early or {}
     for rec in cs.active:

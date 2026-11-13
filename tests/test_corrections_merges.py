@@ -19,6 +19,7 @@ from src.engine.corrections_merges import (
 )
 from src.engine.corrections_pass import (
     configure_corrections,
+    current_rules,
     describe_report,
     run_corrections_pass,
 )
@@ -483,3 +484,53 @@ def test_a_second_split_of_the_same_page_divides_the_page_the_first_made(tmp_pat
         assert split_home("people", aid, "Ann Lee", people)[0] == home
     assert split_block("people", "a4", "Ann Lee", people["Ann Lee (reporter)"])
     assert {s for s, _ in _carry(entities, done={"c-0001", "c-0002"})["states"].values()} == {"held"}  # fmt: skip
+
+
+def test_a_split_of_a_page_a_split_made_sends_each_article_home(tmp_path):
+    """a3 and a4 went to "A. Lee"; a later split, made on "A. Lee", sent a4
+    to "Anne Lee". An "Ann Lee" from a4 goes there, not back beside a3."""
+    later = {
+        "kind": "split",
+        "entity": entity_ref("people", "A. Lee", "A. Lee", ["a3", "a4"]),
+        "article_ids": ["a4"],
+        "name": "Anne Lee",
+    }
+    _file(tmp_path, _split("A. Lee"), later)
+    entities = _ann_entities()
+    assert {s for s, _ in _carry(entities)["states"].values()} == {"applied"}
+    people = entities["people"]
+    held = {k: [a["article_id"] for a in e["articles"]] for k, e in people.items()}
+    assert held == {"Ann Lee": ["a1", "a2"], "A. Lee": ["a3"], "Anne Lee": ["a4"]}
+    for aid, home in (("a1", "Ann Lee"), ("a3", "A. Lee"), ("a4", "Anne Lee")):
+        assert split_home("people", aid, "Ann Lee", people)[0] == home
+
+
+def test_a_strike_made_on_the_joined_in_page_holds_on_the_kept_page(tmp_path):
+    """ "J. Lee" had a struck sentence with the historian's own in its place.
+    After the join the page is gone: the strike is about "Jane Lee" now, the
+    guard knows it while the article is fed in, and the sentence is kept."""
+    strike = {
+        "kind": "strike",
+        "entity": entity_ref("people", "J. Lee", "J. Lee", ["j1"]),
+        "sentence": "Jane Lee again.",
+        "cites": ["j1"],
+        "replacement": "J. Lee was named in a filing.",
+        "replacement_cites": "j1",
+    }
+    path = _file(tmp_path, _join(), strike)
+    entities = _lee_entities()
+    seen: List[Any] = []
+
+    def update(singular, name, profile, *a, **kw):
+        seen.append(current_rules())
+        return fake_update(singular, name, profile, *a, **kw)
+
+    early = carry_out_merges(
+        entities, TEXTS, "gemini", "guantanamo", set(), update=update, embed=_no_embed
+    )
+    assert seen[0] is not None and "jane lee again" in " ".join(seen[0].struck).lower()
+    report = run_corrections_pass(entities, path, str(tmp_path), early=early)
+    states = {r["kind"]: r["state"] for r in report["rows"]}
+    assert states == {"join": "applied", "strike": "applied"}, report["rows"]
+    text = entities["people"]["Jane Lee"]["profile"]["text"]
+    assert "again" not in text and "J. Lee was named in a filing.^[j1]" in text

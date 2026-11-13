@@ -72,12 +72,22 @@ def _family(rec: Dict[str, Any], rules: List[Dict]) -> Set[str]:
     """The names of every split of the same page as ``rec``. Two splits of
     "Ann Lee" (into "Ann Lee (reporter)", then one of those sources into
     "Ann Lee (trader)") are about all three pages: the second has to find its
-    sources on the page the first one made."""
-    ent, names = rec.get("entity") or {}, split_names(rec)
-    for r in rules:
-        e = r.get("entity") or {}
-        if e.get("name") == ent.get("name") or e.get("key") == ent.get("key"):
+    sources on the page the first one made. So are a split of "Ann Lee" and a
+    later split of the page it made."""
+    names, keys = split_names(rec), {str((rec.get("entity") or {}).get("key"))}
+    left = list(rules)
+    while True:  # a split of a page that a split made belongs too
+        more = [
+            r
+            for r in left
+            if split_names(r) & names or str(r["entity"].get("key")) in keys
+        ]
+        if not more:
+            break
+        for r in more:
             names |= split_names(r)
+            keys.add(str(r["entity"].get("key")))
+        left = [r for r in left if r not in more]
     return names
 
 
