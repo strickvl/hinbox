@@ -145,20 +145,27 @@ def guarded(call: Dict[str, Any], dates: Dict[str, Any], ask: Any = None) -> Lis
     for row in report.get("dispute_check") or []:
         if row[0] not in done:  # a conflict or failed check is under "note,"
             rows.append([row[0], f"model: {row[1]}", row[2] if len(row) > 2 else ""])
-    # The report keeps 200 characters of each sentence; show them whole
-    notes = {n[:200]: n for n in _notes_in(reply)}
+    # The report keeps 200 characters of each sentence; show them whole.
+    # Two notes can open with the same 200: each row takes the next one
+    notes: Dict[str, List[str]] = {}
+    for note in _notes_in(reply):
+        notes.setdefault(note[:200], []).append(note)
     whole = [s for e in kept if e.op == "add" for s in _sentences(e.text)]
 
     def full(new: str) -> str:
         return next((s for s in whole if new and s.startswith(new)), new)
 
-    return [[notes[old], how, full(new)] for old, how, new in rows if old in notes]
+    def note_of(old: str) -> str:
+        return notes[old].pop(0) if len(notes[old]) > 1 else notes[old][0]
+
+    return [[note_of(old), how, full(new)] for old, how, new in rows if old in notes]
 
 
 def before(call: Dict[str, Any], dates: Dict[str, Any]) -> Dict[str, List[str]]:
     """What the guards did with each note before they knew notes about the
     profile (no model): only "sources disagree" wordings were looked at.
-    One entry per time the note is in the reply, a dropped repeat last."""
+    By the note's first 200 characters (all the guard report keeps), one
+    entry per time such a note is in the reply, a dropped repeat last."""
     import src.engine.edit_guards as guards
 
     knows, guards.is_profile_note = guards.is_profile_note, lambda claim: False
@@ -172,9 +179,9 @@ def before(call: Dict[str, Any], dates: Dict[str, Any]) -> Dict[str, List[str]]:
     how.update({old: "invented dispute, dropped" for old in report["disputes"]})
     repeats = Counter(report["repeats"])
     was: Dict[str, List[str]] = {}
-    for note, times in Counter(_notes_in(reply)).items():
-        again = min(times, repeats[note[:200]])
-        first = how.get(note[:200], "kept as written")
+    for note, times in Counter(n[:200] for n in _notes_in(reply)).items():
+        again = min(times, repeats[note])
+        first = how.get(note, "kept as written")
         was[note] = [first] * (times - again) + [_REPEAT] * again
     return was
 
@@ -184,7 +191,7 @@ def moves(got: List[Row], was: Dict[str, List[str]]) -> List[Tuple[str, str]]:
     the reply twice is paired in order, its dropped repeat last."""
     now: Dict[str, List[str]] = {}
     for old, how, _ in got:
-        now.setdefault(old, []).append(how)
+        now.setdefault(old[:200], []).append(how)
     pairs: List[Tuple[str, str]] = []
     for old, hows in now.items():
         hows.sort(key=lambda how: how in (_REPEAT, "note, repeat"))

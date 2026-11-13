@@ -31,7 +31,7 @@ profile is handled as that kind of sentence (``guard_edits()``):
 
 import datetime as dt
 import re
-from typing import Optional
+from typing import List, Optional
 
 from src.engine.later_updates import article_side, as_update, is_time_varying
 
@@ -52,6 +52,9 @@ _AGAINST = re.compile(
     r"|compared (?:to|with)|versus)\b[^.;]{0,160}?\b" + _PROFILE.replace("?P<s>", "?:"),
     re.I,
 )
+# ... and "discrepancy with the profile's age of 38" is a note too. Any
+# other mention is one as well, unless the profile is a document someone
+# wrote about the entity (``_DOCUMENT``)
 # ... or names it beside a source in a contrast: "the article states X,
 # whereas the profile states Y"
 _SOURCE = re.compile(
@@ -67,9 +70,35 @@ _LACKS = re.compile(
     re.I | re.S,
 )
 _CONTRAST = re.compile(r"\b(?:while|whereas|but|although|though|however)\b|[;:]", re.I)
+# A document called a profile, in the past tense or with its own name: "the
+# profile also assessed him as ...", "an intelligence profile prepared for
+# his file review", "the board released the profile, which called him ..."
+_DOCUMENT = re.compile(
+    r"\bintelligence\s+profile\b|\bprofile\s+prepared\b"
+    r"|\b(?:released|issued|published|prepared|wrote|read)\s+the\s+profile\b"
+    r"|\bprofile,?\s+(?:(?:also|that|which)\s+)?(?:acknowledged|assessed|dismissed"
+    r"|described|judged|concluded|cast|characteri[sz]ed|portrayed|depicted"
+    r"|determined|recommended|called)\b"
+    r"|\bprofile\s+also\s+(?:states|notes|says|adds)\b",
+    re.I,
+)
+# The profile as the sentence's subject: "The profile states that ...",
+# "The profile's claim that ..."
+_OURS_FIRST = re.compile(
+    r"^(?:(?:however|but|yet)[,\s]+)?" + _PROFILE.replace("?P<s>", "?:"), re.I
+)
+_OURS_SAYS = re.compile(
+    _OURS_FIRST.pattern + r"\s+(?:states|says|notes|claims|mentions|reports"
+    r"|indicates)\s+(?:that\s+)?(?P<side>.+)$",
+    re.I | re.S,
+)
+_OTHER_SOURCE = re.compile(r"\b(?:article|report|story|sources?)\b", re.I)
+_OTHER_HALF = re.compile(r"\b(?:article|report|story|source|profile)\b", re.I)
 # The article's half says how things stand, not what happened
+# ("have been closed once" is something that happened)
 _NOW = re.compile(
-    r"\b(?:is|are|has|have|holds|houses|remains?|commands|consists|leads|heads)\b"
+    r"\b(?:is|are|holds|houses|remains?|commands|consists|leads|heads)\b"
+    r"|\b(?:has|have)\b(?!\s+(?:been|since)\b)"
 )
 
 
@@ -81,7 +110,10 @@ _EMPTY = re.compile(
     r"|\(no conflict|\bno edit needed\b"
     # A remark on the sentence before: "This contradicts the profile's claim"
     r"|^(?:this|that|it)\s+(?:\w+\s+)?(?:contradicts|conflicts|differs|disagrees"
-    r"|is\s+(?:inconsistent|at\s+odds|consistent)|aligns|matches|confirms)\b",
+    r"|is\s+(?:inconsistent|at\s+odds|consistent)|aligns|matches|confirms)\b"
+    # The model thinking aloud: "Wait, the profile sentence *is* the
+    # article's sentence.", "The sentence with 154 is already in the profile?"
+    r"|^wait\b|\?\s*$|\*\w+\*|\balready\s+in\s+the\s+profile\b",
     re.I,
 )
 # It says outright that sources disagree: kept as a dispute, not as a fact
@@ -100,14 +132,45 @@ def is_profile_note(claim: str) -> bool:
         return False
     if _AGAINST.search(claim) or _LACKS.search(claim):
         return True
-    return bool(_SOURCE.search(claim) and _CONTRAST.search(claim))
+    if _SOURCE.search(claim) and _CONTRAST.search(claim):
+        return True
+    return not _DOCUMENT.search(claim)
 
 
-def is_empty_note(claim: str) -> bool:
+def is_empty_note(claim: str, cited: bool = True) -> bool:
     """A note with no fact from the article in it: "The article does not
     mention his age, whereas the profile ...", "(no conflict, ...)", "This
-    contradicts the profile's claim that ..."."""
-    return bool(_EMPTY.search(claim))
+    contradicts the profile's claim that ...", the model thinking aloud, or
+    the profile alone with no article ("The profile has 116 and 122."; with
+    no citation, also "The profile states that Reed led the camp.")."""
+    if _EMPTY.search(claim):
+        return True
+    if not _OURS_FIRST.match(claim) or _OTHER_SOURCE.search(claim):
+        return False
+    if _DOCUMENT.search(claim):
+        return False
+    return not cited or _own_fact(claim) is None
+
+
+def _own_fact(claim: str) -> Optional[str]:
+    """The fact in a note that names the profile and no article: what the
+    profile is said to lack or to state ("The profile states that Reed led
+    the camp"), or what follows a semicolon ("The profile wrongly calls it
+    a firm; Reed was employed by the airline")."""
+    if (m := _LACKS.search(claim)) and m.group("that"):
+        # What the profile lacks is the article's fact ("omits that Reed
+        # led the camp"; "does not specify the month" names no fact)
+        side = m.group("side")
+    elif m := _OURS_SAYS.match(claim):
+        side = m.group("side")
+    elif _OURS_FIRST.match(claim) and ";" in claim:
+        side = claim.rsplit(";", 1)[1]
+    else:
+        return None
+    side = side.strip().rstrip(".;, ")
+    if len(side.split()) < 4 or _OTHER_HALF.search(side):
+        return None
+    return side
 
 
 def says_disagree(claim: str) -> bool:
@@ -123,7 +186,29 @@ def reworded(sentence: str) -> str:
         first = not start or start[-1] in ".!?:;" and m.group(0)[0] == "T"
         return ("Another" if first else "another") + " report" + (m.group("s") or "")
 
-    return _ABOUT_PROFILE.sub(other, sentence)
+    new = _ABOUT_PROFILE.sub(other, sentence)
+    # "the profile notes the profile also notes this fact"
+    return re.sub(
+        r"\b(another report\s+\w+)\s+another report\s+(?:also\s+)?\w+\b",
+        r"\1",
+        new,
+        flags=re.I,
+    )
+
+
+# The side still has the article as its subject
+_NARRATOR = re.compile(
+    r"^the\s+(?:new\s+|latest\s+|current\s+)?(?:article|story)\s+(?P<verb>\w+s)\s+",
+    re.I,
+)
+# "... overturned the conviction^[old].^[new]": the model copied the old
+# sentence's citation inside and put its own after the full stop
+_OWN_CITES = re.compile(r"\^\[[^\]]*\]\.((?:\s*\^\[[^\]]*\])+)\s*$")
+
+
+def _own_citations(sentence: str) -> List[str]:
+    own = _OWN_CITES.search(sentence)
+    return _CITATION.findall(own.group(1) if own else sentence)
 
 
 def plain_side(sentence: str, article_date: Optional[dt.date] = None) -> Optional[str]:
@@ -135,14 +220,15 @@ def plain_side(sentence: str, article_date: Optional[dt.date] = None) -> Optiona
     front ("An April 2013 report notes 41 captives at the camp.")."""
     claim = _CITATION.sub("", sentence).strip()
     found = article_side(claim)
-    if found is None and (m := _LACKS.search(claim)):
-        # What the profile lacks is the article's fact
-        side = m.group("side").rstrip(".;, ")
-        found = ("says" if m.group("that") else "notes", side, None)
+    if found is None and (side := _own_fact(claim)):
+        found = ("says", side, None)
     if found is None:
         return None
     verb, side, dated = found
-    cites = "".join(dict.fromkeys(_CITATION.findall(sentence)))
+    if verb == "says" and (m := _NARRATOR.match(side)):
+        # "The new article refers to her as ...": "A report refers to ..."
+        verb, side = m.group("verb"), side[m.end() :]
+    cites = "".join(dict.fromkeys(_own_citations(sentence)))
     held_then = verb == "notes" or is_time_varying(side) or _NOW.search(side)
     if article_date and held_then:
         return as_update(verb, side, dated, article_date, cites)

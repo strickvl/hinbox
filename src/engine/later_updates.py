@@ -36,6 +36,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 _CITATION = re.compile(r"\^\[[^\]]*\]")
 _CITED = re.compile(r"\^\[([^\]]+)\]")
+# Full month names and their short forms ("Mar.", "Sept"), any case
+_MONTH = (
+    r"(?:January|February|March|April|May|June|July|August|September|October"
+    r"|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\b\.?"
+)
 
 # An ongoing state (hunger strikes, tube feedings, lockdown) ...
 _STATE = re.compile(
@@ -99,7 +104,9 @@ def is_time_varying(text: str) -> bool:
 _SAYS = (
     r"states?|stated|stating|reports?|reported|reporting|indicates?|indicated"
     r"|indicating|says|said|saying|notes?|noted|noting|specifies|specified"
-    r"|specifying|shows?|showed|showing"
+    r"|specifying|shows?|showed|showing|confirms?|confirmed|confirming"
+    r"|clarifies|clarified|clarifying|mentions?|mentioned|mentioning|adds"
+    r"|added|adding|explains?|explained|explaining|reveals?|revealed"
 )
 # ... and verbs whose object is the claim ("identifies Pohl as the judge")
 _NAMES = {
@@ -191,8 +198,37 @@ _RESIDUE = re.compile(
     r"|saying|linking)\b.*$",
     re.I | re.S,
 )
-# "... in 2006, not 2008, and ...": the second value is the profile's
-_NOT_VALUE = re.compile(r",\s+not\s+(?:in\s+|on\s+)?(?:19|20)\d\d\b(,?)")
+# "... in 2006, not 2008, and ...", "... in April 2017, not July, and ...":
+# the second value is the profile's
+_NOT_VALUE = re.compile(
+    rf",\s+not\s+(?:in\s+|on\s+)?(?:{_MONTH}(?:\s+\d{{1,2}}\b)?"
+    r"(?:,?\s+(?:19|20)\d\d\b)?|(?:19|20)\d\d\b)(,?)",
+    re.I,
+)
+# The profile named in brackets: "(implied by the profile's earlier mention
+# of the order)"
+_PROFILE_ASIDE = re.compile(r"\s*\([^()]*\bthe\s+(?:\w+\s+)?profile\b[^()]*\)", re.I)
+# The profile named in the sentence's last clause, whatever it says: "...,
+# a date not specified in the profile", "..., correcting the profile's
+# figure of 45", "..., which supports the profile's mention of four years"
+_LAST_CLAUSE = re.compile(
+    r"""(?:,|(?<=,["'”’]))\s+(?:[^,]|,(?=\d))*?"""
+    r"\bthe\s+(?:existing\s+|current\s+|earlier\s+)?profile\b.*$",
+    re.I | re.S,
+)
+# "... conflicts with the article's report that B"
+_ARTICLES_OWN = re.compile(
+    rf"\bthe\s+(?:{_NEWER}\s+)?(?:article|story|report)['’]s\s+(?:\w+\s+)?"
+    r"(?:report|statement|account|claim|assertion|description)\s+that\s+(?P<side>.+)$",
+    re.I | re.S,
+)
+# The side has a second verb whose subject was the article: "A happened in
+# April, and identifies Clarke as ...", "..., but also notes that ..."
+_SECOND_VERB = re.compile(
+    r"\b(?:and|but)\s+(?:also\s+)?(?:states|reports|notes|says|indicates"
+    r"|identifies|describes|clarifies|confirms|adds|mentions|lists|names|cites)\b",
+    re.I,
+)
 # The side points at the half now gone: "it was reduced to 149", "he
 # suspended the sentence" (the name was in the profile's half), "earmarked
 # this amount"
@@ -280,9 +316,10 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
             subject = s
         else:
             found = ("says", side, None)
-    elif _PROFILE_TAIL.search(claim):
+    elif m := _ARTICLES_OWN.search(claim):
+        found = ("says", m.group("side"), None)
+    elif side := _without_profile(claim):
         # "The article states B, conflicting with the profile's count of A"
-        side = _OPENER.sub("", _PROFILE_TAIL.sub("", claim).strip())
         if s := _LEAD_SUBJECT.match(side):
             found = (s.group("verb"), side[s.end() :], _subject_date(s))
             subject = s
@@ -295,20 +332,41 @@ def article_side(claim: str) -> Optional[Tuple[str, str, Optional[str]]]:
     side = _NOT_VALUE.sub(r"\1", _RESIDUE.sub("", side))
     # 'a decent young man,' -> 'a decent young man'
     side = re.sub(r""",(['"”’])$""", r"\1", side.rstrip(".;, "))
+    # "(of the current year, implied 2018)": the model's own working
+    side = re.sub(r"\s*\([^()]*\bimplied\b[^()]*\)", "", side)
+    # "the 116 captives here, ...": here was where the article was written
+    side = re.sub(r"\s+here(?=,|$)", "", side)
     if _LEANS.search(side):
         return None
-    if subject and _took_that(subject):
-        # "reports that A and that B": the second "that" has lost its verb
-        side = re.sub(r"\b(and|but)\s+that\b", r"\1", side)
     if len(side.split()) < 4 or _COMPARES.search(side):
         return None
     if verb in _NAMES:
         return _NAMES[verb], side, found[2]
+    if subject and _SECOND_VERB.search(side):
+        # Only a source can be the second verb's subject: "A report states
+        # that A, and identifies B"
+        that = "" if side.lower().startswith("that ") else "that "
+        return f"states {that}".strip(), side, found[2]
+    if subject and _took_that(subject):
+        # "reports that A and that B": the second "that" has lost its verb
+        side = re.sub(r"\b(and|but)\s+that\b", r"\1", side)
     return (
         ("notes" if subject and _object_only(subject, side) else "says"),
         side,
         found[2],
     )
+
+
+def _without_profile(claim: str) -> Optional[str]:
+    """The claim without the clause that names the profile, when that clause
+    trails the article's fact; None when the profile isn't named that way."""
+    side = _PROFILE_TAIL.sub("", claim)
+    # "The article confirms B, resolving ... in the profile": cut at
+    # "confirms", nothing is left, so cut the last clause instead
+    if side == claim or len(side.split()) < 5:
+        side = _LAST_CLAUSE.sub("", _PROFILE_ASIDE.sub("", claim))
+    side = _OPENER.sub("", side.strip())
+    return side if side and side != claim.strip() else None
 
 
 # A word that makes the side a sentence of its own, outside a "who ..." clause
@@ -356,11 +414,6 @@ def cited_ids(sentence: str) -> set:
     return {i.strip() for g in _CITED.findall(sentence) for i in g.split(",")}
 
 
-# Full month names and their short forms ("Mar.", "Sept"), any case
-_MONTH = (
-    r"(?:January|February|March|April|May|June|July|August|September|October"
-    r"|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept|Sep|Oct|Nov|Dec)\b\.?"
-)
 # The side already says when: it starts with a date ("On May 16, 2013, ...",
 # "In February 2014, ..."), or gives one as when the value held ("... as of
 # July 17, 2013", "... in February 2014"). A date it is about ("postponed
@@ -393,6 +446,10 @@ _TARGET = re.compile(
 _ON_DAY = re.compile(
     rf"\bon\s+(?:\w+day,?\s+)?{_MONTH}\s+\d{{1,2}},?\s+(?:19|20)\d\d\b", re.I
 )
+# "... on Friday evening (March 15, 2013) Durand stated ..."
+_IN_BRACKETS = re.compile(
+    rf"\((?:\w+day,?\s+)?{_MONTH}\s+\d{{1,2}},?\s+(?:19|20)\d\d\)", re.I
+)
 # The side opens with a source of its own: "a later report by ... states that"
 _OWN_SOURCE = re.compile(
     rf"^(?:an?|the|another)\s+(?:[\w.,]+\s+){{0,3}}?{_SOURCE}\b", re.I
@@ -403,7 +460,9 @@ def _says_when(side: str) -> bool:
     """The side already says when its value held."""
     if _STARTS_DATED.match(side) or _AS_OF.search(side) or _OWN_SOURCE.match(side):
         return True
-    dated = _ENDS_DATED.search(side) or _ON_DAY.search(side)
+    dated = (
+        _ENDS_DATED.search(side) or _ON_DAY.search(side) or _IN_BRACKETS.search(side)
+    )
     return bool(dated) and not _TARGET.search(side)
 
 
@@ -437,7 +496,9 @@ def as_update(
         text = side[0].upper() + side[1:]
     else:
         # "there are 265 captives today" was today for the article
-        side = re.sub(r",?\s+(?:today|currently|at present)$", "", side)
+        side = re.sub(
+            r",?\s+(?:today|currently|at present|at (?:that|the) time)$", "", side
+        )
         # "the trial was ..." stays lower case; a name keeps its capital
         text = f"As of {month}, {side}"
     unique = "".join(dict.fromkeys(_CITATION.findall(citations)))

@@ -360,3 +360,150 @@ def test_as_of_is_not_put_before_a_side_with_its_own_day_or_source():
     # A date the side is about still gets one
     planned = "the trial was scheduled to begin on December 4, 2016"
     assert as_update("says", planned, None, when, "^[a9]").startswith("As of August")
+    then = "there were 80 captives at that time"
+    assert as_update("says", then, None, when, "^[a9]") == (
+        "As of August 2016, there were 80 captives.^[a9]"
+    )
+    bracket = "on Friday evening (March 15, 2013) the spokesman counted 14 men"
+    assert as_update("says", bracket, None, when, "^[a9]").startswith("On Friday")
+
+
+def test_any_mention_of_our_profile_is_a_note():
+    for note in (
+        "The camp closed in May, a date not specified in the profile.^[a9]",
+        "The profile states that Colonel Reed led the camp in 2015.^[a9]",
+        "The article states that 44 men were fed by tube, correcting the "
+        "profile's figure of 45.^[a9]",
+        "A 2016 report puts his age at 36, noting a discrepancy with the "
+        "profile's age of 38.^[a9]",
+    ):
+        assert is_profile_note(note), note
+    # A document someone wrote about the entity is not our profile
+    for document in (
+        "The profile also assessed him as a low-level cook.^[a9]",
+        "The profile also states that he answered every question.^[a9]",
+        "Ahead of the hearing, the profile described him as 38 years old.^[a9]",
+        "A 2015 intelligence profile prepared for the board retreated from the "
+        "earlier profile that cast him as a guard.^[a9]",
+    ):
+        assert not is_profile_note(document), document
+
+
+def test_the_model_thinking_aloud_is_dropped():
+    for debris in (
+        "Wait, the profile sentence *is* the article's sentence.",
+        "The sentence with 154 is already in the profile?",
+        "The profile has 116 and 122.",
+        "But the profile *also* has 116 and 122.",
+    ):
+        assert is_profile_note(debris) and is_empty_note(debris), debris
+        edits, report = guard_edits(PROFILE, [_add(debris)])
+        assert edits == [] and report["profile_notes"][0][1] == "empty"
+    # What the profile is said to state is kept when an article is cited
+    states = "The profile states that Colonel Reed led the camp in 2015."
+    assert is_empty_note(states, cited=False) and not is_empty_note(states)
+    edits, _ = guard_edits(PROFILE, [_add(states)])
+    assert edits == []
+    edits, _ = guard_edits(PROFILE, [_add(f"{states[:-1]}.^[a9]")])
+    assert edits[0].text == "Colonel Reed led the camp in 2015.^[a9]"
+    firm = (
+        "The profile wrongly calls Harbor Air an engineering firm; Reed was an "
+        "engineer employed by the airline.^[a9]"
+    )
+    assert plain_side(firm) == "Reed was an engineer employed by the airline.^[a9]"
+
+
+def test_the_profile_in_the_last_clause_or_in_brackets_is_cut():
+    cases = {
+        "The article reports that Colonel Reed left the camp on May 18, a date "
+        "not specified in the profile.^[a9]": "Colonel Reed left the camp on May 18.^[a9]",
+        "The article confirms Reed was moved to the base in April 2007, "
+        "resolving the previous ambiguity in the profile about the year.^[a9]": (
+            "Reed was moved to the base in April 2007.^[a9]"
+        ),
+        "The article reports that Judge Hale paused the case in January 2015 "
+        "(implied by the profile's earlier mention of the order), not March "
+        "2017.^[a9]": "Judge Hale paused the case in January 2015.^[a9]",
+        'The article states that the men were held "without lawyers for four '
+        "years,\" which supports the profile's mention of four years.^[a9]": (
+            'The men were held "without lawyers for four years".^[a9]'
+        ),
+        "The article states that of the 116 captives here, just one was "
+        "convicted, conflicting with the profile's count of 10 charged.^[a9]": (
+            "Of the 116 captives, just one was convicted.^[a9]"
+        ),
+        # "have been closed" happened; it is not how things stand
+        "The article states that the court struck down the first tribunals, "
+        "and that they have been closed once, which occurred before the 2008 "
+        "ruling described in the profile.^[a9]": (
+            "The court struck down the first tribunals, and they have been "
+            "closed once.^[a9]"
+        ),
+    }
+    for note, plain in cases.items():
+        assert plain_side(note, dt.date(2016, 3, 8)) == plain, note
+
+
+def test_the_articles_report_after_the_profiles_claim():
+    claim = (
+        "The profile's claim that Hale retired in June 2018 conflicts with the "
+        "article's report that Hale announced his retirement on August 27, "
+        "2018^[old].^[a9]"
+    )
+    # ... with the article's own citation, not the one copied from the profile
+    assert plain_side(claim) == "Hale announced his retirement on August 27, 2018.^[a9]"
+    copied = (
+        "The article states that an official suspended the sentence after two "
+        "days, whereas the profile states that a judge overturned it^[old].^[a9]"
+    )
+    assert (
+        plain_side(copied) == "An official suspended the sentence after two days.^[a9]"
+    )
+    # A bare count has no sentence of its own: the dispute stays, reworded
+    count = (
+        "The profile states the camp held 265 men, conflicting with the "
+        "article's count of 181 men held there.^[a9]"
+    )
+    assert plain_side(count) is None and not is_empty_note(count)
+    edits, _ = guard_edits(PROFILE, [_add(count)])
+    assert edits[0].text.startswith("Another report states the camp held 265 men")
+
+
+def test_a_side_with_the_article_as_a_verbs_subject_keeps_a_source():
+    second = (
+        "The profile mentions a July event, but the article clarifies the "
+        "handover happened in April 2017, not July, and identifies Reed as the "
+        "departing commander, whereas the profile does not specify the month.^[a9]"
+    )
+    assert plain_side(second) == (
+        "A report states that the handover happened in April 2017, and "
+        "identifies Reed as the departing commander.^[a9]"
+    )
+    also = (
+        "However, the article states that the players were put in a closet, "
+        "but also notes that in one wing each man still has his own player, "
+        "contradicting the profile's implication that all were removed.^[a9]"
+    )
+    assert plain_side(also, dt.date(2016, 3, 8)) == (
+        "A March 2016 report states that the players were put in a closet, but "
+        "also notes that in one wing each man still has his own player.^[a9]"
+    )
+    narrator = (
+        "The new article refers to her as Dana Moss and states she joined the "
+        "team in 2011, contradicting the profile's claim that she joined in "
+        "2009^[a9]."
+    )
+    assert plain_side(narrator) == (
+        "A report refers to her as Dana Moss and states she joined the team in "
+        "2011.^[a9]"
+    )
+
+
+def test_a_doubled_profile_is_reworded_once():
+    doubled = (
+        "The article reports the charge, whereas the profile notes the profile "
+        "also notes this fact.^[a9]"
+    )
+    assert reworded(doubled) == (
+        "The article reports the charge, whereas another report notes this fact.^[a9]"
+    )

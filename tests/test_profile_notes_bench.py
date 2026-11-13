@@ -67,6 +67,24 @@ def test_only_replies_with_a_note_are_taken_and_the_note_is_rewritten(tmp_path):
     ]
 
 
+def test_two_notes_that_open_alike_are_each_counted(tmp_path):
+    """The guard report keeps 200 characters of a sentence; two notes that
+    differ only after that are still two rows, each paired with a before."""
+    opening = "The article reports that " + "the long list of camps went on and " * 6
+    first = f"{opening}on, conflicting with the profile's count of 93.^[a9]"
+    second = f"{opening}on, conflicting with the profile's count of 93.^[a8]"
+    assert first[:200] == second[:200] and first != second
+    path = tmp_path / "run-2.jsonl"
+    path.write_text(json.dumps(_span(5, f"{first} {second}")) + "\n")
+    places, totals = bench.scan([str(path)])
+    assert totals["notes"] == 2
+    (call,) = bench.load(places)
+    got, was = bench.guarded(call, {}), bench.before(call, {})
+    assert [old for old, _, _ in got] == [first, second]
+    pairs = bench.moves(got, was)
+    assert len(pairs) == 2 and all("?" not in pair for pair in pairs)
+
+
 def test_published_dates_date_a_count_that_changes(tmp_path):
     (call,) = bench.load(_places(tmp_path))
     dates = {"a1": "2010-03-01", "a2": "2010-03-01", "a9": "2013-04-20"}

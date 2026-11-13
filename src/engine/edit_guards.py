@@ -514,7 +514,7 @@ def guard_edits(
             note = is_profile_note(claim)
             if is_repeat(sentence, known) or is_repeat(sentence, rewritten):
                 report["repeats"].append(sentence[:200])
-            elif note and is_empty_note(claim):
+            elif note and is_empty_note(claim, bool(_CITATION.search(sentence))):
                 report["profile_notes"].append([sentence[:200], "empty", ""])
             elif is_invented_dispute(sentence, known) and not (
                 ask and _anchor_differs(sentence, profile, edit.anchor)
