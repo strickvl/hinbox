@@ -41,8 +41,12 @@ from scripts.export_training_data import (
 from scripts.export_training_data import _messages as _span_messages
 from src.constants import OLLAMA_MODEL
 from src.engine import edit_limits as el
+from src.engine.edit_guards import _claim as claim_of
+from src.engine.edit_guards import guard_edits
 from src.engine.edit_limits import LimitedEditList, without_cut_off
 from src.engine.profile_edits import ProfileEditList, apply_edits
+from src.engine.profile_notes import is_profile_note
+from src.evals.profile_cases import _sentences as split_sentences
 
 SCHEMA_NAMES = ("ProfileEditList", "LimitedEditList")
 _NOTE_KEYS = ("hinbox.entity_name", "hinbox.article_id")
@@ -204,19 +208,35 @@ def _applied(profile: str, edits: List[Any]) -> Dict[str, int]:
     }
 
 
+def _notes(edits: List[Any]) -> int:
+    """New sentences that talk about the profile (``profile_notes.py``)."""
+    return sum(
+        is_profile_note(claim_of(s))
+        for e in edits
+        if e.op == "add"
+        for s in split_sentences(e.text)
+    )
+
+
 def compare(call: Dict[str, Any], new_text: str) -> Dict[str, Any]:
     """What the limits left of a reply, beside the recorded one."""
     old, new = parse_reply(call["reply"]), parse_reply(new_text)
     row: Dict[str, Any] = {"parsed": new is not None, "old_parsed": old is not None}
+    row["reply_text"] = new_text
     if new is None:
         return row
     edits, cut = without_cut_off(new)
     found = _PROFILE.search(call["messages"][-1]["content"])
     profile = found.group(1) if found else ""
     old_sentences, new_sentences = _sentences(old), set(_sentences(new))
+    # What the pipeline's code guards then leave (no model check, no dates)
+    guarded = guard_edits(profile, edits)[0]
     return {
         **row,
         "cut": cut,
+        "edits_after_guards": len(guarded),
+        "notes": _notes(edits),
+        "notes_after_guards": _notes(guarded),
         "edits": len(new.edits),
         "edits_kept": len(edits),
         "edits_dropped": len(new.edits) - len(edits),
@@ -288,6 +308,11 @@ def summary(rows: List[Dict[str, Any]]) -> List[str]:
                 for k in ("applied", "appended", "skipped")
             ),
             f"  replies with no edit left: {sum(not r['edits_kept'] for r in ok)}",
+            f"  edits left by the code guards: "
+            f"{sum(r['edits_after_guards'] for r in ok)}",
+            f"  new sentences about the profile, before / after the guards: "
+            f"{sum(r['notes'] for r in ok)} / "
+            f"{sum(r['notes_after_guards'] for r in ok)}",
         ]
         if secs:
             lines.append(
