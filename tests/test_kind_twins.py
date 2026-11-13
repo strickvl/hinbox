@@ -68,7 +68,7 @@ def test_join_pair_feeds_each_missing_article_in_and_keeps_the_input():
     assert len(keeper["articles"]) == 2
 
 
-def test_join_pair_keeps_what_was_fed_in_when_an_update_keeps_failing():
+def test_join_pair_leaves_out_a_failed_article_and_feeds_in_the_rest():
     keeper = _row("Camp X", "detention_facility", ["a1"])
     donor = _row("Camp X", "LocationType.DETENTION_FACILITY", ["a2", "a3", "a4"])
     calls: List[str] = []
@@ -77,37 +77,36 @@ def test_join_pair_keeps_what_was_fed_in_when_an_update_keeps_failing():
         "locations", keeper, donor, texts, "ollama", "guantanamo",
         update=_fake_update(calls, fail_on="a3"),
     )  # fmt: skip
-    assert "a3" in report["failed"] and report["updated"] == 1
-    assert calls == ["a2", "a3", "a3", "a3"]  # a3 asked three times, a4 never
-    assert part["profile"]["sources"] == ["a1", "a2"]
+    assert "a3" in report["failed"] and report["updated"] == 2
+    assert calls == ["a2", "a3", "a4"]  # a3 asked once, a4 still fed in
+    assert part["profile"]["sources"] == ["a1", "a2", "a4"]
     assert len(keeper["articles"]) == 1
     # the next run asks only for what is still missing
-    assert [a["article_id"] for a in donor_articles(part, donor)] == ["a3", "a4"]
+    assert [a["article_id"] for a in donor_articles(part, donor)] == ["a3"]
     done, report = join_pair(
         "locations", part, donor, texts, "ollama", "guantanamo",
         update=_fake_update(calls),
     )  # fmt: skip
-    assert "failed" not in report and report["updated"] == 2
-    assert done["profile"]["sources"] == ["a1", "a2", "a3", "a4"]
+    assert "failed" not in report and report["updated"] == 1
+    assert done["profile"]["sources"] == ["a1", "a2", "a4", "a3"]
 
 
-def test_join_pair_asks_again_after_a_failed_reply():
-    keeper, donor = _row("Y", "city", ["a1"]), _row("Y", "city", ["a2"])
+def test_join_pair_keeps_going_after_a_reply_that_raises():
+    keeper, donor = _row("Y", "city", ["a1"]), _row("Y", "city", ["a2", "a3"])
     calls: List[str] = []
     ok = _fake_update(calls)
 
     def flaky(*a: Any, **kw: Any):
-        if len(calls) < 2:
-            calls.append("boom")
+        if a[5] == "a2":
             raise ValueError("the output is incomplete")
         return ok(*a, **kw)
 
-    done, report = join_pair(
-        "locations", keeper, donor, {"a2": "Two."}, "ollama", "guantanamo",
-        update=flaky,
+    part, report = join_pair(
+        "locations", keeper, donor, {"a2": "Two.", "a3": "Three."}, "ollama",
+        "guantanamo", update=flaky,
     )  # fmt: skip
-    assert "failed" not in report and calls == ["boom", "boom", "a2"]
-    assert done["profile"]["sources"] == ["a1", "a2"]
+    assert "a2 (ValueError)" in report["failed"] and calls == ["a3"]
+    assert part["profile"]["sources"] == ["a1", "a3"]
 
 
 def test_join_pair_fails_without_the_article_text():

@@ -7,8 +7,8 @@ them (251 and 156 sources). A pair is joined the way the pipeline would have
 built one page: the row with more sources is kept, and each article only the
 other row has is fed to it in date order with the pipeline's own profile update
 (``update_or_fill()``; a country or region is only linked, no model call). If
-an update keeps failing, both rows stay, and the kept row holds the articles
-fed in so far, so the next run carries on from there.
+an article's update fails, both rows stay, and the kept row holds the articles
+that did go in, so the next run asks only for the rest.
 """
 
 import copy
@@ -75,60 +75,61 @@ def join_pair(
     model_type: str,
     domain: str,
     update: Callable = update_or_fill,
-    attempts: int = 3,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """The keeper with the donor's articles fed in, and a report.
 
-    An update that fails is asked again, up to ``attempts`` times (a local
-    model's reply sometimes runs past its length limit). If it still fails,
-    the report has ``failed`` and the returned row holds the articles fed in
-    so far, so the caller can save them and a later run carries on from
-    there. The keeper passed in is never changed.
+    An article whose update fails is left out and the next one is tried, as
+    the pipeline does when a profile update fails; it is not asked twice,
+    since a local model at temperature 0 gives the same reply again (on the
+    12 Nov run's copy, one article sent Qwen past its length limit the same
+    way in two passes). The report then lists it under ``failed`` and the
+    returned row holds every article that did go in, so the caller can save
+    them and a later run asks only for the rest. The keeper passed in is
+    never changed.
     """
     work = copy.deepcopy(keeper)
     work["type"] = plain_kind(work.get("type"))
     singular, name = ENTITY_SINGULAR[table], work.get("name") or ""
+    failed: List[str] = []
     report: Dict[str, Any] = {"name": name, "type": work["type"], "updated": 0}
     for entry in donor_articles(keeper, donor):
         article_id = entry.get("article_id")
         text = article_texts.get(article_id)
         if not text:
-            return work, {**report, "failed": f"no text for article {article_id}"}
+            failed.append(f"no text for article {article_id}")
+            continue
+        versions = work.get("profile_versions")
+        versioned = VersionedProfile(**versions) if versions else VersionedProfile()
         dates = article_dates(work, article_id, entry.get("article_published_date"))
-        why = ""
-        for _ in range(max(1, attempts)):
-            versions = work.get("profile_versions")
-            versioned = VersionedProfile(**versions) if versions else VersionedProfile()
-            try:
-                with correction_scope(table, work):
-                    profile, versioned, history = update(
-                        singular,
-                        name,
-                        work["profile"],
-                        versioned,
-                        text,
-                        article_id,
-                        model_type,
-                        domain,
-                        article_texts=article_texts,
-                        model=task_model("profile", model_type),
-                        article_dates=dates,
-                        entity=work,
-                    )
-            except ModelServerUnreachable:
-                raise
-            except Exception as e:  # one bad reply must not lose the pair
-                why = f"{type(e).__name__}: {e}"[:200]
-                continue
-            if article_id in (profile.get("sources") or []):
-                break
-            why = "the update did not link the article"
-        else:
-            failed = f"profile update for {article_id} ({why})"
-            return work, {**report, "failed": failed}
+        try:
+            with correction_scope(table, work):
+                profile, versioned, history = update(
+                    singular,
+                    name,
+                    work["profile"],
+                    versioned,
+                    text,
+                    article_id,
+                    model_type,
+                    domain,
+                    article_texts=article_texts,
+                    model=task_model("profile", model_type),
+                    article_dates=dates,
+                    entity=work,
+                )
+        except ModelServerUnreachable:
+            raise
+        except Exception as e:  # one bad reply must not lose the pair
+            failed.append(f"profile update for {article_id} ({type(e).__name__})")
+            continue
+        if article_id not in (profile.get("sources") or []):
+            failed.append(f"profile update for {article_id} (article not linked)")
+            continue
         work["profile"], work["profile_versions"] = profile, versioned.model_dump()
         work.setdefault("articles", []).append(entry)
         work.setdefault("reflection_history", []).extend(history or [])
         report["updated"] += 1
+    if failed:
+        return work, {**report, "failed": "; ".join(failed)}
     work["alternative_names"] = _alternatives(work, donor)
     return work, report
