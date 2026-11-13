@@ -7,11 +7,12 @@
 linked without a model call.
 
 Works on the run folder in place, so point it at a copy. The tables are saved
-after each joined pair, so a stopped run loses at most one pair, and running the
-same command again carries on (joined pairs are gone). Afterwards, run the
-pipeline on the folder (``HINBOX_OUTPUT_DIR=<dir> just process --local
---relevance-check``): every article is already processed, so it only checks the
-citations of the changed profiles.
+after each pair, so a stopped run loses at most one pair, and running the same
+command again carries on (joined pairs are gone; a pair whose update kept
+failing keeps the articles already fed in and is asked for the rest).
+Afterwards, run the pipeline on the folder (``HINBOX_OUTPUT_DIR=<dir> just
+process --local --relevance-check --limit 0``): it reads no articles and only
+checks the citations of the changed profiles.
 """
 
 import argparse
@@ -148,31 +149,35 @@ def main() -> int:
                 break
             keeper, donors, _ = todo[0]
             tried.add(_ident(rows[keeper]))
-            work, drop = rows[keeper], []
+            work, drop, fed = rows[keeper], [], 0
             for d in donors:
-                result, report = join_pair(
+                work, report = join_pair(
                     table, work, rows[d], texts, model_type, args.domain
                 )
-                if result is None:
+                fed += report["updated"]
+                if report.get("failed"):
                     log(
-                        f"{table}: '{work['name']}' not joined: {report['failed']}",
+                        f"{table}: '{work['name']}' not joined yet: "
+                        f"{report['failed']}; {report['updated']} articles "
+                        "fed in are kept",
                         level="warning",
                     )
                     break
-                work, drop = result, drop + [d]
+                drop.append(d)
                 log(
                     f"{table}: joined '{work['name']}' "
                     f"({report['updated']} articles fed in)",
                     level="success",
                 )
+            if drop or fed:  # save what was fed in, joined or not
+                _embed(work)
+                kept = [work if i == keeper else r for i, r in enumerate(rows)]
+                tables[table] = [r for i, r in enumerate(kept) if i not in drop]
+                write_entities_table(table, tables[table], args.run)
             if len(drop) < len(donors):
                 failed += 1
-                continue
-            _embed(work)
-            kept = [work if i == keeper else r for i, r in enumerate(rows)]
-            tables[table] = [r for i, r in enumerate(kept) if i not in drop]
-            write_entities_table(table, tables[table], args.run)
-            joined += 1
+            else:
+                joined += 1
     log(
         f"Joined {joined} pairs, {failed} not joined (run again to retry)",
         level="success" if not failed else "warning",
