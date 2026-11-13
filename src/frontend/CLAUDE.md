@@ -69,7 +69,10 @@ it never calls a model. Run it with `just frontend`.
   corrections file (`run_rows()`) to say which run did it. Splits and joins
   are told from that report alone (`_merge_status()`), since after a join
   the smaller page is gone. Find pages with
-  `resolve_ref()` (`find_entity()`), as the pipeline does, so both agree.
+  `resolve_ref()` (`find_entity()`), and the page a sentence correction is
+  about with `resolve_correction()` (`find_page()`: the page it names, else
+  the page a join put it into or a split moved its sources to), as the
+  pipeline does, so both agree.
 - The server listens on 127.0.0.1 unless `HINBOX_FRONTEND_HOST` is set.
 - The repository is public: tests use made-up tables only. Never commit
   screenshots or fixtures from a real run. README screenshots come from

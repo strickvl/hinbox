@@ -407,6 +407,52 @@ def test_reader_says_what_the_run_did_with_a_split(client, corr, tmp_path):  # n
     assert page.status_code == 200 and "a trader" in page.text
 
 
+def test_reader_finds_a_verdict_on_the_page_a_split_moved_its_source_to(
+    client, corr, tmp_path
+):  # noqa: F811
+    """A historian overruled the checker on a sentence citing A3, on "Yusuf
+    Qadir". A split moves A3 to a new page: the reader shows the verdict
+    there, as the pipeline finds it, and not "the page can't be found"."""
+    from src.frontend import corrections_view as cv
+    from src.frontend import data_access
+    from src.process_and_extract import write_entities_to_files
+    from src.utils.file_ops import load_existing_entities
+    from tests.test_frontend import A3
+
+    out = tmp_path / "entities"
+    entities = load_existing_entities(str(out))
+    qadir = entities["people"]["Yusuf Qadir"]
+    ids = [a["article_id"] for a in qadir["articles"]]
+    ref = entity_ref("people", "Yusuf Qadir", "Yusuf Qadir", ids)
+    sentence = "Yusuf Qadir, a trader, was released."
+    append_correction(str(corr), {"kind": "verdict", "entity": ref, "sentence": sentence,
+                                  "article_id": A3, "verdict": "supported"})  # fmt: skip
+    append_correction(str(corr), {"kind": "split", "entity": ref, "article_ids": [A3],
+                                  "name": "Yusuf Qadir (trader)"})  # fmt: skip
+    configure_corrections(load_corrections(str(corr)))
+    qadir["search_embedding"] = [0.5, 0.5, 0.0]
+    carry_out_merges(
+        entities, {A3: sentence}, "gemini", "guantanamo", set(),
+        update=fake_update, embed=_no_embed,
+    )  # fmt: skip
+    assert not entities["people"]["Yusuf Qadir"]["search_embedding"]  # stale evidence
+    write_entities_to_files(entities, str(out))
+    data_access._CACHE.clear()
+    assert client.get("/corrections").status_code == 200
+    store, cs = data_access.load_store(), load_corrections(str(corr))
+    verdict = next(r for r in cs.active if r["kind"] == "verdict")
+    new, old = (
+        store.get("people", "Yusuf Qadir (trader)"),
+        store.get("people", "Yusuf Qadir"),
+    )
+    assert cv.find_page(store, cs, verdict) is new
+    assert verdict in cv.for_page(store, cs, new) and verdict not in cv.for_page(
+        store, cs, old
+    )
+    tone, words = cv.status(store, cs, verdict, {})
+    assert tone == "ok", words
+
+
 def test_a_ticked_article_seen_again_lands_on_the_new_page(tmp_path):
     """On the full-run copy the match check could turn the new page away and
     a third page, "... (test) (2)", was created."""

@@ -21,10 +21,12 @@ from src.utils.corrections import (
     VERDICTS,
     CorrectionSet,
     append_correction,
+    correction_sources,
     entity_ref,
     last_report,
     latest_name,
     load_corrections,
+    resolve_correction,
     resolve_ref,
     sentence_key,
 )
@@ -46,15 +48,28 @@ def load(store: Store) -> CorrectionSet:
 
 def for_page(store: Store, cs: CorrectionSet, ent: Entity) -> List[Dict[str, Any]]:
     """Active corrections about this page (a join from either side), found the
-    way ``find_entity()`` finds pages, so a page whose key changed since (an
-    organization retyped, say) keeps its corrections."""
+    way the pipeline finds them (``find_page()``), so a page whose key changed
+    since (an organization retyped, say) keeps its corrections, and so does
+    the page a join or split moved them to."""
+    mine = {a["article_id"] for a in ent.articles}
 
     def here(ref: Any) -> bool:
         if not isinstance(ref, dict) or ref.get("table") != ent.spec.table:
             return False
         return ref.get("key") == ent.key or find_entity(store, ref) is ent
 
-    return [r for r in cs.active if here(r.get("entity")) or here(r.get("other"))]
+    def about(r: Dict[str, Any]) -> bool:
+        if r["kind"] in MERGE_KINDS:
+            return here(r.get("entity")) or here(r.get("other"))
+        ref = r.get("entity")
+        if not isinstance(ref, dict) or ref.get("table") != ent.spec.table:
+            return False
+        srcs = correction_sources(r)
+        if ref.get("key") == ent.key and (not srcs or srcs & mine):
+            return True  # the usual case, without a lookup
+        return find_page(store, cs, r) is ent
+
+    return [r for r in cs.active if about(r)]
 
 
 def overlay_for(store: Store, cs: CorrectionSet, ent: Entity) -> Overlay:
@@ -91,6 +106,21 @@ def find_entity(store: Store, ref: Any) -> Optional[Entity]:
     pages = store.entities.get(str(ref.get("table")), {}).values()
     return resolve_ref(
         ref, ((e.key, e.name, [a["article_id"] for a in e.articles], e) for e in pages)
+    )
+
+
+def find_page(store: Store, cs: CorrectionSet, rec: Dict[str, Any]) -> Optional[Entity]:
+    """The page a correction is about now (``resolve_correction()``): the one
+    it names, else the page a join put it into or a split moved its sources
+    to, as the pipeline's corrections pass finds it."""
+    ref = rec.get("entity")
+    if not isinstance(ref, dict):
+        return None
+    pages = store.entities.get(str(ref.get("table")), {}).values()
+    return resolve_correction(
+        rec,
+        cs,
+        ((e.key, e.name, [a["article_id"] for a in e.articles], e) for e in pages),
     )
 
 
@@ -146,7 +176,7 @@ def status(
         return "off", f"Replaced by {cs.replaced[r['id']]}"
     if r["kind"] in MERGE_KINDS:
         return _merge_status(store, r)
-    ent = find_entity(store, r.get("entity"))
+    ent = find_page(store, cs, r)
     if ent is None:
         return (
             "look",
@@ -245,7 +275,11 @@ def row(
     cache: Dict[Tuple[str, str], RenderedProfile],
 ) -> Dict[str, Any]:
     tone, words = status(store, cs, r, cache)
-    ent = find_entity(store, r.get("entity"))
+    ent = (
+        find_entity(store, r.get("entity"))
+        if r["kind"] in MERGE_KINDS
+        else find_page(store, cs, r)
+    )
     return {"rec": r, "label": KIND_LABELS[r["kind"]], "what": describe(store, r),
             "tone": tone, "status": words, "ent": ent,
             "page_name": ent.name if ent else (r.get("entity") or {}).get("name", "")}  # fmt: skip

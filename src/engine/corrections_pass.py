@@ -50,12 +50,14 @@ from src.utils.corrections import (
     CorrectionSet,
     _report_dir,
     drop_list_mark,
+    is_split_kin,
+    joined_refs,
     last_report,
     last_states,
     latest_name,
     load_corrections,
     md_literal,
-    resolve_ref,
+    resolve_correction,
     stored_key,
 )
 from src.utils.corrections import sentence_key as _raw_key
@@ -158,56 +160,6 @@ def _names(ref: Any, table: str, entity: Dict[str, Any]) -> bool:
     return bool(ref.get("name")) and ref.get("name") == entity.get(NAME_FIELDS[table])
 
 
-def _split_kin(ref: Any, table: str, name: str) -> bool:
-    """Is ``name`` a page that a split made of the page ``ref`` names (or the
-    other way round)? Such a page is guarded by the other's strikes, and a
-    strike whose sources a split moved is about it."""
-    from src.engine.corrections_merges import split_family  # imports this module
-
-    names = split_family(ref, table)
-    return bool(names) and name.split(" (")[0] in {n.split(" (")[0] for n in names}
-
-
-def _sources(rec: Dict[str, Any]) -> Set[str]:
-    """The articles a sentence correction is about."""
-    ids = set(rec.get("cites") or [])
-    ids |= {rec[f] for f in ("replacement_cites", "article_id") if rec.get(f)}
-    return ids
-
-
-def joined_refs(ref: Any, cs: Optional[CorrectionSet]) -> List[Dict[str, Any]]:
-    """The pages a historian's joins put this one together with. A strike
-    made on "J. Lee" is about "Jane Lee" once the two are joined and the
-    "J. Lee" page is gone. No joins count while any contradict a split."""
-    if not isinstance(ref, dict) or not cs or cs.contradictions:
-        return []
-
-    def same(x: Dict[str, Any], y: Dict[str, Any]) -> bool:
-        return x.get("key") == y.get("key") or (
-            bool(x.get("name")) and x.get("name") == y.get("name")
-        )
-
-    joins = [
-        r
-        for r in cs.active
-        if r["kind"] == "join" and r["entity"].get("table") == ref.get("table")
-    ]
-    group, out = [ref], []
-    while True:  # a chain: A joined to B, B joined to C
-        more = [
-            (r, other)
-            for r in joins
-            for one, other in ((r["entity"], r["other"]), (r["other"], r["entity"]))
-            if any(same(one, g) for g in group)
-            and not any(same(other, g) for g in group)
-        ]
-        if not more:
-            break
-        group.append(more[0][1])
-        out.append(more[0][1])
-    return out
-
-
 @contextmanager
 def correction_scope(table: str, entity: Dict[str, Any]) -> Iterator[None]:
     """While a profile update runs, the guard knows this page's strikes. A
@@ -222,7 +174,12 @@ def correction_scope(table: str, entity: Dict[str, Any]) -> Iterator[None]:
             _names(ref, table, entity)
             for ref in (r.get("entity"), *joined_refs(r.get("entity"), _ACTIVE))
         )
-        or _split_kin(r.get("entity"), table, entity.get(NAME_FIELDS[table]) or "")
+        or (
+            (r.get("entity") or {}).get("table") == table
+            and is_split_kin(
+                r.get("entity"), entity.get(NAME_FIELDS[table]) or "", _ACTIVE
+            )
+        )
     ]
     token = _CURRENT.set(_rules(lines) if lines else None)
     page = _PAGE.set((table, entity.get(NAME_FIELDS[table]) or ""))
@@ -744,27 +701,8 @@ def run_corrections_pass(
         table = ref.get("table")
         if table not in entities:
             return None
-        # The page itself, else the page a join put it into
-        found = None
-        for r in (ref, *joined_refs(ref, cs)):
-            found = resolve_ref(r, _candidates(table, entities[table]))
-            if found is not None:
-                break
-        # A sentence whose sources a split moved is about the page they are
-        # on now: put back on the old page, the historian's sentence would
-        # cite an article that page no longer holds.
-        srcs = _sources(rec)
-        held = set(_linked(entities[table][found])) if found is not None else set()
-        if srcs and not srcs & held:
-            homes = [
-                pk
-                for pk, e in entities[table].items()
-                if srcs <= set(_linked(e))
-                and _split_kin(ref, table, e.get(NAME_FIELDS[table]) or "")
-            ]
-            if len(homes) == 1:
-                found = homes[0]
-        return None if found is None else (table, found)
+        pk = resolve_correction(rec, cs, _candidates(table, entities[table]))
+        return None if pk is None else (table, pk)
 
     early = early or {}
     for rec in cs.active:

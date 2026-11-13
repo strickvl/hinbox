@@ -34,7 +34,6 @@ from src.engine.corrections_pass import (
     _linked,
     _new_version,
     active_corrections,
-    joined_refs,
 )
 from src.engine.entity_rows import new_entity_row
 from src.engine.kind_twins import _rank, alt_field, join_pair
@@ -42,7 +41,15 @@ from src.engine.profile_stubs import first_profile, update_or_fill
 from src.engine.profiles import create_profile
 from src.logging_config import log
 from src.utils.claim_spans import parse_claims
-from src.utils.corrections import MERGE_KINDS, CorrectionSet, resolve_ref
+from src.utils.corrections import (
+    MERGE_KINDS,
+    joined_refs,
+    resolve_ref,
+    split_names,
+)
+from src.utils.corrections import base_name as _base
+from src.utils.corrections import split_family_names as _family
+from src.utils.corrections import usable_merges as _usable
 from src.utils.entity_keys import NAME_FIELDS
 from src.utils.profiles import extract_profile_text
 from src.utils.task_models import task_model
@@ -50,57 +57,8 @@ from src.utils.task_models import task_model
 Pages = Dict[Any, Dict[str, Any]]
 
 
-def _usable(cs: Optional[CorrectionSet], kind: str, table: str) -> List[Dict]:
-    if not cs or cs.contradictions:
-        return []
-    return [
-        r
-        for r in cs.active
-        if r["kind"] == kind and (r.get("entity") or {}).get("table") == table
-    ]
-
-
 def _name(table: str, row: Dict[str, Any]) -> str:
     return row.get(NAME_FIELDS[table]) or ""
-
-
-def split_names(rec: Dict[str, Any]) -> Set[str]:
-    """The names a split is about: the page's, and the new page's."""
-    return {n for n in ((rec.get("entity") or {}).get("name"), rec.get("name")) if n}
-
-
-def _family(rec: Dict[str, Any], rules: List[Dict]) -> Set[str]:
-    """The names of every split of the same page as ``rec``. Two splits of
-    "Ann Lee" (into "Ann Lee (reporter)", then one of those sources into
-    "Ann Lee (trader)") are about all three pages: the second has to find its
-    sources on the page the first one made. So are a split of "Ann Lee" and a
-    later split of the page it made."""
-    names, keys = split_names(rec), {str((rec.get("entity") or {}).get("key"))}
-    left = list(rules)
-    while True:  # a split of a page that a split made belongs too
-        more = [
-            r
-            for r in left
-            if split_names(r) & names or str(r["entity"].get("key")) in keys
-        ]
-        if not more:
-            break
-        for r in more:
-            names |= split_names(r)
-            keys.add(str(r["entity"].get("key")))
-        left = [r for r in left if r not in more]
-    return names
-
-
-def split_family(ref: Any, table: str) -> Set[str]:
-    """Names of the pages the usable splits made of this page (and the page's
-    own), empty when no split is about it. A strike made on "Ann Lee" may be
-    about "Ann Lee (reporter)" once its sources moved there."""
-    rules = _usable(active_corrections(), "split", table)
-    if not isinstance(ref, dict) or ref.get("table") != table or not rules:
-        return set()
-    names = _family({"entity": ref}, rules)
-    return names if len(names) > 1 else set()
 
 
 def _find(table: str, ref: Any, pages: Pages) -> Any:
@@ -112,10 +70,6 @@ def _find(table: str, ref: Any, pages: Pages) -> Any:
         if pk is not None:
             return pk
     return None
-
-
-def _base(name: str) -> str:
-    return name.split(" (")[0]  # "Ann Lee (2)" is a page of "Ann Lee"
 
 
 def _sides(rec: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
@@ -497,6 +451,11 @@ class _Run:
                 return f"not split yet ({why}); the next run tries again"
             for f in ("aliases", alt_field(table)):
                 rest[f] = list(page.get(f) or [])
+        # The page's search vector came from its latest evidence, which may
+        # be an article that left: later mentions are compared with the
+        # profile's own vector until a new article gives it evidence again
+        for f in ("", "_model", "_dim", "_fingerprint"):
+            rest["search_embedding" + f] = [] if not f else None
         self.embed([rest, new], self.domain)
         pages[pk], pages[new_key] = rest, new
         self.changed += 2

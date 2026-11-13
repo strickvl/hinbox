@@ -176,6 +176,131 @@ def resolve_ref(
     return None
 
 
+# ── which page a correction is about, after splits and joins ──
+
+
+def usable_merges(cs: Optional["CorrectionSet"], kind: str, table: str) -> List[Dict]:
+    """The active splits (or joins) of one table; none while any contradict."""
+    if not cs or cs.contradictions:
+        return []
+    return [
+        r
+        for r in cs.active
+        if r["kind"] == kind and (r.get("entity") or {}).get("table") == table
+    ]
+
+
+def split_names(rec: Dict[str, Any]) -> Set[str]:
+    """The names a split is about: the page's, and the new page's."""
+    return {n for n in ((rec.get("entity") or {}).get("name"), rec.get("name")) if n}
+
+
+def split_family_names(rec: Dict[str, Any], rules: List[Dict]) -> Set[str]:
+    """The names of every split of the same page as ``rec``. Two splits of
+    "Ann Lee" (into "Ann Lee (reporter)", then one of those sources into
+    "Ann Lee (trader)") are about all three pages: the second has to find its
+    sources on the page the first one made. So are a split of "Ann Lee" and a
+    later split of the page it made."""
+    names, keys = split_names(rec), {str((rec.get("entity") or {}).get("key"))}
+    left = list(rules)
+    while True:  # a split of a page that a split made belongs too
+        more = [
+            r
+            for r in left
+            if split_names(r) & names or str(r["entity"].get("key")) in keys
+        ]
+        if not more:
+            break
+        for r in more:
+            names |= split_names(r)
+            keys.add(str(r["entity"].get("key")))
+        left = [r for r in left if r not in more]
+    return names
+
+
+def base_name(name: str) -> str:
+    return name.split(" (")[0]  # "Ann Lee (2)" is a page of "Ann Lee"
+
+
+def is_split_kin(ref: Any, name: str, cs: Optional["CorrectionSet"]) -> bool:
+    """Is ``name`` a page that a split made of the page ``ref`` names (or the
+    other way round)? Such a page is guarded by the other's strikes, and a
+    strike whose sources a split moved is about it."""
+    if not isinstance(ref, dict):
+        return False
+    rules = usable_merges(cs, "split", str(ref.get("table")))
+    names = split_family_names({"entity": ref}, rules) if rules else set()
+    return len(names) > 1 and base_name(name) in {base_name(n) for n in names}
+
+
+def joined_refs(ref: Any, cs: Optional["CorrectionSet"]) -> List[Dict[str, Any]]:
+    """The pages a historian's joins put this one together with. A strike
+    made on "J. Lee" is about "Jane Lee" once the two are joined and the
+    "J. Lee" page is gone. No joins count while any contradict a split."""
+    if not isinstance(ref, dict):
+        return []
+
+    def same(x: Dict[str, Any], y: Dict[str, Any]) -> bool:
+        return x.get("key") == y.get("key") or (
+            bool(x.get("name")) and x.get("name") == y.get("name")
+        )
+
+    joins = usable_merges(cs, "join", str(ref.get("table")))
+    group, out = [ref], []
+    while True:  # a chain: A joined to B, B joined to C
+        more = [
+            other
+            for r in joins
+            for one, other in ((r["entity"], r["other"]), (r["other"], r["entity"]))
+            if any(same(one, g) for g in group)
+            and not any(same(other, g) for g in group)
+        ]
+        if not more:
+            break
+        group.append(more[0])
+        out.append(more[0])
+    return out
+
+
+def correction_sources(rec: Dict[str, Any]) -> Set[str]:
+    """The articles a sentence correction is about."""
+    ids = set(rec.get("cites") or [])
+    ids |= {rec[f] for f in ("replacement_cites", "article_id") if rec.get(f)}
+    return ids
+
+
+def resolve_correction(
+    rec: Dict[str, Any],
+    cs: Optional["CorrectionSet"],
+    candidates: Iterable[Tuple[str, str, Iterable[str], Any]],
+) -> Any:
+    """The page a correction is about now, among one table's ``resolve_ref()``
+    candidates: the page it names; else the page a join put that page into;
+    and for a sentence whose cited articles a split moved off that page, the
+    split's page that holds them (put back on the old page, the historian's
+    sentence would cite an article that page no longer holds). The pipeline
+    and the reader both use this."""
+    ref = rec.get("entity")
+    pool = [(k, n, set(arts), page) for k, n, arts, page in candidates]
+    found = None
+    for r in (ref, *joined_refs(ref, cs)):
+        found = resolve_ref(r, pool)
+        if found is not None:
+            break
+    srcs = correction_sources(rec)
+    if srcs and rec.get("kind") in ("strike", "verdict"):
+        held = next((arts for _, _, arts, page in pool if page == found), set())
+        if found is None or not srcs & held:
+            homes = [
+                page
+                for _, name, arts, page in pool
+                if srcs <= arts and is_split_kin(ref, name, cs)
+            ]
+            if len(homes) == 1:
+                found = homes[0]
+    return found
+
+
 def _bad_text(value: Any, what: str, required: bool = True) -> Optional[str]:
     if not isinstance(value, str) or (required and not value.strip()):
         return f"{what} is missing" if required else f"{what} must be text"
