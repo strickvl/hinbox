@@ -407,9 +407,7 @@ def test_reader_says_what_the_run_did_with_a_split(client, corr, tmp_path):  # n
     assert page.status_code == 200 and "a trader" in page.text
 
 
-def test_reader_finds_a_verdict_on_the_page_a_split_moved_its_source_to(
-    client, corr, tmp_path
-):  # noqa: F811
+def test_reader_shows_a_verdict_on_the_page_its_source_moved_to(client, corr, tmp_path):  # noqa: F811
     """A historian overruled the checker on a sentence citing A3, on "Yusuf
     Qadir". A split moves A3 to a new page: the reader shows the verdict
     there, as the pipeline finds it, and not "the page can't be found"."""
