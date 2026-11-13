@@ -436,3 +436,50 @@ def test_a_ticked_article_seen_again_lands_on_the_new_page(tmp_path):
     assert asked == []  # each side goes home without a match check
     assert set(entities["people"]) == {"Ann Lee", "Ann Lee (reporter)"}
     assert split_home("people", "a9", "Ann Lee", entities["people"]) is None
+
+
+def test_a_shorter_split_name_is_not_swapped_onto_the_old_page(tmp_path):
+    """The new page is named "A. Lee"; a ticked article seen again says "Ann
+    Lee", the fuller name. The page keeps its name and "Ann Lee" its page."""
+    _file(tmp_path, _split("A. Lee"))
+    entities = _ann_entities()
+    _carry(entities)
+    assert set(entities["people"]) == {"Ann Lee", "A. Lee"}
+    with (
+        patch("src.engine.mergers.create_profile", side_effect=create_profile_stub),
+        patch(
+            "src.engine.mergers.get_embedding_manager",
+            return_value=StubEmbeddingManager(vec=[1.0, 0.0, 0.0]),
+        ),
+    ):
+        stats = EntityMerger("people").merge_entities(
+            [{"name": "Ann Lee", "type": "journalist"}], entities, "a3", "t", "u",
+            "2012-01-01", TEXTS["a3"], "x", similarity_threshold=0.8,
+        )  # fmt: skip
+    people = entities["people"]
+    assert stats.merged == 1 and set(people) == {"Ann Lee", "A. Lee"}
+    assert [a["article_id"] for a in people["Ann Lee"]["articles"]] == ["a1", "a2"]
+    assert people["A. Lee"]["name"] == "A. Lee"
+
+
+def test_a_second_split_of_the_same_page_divides_the_page_the_first_made(tmp_path):
+    """Both splits were made on "Ann Lee": a3 and a4 to a reporter, then a4
+    to a trader. The second finds a4 on the reporter's page."""
+    ref = entity_ref("people", "Ann Lee", "Ann Lee", ["a1", "a2", "a3", "a4"])
+    second = {"kind": "split", "entity": ref, "article_ids": ["a4"], "name": "Ann Lee (trader)"}  # fmt: skip
+    _file(tmp_path, _split(), second)
+    entities = _ann_entities()
+    out = _carry(entities)
+    assert {s for s, _ in out["states"].values()} == {"applied"}
+    people = entities["people"]
+    held = {k: [a["article_id"] for a in e["articles"]] for k, e in people.items()}
+    assert held == {
+        "Ann Lee": ["a1", "a2"],
+        "Ann Lee (reporter)": ["a3"],
+        "Ann Lee (trader)": ["a4"],
+    }
+    # each article's "Ann Lee" has one home, and the others are kept off it
+    for aid, home in (("a1", "Ann Lee"), ("a3", "Ann Lee (reporter)"), ("a4", "Ann Lee (trader)")):  # fmt: skip
+        assert split_home("people", aid, "Ann Lee", people)[0] == home
+    assert split_block("people", "a4", "Ann Lee", people["Ann Lee (reporter)"])
+    assert {s for s, _ in _carry(entities, done={"c-0001", "c-0002"})["states"].values()} == {"held"}  # fmt: skip

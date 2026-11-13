@@ -68,6 +68,23 @@ def split_names(rec: Dict[str, Any]) -> Set[str]:
     return {n for n in ((rec.get("entity") or {}).get("name"), rec.get("name")) if n}
 
 
+def _family(rec: Dict[str, Any], rules: List[Dict]) -> Set[str]:
+    """The names of every split of the same page as ``rec``. Two splits of
+    "Ann Lee" (into "Ann Lee (reporter)", then one of those sources into
+    "Ann Lee (trader)") are about all three pages: the second has to find its
+    sources on the page the first one made."""
+    ent, names = rec.get("entity") or {}, split_names(rec)
+    for r in rules:
+        e = r.get("entity") or {}
+        if e.get("name") == ent.get("name") or e.get("key") == ent.get("key"):
+            names |= split_names(r)
+    return names
+
+
+def _base(name: str) -> str:
+    return name.split(" (")[0]  # "Ann Lee (2)" is a page of "Ann Lee"
+
+
 def _sides(rec: Dict[str, Any]) -> Tuple[Set[str], Set[str]]:
     ticked = set(rec["article_ids"])
     return ticked, set(rec["entity"].get("article_ids") or []) - ticked
@@ -92,7 +109,7 @@ def split_block(
         return None
     arts = set(_linked(candidate))
     for r in rules:
-        names = split_names(r)
+        names = _family(r, rules)
         if incoming not in names and _name(table, candidate) not in names:
             continue
         ticked, rest = _sides(r)
@@ -132,23 +149,33 @@ def split_home(
     Example: "Ann Lee" from a ticked article goes to "Ann Lee (reporter)",
     which holds the other ticked article; without this the match check could
     turn it away and a third page, "Ann Lee (reporter) (2)", was created.
+    With several splits of one page, the home holds no source from the other
+    side of any of them.
     """
-    for r in _usable(active_corrections(), "split", table):
-        names = split_names(r)
-        ticked, rest = _sides(r)
-        if incoming not in names or article_id not in ticked | rest:
+    rules = _usable(active_corrections(), "split", table)
+    apply = [
+        r
+        for r in rules
+        if incoming in _family(r, rules) and article_id in set().union(*_sides(r))
+    ]
+    if not apply:
+        return None
+    bases = {_base(n) for r in apply for n in _family(r, rules)}
+    homes = []
+    for pk, e in pages.items():
+        if _base(_name(table, e)) not in bases:
             continue
-        mine, other = (ticked, rest) if article_id in ticked else (rest, ticked)
-        homes = [
-            pk
-            for pk, e in pages.items()
-            if _name(table, e).split(" (")[0] in {n.split(" (")[0] for n in names}
-            and set(_linked(e)) & mine
-            and not set(_linked(e)) & other
-        ]
-        if len(homes) == 1:
-            return homes[0], r["id"]
-    return None
+        arts, own = set(_linked(e)), False
+        for r in apply:
+            ticked, rest = _sides(r)
+            mine, other = (ticked, rest) if article_id in ticked else (rest, ticked)
+            if arts & other:
+                break
+            own = own or bool(arts & mine)
+        else:
+            if own:
+                homes.append(pk)
+    return (homes[0], apply[-1]["id"]) if len(homes) == 1 else None
 
 
 def forced_target(
@@ -247,6 +274,7 @@ def _build_page(
     model_type: str,
     domain: str,
     update: Callable,
+    said: str = "",
 ) -> Tuple[Optional[Dict[str, Any]], str]:
     """A page built from ``entries`` as a run builds one: a stub (or with stubs
     off, a written profile) from the oldest article, then one profile update
@@ -261,11 +289,11 @@ def _build_page(
         "type": like.get("type", ""),
         **{f: like.get(f, "") for f in ("event_type", "end_date") if table == "events"},
     }  # fmt: skip
-    # The stub looks for the name the articles use ("Ann Lee", not the new
-    # page's "Ann Lee (reporter)")
+    # The stub looks for the name the articles use (``said``: "Ann Lee", not
+    # the page's "Ann Lee (reporter)")
     profile, versioned, history = first_profile(
         table,
-        _key(table, _name(table, like), like),
+        _key(table, said or _name(table, like), like),
         entity,
         text,
         first["article_id"],
@@ -379,12 +407,13 @@ class _Run:
         table = rec["entity"]["table"]
         pages = self.entities.get(table, {})
         ticked, rest = _sides(rec)
-        names = split_names(rec)
+        names = _family(rec, _usable(active_corrections(), "split", table))
+        bases = {_base(n) for n in names}
         hit = resolve_ref(rec["entity"], _candidates(table, pages))
         both = [
             pk
             for pk, e in pages.items()
-            if (pk == hit or _name(table, e) in names)
+            if (pk == hit or _base(_name(table, e)) in bases)
             and set(_linked(e)) & ticked
             and set(_linked(e)) & rest
         ]
@@ -413,9 +442,12 @@ class _Run:
             a for a in page.get("articles") or [] if a.get("article_id") not in ticked
         ]
         name = _name(table, page)
-        new_key = _free_key(table, rec.get("name") or name, page, pages)
+        # The name the articles use: the split's page, not a page an earlier
+        # split of it named ("Ann Lee", not "Ann Lee (reporter)")
+        said = rec["entity"].get("name") or name
+        new_key = _free_key(table, rec.get("name") or said, page, pages)
         args = (self.texts, self.model_type, self.domain, self.update)
-        new, why = _build_page(table, page, new_key, moved, *args)
+        new, why = _build_page(table, page, new_key, moved, *args, said=said)
         if new is None:
             return f"not split yet ({why}); the next run tries again"
         profile = page.get("profile") or {}
@@ -427,7 +459,7 @@ class _Run:
             rest["profile"] = {**rest["profile"], "text": text, "sources": srcs}
             _new_version(rest, [rec["id"]])
         else:  # nothing cited is left: write the page again from its own sources
-            rest, why = _build_page(table, page, pk, kept, *args)
+            rest, why = _build_page(table, page, pk, kept, *args, said=said)
             if rest is None:
                 return f"not split yet ({why}); the next run tries again"
             for f in ("aliases", alt_field(table)):

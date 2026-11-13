@@ -600,6 +600,11 @@ class EntityMerger:
                 canonical_key, demoted_key, swapped = self._pick_canonical_key(
                     similar_key, entity_key
                 )
+                # A page a split or join placed this mention on keeps its name
+                # (the historian's), and no page is re-keyed onto a key
+                # another page holds: it would replace that page.
+                if swapped and (forced or canonical_key in entities[self.entity_type]):
+                    swapped = False
                 if swapped:
                     existing_entity = entities[self.entity_type].pop(
                         similar_key
