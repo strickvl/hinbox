@@ -4,7 +4,7 @@
 <header class="page-head">
   <div class="eyebrow"><span>Correct this page</span></div>
   <h1><a href="{{ u(ent.url) }}" style="color:inherit;text-decoration:none">{{ ent.name }}</a></h1>
-  <p class="small muted">Each correction is added to your corrections file; the tables aren't changed. Names, tables, splits and joins are saved now and carried out by a later pipeline step, which isn't built yet.</p>
+  <p class="small muted">Each correction is added to your corrections file; the tables aren't changed. The next pipeline run carries out splits and joins. Names and tables are saved now and carried out by a later pipeline step, which isn't built yet.</p>
 </header>
 {% if error %}<p class="corr-error" role="alert">{{ error }}</p>{% endif %}
 {% if box.rows %}
@@ -32,8 +32,10 @@
   {% if sources|length > 1 %}
   <form method="post" action="{{ u('/corrections') }}" class="corr-form">
     <h2 class="section-title">Some sources are about someone else</h2>
-    <p class="small muted">Tick the ones that belong to a different {{ ent.spec.singular }}. A later run takes them off this page and makes a page for them.</p>
+    <p class="small muted">Tick the ones that belong to a different {{ ent.spec.singular }}. The next run takes them off this page, cuts the sentences that cite only them, and makes a page for them. Later runs never merge them back.</p>
     <input type="hidden" name="kind" value="split">{{ hidden() }}
+    <label>Name of the new page<input type="text" name="name" maxlength="300" value="{{ posted.name or ent.name }}"></label>
+    <p class="small muted">If it's the same name, add what tells them apart ("{{ ent.name }} (journalist)"); otherwise the run numbers it ("{{ ent.name }} (2)").</p>
     <ul class="corr-ticks">{% for s in sources %}<li><label class="check"><input type="checkbox" name="article_ids" value="{{ s.id }}" {% if s.id in ticked %}checked{% endif %}> <span class="dt">{{ s.source.date }}</span> {{ s.source.title }}</label></li>{% endfor %}</ul>
     <label>Why<textarea name="reason" rows="2" maxlength="2000"></textarea></label>
     <button class="btn" type="submit">Save</button>
