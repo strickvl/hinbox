@@ -78,7 +78,10 @@ _EMPTY = re.compile(
     r"\b(?:article|report|story|source)\s+(?:does\s+not|doesn't|did\s+not|never)\s+"
     r"(?:mention|state|specify|say|give|address|confirm|include|provide|report)"
     r"|\bno (?:conflict|edit|change)(?:\s+is)?(?:\s+needed)?\b[,)]"
-    r"|\(no conflict|\bno edit needed\b",
+    r"|\(no conflict|\bno edit needed\b"
+    # A remark on the sentence before: "This contradicts the profile's claim"
+    r"|^(?:this|that|it)\s+(?:\w+\s+)?(?:contradicts|conflicts|differs|disagrees"
+    r"|is\s+(?:inconsistent|at\s+odds|consistent)|aligns|matches|confirms)\b",
     re.I,
 )
 # It says outright that sources disagree: kept as a dispute, not as a fact
@@ -102,7 +105,8 @@ def is_profile_note(claim: str) -> bool:
 
 def is_empty_note(claim: str) -> bool:
     """A note with no fact from the article in it: "The article does not
-    mention his age, whereas the profile ...", "(no conflict, ...)"."""
+    mention his age, whereas the profile ...", "(no conflict, ...)", "This
+    contradicts the profile's claim that ..."."""
     return bool(_EMPTY.search(claim))
 
 

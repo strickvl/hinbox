@@ -193,10 +193,11 @@ _RESIDUE = re.compile(
 )
 # "... in 2006, not 2008, and ...": the second value is the profile's
 _NOT_VALUE = re.compile(r",\s+not\s+(?:in\s+|on\s+)?(?:19|20)\d\d\b(,?)")
-# The side points at the half now gone: "it was reduced to 149", "earmarked
+# The side points at the half now gone: "it was reduced to 149", "he
+# suspended the sentence" (the name was in the profile's half), "earmarked
 # this amount"
 _LEANS = re.compile(
-    r"^(?:it|this|that|they|these|those|both|such)\b"
+    r"^(?:it|this|that|they|these|those|both|such|he|she|his|her|its|their)\b"
     r"|\b(?:this|that|the same)\s+(?:amount|figure|number|sum|total|count|date)\b",
     re.I,
 )
@@ -387,11 +388,23 @@ _TARGET = re.compile(
 )
 
 
+# "... cleared him for release on May 26, 2016, making him the 35th ...",
+# "... on Wednesday, October 9, 2013"
+_ON_DAY = re.compile(
+    rf"\bon\s+(?:\w+day,?\s+)?{_MONTH}\s+\d{{1,2}},?\s+(?:19|20)\d\d\b", re.I
+)
+# The side opens with a source of its own: "a later report by ... states that"
+_OWN_SOURCE = re.compile(
+    rf"^(?:an?|the|another)\s+(?:[\w.,]+\s+){{0,3}}?{_SOURCE}\b", re.I
+)
+
+
 def _says_when(side: str) -> bool:
     """The side already says when its value held."""
-    if _STARTS_DATED.match(side) or _AS_OF.search(side):
+    if _STARTS_DATED.match(side) or _AS_OF.search(side) or _OWN_SOURCE.match(side):
         return True
-    return bool(_ENDS_DATED.search(side)) and not _TARGET.search(side)
+    dated = _ENDS_DATED.search(side) or _ON_DAY.search(side)
+    return bool(dated) and not _TARGET.search(side)
 
 
 def _earlier(side: str, month: str) -> bool:
@@ -423,9 +436,10 @@ def as_update(
     elif _says_when(side) or month.lower() in side.lower() or _earlier(side, month):
         text = side[0].upper() + side[1:]
     else:
-        first, _, rest = side.partition(" ")
+        # "there are 265 captives today" was today for the article
+        side = re.sub(r",?\s+(?:today|currently|at present)$", "", side)
         # "the trial was ..." stays lower case; a name keeps its capital
-        text = f"As of {month}, {first} {rest}"
+        text = f"As of {month}, {side}"
     unique = "".join(dict.fromkeys(_CITATION.findall(citations)))
     return f"{text.rstrip('.')}.{unique}"
 

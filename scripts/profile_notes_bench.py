@@ -18,7 +18,9 @@ articles' published dates when ``--articles`` is given:
   model call (the pipeline's default path), and what it answered.
 
 Writes ``rewrites.md`` (and ``checked.md``): each note beside what took its
-place, for reading. They hold article-derived text: keep them off GitHub.
+place, for reading, and ``left_alone.md``: new sentences that mention "the
+profile" and are not taken for notes. They hold article-derived text: keep
+them off GitHub.
 """
 
 import argparse
@@ -33,13 +35,14 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from scripts.edit_limits_bench import _PROFILE, edit_call, parse_reply
 from src.constants import OLLAMA_MODEL
 from src.engine.edit_guards import _claim, guard_edits
-from src.engine.profile_notes import is_profile_note
+from src.engine.profile_notes import _ABOUT_PROFILE, is_profile_note
 from src.evals.profile_cases import _sentences
 
 _ARTICLE_ID = re.compile(r"\n\nNew article \(ID: ([^)]+)\):\n")
 _ENTITY = re.compile(r'profile of the ([\w ]+?) "(.+?)"\. ')
 Row = List[str]  # [the note, what happened to it, what took its place]
 _REPEAT = "repeat, dropped"
+LEFT_ALONE: List[str] = []  # filled by scan()
 
 
 def _notes_in(reply: Any) -> List[str]:
@@ -49,6 +52,18 @@ def _notes_in(reply: Any) -> List[str]:
         if e.op == "add"
         for s in _sentences(e.text)
         if is_profile_note(_claim(s))
+    ]
+
+
+def _left_alone(reply: Any) -> List[str]:
+    """New sentences that mention "the profile" and are not taken for notes
+    (a document called a profile, or a note the guard misses)."""
+    return [
+        s
+        for e in reply.edits
+        if e.op == "add"
+        for s in _sentences(e.text)
+        if _ABOUT_PROFILE.search(_claim(s)) and not is_profile_note(_claim(s))
     ]
 
 
@@ -71,6 +86,7 @@ def scan(paths: Iterable[str]) -> Tuple[List[Tuple[str, int]], Counter]:
                     continue
                 seen.add(call["key"])
                 found = _notes_in(reply)
+                LEFT_ALONE.extend(_left_alone(reply))
                 totals["replies"] += 1
                 totals["new sentences"] += sum(
                     len(_sentences(e.text)) for e in reply.edits if e.op == "add"
@@ -215,6 +231,9 @@ def main() -> int:
     print("\n".join(f"{k}: {v}" for k, v in totals.items()))
     dates = published_dates(args.articles)
     os.makedirs(args.out, exist_ok=True)
+    print(f'mention "the profile", not taken for a note: {len(LEFT_ALONE)}')
+    with open(os.path.join(args.out, "left_alone.md"), "w", encoding="utf-8") as f:
+        f.write("".join(f"- {s}\n" for s in sorted(set(LEFT_ALONE))))
     rng = random.Random(args.seed)
     rows: List[Row] = []
     moved: Counter = Counter()  # (before this guard, with it)

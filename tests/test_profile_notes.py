@@ -323,3 +323,40 @@ def test_what_is_left_of_the_comparison_is_cut_from_the_half():
     )
     assert plain_side(far).startswith("The camp holds 79 captives, with 26 cleared")
     assert "31" not in plain_side(far)
+
+
+def test_a_half_whose_subject_was_in_the_other_half_is_not_cut_loose():
+    he = (
+        "The profile states that Hale upheld the fine, while the new article "
+        "reports that he suspended the fine pending review.^[a9]"
+    )
+    assert plain_side(he) is None
+    edits, _ = guard_edits(PROFILE, [_add(he)])
+    assert edits[0].text == reworded(he)
+
+
+def test_a_remark_on_the_sentence_before_is_dropped():
+    remark = (
+        "This contradicts the profile's claim that Hale took the case in July "
+        "2014, as Reed was already presiding in May.^[a9]"
+    )
+    assert is_empty_note(remark)
+    edits, report = guard_edits(PROFILE, [_add(remark)])
+    assert edits == [] and report["profile_notes"][0][1] == "empty"
+
+
+def test_as_of_is_not_put_before_a_side_with_its_own_day_or_source():
+    when = dt.date(2016, 8, 2)
+    day = "the board cleared Reed for release on May 26, 2016, the 35th so far"
+    assert as_update("says", day, None, when, "^[a9]").startswith("The board cleared")
+    weekday = "17 captives were on hunger strike on Wednesday, October 9, 2013"
+    assert as_update("says", weekday, None, when, "^[a9]").startswith("17 captives")
+    source = "a later report by a wire service states that no one was injured"
+    assert as_update("says", source, None, when, "^[a9]").startswith("A later report")
+    today = "there are 265 captives at the camp today"
+    assert as_update("says", today, None, when, "^[a9]") == (
+        "As of August 2016, there are 265 captives at the camp.^[a9]"
+    )
+    # A date the side is about still gets one
+    planned = "the trial was scheduled to begin on December 4, 2016"
+    assert as_update("says", planned, None, when, "^[a9]").startswith("As of August")
