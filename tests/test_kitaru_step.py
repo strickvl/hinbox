@@ -223,18 +223,61 @@ def test_case_ok_applies_the_eval_rule_for_the_cases_kind():
     assert rows["case_ok"]["passed"] is False  # 3 sentences on an irrelevant article
     assert "3 sentences added" in rows["case_ok"]["explanation"]
     kept = {"profile": {"text": OLD, "sources": ["a1", "a2"]}}
-    assert case_result(step_checks(_inputs(), kept), {"eval_kind": "irrelevant"})[
-        "passed"
-    ]
-    missed = case_result(step_checks(_inputs(), kept), {"eval_kind": "new_fact"})
+    irrelevant = {"eval_kind": "irrelevant"}
+    assert case_result(step_checks(_inputs(), kept, irrelevant))["passed"]
+    missed = case_result(step_checks(_inputs(), kept, {"eval_kind": "new_fact"}))
     assert missed["passed"] is False and "not cited" in missed["explanation"]
+    assert rows["update_ok"]["passed"] is True  # the case rule, not damage
 
 
-def test_case_ok_is_left_out_when_the_rule_needs_the_case():
-    scores = step_checks(_inputs(), {"profile": {"text": OLD, "sources": ["a1"]}})
-    for metadata in (None, {"eval_kind": "disputed"},
-                     {"eval_kind": "new_fact", "eval_claim_label": True}):  # fmt: skip
-        assert case_result(scores, metadata) is None
+DISPUTED = {
+    "eval_kind": "disputed",
+    "eval_expected": {
+        "keep_both": True,
+        "original_value": "2009",
+        "disputed_value": "2010",
+        "original_sources": ["a1"],
+        "profile_sentence": "It filed again in 2009.^[a1]",
+        "article_sentence": "The ACLU filed again in 2010.",
+    },
+}
+
+
+def test_case_ok_on_a_disputed_case_needs_both_years():
+    both = OLD + " A later report gives the year as 2010 instead.^[a2]"
+    swapped = OLD.replace("2009.^[a1]", "2010.^[a2]")
+    for text, ok in ((both, True), (swapped, False)):
+        new = {"profile": {"text": text, "sources": ["a1", "a2"]}}
+        assert case_result(step_checks(_inputs(), new, DISPUTED))["passed"] is ok
+
+
+def test_case_ok_on_a_labelled_case_needs_its_facts():
+    label = {
+        "disputes_ok": False,
+        "facts": [{"id": "appeal", "claim": "The ACLU appealed in 2010.", "core": True,
+                   "match": [["appeal"], ["2010"]]}],
+        "must_not": [],
+    }  # fmt: skip
+    labels = {"eval_kind": "new_fact", "eval_claim_label": label}
+    stated = {
+        "profile": {"text": OLD + " It appealed in 2010.^[a2]", "sources": ["a1", "a2"]}
+    }
+    vague = {
+        "profile": {"text": OLD + " The ACLU is a group.^[a2]", "sources": ["a1", "a2"]}
+    }
+    assert case_result(step_checks(_inputs(), stated, labels))["passed"]
+    missing = case_result(step_checks(_inputs(), vague, labels))
+    assert (
+        missing["passed"] is False
+        and "misses 1 labelled fact" in missing["explanation"]
+    )
+
+
+def test_case_ok_is_left_out_without_the_cases_data():
+    new = {"profile": {"text": OLD, "sources": ["a1"]}}
+    for labels in (None, {"eval_kind": "disputed"},  # no expected: an older session
+                   {"eval_kind": "new_fact", "eval_claim_label": True}):  # fmt: skip
+        assert case_result(step_checks(_inputs(), new, labels)) is None
 
 
 def test_a_replay_keeps_its_baselines_eval_labels(monkeypatch):

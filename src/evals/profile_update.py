@@ -541,9 +541,10 @@ def run_updates(
             eval_item_id=case["case_id"],
             eval_kind=case["kind"],
             eval_split=case["split"],
-            # A labelled new_fact case passes on its labelled facts, which a
-            # Kitaru evaluator doesn't have (src/evals/kitaru_checks.py)
-            eval_claim_label=bool(case.get("claim_label")),
+            # What the case's own check needs, so a Kitaru evaluator can apply
+            # it to the step session and its replays (src/evals/kitaru_checks.py)
+            eval_expected=case.get("expected") or None,
+            eval_claim_label=case.get("claim_label"),
         ):
             record = score_one(case)
             scores = record.get("scores") or {}

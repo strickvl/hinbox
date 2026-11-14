@@ -6,12 +6,12 @@ as its inputs and its result as its outputs. ``step_checks()`` scores the
 updated profile against the old one with ``score_update()``'s checks that
 need no case label: collapse, kept facts, unchanged text, added sentences,
 citing the article, invented citations, "sources disagree" sentences and
-numbers the article doesn't have. For an eval case whose kind is in the
-session's inputs (``labels.eval_kind``, which a replay keeps),
-``case_ok`` also applies the eval's own pass rule for an ``irrelevant`` case
-(at most 2 added sentences) or an unlabelled ``new_fact`` case (cites the
-article). The other case checks (a planted dispute kept, a labelled fact
-stated) need the case itself, so they stay in ``just eval profile-update``.
+numbers the article doesn't have. For an eval case, whose kind and check
+data its step session holds in its inputs (``labels``: ``eval_kind``,
+``eval_expected``, ``eval_claim_label``; a replay keeps them), ``case_ok`` is
+the eval's own verdict, ``case_passed()``: at most 2 added sentences for an
+``irrelevant`` case, the labelled facts (or a citation, unlabelled) for a
+``new_fact`` case, both years kept for a ``disputed`` one.
 
 ``step_results()`` turns those scores into the rows a Kitaru evaluator
 returns (``scripts/kitaru_evaluators/profile_update_checks.py`` wraps each in
@@ -27,20 +27,38 @@ from src.evals.profile_update import (
     score_update,
 )
 
-# Kinds whose case check needs nothing but the scores: an irrelevant case adds
-# at most 2 sentences, an unlabelled new_fact case cites its article
-CASE_KINDS = ("irrelevant", "new_fact")
+
+def _case(labels: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """The eval case's own check data from a step session's labels: its kind,
+    ``expected`` (a disputed case's two years and sentences) and claim label.
+    A kind whose data is missing (sessions from before these labels) is
+    scored with the checks every case has only (kind ``step``)."""
+    labels = labels or {}
+    kind = labels.get("eval_kind")
+    expected = labels.get("eval_expected") or {}
+    label = labels.get("eval_claim_label")
+    if (
+        kind not in ("irrelevant", "new_fact", "disputed")
+        or (kind == "disputed" and "original_value" not in expected)
+        or label is True  # an older session said only that a label applied
+    ):
+        return {"kind": "step"}
+    return {"kind": kind, "expected": expected, "claim_label": label or None}
 
 
 def step_checks(
-    inputs: Dict[str, Any], outputs: Optional[Dict[str, Any]]
+    inputs: Dict[str, Any],
+    outputs: Optional[Dict[str, Any]],
+    labels: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """``score_update()`` on a step's recorded arguments and result.
 
     Reads ``update_profile()``'s argument names (``new_article_id``…) or
     ``edit_profile()``'s (``article_id``…), whichever the step recorded. A
     step that recorded no profile (it failed) is scored as if it kept the
-    old one, which is what the pipeline does then.
+    old one, which is what the pipeline does then. With an eval case's
+    ``labels``, ``case_passed`` is the eval's verdict on the case and
+    ``case_kind`` its kind (``step`` when it can't be judged here).
     """
     old = inputs.get("existing_profile") or {}
     article_id = inputs.get("new_article_id") or inputs.get("article_id") or ""
@@ -50,30 +68,46 @@ def step_checks(
         "profile": old,
         "article_id": article_id,
         "article_text": article_text,
-        "kind": "step",  # no kind of its own: only the checks every case has
+        **_case(labels),
     }
     scores = score_update(case, str(new.get("text") or ""))
+    scores["case_kind"] = case["kind"]
+    scores["case_passed"] = scores["passed"]
+    # update_ok: only the checks every case has (collapse, retention, citations)
+    scores["passed"] = case_passed({"kind": "step"}, scores)
     # Every real update adds the article to the profile's sources, even one
     # that rightly leaves the text alone; a failed one doesn't
     scores["updated"] = article_id in (new.get("sources") or [])
     return scores
 
 
-def case_result(
-    scores: Dict[str, Any], metadata: Optional[Dict[str, Any]]
-) -> Optional[Dict[str, Any]]:
-    """``case_ok``: the eval's own pass rule for the session's case kind
-    (``eval_kind`` in its inputs' ``labels``, which a replay keeps),
-    or None when it can't be applied here: not an eval case, a ``disputed``
-    case, or a ``new_fact`` case passed on its claim label's facts."""
-    kind = (metadata or {}).get("eval_kind")
-    if kind not in CASE_KINDS or (metadata or {}).get("eval_claim_label"):
+def case_result(scores: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """``case_ok``: the eval's own verdict on the session's case (its kind and
+    check data in the inputs' ``labels``, which a replay keeps), or None for
+    a session that isn't an eval case or lacks its case's data."""
+    kind, ok = scores["case_kind"], scores["case_passed"]
+    if kind == "step":
         return None
-    ok = case_passed({"kind": kind}, scores)
     if not scores["passed"]:
         why = "the profile was damaged (see update_ok)"
     elif kind == "irrelevant":
         why = f"{scores['added_sentences']} sentences added (at most 2)"
+    elif kind == "disputed":
+        why = "keeps both years" if ok else "doesn't keep both years with their sources"
+    elif "claims_ok" in scores:
+        missing, hits = (
+            scores.get("core_missing") or [],
+            scores.get("must_not_hits") or [],
+        )
+        why = "states every labelled fact" if ok else "; ".join(
+            filter(None, [
+                f"misses {len(missing)} labelled fact(s)" if missing else "",
+                f"adds {len(hits)} wrong reading(s)" if hits else "",
+                "says sources disagree" if scores["dispute_claims"]
+                and not scores.get("disputes_ok") else "",
+                "" if scores["cites_article"] else "doesn't cite the article",
+            ])
+        )  # fmt: skip
     else:
         why = "cites the article" if ok else "the article is not cited"
     return {
@@ -92,7 +126,7 @@ def step_results(
     """The checks as evaluator rows: ``name``, ``score`` and, for the checks
     that fail a case, ``passed``; the rest are reported, as in the eval.
     With an eval case's kind in ``metadata``, also ``case_ok``."""
-    s = step_checks(inputs, outputs)
+    s = step_checks(inputs, outputs, metadata)
     invented = s["invented_citations"]
     failures = [
         why
@@ -163,5 +197,5 @@ def step_results(
             "explanation": "new sentences citing the article with numbers it lacks",
         },
     ]
-    case = case_result(s, metadata)
+    case = case_result(s)
     return rows + ([case] if case else [])
