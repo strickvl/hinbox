@@ -184,3 +184,35 @@ def test_profile_that_is_one_long_paragraph_is_cut_without_error():
     view = profile_view(text, ARTICLE, 16000)
     assert view.startswith("Sentence 0 says routine things.^[c0]")
     assert len(view) <= 16000
+
+
+def test_a_sentence_the_article_dates_differently_is_kept(monkeypatch):
+    """A dated claim at the end of a long run about something else is shown,
+    so the model can see the year the article disagrees with (as in a 22,140
+    character profile of Omar Khadr, where the 2010 plea sentence was cut)."""
+    from src.engine import profile_view as pv
+
+    plea = "On October 25, 2010, Khadr pleaded guilty to war crimes under a plea deal."
+    interrogation = " ".join(
+        f"Interrogators at Bagram questioned Khadr about wound {i} in hospital."
+        for i in range(26)
+    )  # with the plea, one 1,858-character run of sentences
+    related = (
+        "Khadr's Canadian lawyers asked the Canadian embassy in Washington about "
+        "his transfer to Canada and parole.^[c1]"
+    )
+    filler = "Guards at Camp Echo logged routine laundry and meals for detainees.^[c3]"
+    profile = "\n\n".join(
+        ["Omar Khadr is a Canadian held at Guantánamo.^[c0]"]
+        + [f"{related} Note {i}." for i in range(130)]
+        + [f"{interrogation} {plea}^[c2]"]
+        + [f"{filler} Day {i}." for i in range(40)]
+    )
+    article = (
+        "Khadr's Canadian lawyers asked the Canadian embassy in Washington about "
+        "his transfer to Canada and his parole hearing. Under a diplomatic deal, "
+        "Khadr pleaded guilty to war crimes in October 2011."
+    )
+    assert plea in profile_view(profile, article, 16000)
+    monkeypatch.setattr(pv, "_dated", lambda *a: set())  # scored by overlap alone
+    assert plea not in profile_view(profile, article, 16000)

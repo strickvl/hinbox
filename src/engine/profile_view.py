@@ -11,7 +11,10 @@ its budget:
 1. the opening text before the first heading (at most a quarter of the budget),
 2. the heading lines (up to a third of the budget), so the model can still
    add to the end of a section,
-3. the passages that share the most words, names and years with the new
+3. the passages holding a sentence the article may give another date for
+   (``date_pairs()`` in ``date_disputes.py``: the years differ, the words
+   around them match), so a dispute or later update can be seen,
+4. the passages that share the most words, names and years with the new
    article, best first, until the budget is used up,
 
 in their original order, with ``[… N passages not shown …]`` where text was
@@ -139,6 +142,28 @@ def _scores(passages: List[_Passage], article_text: str) -> List[float]:
     return scores
 
 
+def _dated(passages: List[_Passage], article_text: str) -> Set[int]:
+    """Passages with a sentence the article may give another date for.
+
+    Scored as whole passages, such a sentence can rank low: in a 22,140
+    character profile of Omar Khadr, "On October 25, 2010, Khadr pleaded
+    guilty..." sat in a 1,898-character run about his interrogation, came 8th
+    of 15 and was cut, so the model never saw the 2010 the article's "pleaded
+    guilty ... in October 2011" disagrees with.
+    """
+    from src.engine.date_disputes import date_pairs
+    from src.evals.profile_cases import _sentences
+
+    rows = [
+        {"id": f"{i}:{j}", "claim": sentence}
+        for i, passage in enumerate(passages)
+        if not passage.heading
+        for j, sentence in enumerate(_sentences(passage.text))
+    ]
+    pairs = date_pairs(rows, article_text, set())
+    return {int(pair["row"]["id"].split(":")[0]) for pair in pairs}
+
+
 def _render(passages: List[_Passage], keep: List[bool], what: str) -> str:
     parts: List[str] = []
     hidden = 0
@@ -195,7 +220,8 @@ def profile_view(text: str, article_text: str, budget: int) -> str:
         lead_used += len(passage.text) + 2
     used += lead_used
     scores = _scores(passages, article_text)
-    order = sorted(range(len(passages)), key=lambda i: (-scores[i], i))
+    dated = _dated(passages, article_text) if article_text else set()
+    order = sorted(range(len(passages)), key=lambda i: (i not in dated, -scores[i], i))
     for i in order:
         cost = len(passages[i].text) + 2 + marker
         if keep[i] or used + cost > budget:
