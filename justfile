@@ -78,6 +78,11 @@ eval-mine *args:
 export-training *args:
     uv run python -m scripts.export_training_data {{args}}
 
+# Turn trace files into Kitaru JSONL sessions, in parts under its upload limit, for `kitaru session import`
+# (e.g. `just kitaru-traces data/guantanamo/entities/traces/run-*.jsonl --out data/guantanamo/entities/kitaru`)
+kitaru-traces *args:
+    uv run python -m scripts.kitaru_traces {{args}}
+
 # ─── DSPy experiments (own environment in experiments/dspy_opt/, no LiteLLM) ──
 
 # Optimise the edit-list profile updater with DSPy GEPA (e.g. `just dspy-profile --model ollama/local-qwen36-16k:latest --reflection-model openai/gpt-6-luna`)
