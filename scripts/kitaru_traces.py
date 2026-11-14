@@ -21,6 +21,11 @@ then, for each part:
     kitaru session import <part> --importer kitaru/kitaru-jsonl@latest \\
         --agent hinbox@latest --media-type application/x-ndjson --wait
 
+With ``--step profile.update`` each span of that step becomes its own session
+instead (``step_sessions()``), whose inputs are the step's recorded
+arguments: the unit a Kitaru replay re-runs. Import those under their own
+agent (``hinbox-profile-update``), not beside the article sessions.
+
 The parts hold article text: keep them off GitHub (the repo is public).
 """
 
@@ -241,6 +246,29 @@ def node(
     }
 
 
+def _nodes(rows: List[Dict[str, Any]]) -> Tuple[List[Dict], List[Dict[str, Any]]]:
+    """Spans in start order and their nodes; a parent outside ``rows`` is no parent."""
+    rows = sorted(rows, key=lambda r: r.get("start_time") or "")
+    position = {r["context"]["span_id"]: i for i, r in enumerate(rows)}
+    return rows, [
+        node(r, i, position.get(r.get("parent_id"))) for i, r in enumerate(rows)
+    ]
+
+
+def _run_metadata(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The run's ``hinbox.*`` resource attributes (run ID, commit…), not its settings."""
+    resource = (rows[0].get("resource") or {}).get("attributes") or {}
+    return {
+        k[len("hinbox.") :]: v
+        for k, v in resource.items()
+        if k.startswith("hinbox.") and not k.startswith("hinbox.env.")
+    }
+
+
+def _ended(rows: List[Dict[str, Any]]) -> Optional[str]:
+    return max((r.get("end_time") or "" for r in rows), default=None) or None
+
+
 def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     """One trace's spans as a Kitaru session; its top span gives the name and status.
 
@@ -248,17 +276,9 @@ def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     between extraction and merging) is kept as a failed session, so its
     model calls still show.
     """
-    rows = sorted(rows, key=lambda r: r.get("start_time") or "")
-    position = {r["context"]["span_id"]: i for i, r in enumerate(rows)}
-    nodes = [node(r, i, position.get(r.get("parent_id"))) for i, r in enumerate(rows)]
+    rows, nodes = _nodes(rows)
     roots = [n for n, r in zip(nodes, rows) if not r.get("parent_id")]
-    resource = (rows[0].get("resource") or {}).get("attributes") or {}
-    metadata = {
-        k[len("hinbox.") :]: v
-        for k, v in resource.items()
-        if k.startswith("hinbox.") and not k.startswith("hinbox.env.")
-    }
-    metadata["complete"] = bool(roots)
+    metadata = {**_run_metadata(rows), "complete": bool(roots)}
     if roots:
         root = roots[0]
         ended = root["outputs"] if isinstance(root["outputs"], dict) else {}
@@ -279,12 +299,73 @@ def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "outputs": outputs,
         "error": error,
         "started_at": rows[0].get("start_time"),
-        "ended_at": max((r.get("end_time") or "" for r in rows), default=None) or None,
+        "ended_at": _ended(rows),
         "external_id": f"hinbox:{rows[0]['context']['trace_id']}",
         "metadata": metadata,
         "framework": None,
         "nodes": nodes,
     }
+
+
+def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]:
+    """One session per ``step`` span in a trace that recorded its arguments.
+
+    The session's inputs are exactly the arguments the step was called with
+    (``record_step_input()``), which is what a replay calls the step again
+    with; its outputs are what the step recorded as its result, and its nodes
+    the step's own spans and model calls. A step span from before steps
+    recorded their arguments (or that failed before recording them) is left
+    out: there is nothing to replay it with.
+    """
+    children: Dict[Optional[str], List[Dict[str, Any]]] = {}
+    for r in rows:
+        children.setdefault(r.get("parent_id"), []).append(r)
+    top = next((r for r in rows if not r.get("parent_id")), None)
+    article = _labels((top or {}).get("attributes") or {})
+    sessions = []
+    for span in rows:
+        attrs = span.get("attributes") or {}
+        inputs = _decode(attrs.get("input.value"))
+        if span["name"] != step or not isinstance(inputs, dict):
+            continue
+        subtree, stack = [], [span]
+        while stack:
+            current = stack.pop()
+            subtree.append(current)
+            stack.extend(children.get(current["context"]["span_id"], []))
+        sub_rows, nodes = _nodes(subtree)
+        step_node = nodes[sub_rows.index(span)]
+        outputs = _decode(attrs.get("output.value"))
+        error = step_node["error"] or (
+            outputs.get("error") if isinstance(outputs, dict) else None
+        )
+        labels = _labels(attrs)
+        about = labels.get("entity_name") or " vs ".join(
+            str(labels[k]) for k in ("new_name", "existing_name") if labels.get(k)
+        )
+        trace_id = span["context"]["trace_id"]
+        sessions.append(
+            {
+                "status": "failed" if error else "completed",
+                "name": f"{step}: {about}" if about else step,
+                "inputs": inputs,
+                "outputs": outputs if isinstance(outputs, dict) else None,
+                "error": error,
+                "started_at": sub_rows[0].get("start_time"),
+                "ended_at": _ended(sub_rows),
+                "external_id": f"hinbox:{trace_id}:{span['context']['span_id']}",
+                "metadata": {
+                    **_run_metadata(rows),
+                    "step": step,
+                    "article_session": f"hinbox:{trace_id}",
+                    "article_id": labels.get("article_id") or article.get("article.id"),
+                    "article_title": article.get("article.title"),
+                },
+                "framework": None,
+                "nodes": nodes,
+            }
+        )
+    return sessions
 
 
 def index_traces(paths: Iterable[str]) -> Dict[str, List[Tuple[str, int, int]]]:
@@ -305,10 +386,18 @@ def index_traces(paths: Iterable[str]) -> Dict[str, List[Tuple[str, int, int]]]:
     return traces
 
 
-def write_parts(paths: List[str], out_dir: str, max_bytes: int) -> List[str]:
-    """Write one session line per trace into ``part-NNN.jsonl`` files of at most
-    ``max_bytes`` (a bigger session gets a part of its own); returns their paths."""
+def write_parts(
+    paths: List[str],
+    out_dir: str,
+    max_bytes: int,
+    step: Optional[str] = None,
+    counts: Optional[Dict[str, int]] = None,
+) -> List[str]:
+    """Write one session line per trace (or per ``step`` span, ``step_sessions()``)
+    into ``part-NNN.jsonl`` files of at most ``max_bytes`` (a bigger session gets
+    a part of its own); returns their paths and counts sessions in ``counts``."""
     traces = index_traces(paths)
+    counts = counts if counts is not None else {}
     os.makedirs(out_dir, exist_ok=True)
     written: List[str] = []
     out, size = None, 0
@@ -319,16 +408,18 @@ def write_parts(paths: List[str], out_dir: str, max_bytes: int) -> List[str]:
             for path, offset, length in lines:
                 files[path].seek(offset)
                 rows.append(json.loads(files[path].read(length)))
-            line = (json.dumps(session(rows)) + "\n").encode()
-            if out is None or (size and size + len(line) > max_bytes):
-                if out is not None:
-                    out.close()
-                written.append(
-                    os.path.join(out_dir, f"part-{len(written) + 1:03d}.jsonl")
-                )
-                out, size = open(written[-1], "wb"), 0
-            out.write(line)
-            size += len(line)
+            for made in step_sessions(rows, step) if step else [session(rows)]:
+                counts["sessions"] = counts.get("sessions", 0) + 1
+                line = (json.dumps(made) + "\n").encode()
+                if out is None or (size and size + len(line) > max_bytes):
+                    if out is not None:
+                        out.close()
+                    written.append(
+                        os.path.join(out_dir, f"part-{len(written) + 1:03d}.jsonl")
+                    )
+                    out, size = open(written[-1], "wb"), 0
+                out.write(line)
+                size += len(line)
         if out is not None:
             out.close()
     return written
@@ -344,12 +435,24 @@ def main() -> None:
         default=DEFAULT_MAX_BYTES / 1024 / 1024,
         help="largest part in MiB (default %(default)s); a bigger session gets a part of its own",
     )
+    parser.add_argument(
+        "--step",
+        help="one session per span of this step (e.g. profile.update) that "
+        "recorded its arguments, instead of one per trace",
+    )
     args = parser.parse_args()
     max_bytes = int(args.max_mb * 1024 * 1024)
-    for part in write_parts(args.traces, args.out, max_bytes):
+    counts: Dict[str, int] = {}
+    for part in write_parts(args.traces, args.out, max_bytes, args.step, counts):
         size = os.path.getsize(part)
         note = "  (one session, over --max-mb)" if size > max_bytes else ""
         print(f"{part}  {size / 1024 / 1024:.1f} MiB{note}")
+    print(f"{counts.get('sessions', 0)} sessions")
+    if args.step and not counts.get("sessions"):
+        print(
+            f"No {args.step} span recorded its arguments: traces from before "
+            "steps recorded them (PR #139) can't become step sessions."
+        )
 
 
 if __name__ == "__main__":
