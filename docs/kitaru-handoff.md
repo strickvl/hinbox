@@ -9,7 +9,7 @@ Use Kitaru on Hinbox itself (dogfooding). That needs two things:
 1. **A way to get Hinbox's traces into Kitaru** (an importer), so Kitaru's insights, investigations and evaluators can look at every run.
 2. **A replay adapter**, so Kitaru can re-run a piece of Hinbox with one thing changed (a model, a prompt) and compare the results against the original.
 
-Part 1 is done (PR #138). Part 2 is designed below; its step 1 (recording step arguments) is done, the rest is not built.
+Part 1 is done (PR #138). Part 2 is built and was tried on the cloud workspace on 14 Nov ("Part 2" below): step sessions, the replay script, and a first evaluator. What is left is under "Still open".
 
 ## Short version
 
@@ -68,7 +68,7 @@ Notes:
 - **Cost:** Kitaru shows token counts but no cost; Hinbox doesn't record cost.
 - **The Kitaru MCP server** in local Claude sessions may point at another server; the CLI uses the stored login.
 
-## Part 2: the replay adapter (designed, not built)
+## Part 2: the replay adapter (built)
 
 ### What a Kitaru replay does
 
@@ -106,22 +106,40 @@ A step span used to record only the prompts sent to the model, not the arguments
    - **`profile.update`** (`update_profile()` in `src/engine/profiles.py`) records `entity_type`, `entity_name`, `kind`, `existing_profile` (the whole dict, not only its text: the `reorganised`, `split_refused_json` and `fact_rows_json` keys change what an update does), `new_article_text`, `new_article_id`, `article_dates`, `model_type`, `domain`, `model` (the argument, often empty), `answering_model` (the model that answers, after defaults) and `approach`. Out: `profile` (the whole updated dict), plus `edits`, `disagreements` and `edit_report` from the edit updater, `fact_report` from the fact-list updater, or `error` when the updater failed and the old profile was kept. These are `update_profile()`'s own parameter names, so a replay can mostly pass them back; it must drop `answering_model` and `labels`, and give a fresh `VersionedProfile()`.
    - **`match_check`** (`_check_match()`) records `backend`, both names, both profile texts (the existing one in full, before `profile_view()` shortens it), `entity_type` and `model`; out: `result` (`is_match`, `confidence`, `reason`), and `memo_hit` when the answer came from the memo with no model call.
    - **Size:** OpenTelemetry sets no length cap on a value by default, but an `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT` or `OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT` variable would have cut every long one without a word. `span_limits()` now sets both to `UNSET`, which makes the SDK ignore the variables. A test trace with the cap set to 1,000 kept a 547,945-character profile (Carol Rosenberg's, from the full run) and a 76,134-character article whole; its Kitaru part was 1.2 MiB. An update's span is now about the size of the old profile, the new one and the article together, so trace files of long runs grow by that much per update. Measured on 14 Nov: four real `profile.update` calls (Luna, small profiles) each added 1.2-1.5 bytes per character of old profile, article and new profile (JSON wrapping, the `sources` list and the edit report on top). Applying that to the 7 Nov Luna and 9 Nov Qwen 150-article runs (1,301 and 582 updates, 2,645 and 985 match checks) estimates +27% and +28% on their 122 MB and 95 MB trace files, about 0.2 MB per article: roughly a third bigger once small profiles' overhead is counted.
-   - **Eval traces don't record arguments:** `just eval profile-update` with the default edit approach calls `edit_profile()` inside its own `profile.update` span (`_update_step()` in `src/evals/profile_update.py`), not `update_profile()`, so its spans carry no `input.value` and make no step sessions.
+   - **Eval steps record too:** `just eval profile-update` with the default edit approach calls `edit_profile()`, not `update_profile()`, so its steps record `edit_profile()`'s own arguments plus `call: edit_profile` (`edit_step()` in `src/evals/profile_update.py`), and a replay runs that function. Calling `update_profile()` from the eval instead would have changed what it scores: for long people profiles `update_profile()` also reorganises and splits sections. Eval step sessions carry the case's `eval_item_id`, `eval_kind` and `eval_split` in their metadata.
    - **Privacy:** this is article text, so the same rule applies as now: keep it local.
    - **Not yet:** `relevance`, `extract.<type>`, `profile.create` and grounding record nothing new. Add them the same way when a replay needs them.
 2. **One session per step (done).** `just kitaru-traces <traces...> --out <dir> --step profile.update` writes each `profile.update` span that recorded its arguments as its own session (`step_sessions()`): its inputs are exactly those arguments (what a replay gets in `KITARU_TASK_INPUTS`), its outputs the recorded result, its nodes the step's spans and model calls; it fails when the step span failed or recorded an `error`. Its `external_id` is `hinbox:<trace id>:<span id>`, and its metadata names the step, the article ID and title, and the article's own session (`article_session`). A step span without recorded arguments (traces from before #139) is left out. Import these under their own agent, `hinbox-profile-update`, which the replay script will be registered as. Checked on 14 Nov with four real updates imported into a scratch agent: the session's inputs held the old profile, article text, dates and model.
-3. **A replay script**, `scripts/kitaru_step.py`, registered as the agent's run command, for example `kitaru agent register hinbox-profile-update --command "uv run python -m scripts.kitaru_step"`. It would:
-   - read the step input from `KITARU_TASK_INPUTS`, or from the task's spec through `client.tasks.get_spec()`;
-   - read the override through `client.replays.get(KITARU_REPLAY_ID)`;
-   - create a session plus a root node at index 0;
-   - call `update_profile(**inputs, model=…)`;
-   - record each model call as an `llm_call` node, by hooking the same `create` wrapper tracing uses (`_traced_create()` in `src/utils/tracing.py`);
-   - finish the root node and the session, marking them failed on error.
+3. **A replay script (done)**, `scripts/kitaru_step.py`, the agent's run command (`uv run --extra kitaru python -m scripts.kitaru_step`). It:
+   - reads the step's inputs with `kitaru.task.get_task_inputs()` (from `KITARU_TASK_INPUTS`, or the task spec when they were too long for the environment);
+   - reads the override with `client.replays.get(KITARU_REPLAY_ID)` and applies `model` (`provider:model` → `provider/model`; a map matches the step's model in either spelling or without the provider). `system_prompt`, `prompt` and `model_params` fail the run with a message saying why;
+   - calls the function the step ran, `update_profile()` (with the model that answered, so a replay doesn't pick up another environment's defaults) or `edit_step()`, with tracing on and the finished spans also kept in memory;
+   - turns those spans into a session with `step_sessions()`, the same code that converts traces for import, so a replay is laid out like its baseline;
+   - sends session and nodes in one request with Kitaru's own `ingest_session()`, and exits 1 if the step raised.
 
-   Declare `runtime_capabilities.tool_policies: false`. Hinbox has no tools: Instructor's "tool call" is a way to get structured output, not a tool.
-4. **Evaluators.** Port the deterministic checks from `src/evals/profile_update.py` (collapse, kept facts, unchanged text, invented citations) as Kitaru evaluators, using the `kitaru-validate-evaluator` and `kitaru-investigation` skills. A replay without evaluators only produces two profiles to compare by eye.
+   **How it differs from the plan:** no session is opened before the step runs and no `create` hook was written. Kitaru's core `ImporterBackedAdapter` does the same thing (run the function, then parse its trace into one session and ingest it; `asyncio.run()` only before and after), so the sync/async question goes away: Hinbox's code never runs inside an event loop. The one thing taken from that class's behaviour that matters: the session is sent with `imported_from: hinbox`. Without it the server refuses the nodes (`SessionNotIngestable`: a finished session takes nodes only when it is imported), and `ingest_session()` reports that 409 as "already exists", which is misleading. Unlike that class, the script applies the model override, so the agent version declares `overrides: true`, `tool_policies: false`.
+4. **Evaluators (first one done).** `hinbox-profile-update-checks` (`scripts/kitaru_evaluators/profile_update_checks.py`, rows from `step_results()` in `src/evals/kitaru_checks.py`) runs `score_update()`'s checks that need no case label on one session: `update_ok`, `length_ratio` (collapse), `fact_retention` and `invented_citations` pass or fail; `unchanged_share`, `added_sentences`, `cites_article`, `updated` (the article joined `sources`), `dispute_claims` and `unsupported_numbers` are reported. It declares no dependencies, so the worker runs it on its own Python and it imports Hinbox's scorer instead of copying it: the worker must run in Hinbox's environment (`just kitaru-worker`). On the 5 eval cases below its numbers matched the eval run's own scores field for field. Not yet: the kind-specific checks (a planted dispute kept, a labelled fact stated), which need the case's labels in the session, and the `kitaru-validate-evaluator` method (hand labels, then an agreement check).
 
-My rough guesses: 1–2 days for steps 1 and 2, 2–4 days for step 3 with tests, 1 day for the first two evaluators.
+### What the trial on 14 Nov showed
+
+The workspace now has an agent `hinbox-profile-update` (version 1, its `working_dir` this session's worktree) holding 5 eval step sessions (one entity, the American Civil Liberties Union; 3 `irrelevant` and 2 `new_fact` dev cases; tag `eval-dev-20261114`), the evaluator, and the replays of one `new_fact` case:
+
+| Replay | Result |
+|---|---|
+| Unchanged (Luna) | completed; every pass/fail check the same as the baseline; length ratio 1.446 against 1.41, 2 added sentences against 1 |
+| Model fork onto `anthropic:claude-haiku-5-5` | completed; the model call went to Haiku; every check passed, length ratio 1.552 |
+| Two earlier tries | failed: before the `imported_from` fix, and a fork whose worker had no `ANTHROPIC_API_KEY` (the shell had only the OpenAI key; `just kitaru-worker` now passes `--env-file .env`) |
+
+A pipeline step (`update_profile()`, from the 4-update trace of PR #140) was replayed locally with `--inputs`/`--out` and passed too; it was not sent to the workspace.
+
+### Still open
+
+- **The agent version points at this worktree.** Register version 2 with `working_dir` the main checkout once this is merged, or replays fail when the worktree is removed.
+- **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
+- **An experiment over a cohort** (the regression suite): freeze the step sessions into a cohort and replay all of them against a new agent version, e.g. one whose checkout has an edited `profile_edit.cloud.md`.
+- **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
+- **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
+- **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
 
 ### How replay changes map onto Hinbox
 
@@ -135,6 +153,8 @@ My rough guesses: 1–2 days for steps 1 and 2, 2–4 days for step 3 with tests
 
 ### Sync versus async
 
+*Resolved: the script runs the step first and records it afterwards, as Kitaru's `ImporterBackedAdapter` does (step 3 above), so none of the bridge below was needed. Kept for the reasoning.*
+
 - **The mismatch:** Kitaru's recording client (`KitaruAPIClient`, with `sessions.create`, `sessions.ingest_nodes` and `sessions.update`) is async. `KitaruSyncClient` in `src/kitaru/client/sync_client.py` (Kitaru repo) has no session or node write methods; I checked. Hinbox is synchronous and uses thread pools.
 - **The plan:** because the replay script is our own process, it can start with `asyncio.run(main())`, run the Hinbox step in a thread with `asyncio.to_thread`, collect model-call records in a thread-safe list, and write the nodes afterwards.
 - **Why that's acceptable:** the `kitaru-adapter-builder` skill warns against bridges between sync and async code. Its worry is breaking cancellation or context inside someone else's framework. Here we own the whole process, so that risk mostly doesn't apply, but a reviewer should know the rule exists.
@@ -146,7 +166,7 @@ My rough guesses: 1–2 days for steps 1 and 2, 2–4 days for step 3 with tests
 
 ## Decisions made
 
-1. **How Kitaru gets installed:** not in Hinbox's dependencies for now; run the CLI with `uvx --from 'kitaru[cli]' kitaru` or `uv tool install kitaru`. Once `scripts/kitaru_step.py` exists, add Kitaru as an optional extra (`uv sync --extra kitaru`), like the `anthropic` extra, because the worker runs the replay script inside Hinbox's environment and it imports the Kitaru SDK.
+1. **How Kitaru gets installed:** the optional `kitaru` extra (`kitaru[cli,worker]>=0.27.7,<0.28`; `uv sync --extra kitaru`), since the worker runs the replay script and the evaluator inside Hinbox's environment. CI doesn't install it; the tests that need it are skipped there.
 2. **First step to replay:** `profile.update`.
 3. **Eval traces:** a separate `hinbox-eval` agent.
 

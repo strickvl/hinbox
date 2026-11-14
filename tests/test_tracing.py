@@ -361,11 +361,38 @@ def test_profile_update_records_its_arguments_and_result(spans, monkeypatch):
     assert (args["new_article_id"], args["kind"]) == ("a2", "judge")
     assert args["article_dates"] == {"a2": "2018-05-01"}
     assert args["answering_model"] == "ollama/qwen"
+    assert args["guarded_corrections"] == 0  # no correction scope here
     result = json.loads(span.attributes["output.value"])
     assert result["profile"]["text"] == edited["text"]
     assert result["edit_report"]["applied"] == 1
     assert result["edits"] == edited["edits"]
     assert span.attributes["hinbox.entity_name"] == "Vance Spath"  # labels stay
+
+
+class _Fixed:
+    def __init__(self, value):
+        self.value = value
+
+    def get(self):
+        return self.value
+
+
+def test_profile_update_records_how_many_corrections_it_guarded(spans, monkeypatch):
+    from src.engine import corrections_pass, profile_edits
+    from src.engine.profiles import VersionedProfile, update_profile
+
+    rules = corrections_pass.PageRules(struck={"a": {}}, written={"b": {}})
+    monkeypatch.setattr(corrections_pass, "_CURRENT", _Fixed(rules))
+    edited = {"text": "Old.^[a1]", "sources": ["a1", "a2"], "edits": [],
+              "disagreements": [], "edit_report": {"applied": 0, "appended": 0,
+              "skipped": []}}  # fmt: skip
+    monkeypatch.setattr(profile_edits, "edit_profile", lambda *a, **k: edited)
+    update_profile(
+        "people", "N", {"text": "Old.^[a1]", "sources": ["a1"]}, VersionedProfile(),
+        "x", "a2", model="openai/x",
+    )  # fmt: skip
+    (span,) = _by_name(spans, "profile.update")
+    assert json.loads(span.attributes["input.value"])["guarded_corrections"] == 2
 
 
 def test_match_check_records_both_profiles_and_its_verdict(spans, monkeypatch):

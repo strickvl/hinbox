@@ -1,0 +1,277 @@
+"""Run one recorded ``profile.update`` step again and record it in Kitaru.
+
+Kitaru's worker starts this script for a replay of a step session (one that
+``scripts/kitaru_traces.py --step profile.update`` wrote). The session's
+inputs are the step's own arguments; this script:
+
+1. reads them from the task (``KITARU_TASK_INPUTS``, or the task's spec when
+   they were too long for the environment);
+2. applies the replay's model override, if any (``KITARU_REPLAY_ID``);
+3. calls the function the step ran, with those arguments: ``update_profile()``
+   for a pipeline step, ``edit_step()`` (``edit_profile()``) for an eval step,
+   as the recorded ``call`` says;
+4. turns the spans that call left (the step and its model calls) into a
+   session with the same code that converts traces for import
+   (``step_sessions()``), so a replay and its baseline have the same shape;
+5. writes it to Kitaru in one request (``origin: replay``) and exits 1 if
+   the step raised.
+
+Register it as the step agent's run command,
+``kitaru agent register hinbox-profile-update --spec spec.yaml``, with::
+
+    version:
+      run_spec:
+        command: uv run --extra kitaru python -m scripts.kitaru_step
+        working_dir: <this checkout>
+        runtime_capabilities: {overrides: true, tool_policies: false}
+
+(Hinbox has no tools; Instructor's tool call is structured output.) Run the
+worker with ``just kitaru-worker``, which gives it ``.env``'s API keys. Of the
+replay overrides only ``model`` is applied; ``system_prompt``, ``prompt`` and
+``model_params`` fail the run, since one step makes several calls with
+different prompts. Every replay makes live model calls.
+
+Outside a worker, ``--inputs <json> --out <file>`` runs a step from a file of
+recorded inputs and writes the session as a Kitaru JSONL line instead.
+"""
+
+import argparse
+import asyncio
+import json
+import os
+import sys
+import tempfile
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from scripts.kitaru_traces import step_sessions
+
+STEP = "profile.update"
+# Recorded beside update_profile()'s arguments but not one of them
+NOT_ARGUMENTS = ("call", "answering_model", "labels", "guarded_corrections")
+
+
+def hinbox_model(name: str) -> str:
+    """Kitaru writes ``provider:model``; Hinbox ``provider/model``. A colon
+    before the first slash is the provider's (``openrouter:anthropic/x``);
+    one after it is a tag (``ollama/qwen2.5:32b``), kept."""
+    return name.replace(":", "/", 1) if ":" in name.split("/", 1)[0] else name
+
+
+def _model_of(inputs: Dict[str, Any]) -> str:
+    return str(inputs.get("model") or inputs.get("answering_model") or "")
+
+
+def apply_override(inputs: Dict[str, Any], override: Any) -> Dict[str, Any]:
+    """The inputs with the replay override applied (``model`` only).
+
+    A string replaces the model; a map replaces the step's model when it is
+    one of its keys (in either spelling, or without the provider).
+    """
+    if override is None:
+        return inputs
+    unsupported = [
+        f for f in ("system_prompt", "prompt", "model_params") if getattr(override, f)
+    ]
+    if unsupported:
+        raise ValueError(
+            f"Replay override {', '.join(unsupported)} is not supported: a "
+            "profile update makes several model calls with different prompts. "
+            "Test a prompt change as a new agent version instead."
+        )
+    model = getattr(override, "model", None)
+    if not model:
+        return inputs
+    current = _model_of(inputs)
+    if isinstance(model, str):
+        return {**inputs, "model": hinbox_model(model)}
+    for old, new in model.items():
+        if hinbox_model(old) in (current, current.split("/", 1)[-1]):
+            return {**inputs, "model": hinbox_model(new)}
+    raise ValueError(f"The model override has no entry for {current!r}")
+
+
+def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any]]:
+    """The function the recorded step ran, and the arguments to call it with.
+
+    Refuses a pipeline step that ran with a historian's corrections guarded:
+    the replay has no correction scope, so the guard would let a struck
+    sentence back in and the replay would differ for that reason alone.
+    """
+    if inputs.get("guarded_corrections"):
+        raise ValueError(
+            f"This step ran with {inputs['guarded_corrections']} of the "
+            "historian's sentences guarded (struck or written), which a replay "
+            "can't restore yet; replaying it would let them be rewritten"
+        )
+    args = {k: v for k, v in inputs.items() if k not in NOT_ARGUMENTS}
+    if inputs.get("call") == "edit_profile":
+        from src.evals.profile_update import edit_step
+
+        return (lambda **kw: edit_step(kw)), args
+    from src.engine.profiles import VersionedProfile, update_profile
+
+    # The model that answered: a step recorded with no model argument used
+    # the defaults of the run's environment, which a replay may not share
+    args["model"] = _model_of(inputs) or None
+    return update_profile, {**args, "versioned_profile": VersionedProfile()}
+
+
+def _capture() -> Any:
+    """Keep this process's finished spans in memory as well."""
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+        InMemorySpanExporter,
+    )
+
+    provider = trace.get_tracer_provider()
+    if not isinstance(provider, TracerProvider):  # tracing off or not set up
+        raise RuntimeError("Tracing must be on to record the step")
+    exporter = InMemorySpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return exporter
+
+
+def recorded_session(rows: List[Dict[str, Any]], replay: bool) -> Dict[str, Any]:
+    """The step's session from the re-run's spans."""
+    step = next((r for r in rows if r["name"] == STEP), None)
+    if step is None:
+        raise RuntimeError(f"The re-run left no {STEP} span")
+    trace_id = step["context"]["trace_id"]
+    sessions = step_sessions(
+        [r for r in rows if r["context"]["trace_id"] == trace_id], STEP
+    )
+    if len(sessions) != 1:
+        raise RuntimeError(f"Expected one {STEP} step, found {len(sessions)}")
+    session = sessions[0]
+    session["framework"] = "hinbox"
+    if replay:  # the re-run is no article of its own
+        session["metadata"].pop("article_session", None)
+    return session
+
+
+def run_step(
+    inputs: Dict[str, Any], replay: bool
+) -> Tuple[Dict[str, Any], Optional[BaseException]]:
+    """Run the step with tracing on; its session, and what it raised."""
+    from src.utils import tracing
+
+    os.environ["HINBOX_TRACING"] = "on"
+    model = _model_of(inputs)
+    with tempfile.TemporaryDirectory() as tmp:
+        tracing.configure_tracing(
+            tmp,
+            local=model.startswith("ollama/"),
+            run_name="kitaru-step",
+            domain=str(inputs.get("domain") or ""),
+        )
+        exporter = _capture()
+        fn, args = step_call(inputs)
+        error: Optional[BaseException] = None
+        try:
+            fn(**args)
+        except Exception as e:  # recorded, then raised again by main()
+            error = e
+        rows = [
+            json.loads(s.to_json(indent=None)) for s in exporter.get_finished_spans()
+        ]
+        tracing.shutdown_tracing()
+    return recorded_session(rows, replay), error
+
+
+def ingest_request(session: Dict[str, Any], replay: bool) -> Any:
+    """The session as Kitaru's ``ImportedSession`` (nodes nested by parent)."""
+    from kitaru.task.importer import ImportedNode, ImportedSession
+
+    by_index = {
+        n["index"]: {k: v for k, v in n.items() if k not in ("index", "parent_index")}
+        for n in session["nodes"]
+    }
+    roots: List[Dict[str, Any]] = []
+    for n in session["nodes"]:
+        node = by_index[n["index"]]
+        node.setdefault("children", [])
+        parent = n["parent_index"]
+        if parent is None:
+            roots.append(node)
+        else:
+            by_index[parent].setdefault("children", []).append(node)
+
+    def build(node: Dict[str, Any]) -> Any:
+        return ImportedNode(
+            **{**node, "children": [build(c) for c in node["children"]]}
+        )
+
+    return ImportedSession(
+        **{k: v for k, v in session.items() if k != "nodes"},
+        nodes=[build(r) for r in roots],
+    )
+
+
+async def _replay_override() -> Any:
+    import uuid
+
+    from kitaru.client import KitaruAPIClient
+
+    async with KitaruAPIClient() as client:
+        replay = await client.replays.get(uuid.UUID(os.environ["KITARU_REPLAY_ID"]))
+    return replay.override
+
+
+async def _send(parsed: Any, replay: bool) -> Any:
+    from kitaru.api_models.v1.session import SessionOrigin
+    from kitaru.client import KitaruAPIClient
+    from kitaru.task.importer import ingest_session
+
+    origin = SessionOrigin.REPLAY if replay else SessionOrigin.RECORDED
+    async with KitaruAPIClient() as client:
+        # Agent None: the task's own token says which agent it is. The
+        # provider marks the session as built from a trace, as Kitaru's own
+        # ImporterBackedAdapter does: the server takes the nodes of a finished
+        # session only then
+        return await ingest_session(client, parsed, None, "hinbox", origin)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument(
+        "--inputs", help="JSON file of recorded step inputs (outside a worker)"
+    )
+    ap.add_argument(
+        "--out", help="write the session here as Kitaru JSONL, don't send it"
+    )
+    a = ap.parse_args(argv)
+    if a.inputs:
+        with open(a.inputs, encoding="utf-8") as f:
+            inputs = json.load(f)
+    else:
+        from kitaru.task import get_task_inputs
+
+        inputs = get_task_inputs()
+    if not isinstance(inputs, dict):
+        ap.error("no step inputs: run under a Kitaru worker or pass --inputs")
+    if not a.out and not os.environ.get("KITARU_TASK_ID"):
+        ap.error("outside a Kitaru worker, pass --out")
+    replay = bool(os.environ.get("KITARU_REPLAY_ID"))
+    if replay:
+        inputs = apply_override(inputs, asyncio.run(_replay_override()))
+    session, error = run_step(inputs, replay)
+    if a.out:
+        with open(a.out, "w", encoding="utf-8") as f:
+            f.write(json.dumps(session, ensure_ascii=False) + "\n")
+    else:
+        if asyncio.run(_send(ingest_request(session, replay), replay)) is None:
+            # ingest_session() reads any 409 as a duplicate; it can also be
+            # a task that already has its session, or one no longer running
+            raise RuntimeError(
+                f"Kitaru refused session {session['external_id']} (409 Conflict)"
+            )
+    print(f"{session['name']}: {session['status']}", file=sys.stderr)
+    if error is not None:
+        raise error
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

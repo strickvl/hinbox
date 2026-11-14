@@ -360,6 +360,12 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
                     "article_session": f"hinbox:{trace_id}",
                     "article_id": labels.get("article_id") or article.get("article.id"),
                     "article_title": article.get("article.title"),
+                    # An eval item's case, so eval sessions can be grouped by kind
+                    **{
+                        k: article[k]
+                        for k in ("eval_item_id", "eval_kind", "eval_split")
+                        if k in article
+                    },
                 },
                 "framework": None,
                 "nodes": nodes,
