@@ -131,10 +131,13 @@ def _llm_fields(attrs: Dict[str, Any]) -> Dict[str, Any]:
     ins, outs = messages(attrs, "input"), messages(attrs, "output")
     users = [i for i, m in enumerate(ins) if m.get("role") == "user"]
     reply = outs[0] if outs else {}
-    if reply.get("content") is not None:
-        output_selector: Optional[str] = "/0/content"
-    elif reply.get("tool_calls"):  # structured output sent as a tool call
-        output_selector = "/0/tool_calls/0/function/arguments"
+    # structured output comes back as a tool call, which is the result even when
+    # the model also wrote text ("Here is the extraction"), as Claude can; the
+    # trace's own ``output.value`` makes the same choice (``_record_reply()``)
+    if reply.get("tool_calls"):
+        output_selector: Optional[str] = "/0/tool_calls/0/function/arguments"
+    elif reply.get("content") is not None:
+        output_selector = "/0/content"
     else:
         output_selector = None
     reasoning = []

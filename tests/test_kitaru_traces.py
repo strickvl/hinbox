@@ -126,6 +126,11 @@ def test_a_tool_call_reply_points_at_its_arguments():
         {"id": "x", "function": {"name": "Edits", "arguments": '{"a": 1}'}}
     ]
     assert call["output_text_selector"] == "/0/tool_calls/0/function/arguments"
+    # a Claude reply can carry a preamble beside the tool call; the call is the result
+    mixed = {**reply, "content": "Here are the edits."}
+    call = session([_article(), _llm("t1", "c1", "t1-root", mixed)])["nodes"][1]
+    assert call["outputs"][0]["content"] == "Here are the edits."
+    assert call["output_text_selector"] == "/0/tool_calls/0/function/arguments"
 
 
 def test_a_step_shows_its_labels_and_merge_decisions():
