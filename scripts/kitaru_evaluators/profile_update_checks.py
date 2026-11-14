@@ -31,5 +31,6 @@ def evaluate(session: SessionView, **params: Any) -> List[EvaluationResult]:
             "Can't import Hinbox's checks: start the worker from the Hinbox "
             "checkout with `uv run --extra kitaru kitaru worker start`"
         ) from e
-    rows = step_results(session.session.inputs or {}, session.session.outputs)
+    s = session.session
+    rows = step_results(s.inputs or {}, s.outputs, s.metadata)
     return [EvaluationResult(**row) for row in rows]

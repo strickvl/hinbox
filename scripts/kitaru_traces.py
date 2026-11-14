@@ -307,6 +307,10 @@ def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+# An eval item's labels that its step sessions carry in their metadata
+EVAL_KEYS = ("eval_item_id", "eval_kind", "eval_split", "eval_claim_label")
+
+
 def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]:
     """One session per ``step`` span in a trace that recorded its arguments.
 
@@ -361,11 +365,7 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
                     "article_id": labels.get("article_id") or article.get("article.id"),
                     "article_title": article.get("article.title"),
                     # An eval item's case, so eval sessions can be grouped by kind
-                    **{
-                        k: article[k]
-                        for k in ("eval_item_id", "eval_kind", "eval_split")
-                        if k in article
-                    },
+                    **{k: article[k] for k in EVAL_KEYS if k in article},
                 },
                 "framework": None,
                 "nodes": nodes,

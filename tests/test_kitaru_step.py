@@ -9,7 +9,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 
 from scripts import kitaru_step as ks
-from src.evals.kitaru_checks import step_checks, step_results
+from src.evals.kitaru_checks import case_result, step_checks, step_results
 
 OLD = "## Background\nThe ACLU sued over the camp.^[a1] It filed again in 2009.^[a1]"
 
@@ -209,6 +209,38 @@ def test_a_step_that_recorded_no_profile_counts_as_not_updated():
     rows = {r["name"]: r for r in step_results(_inputs(), {"error": "failed"})}
     assert rows["updated"]["score"] is False
     assert rows["update_ok"]["passed"] is True  # the old profile is intact
+
+
+def test_case_ok_applies_the_eval_rule_for_the_cases_kind():
+    added = OLD + (
+        " Lawyers filed motions in Miami.^[a2] Judges heard appeals in Virginia.^[a2]"
+        " Reporters covered hearings at Guantanamo.^[a2]"
+    )
+    new = {"profile": {"text": added, "sources": ["a1", "a2"]}}
+    rows = {
+        r["name"]: r for r in step_results(_inputs(), new, {"eval_kind": "irrelevant"})
+    }
+    assert rows["case_ok"]["passed"] is False  # 3 sentences on an irrelevant article
+    assert "3 sentences added" in rows["case_ok"]["explanation"]
+    kept = {"profile": {"text": OLD, "sources": ["a1", "a2"]}}
+    assert case_result(step_checks(_inputs(), kept), {"eval_kind": "irrelevant"})[
+        "passed"
+    ]
+    missed = case_result(step_checks(_inputs(), kept), {"eval_kind": "new_fact"})
+    assert missed["passed"] is False and "not cited" in missed["explanation"]
+
+
+def test_case_ok_is_left_out_when_the_rule_needs_the_case():
+    scores = step_checks(_inputs(), {"profile": {"text": OLD, "sources": ["a1"]}})
+    for metadata in (None, {"eval_kind": "disputed"},
+                     {"eval_kind": "new_fact", "eval_claim_label": True}):  # fmt: skip
+        assert case_result(scores, metadata) is None
+
+
+def test_a_replay_keeps_its_baselines_eval_labels_only():
+    meta = {"eval_kind": "new_fact", "eval_item_id": "c1", "run_id": "r", "step": "x"}
+    assert ks.baseline_labels(meta) == {"eval_kind": "new_fact", "eval_item_id": "c1"}
+    assert ks.baseline_labels(None) == {}
 
 
 def test_every_check_is_a_valid_kitaru_result():
