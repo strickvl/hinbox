@@ -353,16 +353,17 @@ def make_rewrite_updater(model: str, domain: str) -> Updater:
 
 
 @contextmanager
-def _update_step(case: Dict[str, Any], approach: str) -> Iterator[None]:
-    """The ``profile.update`` step the pipeline would open around this call."""
+def _update_step(about: Dict[str, Any], approach: str) -> Iterator[None]:
+    """The ``profile.update`` step the pipeline would open around this call
+    (``about``: a case, or ``edit_profile``'s arguments)."""
     from src.utils.step_timing import timed_step
     from src.utils.tracing import annotate
 
     with timed_step("profile.update"):
         annotate(
-            entity_type=case["entity_type"],
-            entity_name=case["entity_name"],
-            article_id=case["article_id"],
+            entity_type=about["entity_type"],
+            entity_name=about["entity_name"],
+            article_id=about["article_id"],
             approach=approach,
         )
         yield
@@ -393,30 +394,46 @@ def case_dates(case: Dict[str, Any], domain: str) -> Dict[str, Any]:
     return {i: d for i, d in found.items() if d is not None}
 
 
+def edit_step(args: Dict[str, Any]) -> Dict[str, Any]:
+    """``edit_profile(**args)`` inside the ``profile.update`` step, recording
+    ``args`` and the result on the step's span. The eval runs this, not
+    ``update_profile()``, so a replay (``scripts/kitaru_step.py``) of an eval
+    step runs it too: the recorded ``call`` says which."""
+    from src.engine.profile_edits import edit_profile
+    from src.utils.tracing import record_step_input, record_step_output
+
+    with _update_step(args, "edit"):
+        record_step_input(call="edit_profile", **args)
+        profile = edit_profile(**args)
+        extra = ("edits", "disagreements", "edit_report")
+        record_step_output(
+            profile={k: v for k, v in profile.items() if k not in extra},
+            **{k: profile.get(k) for k in extra},
+        )
+    return profile
+
+
 def make_edit_updater(model: str, domain: str) -> Updater:
     """Ask for a list of edits, check and apply them (``profile_edits.py``,
     ``edit_guards.py``); a profile too long for the local model goes to the
     fact list, as in the pipeline."""
-    from src.engine.profile_edits import edit_profile
     from src.utils.ollama_context import PromptTooLongError
 
     def update(case: Dict[str, Any]) -> str:
-        args = (
-            case["entity_type"],
-            case["entity_name"],
-            case["profile"],
-            case["article_text"],
-            case["article_id"],
-        )
         try:
-            with _update_step(case, "edit"):
-                profile = edit_profile(
-                    *args,
-                    model=model,
-                    domain=domain,
-                    article_dates=case_dates(case, domain),
-                    kind=case.get("entity_kind") or None,
-                )
+            profile = edit_step(
+                {
+                    "entity_type": case["entity_type"],
+                    "entity_name": case["entity_name"],
+                    "existing_profile": case["profile"],
+                    "article_text": case["article_text"],
+                    "article_id": case["article_id"],
+                    "model": model,
+                    "domain": domain,
+                    "article_dates": case_dates(case, domain),
+                    "kind": case.get("entity_kind") or None,
+                }
+            )
         except PromptTooLongError:
             result = make_fact_updater(model, domain)(case)
             result["report"]["fallback"] = "facts"

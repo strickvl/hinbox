@@ -235,6 +235,25 @@ def test_each_recorded_step_becomes_a_session_of_its_own():
     assert (f["status"], f["error"]) == ("failed", "profile edit failed: timeout")
 
 
+def test_an_eval_steps_session_names_its_case():
+    item = _row(
+        "t1",
+        "t1-root",
+        name="eval new_fact:ACLU:3",
+        attrs={"hinbox.eval_item_id": "new_fact:ACLU:3", "hinbox.eval_kind": "new_fact",
+               "hinbox.eval_split": "dev"},
+    )  # fmt: skip
+    step = _row("t1", "p1", "t1-root", "profile.update", _update("p1")["attributes"])
+    (s,) = step_sessions([item, step], "profile.update")
+    assert {
+        k: s["metadata"][k] for k in ("eval_item_id", "eval_kind", "eval_split")
+    } == {
+        "eval_item_id": "new_fact:ACLU:3",
+        "eval_kind": "new_fact",
+        "eval_split": "dev",
+    }
+
+
 def test_step_parts_count_their_sessions(tmp_path):
     rows = [_article(), _update("p1"), _update("p2"), _update("p3", recorded=False)]
     counts: Dict = {}

@@ -173,6 +173,17 @@ def test_eval_edit_updater_calls_land_under_profile_update(spans, monkeypatch):
     assert row["metadata"]["task"] == "profile.update"
     assert row["metadata"]["entity_name"] == "Vance Spath"
     assert row["metadata"]["approach"] == "edit"
+    # The step records edit_profile's own arguments, so a replay can call it again
+    (span,) = [s for s in spans.get_finished_spans() if s.name == "profile.update"]
+    args = json.loads(span.attributes["input.value"])
+    assert args["call"] == "edit_profile"
+    assert (args["existing_profile"], args["article_id"]) == (
+        {"text": "unchanged"},
+        "a9",
+    )
+    assert args["model"] == "openai/x"
+    out = json.loads(span.attributes["output.value"])
+    assert out["profile"] == {"text": "unchanged"}
 
 
 def test_instructor_retry_turns_keep_tool_call_names_and_ids(spans):
