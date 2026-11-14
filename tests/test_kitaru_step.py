@@ -237,10 +237,19 @@ def test_case_ok_is_left_out_when_the_rule_needs_the_case():
         assert case_result(scores, metadata) is None
 
 
-def test_a_replay_keeps_its_baselines_eval_labels_only():
-    meta = {"eval_kind": "new_fact", "eval_item_id": "c1", "run_id": "r", "step": "x"}
-    assert ks.baseline_labels(meta) == {"eval_kind": "new_fact", "eval_item_id": "c1"}
-    assert ks.baseline_labels(None) == {}
+def test_a_replay_keeps_its_baselines_eval_labels(monkeypatch):
+    def same(**kwargs):
+        return {**kwargs["existing_profile"], "edits": [], "disagreements": [],
+                "edit_report": {}}  # fmt: skip
+
+    monkeypatch.setattr("src.engine.profile_edits.edit_profile", same)
+    labels = {"eval_kind": "irrelevant", "eval_item_id": "irrelevant:ACLU:1"}
+    session, error = ks.run_step(_inputs(labels=labels), replay=True)
+    assert error is None
+    assert session["inputs"]["labels"] == labels  # for the evaluator
+    assert session["metadata"]["eval_kind"] == "irrelevant"
+    fn, args = ks.step_call(_inputs(labels=labels))
+    assert "labels" not in args  # the step itself never sees them
 
 
 def test_every_check_is_a_valid_kitaru_result():

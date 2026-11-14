@@ -7,7 +7,7 @@ updated profile against the old one with ``score_update()``'s checks that
 need no case label: collapse, kept facts, unchanged text, added sentences,
 citing the article, invented citations, "sources disagree" sentences and
 numbers the article doesn't have. For an eval case whose kind is in the
-session's metadata (``eval_kind``; a replay copies it from its baseline),
+session's inputs (``labels.eval_kind``, which a replay keeps),
 ``case_ok`` also applies the eval's own pass rule for an ``irrelevant`` case
 (at most 2 added sentences) or an unlabelled ``new_fact`` case (cites the
 article). The other case checks (a planted dispute kept, a labelled fact
@@ -63,7 +63,7 @@ def case_result(
     scores: Dict[str, Any], metadata: Optional[Dict[str, Any]]
 ) -> Optional[Dict[str, Any]]:
     """``case_ok``: the eval's own pass rule for the session's case kind
-    (``eval_kind`` in its metadata, which replays copy from their baseline),
+    (``eval_kind`` in its inputs' ``labels``, which a replay keeps),
     or None when it can't be applied here: not an eval case, a ``disputed``
     case, or a ``new_fact`` case passed on its claim label's facts."""
     kind = (metadata or {}).get("eval_kind")

@@ -43,7 +43,7 @@ import sys
 import tempfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from scripts.kitaru_traces import EVAL_KEYS, step_sessions
+from scripts.kitaru_traces import step_sessions
 
 STEP = "profile.update"
 # Recorded beside update_profile()'s arguments but not one of them
@@ -151,6 +151,17 @@ def recorded_session(rows: List[Dict[str, Any]], replay: bool) -> Dict[str, Any]
     return session
 
 
+def with_labels(session: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """The re-run's session keeping the baseline's eval-case labels (inputs
+    ``labels``), which the step never sees, so the evaluator can score it by
+    its case's kind."""
+    labels = inputs.get("labels")
+    if labels:
+        session["inputs"] = {**session["inputs"], "labels": labels}
+        session["metadata"].update(labels)
+    return session
+
+
 def run_step(
     inputs: Dict[str, Any], replay: bool
 ) -> Tuple[Dict[str, Any], Optional[BaseException]]:
@@ -177,7 +188,7 @@ def run_step(
             json.loads(s.to_json(indent=None)) for s in exporter.get_finished_spans()
         ]
         tracing.shutdown_tracing()
-    return recorded_session(rows, replay), error
+    return with_labels(recorded_session(rows, replay), inputs), error
 
 
 def ingest_request(session: Dict[str, Any], replay: bool) -> Any:
@@ -209,21 +220,14 @@ def ingest_request(session: Dict[str, Any], replay: bool) -> Any:
     )
 
 
-async def _replay_context() -> Tuple[Any, Dict[str, Any]]:
-    """The replay's override, and its baseline's eval labels (``EVAL_KEYS``):
-    the evaluator scores a replay of an eval case by the case's kind."""
+async def _replay_override() -> Any:
     import uuid
 
     from kitaru.client import KitaruAPIClient
 
     async with KitaruAPIClient() as client:
         replay = await client.replays.get(uuid.UUID(os.environ["KITARU_REPLAY_ID"]))
-        baseline = await client.sessions.get(replay.baseline_session_id)
-    return replay.override, baseline_labels(baseline.metadata)
-
-
-def baseline_labels(metadata: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    return {k: v for k, v in (metadata or {}).items() if k in EVAL_KEYS}
+    return replay.override
 
 
 async def _send(parsed: Any, replay: bool) -> Any:
@@ -262,11 +266,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         ap.error("outside a Kitaru worker, pass --out")
     replay = bool(os.environ.get("KITARU_REPLAY_ID"))
     if replay:
-        override, labels = asyncio.run(_replay_context())
-        inputs = apply_override(inputs, override)
+        inputs = apply_override(inputs, asyncio.run(_replay_override()))
     session, error = run_step(inputs, replay)
-    if replay:
-        session["metadata"].update(labels)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:
             f.write(json.dumps(session, ensure_ascii=False) + "\n")

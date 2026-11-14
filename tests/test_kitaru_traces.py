@@ -245,6 +245,7 @@ def test_an_eval_steps_session_names_its_case():
     )  # fmt: skip
     step = _row("t1", "p1", "t1-root", "profile.update", _update("p1")["attributes"])
     (s,) = step_sessions([item, step], "profile.update")
+    assert s["inputs"]["labels"]["eval_kind"] == "new_fact"  # a replay gets them too
     assert {
         k: s["metadata"][k] for k in ("eval_item_id", "eval_kind", "eval_split")
     } == {
