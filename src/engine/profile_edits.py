@@ -402,18 +402,17 @@ def _date_check(
 ) -> Tuple[List[Any], Dict[str, Any]]:
     """With ``HINBOX_EDIT_DATE_CHECK=on``, the ``add`` edits for the date
     conflicts the model's own list missed (``edit_date_check.py``) and its
-    report; nothing and {} when off. A failed call adds nothing, reported."""
+    report; nothing and {} when off. A failed call raises, like a failed edit
+    call: the update fails, the article isn't linked, and the next run tries
+    again, instead of the article being marked done unchecked."""
     from src.engine.edit_date_check import date_check_edits, edit_date_check_enabled
 
     if not edit_date_check_enabled():
         return [], {}
-    try:
-        return date_check_edits(
-            generate, model, domain, entity_type, entity_name, old_text,
-            article_text, article_id, [d.profile_sentence for d in disagreements],
-        )  # fmt: skip
-    except Exception as e:
-        return [], {"error": f"date check failed: {e}"}
+    return date_check_edits(
+        generate, model, domain, entity_type, entity_name, old_text,
+        article_text, article_id, [d.profile_sentence for d in disagreements],
+    )  # fmt: skip
 
 
 def _dispute_asker(generate: Any, model: str, entity_type: str, entity_name: str):

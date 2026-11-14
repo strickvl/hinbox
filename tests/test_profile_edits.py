@@ -305,14 +305,28 @@ def test_the_date_check_leaves_a_disagreement_the_model_listed(monkeypatch):
     assert "DateVerdicts" not in calls
 
 
-def test_a_failed_date_check_keeps_the_models_edits(monkeypatch):
+def test_a_failed_date_check_fails_the_update(monkeypatch):
+    """So the pipeline leaves the article unlinked and tries it again."""
     monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
     fake, _ = _date_model(
         ProfileEditList(edits=[_edit("add", "END", "He was tried.^[a9]")]), fail=True
     )
     monkeypatch.setattr(pe, "cloud_generation", fake)
-    out = pe.edit_profile(
-        "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
-    )
-    assert out["text"].rstrip().endswith("He was tried.^[a9]")
-    assert "server down" in out["edit_report"]["date_check"]["error"]
+    with pytest.raises(RuntimeError, match="server down"):
+        pe.edit_profile(
+            "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
+        )
+
+
+def test_a_failed_date_check_keeps_the_old_profile_and_article_unlinked(monkeypatch):
+    from src.engine.profiles import VersionedProfile, update_profile
+
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    fake, _ = _date_model(ProfileEditList(edits=[]), fail=True)
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    old = {"text": MOVED, "sources": ["a1"]}
+    new, _, _ = update_profile(
+        "people", "Nashiri", old, VersionedProfile(), MOVED_ARTICLE, "a9",
+        model="openai/x", approach="edit",
+    )  # fmt: skip
+    assert new["text"] == MOVED and "a9" not in new.get("sources", [])
