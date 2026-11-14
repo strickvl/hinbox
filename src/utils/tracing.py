@@ -98,9 +98,28 @@ def _model_settings() -> Dict[str, str]:
     return {f"hinbox.env.{k}": os.environ[k] for k in keys}
 
 
-# OpenTelemetry's defaults (128 attributes and 128 events per span) would
-# silently drop the tail of a long conversation or of a busy merge step.
 SPAN_LIMIT = 4096
+
+
+def span_limits() -> Any:
+    """Span limits under which nothing a step or model call records is dropped.
+
+    OpenTelemetry's defaults (128 attributes and 128 events per span) would
+    silently drop the tail of a long conversation or of a busy merge step.
+    Values have no length cap by default, but ``OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT``
+    or ``OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT`` in the environment would cut
+    every long one (a step's recorded profile and article, a prompt) without a
+    word; ``UNSET`` makes the SDK ignore them.
+    """
+    from opentelemetry.sdk.trace import SpanLimits
+
+    return SpanLimits(
+        max_span_attributes=SPAN_LIMIT,
+        max_events=SPAN_LIMIT,
+        max_event_attributes=SPAN_LIMIT,
+        max_attribute_length=SpanLimits.UNSET,
+        max_span_attribute_length=SpanLimits.UNSET,
+    )
 
 
 def configure_tracing(
@@ -122,7 +141,7 @@ def configure_tracing(
             "point it at a local Phoenix."
         )
     from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import SpanLimits, SpanProcessor, TracerProvider
+    from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     run_id = f"{run_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -148,11 +167,7 @@ def configure_tracing(
                 **_model_settings(),
             }
         ),
-        span_limits=SpanLimits(
-            max_span_attributes=SPAN_LIMIT,
-            max_events=SPAN_LIMIT,
-            max_event_attributes=SPAN_LIMIT,
-        ),
+        span_limits=span_limits(),
     )
     provider.add_span_processor(_SessionProcessor())
     provider.add_span_processor(
@@ -296,6 +311,41 @@ def annotate_span(span: Any, **attrs: Any) -> None:
         return
     span.set_attributes(
         {f"hinbox.{k}": _attr_value(v) for k, v in attrs.items() if v is not None}
+    )
+
+
+def record_step_input(**args: Any) -> None:
+    """Set the current step span's ``input.value`` to ``args`` as one JSON object.
+
+    Steps that could be re-run on their own (``profile.update``,
+    ``match_check``) record the arguments they were called with, in full, so
+    a replay can call the step again with exactly them. The ``hinbox.*``
+    labels stay as they are: they summarise, this is the whole input.
+    """
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.set_attributes(
+            {"input.value": _text(args), "input.mime_type": "application/json"}
+        )
+
+
+def record_step_output(**parts: Any) -> None:
+    """Add ``parts`` to the current step span's ``output.value`` JSON object.
+
+    Merges with what an earlier call on the same span recorded, so a helper
+    can add its report (``edit_report``) and the step its result
+    (``profile``); a later part of the same name wins.
+    """
+    span = trace.get_current_span()
+    if not span.is_recording():
+        return
+    old = (getattr(span, "attributes", None) or {}).get("output.value")
+    try:
+        merged = {**json.loads(old), **parts} if old else parts
+    except (TypeError, ValueError):
+        merged = parts
+    span.set_attributes(
+        {"output.value": _text(merged), "output.mime_type": "application/json"}
     )
 
 

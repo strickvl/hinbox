@@ -7,10 +7,11 @@ letting ``kitaru/phoenix`` read the raw spans, because Kitaru's viewer only
 shows a model call as a conversation when its messages are ``{"role",
 "content"}`` and the node says where the system prompt, the prompt and the
 reply are (``*_selector``); the Phoenix importer sets neither
-(https://github.com/zenml-io/kitaru/issues/1517). A step span carries no
-``input.value``, only our ``hinbox.*`` labels, so those become its inputs and
-outputs here, and merge decisions join the outputs of their ``merge.<type>``
-step.
+(https://github.com/zenml-io/kitaru/issues/1517). A step that records its
+arguments and result (``profile.update``, ``match_check``: a JSON object in
+``input.value``/``output.value``) shows them as its inputs and outputs, with
+our ``hinbox.*`` labels beside them under ``labels``; any other step shows its
+labels alone. Merge decisions join the outputs of their ``merge.<type>`` step.
 
     uv run python -m scripts.kitaru_traces data/guantanamo/entities/traces/run-*.jsonl \\
         --out data/guantanamo/entities/kitaru
@@ -173,19 +174,37 @@ def _llm_fields(attrs: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _with_recorded(labels: Dict[str, Any], value: Any) -> Any:
+    """A step's recorded arguments or result with its labels under ``labels``;
+    the labels alone when the step recorded none.
+
+    Only a JSON object counts as recorded (``record_step_input()``/
+    ``record_step_output()``): the article span's ``input.value`` is its
+    title and stays out, as before.
+    """
+    recorded = _decode(value)
+    if not isinstance(recorded, dict):
+        return labels
+    return {**recorded, "labels": labels} if labels else recorded
+
+
 def _span_fields(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Inputs and outputs of a step span, from its labels and merge decisions."""
+    """Inputs and outputs of a step span: what the step recorded (the
+    arguments of ``profile.update``, ``match_check``) with its labels beside
+    it, else its labels; merge decisions join the outputs."""
     attrs = row.get("attributes") or {}
     labels = _labels(attrs)
-    inputs: Any = {k: v for k, v in labels.items() if k in INPUT_LABELS}
-    outputs: Any = {k: v for k, v in labels.items() if k not in INPUT_LABELS}
+    ins: Dict[str, Any] = {k: v for k, v in labels.items() if k in INPUT_LABELS}
+    outs: Dict[str, Any] = {k: v for k, v in labels.items() if k not in INPUT_LABELS}
     decisions = [
         e["attributes"]
         for e in row.get("events") or []
         if "kind" in (e.get("attributes") or {})
     ]
     if decisions:
-        outputs["decisions"] = decisions
+        outs["decisions"] = decisions
+    inputs = _with_recorded(ins, attrs.get("input.value"))
+    outputs = _with_recorded(outs, attrs.get("output.value"))
     return {
         "node_type": "span",
         "inputs": inputs or _decode(attrs.get("input.value")),

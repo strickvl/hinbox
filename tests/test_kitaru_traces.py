@@ -169,6 +169,32 @@ def test_a_step_shows_its_labels_and_merge_decisions():
     assert s["metadata"] == {"run_id": "r1", "complete": True}
 
 
+def test_a_step_that_recorded_its_arguments_shows_them_beside_its_labels():
+    args = {"existing_profile": {"text": "Old."}, "new_article_text": "Article."}
+    update = _row(
+        "t1",
+        "p1",
+        "t1-root",
+        "profile.update",
+        {
+            "hinbox.entity_name": "KSM",
+            "hinbox.chars_after": 9,
+            "input.value": json.dumps(args),
+            "output.value": json.dumps({"profile": {"text": "Old. New."}}),
+        },
+    )
+    s = session([_article(), update])
+    node = s["nodes"][1]
+    assert node["inputs"] == {**args, "labels": {"entity_name": "KSM"}}
+    assert node["outputs"] == {
+        "profile": {"text": "Old. New."},
+        "labels": {"chars_after": 9},
+    }
+    assert "input.value" not in node["attributes"]
+    # the article span's input.value is its title, not recorded arguments
+    assert s["inputs"] == {"article.title": "Hearing"}
+
+
 def test_failures_show_on_the_node_and_an_incomplete_article_fails():
     check = _row(
         "t1", "k1", "t1-root", "match_check", error="ValueError: no is_match answer"
