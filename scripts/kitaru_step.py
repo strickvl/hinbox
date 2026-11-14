@@ -51,9 +51,10 @@ NOT_ARGUMENTS = ("call", "answering_model", "labels")
 
 
 def hinbox_model(name: str) -> str:
-    """Kitaru writes ``provider:model``; Hinbox ``provider/model``
-    (``ollama/qwen2.5:32b`` keeps the colon of its tag)."""
-    return name if "/" in name else name.replace(":", "/", 1)
+    """Kitaru writes ``provider:model``; Hinbox ``provider/model``. A colon
+    before the first slash is the provider's (``openrouter:anthropic/x``);
+    one after it is a tag (``ollama/qwen2.5:32b``), kept."""
+    return name.replace(":", "/", 1) if ":" in name.split("/", 1)[0] else name
 
 
 def _model_of(inputs: Dict[str, Any]) -> str:

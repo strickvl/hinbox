@@ -51,6 +51,10 @@ def test_kitaru_model_names_become_hinbox_ones():
     assert ks.hinbox_model("openai:gpt-6-luna") == "openai/gpt-6-luna"
     assert ks.hinbox_model("ollama:qwen2.5:32b") == "ollama/qwen2.5:32b"
     assert ks.hinbox_model("ollama/qwen2.5:32b") == "ollama/qwen2.5:32b"
+    assert (
+        ks.hinbox_model("openrouter:anthropic/claude-3.5-sonnet")
+        == "openrouter/anthropic/claude-3.5-sonnet"
+    )
 
 
 def test_a_model_override_replaces_the_steps_model():
