@@ -184,6 +184,33 @@ How to read it:
 
 Two things to take from it. A prompt change needs repeat runs before a 1 or 2 case difference means anything. And Khadr's case 30 is a `profile_view()` problem: the view could always keep the sentences that share a year or an event's words with the article.
 
+### The date check after the edits (15 Nov)
+
+`profile_view()` now keeps every passage with a sentence the article dates differently (`date_pairs()`), so the model sees both years. That changed the view in 7 of 46 long-profile eval cases, and the 6 that weren't Khadr's case 30 passed as often as before. But with both years shown, Luna still listed no disagreement for Khadr's case 30, in two runs out of two.
+
+So the check now runs in code too. `HINBOX_EDIT_DATE_CHECK=on` (off by default) runs the fact-list prototype's date check after the edit-list updater's edits (`src/engine/edit_date_check.py`):
+
+1. code pairs each dated article sentence with the profile's cited sentences that give it another year;
+2. one model call judges each pair;
+3. each conflict becomes an `add` after the old sentence.
+
+The trial ran as experiment `edit-date-check` on agent version 5. That version is the replay worktree with `HINBOX_EDIT_DATE_CHECK: "on"` in its run spec, so once this is merged it is main with the check on.
+
+| | Luna baseline | Luna again | Date check on |
+|---|---|---|---|
+| Hard cohort: `disputed` (6) | 2 | 0 | 5 |
+| Hard cohort: `new_fact` (9) | 7 | 6 | 6 |
+| Hard cohort: `irrelevant` (4) | 2 | 3 | 2 |
+| Hard cohort: all (19) | 11 | 9 | 13 |
+| Easy cohort (15) | 15 | | 15 |
+
+**Results:**
+- **Hard cohort:** al Nashiri's two cases held, and Pohl's and both of Khadr's passed for the first time.
+- **Red Cross case:** still fails. The code forms no pair for it: its two sentences share too few words.
+- **The rest of the cohort:** on the 28 cases that aren't disputed, the code formed 2 pairs and the model rejected both.
+- **Dev split (81 cases):** with the check on, 77 passed against 73 off. Disputed went from 0/5 to 3/5, irrelevant from 36 to 37 of 38, and new_fact stayed at 37/38.
+- **Wrong disputes:** none. Of the 7 disputes written across the cohorts and the dev split, every one was real. One was on a real `new_fact` case: the profile says Khadr "pleaded guilty to war crimes in 2011", the article says October 2010, and the article is right.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
@@ -200,6 +227,7 @@ The agent versions:
 | 2 | the main checkout | don't: it is usually on another branch |
 | 3 | `.worktrees/kitaru-replay` | the one to use; an unchanged replay on it passed every check on 14 Nov |
 | 4 | `.worktrees/kitaru-prompt-disputes` | the prompt experiment above; only for comparing against it |
+| 5 | `.worktrees/kitaru-replay`, `HINBOX_EDIT_DATE_CHECK=on` | the date check after the edits |
 
 Register a new version when a change should be replayed against older baselines, such as a prompt edit in a worktree of its own.
 
@@ -207,7 +235,7 @@ Register a new version when a change should be replayed against older baselines,
 
 - **Repeat runs.** Run each experiment two or three times on the hard cohort before reading a 2-case difference as real.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **Disputes in passing clauses** are still missed (see the prompt experiment above). `profile_view()` now keeps every passage with a sentence the article dates differently (`date_pairs()`), so the model can see both years. That changed the view in 7 of 46 long-profile eval cases, and the 6 that weren't Khadr's case 30 passed as often as before. But Luna still misses the conflict when both years are visible, so the next idea is the code-side pass: pair the dated sentences in code and have one model call judge each pair. That is the fact-list prototype's date check (`find_date_disputes()` in `src/engine/date_disputes.py`), off by default because on Luna it wrote 1-3 wrong disputes per 160 cases. Measure it on the hard cohort.
+- **Turning the edit date check on by default.** See the next section: so far it has written no wrong dispute. Before switching it on, run it on the train and test splits and a short pipeline run, and count wrong "Another report differs" sentences.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 - **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
