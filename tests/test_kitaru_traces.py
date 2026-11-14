@@ -4,7 +4,7 @@ import json
 import os
 from typing import Dict, List, Optional
 
-from scripts.kitaru_traces import UNFINISHED, session, write_parts
+from scripts.kitaru_traces import UNFINISHED, session, step_sessions, write_parts
 from src.utils.tracing import _message_attrs
 
 
@@ -193,6 +193,60 @@ def test_a_step_that_recorded_its_arguments_shows_them_beside_its_labels():
     assert "input.value" not in node["attributes"]
     # the article span's input.value is its title, not recorded arguments
     assert s["inputs"] == {"article.title": "Hearing"}
+
+
+def _update(span: str, recorded: bool = True, output: Optional[Dict] = None) -> dict:
+    attrs: Dict = {"hinbox.entity_name": "KSM", "hinbox.article_id": "a1"}
+    if recorded:
+        attrs["input.value"] = json.dumps({"existing_profile": {"text": "Old."}})
+        attrs["output.value"] = json.dumps(output or {"profile": {"text": "Old. New."}})
+    return _row("t1", span, "m1", "profile.update", attrs)
+
+
+def test_each_recorded_step_becomes_a_session_of_its_own():
+    reply = {"role": "assistant", "content": '{"edits": []}'}
+    rows = [
+        _article(),
+        _row("t1", "m1", "t1-root", "merge.people"),
+        _update("p1"),
+        _llm("t1", "c1", "p1", reply),
+        _update("p2", recorded=False),  # from before steps recorded arguments
+        _row("t1", "k1", "m1", "match_check"),
+    ]
+    (s,) = step_sessions(rows, "profile.update")
+    assert s["inputs"] == {"existing_profile": {"text": "Old."}}  # what a replay calls
+    assert s["outputs"] == {"profile": {"text": "Old. New."}}
+    assert (s["name"], s["status"], s["external_id"]) == (
+        "profile.update: KSM",
+        "completed",
+        "hinbox:t1:p1",
+    )
+    assert [(n["name"], n["parent_index"]) for n in s["nodes"]] == [
+        ("profile.update", None),
+        ("chat qwen", 0),
+    ]
+    assert s["metadata"]["article_session"] == "hinbox:t1"
+    assert (s["metadata"]["article_id"], s["metadata"]["article_title"]) == (
+        "a1",
+        "Hearing",
+    )
+    failed = _update("p3", output={"error": "profile edit failed: timeout"})
+    (f,) = step_sessions([_article(), failed], "profile.update")
+    assert (f["status"], f["error"]) == ("failed", "profile edit failed: timeout")
+
+
+def test_step_parts_count_their_sessions(tmp_path):
+    rows = [_article(), _update("p1"), _update("p2"), _update("p3", recorded=False)]
+    counts: Dict = {}
+    (part,) = write_parts(
+        [_write(tmp_path / "run.jsonl", rows)],
+        str(tmp_path / "out"),
+        10**6,
+        "profile.update",
+        counts,
+    )
+    assert [s["external_id"] for s in _read(part)] == ["hinbox:t1:p1", "hinbox:t1:p2"]
+    assert counts == {"sessions": 2}
 
 
 def test_failures_show_on_the_node_and_an_incomplete_article_fails():
