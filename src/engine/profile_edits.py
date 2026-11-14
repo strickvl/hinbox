@@ -446,9 +446,12 @@ def edit_profile(
     """
     from src.engine.corrections_pass import guard_corrections
     from src.engine.edit_guards import guard_edits
+    from src.engine.edit_limits import LimitedEditList, limits_on, without_cut_off
     from src.engine.section_routing import routing_note, routing_sections
 
     local = (model or "").startswith("ollama/") if local is None else local
+    # A local reply gets length limits in its schema, so it always ends
+    limited = local and limits_on()
     generate = local_generation if local else cloud_generation
     model = model or (OLLAMA_MODEL if local else CLOUD_MODEL)
     sections = routing_sections(existing_profile, entity_type, kind, domain)
@@ -465,7 +468,7 @@ def edit_profile(
             model,
             routing=routing,
         ),
-        response_model=ProfileEditList,
+        response_model=LimitedEditList if limited else ProfileEditList,
         model=model,
         max_tokens=PROFILE_MAX_TOKENS,
     )
@@ -473,16 +476,17 @@ def edit_profile(
         raise RuntimeError("edit call returned nothing")
     old_text = existing_profile.get("text", "")
     dates = article_dates or {}
+    proposed, cut = without_cut_off(response) if limited else (response.edits, [])
     edits, guarded = (
         guard_edits(
             old_text,
-            response.edits,
+            proposed,
             dates.get(article_id),
             dates,
             ask=_dispute_asker(generate, model, entity_type, entity_name),
         )
         if guard
-        else (response.edits, {})
+        else (proposed, {})
     )
     # A historian's corrections (only inside correction_scope(), during a run)
     edits, by_corrections = guard_corrections(old_text, edits)
@@ -490,6 +494,8 @@ def edit_profile(
     report["routed"] = bool(sections)
     report["guard"] = guarded
     report["corrections"] = by_corrections
+    if cut:
+        report["cut_off"] = cut
     report["profile_chars_shown"] = len(
         profile_view(old_text, article_text, PROFILE_VIEW_CHARS)
     )
@@ -498,7 +504,7 @@ def edit_profile(
         **existing_profile,
         "text": text,
         "sources": sources + ([article_id] if article_id not in sources else []),
-        "edits": [e.model_dump() for e in response.edits],
+        "edits": [e.model_dump() for e in proposed],
         "disagreements": [d.model_dump() for d in response.disagreements],
         "edit_report": report,
     }

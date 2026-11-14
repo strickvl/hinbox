@@ -91,6 +91,24 @@ def test_join_pair_leaves_out_a_failed_article_and_feeds_in_the_rest():
     assert done["profile"]["sources"] == ["a1", "a2", "a4", "a3"]
 
 
+def test_a_half_joined_row_keeps_its_saved_kind_so_the_two_keys_differ():
+    keeper = _row("DoD", "OrganizationType.GOVERNMENT", ["a1", "a2"])
+    donor = _row("DoD", "government", ["a3", "a4"])
+    texts = {"a3": "Three.", "a4": "Four."}
+    part, report = join_pair(
+        "organizations", keeper, donor, texts, "ollama", "guantanamo",
+        update=_fake_update([], fail_on="a4"),
+    )  # fmt: skip
+    assert report["failed"] and part["profile"]["sources"] == ["a1", "a2", "a3"]
+    assert part["type"] == "OrganizationType.GOVERNMENT" != donor["type"]
+    assert find_twins([part, donor]) == [(0, [1])]  # still found as a pair
+    done, report = join_pair(
+        "organizations", part, donor, texts, "ollama", "guantanamo",
+        update=_fake_update([]),
+    )  # fmt: skip
+    assert "failed" not in report and done["type"] == "government"
+
+
 def test_join_pair_keeps_going_after_a_reply_that_raises():
     keeper, donor = _row("Y", "city", ["a1"]), _row("Y", "city", ["a2", "a3"])
     calls: List[str] = []
