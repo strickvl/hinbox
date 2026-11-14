@@ -30,9 +30,20 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 EDIT_DATE_CHECK_ENV = "HINBOX_EDIT_DATE_CHECK"
 _CITATION = re.compile(r"\^\[[^\]]+\]")
-# A sentence already followed by a dispute: this check's own ("Another report
-# differs: ..."), or the edit model's ("... instead.", "sources disagree")
-_DISPUTE_AFTER = re.compile(r"^Another report differs:|\binstead\b|\bdisagree", re.I)
+
+
+def _is_dispute(sentence: str) -> bool:
+    """This check's own dispute ("Another report differs: ..."), or the edit
+    model's: words saying sources differ beside a word naming a source ("A
+    later report gives the year as 2005 instead", "the sources disagree").
+    "His lawyers instead sought a civilian trial" is no dispute."""
+    from src.engine.date_disputes import DISPUTE_PREFIX
+    from src.engine.edit_guards import _DISPUTE, _SOURCES
+
+    if sentence.startswith(DISPUTE_PREFIX.strip()):
+        return True
+    differs = _DISPUTE.search(sentence) or re.search(r"\binstead\b", sentence, re.I)
+    return bool(differs and _SOURCES.search(sentence))
 
 
 def edit_date_check_enabled() -> bool:
@@ -78,7 +89,7 @@ def date_check_edits(
     already = {
         str(i)
         for i in range(len(sentences) - 1)
-        if _DISPUTE_AFTER.search(_norm(sentences[i + 1]))
+        if _is_dispute(_norm(sentences[i + 1]))
     }
     skip = {r["id"] for r in rows if r["claim"] in done or r["id"] in already}
 
