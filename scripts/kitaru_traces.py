@@ -307,6 +307,10 @@ def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+# An eval item's labels that its step sessions carry in their metadata
+EVAL_KEYS = ("eval_item_id", "eval_kind", "eval_split", "eval_claim_label")
+
+
 def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]:
     """One session per ``step`` span in a trace that recorded its arguments.
 
@@ -344,11 +348,16 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
             str(labels[k]) for k in ("new_name", "existing_name") if labels.get(k)
         )
         trace_id = span["context"]["trace_id"]
+        case = {k: article[k] for k in EVAL_KEYS if k in article}
         sessions.append(
             {
                 "status": "failed" if error else "completed",
                 "name": f"{step}: {about}" if about else step,
-                "inputs": inputs,
+                # An eval case's labels go in the inputs too, under `labels`:
+                # a replay gets only the inputs, and the evaluator scores the
+                # re-run by its case's kind (scripts/kitaru_step.py drops them
+                # before calling the step)
+                "inputs": {**inputs, "labels": case} if case else inputs,
                 "outputs": outputs if isinstance(outputs, dict) else None,
                 "error": error,
                 "started_at": sub_rows[0].get("start_time"),
@@ -361,11 +370,7 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
                     "article_id": labels.get("article_id") or article.get("article.id"),
                     "article_title": article.get("article.title"),
                     # An eval item's case, so eval sessions can be grouped by kind
-                    **{
-                        k: article[k]
-                        for k in ("eval_item_id", "eval_kind", "eval_split")
-                        if k in article
-                    },
+                    **case,
                 },
                 "framework": None,
                 "nodes": nodes,

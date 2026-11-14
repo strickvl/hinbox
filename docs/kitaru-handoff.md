@@ -132,6 +132,20 @@ The workspace now has an agent `hinbox-profile-update` (see "Where replays run" 
 
 A pipeline step (`update_profile()`, from the 4-update trace of PR #140) was replayed locally with `--inputs`/`--out` and passed too; it was not sent to the workspace.
 
+### The first cohort experiment (14 Nov)
+
+Cohort `profile-update-dev` freezes 15 eval dev step sessions: 6 entities, 8 `irrelevant` and 7 `new_fact` cases, all Luna baselines that pass the eval. Version 1 holds the first imports. Version 2 holds the same 15 cases run again after their step sessions began carrying their labels (`labels` in the inputs, below). Two experiments ran on it with evaluator version 3, on agent version 3:
+
+| | Baseline | `luna-unchanged-labelled` | `haiku-fork-labelled` |
+|---|---|---|---|
+| `case_ok` (the eval's pass rule for the case's kind) | 15/15 | 15/15 | 15/15 |
+| added sentences per update | 1.2 | 1.33 | 1.27 |
+| length ratio | 1.23 | 1.25 | 1.30 |
+
+Every replay completed, and both runs pass every case. This cohort is too easy to tell models apart: no baseline fails, so there is nothing to fix or break. The next cohort needs cases Luna gets wrong, such as dev cases failed in past eval runs and the `disputed` cases, plus `case_ok` rules for `disputed` and labelled `new_fact` cases, which need the case's own data.
+
+**Why the labels are in the inputs:** an agent task gets only the baseline's inputs, and its task token can't read the baseline session (403). An experiment run's settings are frozen once it has runs, so a changed evaluator needs a new experiment. The earlier experiments (`luna-unchanged`, `haiku-fork`, `luna-unchanged-case`, `haiku-fork-case`) stay in the workspace. The `-case` runs failed on that 403.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
