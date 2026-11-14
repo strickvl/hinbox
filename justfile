@@ -83,6 +83,11 @@ export-training *args:
 kitaru-traces *args:
     uv run python -m scripts.kitaru_traces {{args}}
 
+# Run a Kitaru worker in Hinbox's environment with `.env`'s keys: step replays (`scripts/kitaru_step.py`) and the
+# evaluator both need it (e.g. `just kitaru-worker --job-id <job> --claim agent --claim evaluator`)
+kitaru-worker *args:
+    uv run --env-file .env --extra kitaru kitaru worker start {{args}}
+
 # ─── DSPy experiments (own environment in experiments/dspy_opt/, no LiteLLM) ──
 
 # Optimise the edit-list profile updater with DSPy GEPA (e.g. `just dspy-profile --model ollama/local-qwen36-16k:latest --reflection-model openai/gpt-6-luna`)

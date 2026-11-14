@@ -1,0 +1,210 @@
+"""Replaying one recorded step (scripts/kitaru_step.py) and its checks
+(src/evals/kitaru_checks.py), without a model or a Kitaru server."""
+
+import json
+from types import SimpleNamespace
+
+import pytest
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+
+from scripts import kitaru_step as ks
+from src.evals.kitaru_checks import step_checks, step_results
+
+OLD = "## Background\nThe ACLU sued over the camp.^[a1] It filed again in 2009.^[a1]"
+
+
+@pytest.fixture(autouse=True)
+def sdk_provider(monkeypatch):
+    # The global provider can be set only once per process: make sure it is
+    # an SDK one, so the script's configure_tracing() never replaces it
+    if not isinstance(trace.get_tracer_provider(), TracerProvider):
+        trace.set_tracer_provider(TracerProvider())
+    monkeypatch.setenv("HINBOX_TRACING", "on")
+
+
+def _inputs(**extra):
+    return {
+        "call": "edit_profile",
+        "entity_type": "organizations",
+        "entity_name": "ACLU",
+        "existing_profile": {"text": OLD, "sources": ["a1"]},
+        "article_text": "The ACLU appealed in 2010.",
+        "article_id": "a2",
+        "model": "openai/gpt-6-luna",
+        "domain": "guantanamo",
+        "article_dates": {},
+        "kind": "advocacy",
+        **extra,
+    }
+
+
+def _override(**fields):
+    base = {"model": None, "system_prompt": None, "prompt": None, "model_params": None}
+    return SimpleNamespace(**{**base, **fields})
+
+
+# --- the replay override ------------------------------------------------------
+
+
+def test_kitaru_model_names_become_hinbox_ones():
+    assert ks.hinbox_model("openai:gpt-6-luna") == "openai/gpt-6-luna"
+    assert ks.hinbox_model("ollama:qwen2.5:32b") == "ollama/qwen2.5:32b"
+    assert ks.hinbox_model("ollama/qwen2.5:32b") == "ollama/qwen2.5:32b"
+
+
+def test_a_model_override_replaces_the_steps_model():
+    inputs = _inputs()
+    assert ks.apply_override(inputs, None) is inputs
+    swap = _override(model="anthropic:claude-haiku-5-5")
+    assert ks.apply_override(inputs, swap)["model"] == "anthropic/claude-haiku-5-5"
+    for key in ("openai:gpt-6-luna", "openai/gpt-6-luna", "gpt-6-luna"):
+        mapped = _override(model={key: "anthropic:claude-haiku-5-5"})
+        assert (
+            ks.apply_override(inputs, mapped)["model"] == "anthropic/claude-haiku-5-5"
+        )
+    with pytest.raises(ValueError, match="no entry"):
+        ks.apply_override(inputs, _override(model={"openai:other": "x:y"}))
+
+
+def test_prompt_overrides_are_refused():
+    with pytest.raises(ValueError, match="system_prompt"):
+        ks.apply_override(_inputs(), _override(system_prompt="Be brief."))
+
+
+# --- which function a step runs -----------------------------------------------
+
+
+def test_an_eval_step_runs_edit_profile_with_its_own_arguments(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "src.evals.profile_update.edit_step", lambda args: seen.update(args)
+    )
+    fn, args = ks.step_call(_inputs())
+    fn(**args)
+    assert "call" not in seen and seen["article_id"] == "a2"
+
+
+def test_a_pipeline_step_runs_update_profile_with_the_model_that_answered():
+    recorded = {
+        "entity_type": "people",
+        "entity_name": "N",
+        "existing_profile": {"text": OLD},
+        "new_article_text": "x",
+        "new_article_id": "a2",
+        "model": None,
+        "answering_model": "openai/gpt-6-luna",
+        "approach": "edit",
+    }
+    fn, args = ks.step_call(recorded)
+    assert fn.__name__ == "update_profile"
+    assert args["model"] == "openai/gpt-6-luna"
+    assert "answering_model" not in args and "versioned_profile" in args
+
+
+# --- the re-run becomes a session ---------------------------------------------
+
+
+def test_a_replayed_step_is_recorded_as_a_session_of_its_own(monkeypatch):
+    new_text = OLD + " It appealed in 2010.^[a2]"
+
+    def fake_edit_profile(**kwargs):
+        return {
+            **kwargs["existing_profile"],
+            "text": new_text,
+            "sources": ["a1", "a2"],
+            "edits": [{"action": "add", "text": "It appealed in 2010.^[a2]"}],
+            "disagreements": [],
+            "edit_report": {"applied": 1},
+        }
+
+    monkeypatch.setattr("src.engine.profile_edits.edit_profile", fake_edit_profile)
+    inputs = _inputs()
+    session, error = ks.run_step(inputs, replay=True)
+    assert error is None
+    assert session["inputs"] == inputs  # what a later replay is given again
+    assert session["outputs"]["profile"]["text"] == new_text
+    assert session["status"] == "completed" and session["framework"] == "hinbox"
+    assert session["name"] == "profile.update: ACLU"
+    assert "article_session" not in session["metadata"]
+    assert [n["name"] for n in session["nodes"]] == ["profile.update"]
+
+
+def test_a_step_that_raises_is_recorded_failed(monkeypatch):
+    def broken(**kwargs):
+        raise RuntimeError("model down")
+
+    monkeypatch.setattr("src.engine.profile_edits.edit_profile", broken)
+    session, error = ks.run_step(_inputs(), replay=False)
+    assert isinstance(error, RuntimeError)
+    assert session["status"] == "failed" and "model down" in session["error"]
+
+
+def test_the_session_becomes_kitarus_import_shape():
+    importer = pytest.importorskip("kitaru.task.importer")
+    session = {
+        "status": "completed",
+        "name": "profile.update: ACLU",
+        "inputs": _inputs(),
+        "outputs": {"profile": {"text": OLD}},
+        "error": None,
+        "started_at": "2026-11-14T22:00:00Z",
+        "ended_at": "2026-11-14T22:00:05Z",
+        "external_id": "hinbox:t:s",
+        "metadata": {},
+        "framework": "hinbox",
+        "nodes": [
+            {"index": 0, "parent_index": None, "external_id": "s", "name": "profile.update",
+             "node_type": "span", "status": "completed", "inputs": None, "outputs": None,
+             "attributes": {}},
+            {"index": 1, "parent_index": 0, "external_id": "c", "name": "chat",
+             "node_type": "llm_call", "status": "completed", "inputs": [], "outputs": [],
+             "attributes": {}},
+        ],
+    }  # fmt: skip
+    nodes = importer.flatten_nodes(ks.ingest_request(session, replay=True).nodes)
+    assert [(n.external_id, n.parent_external_id) for n in nodes] == [
+        ("s", None),
+        ("c", "s"),
+    ]
+
+
+# --- the evaluator's checks ---------------------------------------------------
+
+
+def test_checks_read_either_steps_argument_names():
+    new = {"profile": {"text": OLD + " Appealed.^[a2]", "sources": ["a1", "a2"]}}
+    pipeline = {
+        "existing_profile": {"text": OLD, "sources": ["a1"]},
+        "new_article_id": "a2",
+        "new_article_text": "Appealed.",
+    }
+    for inputs in (_inputs(), pipeline):
+        scores = step_checks(inputs, new)
+        assert scores["passed"] and scores["cites_article"] and scores["updated"]
+
+
+def test_a_collapsed_profile_with_an_invented_citation_fails():
+    new = {"profile": {"text": "The ACLU sued.^[zz9]", "sources": ["a1", "a2"]}}
+    rows = {r["name"]: r for r in step_results(_inputs(), new)}
+    assert rows["update_ok"]["passed"] is False
+    assert "collapsed" in rows["update_ok"]["explanation"]
+    assert "zz9" in rows["update_ok"]["explanation"]
+    assert rows["invented_citations"]["score"] == 1.0
+    assert rows["length_ratio"]["passed"] is False
+
+
+def test_a_step_that_recorded_no_profile_counts_as_not_updated():
+    rows = {r["name"]: r for r in step_results(_inputs(), {"error": "failed"})}
+    assert rows["updated"]["score"] is False
+    assert rows["update_ok"]["passed"] is True  # the old profile is intact
+
+
+def test_every_check_is_a_valid_kitaru_result():
+    evaluation = pytest.importorskip("kitaru.api_models.v1.evaluation")
+    new = {"profile": {"text": OLD, "sources": ["a1", "a2"]}}
+    names = [
+        evaluation.EvaluationResult(**r).name for r in step_results(_inputs(), new)
+    ]
+    assert len(names) == len(set(names))
+    json.dumps(step_results(_inputs(), new))  # plain JSON for the task result
