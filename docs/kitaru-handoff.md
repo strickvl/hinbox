@@ -142,9 +142,27 @@ Cohort `profile-update-dev` freezes 15 eval dev step sessions: 6 entities, 8 `ir
 | added sentences per update | 1.2 | 1.33 | 1.27 |
 | length ratio | 1.23 | 1.25 | 1.30 |
 
-Every replay completed, and both runs pass every case. This cohort is too easy to tell models apart: no baseline fails, so there is nothing to fix or break. The next cohort needs cases Luna gets wrong, such as dev cases failed in past eval runs and the `disputed` cases, plus `case_ok` rules for `disputed` and labelled `new_fact` cases, which need the case's own data.
+Every replay completed, and both runs pass every case. This cohort is too easy to tell models apart: no baseline fails, so there is nothing to fix or break.
 
 **Why the labels are in the inputs:** an agent task gets only the baseline's inputs, and its task token can't read the baseline session (403). An experiment run's settings are frozen once it has runs, so a changed evaluator needs a new experiment. The earlier experiments (`luna-unchanged`, `haiku-fork`, `luna-unchanged-case`, `haiku-fork-case`) stay in the workspace. The `-case` runs failed on that 403.
+
+### The hard cohort (15 Nov)
+
+`case_ok` now applies the eval's own `case_passed()` for every kind: a step session's `labels` also carry the case's `eval_expected` (a disputed case's two years, sources and sentences) and its claim label. Cohort `profile-update-hard` freezes 19 cases Luna failed 2 or more times across 51 past eval runs: dev and train only, at most 2 per entity, 11 entities. On the new Luna baselines `case_ok` gave the same verdict as the eval on all 19. Both experiments ran with evaluator version 4:
+
+| Kind | Cases | Luna baseline | `luna-unchanged-hard` | `haiku-fork-hard` |
+|---|---|---|---|---|
+| `new_fact` | 9 | 7 | 6 | 9 |
+| `disputed` | 6 | 2 | 0 | 2 |
+| `irrelevant` | 4 | 2 | 3 | 2 |
+| all | 19 | 11 | 9 | 13 |
+
+How to read it:
+
+- **Noise is large.** Luna run again flipped 4 of 19 verdicts against its own baseline: both of al Nashiri's disputed cases from pass to fail, and two cases near a limit. One irrelevant case moved from 3 added sentences to 2, the other way round for a new_fact case. A difference of 2 cases out of 19 is within that noise.
+- **New facts lean towards Haiku.** On Camp Justice and the Red Cross, Luna left the article uncited in the baseline and the re-run; Haiku cited it and passed all 9. That is one run each, so it is a hint, not a result: repeat runs would settle it.
+- **Disputes are hard for both.** 4 of the 6 disputed cases failed in every run, on both models: neither kept the old year beside the new one. That is a prompt or guard problem, not a model choice, and the place a prompt experiment would start.
+- **Irrelevant cases sit on the line.** Their verdicts turn on 2 against 3 added sentences.
 
 ### Where replays run
 
@@ -166,8 +184,9 @@ Register a new version when a change should be replayed against older baselines,
 
 ### Still open
 
+- **Repeat runs.** Run each experiment two or three times on the hard cohort before reading a 2-case difference as real.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **An experiment over a cohort** (the regression suite): freeze the step sessions into a cohort and replay all of them against a new agent version, e.g. one whose checkout has an edited `profile_edit.cloud.md`.
+- **A prompt experiment:** replay `profile-update-hard` against an agent version whose worktree has an edited `profile_edit.cloud.md`, aimed at the 4 disputed cases every run fails. Kitaru replays a cohort on any agent version (`--agent hinbox-profile-update@<n>` on the run).
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 - **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
