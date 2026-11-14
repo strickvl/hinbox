@@ -9,7 +9,7 @@ Use Kitaru on Hinbox itself (dogfooding). That needs two things:
 1. **A way to get Hinbox's traces into Kitaru** (an importer), so Kitaru's insights, investigations and evaluators can look at every run.
 2. **A replay adapter**, so Kitaru can re-run a piece of Hinbox with one thing changed (a model, a prompt) and compare the results against the original.
 
-Part 1 is done on this branch. Part 2 is investigated and designed below, but not built.
+Part 1 is done (PR #138). Part 2 is designed below; its step 1 (recording step arguments) is done, the rest is not built.
 
 ## Short version
 
@@ -42,7 +42,7 @@ One `kitaru-jsonl` session line per trace:
 | Part of the trace | Becomes |
 |---|---|
 | Model-call span | `llm_call` node: messages as `{"role", "content"}` (tool calls nested as `{"id", "function": {"name", "arguments"}}`), `hinbox.llm.reasoning` as a `reasoning` message, selectors for the system prompt, the last user message and the reply (the tool-call arguments for a structured reply), model, provider, tokens, request parameters without the response schema |
-| Step span | `span` node: `hinbox.*` labels about what went in (`INPUT_LABELS`: entity name, article ID, names compared…) as inputs, the rest as outputs |
+| Step span | `span` node: `hinbox.*` labels about what went in (`INPUT_LABELS`: entity name, article ID, names compared…) as inputs, the rest as outputs; a step that recorded its arguments and result (`profile.update`, `match_check`) shows those, with the labels beside them under `labels` |
 | Merge decision events | `decisions` in their `merge.<type>` step's outputs |
 | Article span | the session's name, inputs (title, URL, date…) and outputs (outcome); the session fails when the outcome is `relevance_error` or starts with `incomplete` |
 | Trace with no top span | a failed session named `unfinished (<first step>)`, metadata `complete: false` |
@@ -98,13 +98,16 @@ Kitaru's usual answer is to answer the outside world from the recording (tool po
 
 A `profile.update` is self-contained. In: entity type, name and kind, the old profile, the article text and ID, and the article dates. Out: the new profile and its edit report. It needs nothing else from the tables. The same holds for `match_check`, `relevance`, `extract.<type>` and grounding. These are what the profile-update eval cases already are; Kitaru would provide the same kind of harness over real production steps.
 
-A step span records the prompts sent to the model, not the arguments the function was called with. Rebuilding the old profile from the prompt text would break easily (the prompt may show a shortened `profile_view()`, for one), so the arguments have to be recorded directly.
+A step span used to record only the prompts sent to the model, not the arguments the function was called with. Rebuilding the old profile from the prompt text would break easily (the prompt may show a shortened `profile_view()`, for one), so the arguments are now recorded directly (step 1 below).
 
 ### Planned work, in order
 
-1. **Record step inputs and outputs.** In `update_profile()` (`src/engine/profiles.py`), `_check_match()` in `src/engine/match_checker.py` (the `@timed("match_check")` step), and the others, put the arguments as JSON in the step span's `input.value` and the result in `output.value`.
-   - **Size:** a profile can pass 16,000 characters, plus the article text. That is fine for JSON, but check OpenTelemetry's attribute length limits (the span limits are set in `configure_tracing()`).
+1. **Record step inputs and outputs (done for `profile.update` and `match_check`).** `record_step_input()` and `record_step_output()` in `src/utils/tracing.py` put a step's arguments as one JSON object in its span's `input.value` and its result in `output.value` (`input.mime_type`/`output.mime_type` say `application/json`).
+   - **`profile.update`** (`update_profile()` in `src/engine/profiles.py`) records `entity_type`, `entity_name`, `kind`, `existing_profile` (the whole dict, not only its text: the `reorganised`, `split_refused_json` and `fact_rows_json` keys change what an update does), `new_article_text`, `new_article_id`, `article_dates`, `model_type`, `domain`, `model` (the argument, often empty), `answering_model` (the model that answers, after defaults) and `approach`. Out: `profile` (the whole updated dict), plus `edits`, `disagreements` and `edit_report` from the edit updater, `fact_report` from the fact-list updater, or `error` when the updater failed and the old profile was kept. These are `update_profile()`'s own parameter names, so a replay can mostly pass them back; it must drop `answering_model` and `labels`, and give a fresh `VersionedProfile()`.
+   - **`match_check`** (`_check_match()`) records `backend`, both names, both profile texts (the existing one in full, before `profile_view()` shortens it), `entity_type` and `model`; out: `result` (`is_match`, `confidence`, `reason`), and `memo_hit` when the answer came from the memo with no model call.
+   - **Size:** OpenTelemetry sets no length cap on a value by default, but an `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT` or `OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT` variable would have cut every long one without a word. `span_limits()` now sets both to `UNSET`, which makes the SDK ignore the variables. A test trace with the cap set to 1,000 kept a 547,945-character profile (Carol Rosenberg's, from the full run) and a 76,134-character article whole; its Kitaru part was 1.2 MiB. An update's span is now about the size of the old profile, the new one and the article together, so trace files of long runs grow by that much per update. Not measured on a real run yet.
    - **Privacy:** this is article text, so the same rule applies as now: keep it local.
+   - **Not yet:** `relevance`, `extract.<type>`, `profile.create` and grounding record nothing new. Add them the same way when a replay needs them.
 2. **One session per step.** An option in `scripts/kitaru_traces.py` that writes each `profile.update` span subtree as its own session, not each article. The session's input is the recorded arguments; its nodes are the step's model calls. It reuses `node()` from Part 1.
 3. **A replay script**, `scripts/kitaru_step.py`, registered as the agent's run command, for example `kitaru agent register hinbox-profile-update --command "uv run python -m scripts.kitaru_step"`. It would:
    - read the step input from `KITARU_TASK_INPUTS`, or from the task's spec through `client.tasks.get_spec()`;

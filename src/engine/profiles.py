@@ -39,7 +39,7 @@ from src.utils.outcomes import PhaseOutcome
 from src.utils.profiles import extract_profile_text
 from src.utils.quality_controls import run_profile_qc
 from src.utils.step_timing import timed
-from src.utils.tracing import annotate
+from src.utils.tracing import annotate, record_step_input, record_step_output
 
 logger = get_logger("profiles")
 
@@ -574,8 +574,14 @@ def _edit_profile_update(
             f"Profile edit failed for {entity_name}, keeping existing profile: {e}",
             level="warning",
         )
+        record_step_output(error=f"profile edit failed: {e}")
         return existing_profile, []
     report = edited["edit_report"]
+    record_step_output(
+        edits=edited["edits"],
+        disagreements=edited["disagreements"],
+        edit_report=report,
+    )
     annotate(
         profile_chars_shown=report.get("profile_chars_shown"),
         later_updates=len((report.get("guard") or {}).get("later_updates") or []),
@@ -631,8 +637,10 @@ def _fact_profile_update(
             f"Fact-list update failed for {entity_name}, keeping existing profile: {e}",
             level="warning",
         )
+        record_step_output(error=f"fact-list update failed: {e}")
         return existing_profile, []
     report = updated["fact_report"]
+    record_step_output(fact_report=report)
     log(
         f"Fact-list update for {entity_name}: {report.get('claims', 0)} claims, "
         f"{report.get('new', 0)} new, {report.get('same', 0)} same, "
@@ -751,6 +759,20 @@ def update_profile(
         approach=approach,
         chars_before=len(str(existing_profile.get("text") or "")),
     )
+    record_step_input(
+        entity_type=entity_type,
+        entity_name=entity_name,
+        kind=kind,
+        existing_profile=existing_profile,
+        new_article_text=new_article_text,
+        new_article_id=new_article_id,
+        article_dates=article_dates,
+        model_type=model_type,
+        domain=domain,
+        model=model,
+        answering_model=_prompt_model(model_type, model),
+        approach=approach,
+    )
     if approach not in ("edit", "rewrite", "facts"):
         raise ValueError(f"Unknown profile update approach: {approach!r}")
     update = _UPDATERS.get(approach, _update_profile_internal)
@@ -779,6 +801,7 @@ def update_profile(
 
     updated_profile = _apply_profile_qc(updated_profile, entity_name)
     _annotate_profile(updated_profile)
+    record_step_output(profile=updated_profile)
 
     # Add new version if versioning enabled
     if ENABLE_PROFILE_VERSIONING:

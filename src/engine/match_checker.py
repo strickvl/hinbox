@@ -16,7 +16,12 @@ from src.utils.sectioned_prompt import (
     read_unit_float,
 )
 from src.utils.step_timing import timed
-from src.utils.tracing import annotate, request_span
+from src.utils.tracing import (
+    annotate,
+    record_step_input,
+    record_step_output,
+    request_span,
+)
 
 logger = get_logger("engine.match_checker")
 
@@ -310,6 +315,15 @@ def _check_match(
     new evidence is about (``profile_view()``).
     """
     annotate(entity_type=entity_type, new_name=new_name, existing_name=existing_name)
+    record_step_input(
+        backend=backend,
+        new_name=new_name,
+        existing_name=existing_name,
+        new_profile_text=new_profile_text,
+        existing_profile_text=existing_profile_text,
+        entity_type=entity_type,
+        model=model,
+    )
     full_chars = len(existing_profile_text)
     existing_profile_text = profile_view(
         existing_profile_text, new_profile_text, MATCH_PROFILE_CHARS
@@ -332,6 +346,7 @@ def _check_match(
         if cached is not None:
             logger.debug(f"Match-check memo hit for {new_name} vs {existing_name}")
             annotate(memo_hit=True, is_match=cached.is_match)
+            record_step_output(result=cached, memo_hit=True)
             return cached
 
     local = backend == "local"
@@ -386,6 +401,7 @@ def _check_match(
             )
 
     annotate(is_match=result.is_match, confidence=result.confidence)
+    record_step_output(result=result)
     # a failed call is asked again next time, not remembered as "different"
     if _MATCH_MEMO_ENABLED and _MATCH_MEMO is not None and not check_failed(result):
         _MATCH_MEMO.set(memo_key, result)

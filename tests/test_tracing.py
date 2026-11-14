@@ -317,3 +317,76 @@ def test_article_outcome_shows_incomplete_reason(spans):
         pass
     (root,) = _by_name(spans, "article #2")
     assert root.attributes["hinbox.article.outcome"] == "incomplete: error_people"
+
+
+# --- step arguments and results -------------------------------------------------
+
+
+def test_long_values_are_kept_whole_whatever_the_environment_says(monkeypatch):
+    monkeypatch.setenv("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", "100")
+    monkeypatch.setenv("OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT", "100")
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider(span_limits=tracing.span_limits())
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    with provider.get_tracer("t").start_as_current_span("profile.update") as span:
+        span.set_attribute("input.value", "x" * 60_000)
+    (finished,) = exporter.get_finished_spans()
+    assert len(finished.attributes["input.value"]) == 60_000
+
+
+def test_profile_update_records_its_arguments_and_result(spans, monkeypatch):
+    from src.engine import profile_edits
+    from src.engine.profiles import VersionedProfile, update_profile
+
+    old_text = "## Background\n" + "Spath was a judge.^[a1] " * 700  # 16,800 chars
+    article = "Vance Spath ruled on Tuesday. " * 400
+    edited = {
+        "text": old_text + "He ruled.^[a2]",
+        "sources": ["a1", "a2"],
+        "edits": [{"action": "add", "text": "He ruled.^[a2]"}],
+        "disagreements": [],
+        "edit_report": {"applied": 1, "appended": 0, "skipped": []},
+    }
+    monkeypatch.setattr(profile_edits, "edit_profile", lambda *a, **k: edited)
+    profile = {"text": old_text, "sources": ["a1"], "tags": ["judge"]}
+    update_profile(
+        "people", "Vance Spath", profile, VersionedProfile(), article, "a2",
+        model="ollama/qwen", article_dates={"a2": "2018-05-01"}, kind="judge",
+    )  # fmt: skip
+
+    (span,) = _by_name(spans, "profile.update")
+    args = json.loads(span.attributes["input.value"])
+    assert args["existing_profile"]["text"] == old_text
+    assert args["new_article_text"] == article
+    assert (args["new_article_id"], args["kind"]) == ("a2", "judge")
+    assert args["article_dates"] == {"a2": "2018-05-01"}
+    assert args["answering_model"] == "ollama/qwen"
+    result = json.loads(span.attributes["output.value"])
+    assert result["profile"]["text"] == edited["text"]
+    assert result["edit_report"]["applied"] == 1
+    assert result["edits"] == edited["edits"]
+    assert span.attributes["hinbox.entity_name"] == "Vance Spath"  # labels stay
+
+
+def test_match_check_records_both_profiles_and_its_verdict(spans, monkeypatch):
+    from src.engine import match_checker
+
+    monkeypatch.setattr(
+        match_checker,
+        "text_generation",
+        lambda *a, **k: (
+            "[[ ## reasoning ## ]]\nSame judge.\n\n"
+            "[[ ## is_match ## ]]\nTrue\n\n[[ ## confidence ## ]]\n0.9"
+        ),
+    )
+    match_checker._check_match(
+        "local", "Spath", "Vance Spath", "new text", "old text", "people", "m"
+    )
+    (span,) = _by_name(spans, "match_check")
+    args = json.loads(span.attributes["input.value"])
+    assert (args["new_profile_text"], args["existing_profile_text"]) == (
+        "new text",
+        "old text",
+    )
+    result = json.loads(span.attributes["output.value"])["result"]
+    assert (result["is_match"], result["confidence"]) == (True, 0.9)
