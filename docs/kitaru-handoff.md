@@ -164,6 +164,26 @@ How to read it:
 - **Disputes are hard for both.** 4 of the 6 disputed cases failed in every run, on both models: neither kept the old year beside the new one. That is a prompt or guard problem, not a model choice, and the place a prompt experiment would start.
 - **Irrelevant cases sit on the line.** Their verdicts turn on 2 against 3 added sentences.
 
+### A prompt experiment: disagreements in passing clauses (15 Nov)
+
+**Why the disputed cases fail:** in the 4 that every run fails, the model lists no disagreement at all; no check after the model call removes one. In each case the article gives the other year in a passing clause ("the Pentagon prison system that opened in January 2003", "the October 2001 bombing of the destroyer"). `profile_edit.cloud.md` asks the model to compare only the dates "that concern" the entity, and such a clause doesn't. In one of the 4 (Khadr, case 30) the reason is different: the profile is 22,140 characters, `profile_view()` shows the model 14,585, and the cut leaves out the very sentence with the old year, so no prompt can fix that case.
+
+**The change:** the `disagreements` instruction also covers anything the profile itself states, including passing and background clauses, and asks for a check the other way round as well: for each date in the profile, look for the same event anywhere in the article. Local tries on the 6 disputed cases scored 2/6 and 3/6, against 2/6 before. The change ran as experiment `dispute-prompt` on agent version 4, a worktree with the edit (`.worktrees/kitaru-prompt-disputes`, local branch `experiment/dispute-background-clauses`, not pushed):
+
+| Hard cohort | Cases | Luna baseline | Luna again | Prompt change |
+|---|---|---|---|---|
+| `disputed` | 6 | 2 | 0 | 3 |
+| `new_fact` | 9 | 7 | 6 | 5 |
+| `irrelevant` | 4 | 2 | 3 | 2 |
+| all | 19 | 11 | 9 | 10 |
+
+- **Disputed cases:** Khadr's case 20 passed for the first time; both al Nashiri cases held.
+- **New facts:** both Abu Zubaydah cases left the new article uncited, where both Luna runs had cited it. That looks like the extra comparing crowding out the new facts, but it is one run.
+- **The easy cohort** stayed at 15/15, with no "sources disagree" sentence invented.
+- **Verdict:** no net gain, so the change was not landed.
+
+Two things to take from it. A prompt change needs repeat runs before a 1 or 2 case difference means anything. And Khadr's case 30 is a `profile_view()` problem: the view could always keep the sentences that share a year or an event's words with the article.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
@@ -179,6 +199,7 @@ The agent versions:
 | 1 | the PR worktree the trial ran from | the 5 baselines are bound to it, so a replay without `--agent` runs it and fails once that worktree is gone |
 | 2 | the main checkout | don't: it is usually on another branch |
 | 3 | `.worktrees/kitaru-replay` | the one to use; an unchanged replay on it passed every check on 14 Nov |
+| 4 | `.worktrees/kitaru-prompt-disputes` | the prompt experiment above; only for comparing against it |
 
 Register a new version when a change should be replayed against older baselines, such as a prompt edit in a worktree of its own.
 
@@ -186,7 +207,7 @@ Register a new version when a change should be replayed against older baselines,
 
 - **Repeat runs.** Run each experiment two or three times on the hard cohort before reading a 2-case difference as real.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **A prompt experiment:** replay `profile-update-hard` against an agent version whose worktree has an edited `profile_edit.cloud.md`, aimed at the 4 disputed cases every run fails. Kitaru replays a cohort on any agent version (`--agent hinbox-profile-update@<n>` on the run).
+- **Disputes in passing clauses** are still missed (see the prompt experiment above). Next ideas: a separate pass that pairs the article's dated sentences with the profile's (the fact-list prototype's date check, `src/engine/date_disputes.py`, does this), and making `profile_view()` keep sentences that share a year with the article.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 - **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
