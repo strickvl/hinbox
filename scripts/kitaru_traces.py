@@ -241,11 +241,11 @@ def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         root = roots[0]
         ended = root["outputs"] if isinstance(root["outputs"], dict) else {}
         outcome = str(ended.get("article.outcome", ""))
-        error = root["error"] or (
-            outcome
-            if outcome.startswith(("incomplete", "Relevance check failed"))
-            else None
-        )
+        # ``article_scope()`` writes the skip reason when there is one, so a
+        # failed relevance check reads ``relevance_error``; an article whose
+        # extraction or merge step failed reads ``incomplete: <steps>``
+        failed = outcome == "relevance_error" or outcome.startswith("incomplete")
+        error = root["error"] or (outcome if failed else None)
         name, inputs, outputs = root["name"], root["inputs"], root["outputs"]
     else:
         error, name = UNFINISHED, f"unfinished ({nodes[0]['name']})"

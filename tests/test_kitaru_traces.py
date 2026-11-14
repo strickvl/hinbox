@@ -174,7 +174,9 @@ def test_failures_show_on_the_node_and_an_incomplete_article_fails():
         "ValueError: no is_match answer",
     )
     assert (s["status"], s["error"]) == ("failed", "incomplete: match check failed")
-    assert session([_article()])["status"] == "completed"
+    assert session([_article(outcome="relevance_error")])["status"] == "failed"
+    for done in ("processed", "not_relevant", "already_processed"):
+        assert session([_article(outcome=done)])["status"] == "completed"
 
 
 def test_a_trace_without_its_top_span_is_kept_as_unfinished():

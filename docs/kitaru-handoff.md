@@ -44,7 +44,7 @@ One `kitaru-jsonl` session line per trace:
 | Model-call span | `llm_call` node: messages as `{"role", "content"}` (tool calls nested as `{"id", "function": {"name", "arguments"}}`), `hinbox.llm.reasoning` as a `reasoning` message, selectors for the system prompt, the last user message and the reply (the tool-call arguments for a structured reply), model, provider, tokens, request parameters without the response schema |
 | Step span | `span` node: `hinbox.*` labels about what went in (`INPUT_LABELS`: entity name, article ID, names compared…) as inputs, the rest as outputs |
 | Merge decision events | `decisions` in their `merge.<type>` step's outputs |
-| Article span | the session's name, inputs (title, URL, date…) and outputs (outcome); the session fails when the outcome starts with `incomplete` or `Relevance check failed` |
+| Article span | the session's name, inputs (title, URL, date…) and outputs (outcome); the session fails when the outcome is `relevance_error` or starts with `incomplete` |
 | Trace with no top span | a failed session named `unfinished (<first step>)`, metadata `complete: false` |
 | Resource | session metadata: run ID, git commit, domain, local flag (not the `HINBOX_*` settings) |
 
