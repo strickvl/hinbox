@@ -241,11 +241,13 @@ def test_an_eval_steps_session_names_its_case():
         "t1-root",
         name="eval new_fact:ACLU:3",
         attrs={"hinbox.eval_item_id": "new_fact:ACLU:3", "hinbox.eval_kind": "new_fact",
-               "hinbox.eval_split": "dev"},
+               "hinbox.eval_split": "dev",
+               "hinbox.eval_claim_label": json.dumps({"facts": [{"id": "f"}]})},
     )  # fmt: skip
     step = _row("t1", "p1", "t1-root", "profile.update", _update("p1")["attributes"])
     (s,) = step_sessions([item, step], "profile.update")
     assert s["inputs"]["labels"]["eval_kind"] == "new_fact"  # a replay gets them too
+    assert s["inputs"]["labels"]["eval_claim_label"] == {"facts": [{"id": "f"}]}
     assert {
         k: s["metadata"][k] for k in ("eval_item_id", "eval_kind", "eval_split")
     } == {

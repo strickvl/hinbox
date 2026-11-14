@@ -308,7 +308,13 @@ def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 # An eval item's labels that its step sessions carry in their metadata
-EVAL_KEYS = ("eval_item_id", "eval_kind", "eval_split", "eval_claim_label")
+EVAL_KEYS = (
+    "eval_item_id",
+    "eval_kind",
+    "eval_split",
+    "eval_expected",
+    "eval_claim_label",
+)
 
 
 def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]:
@@ -348,7 +354,7 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
             str(labels[k]) for k in ("new_name", "existing_name") if labels.get(k)
         )
         trace_id = span["context"]["trace_id"]
-        case = {k: article[k] for k in EVAL_KEYS if k in article}
+        case = {k: _decode(article[k]) for k in EVAL_KEYS if k in article}
         sessions.append(
             {
                 "status": "failed" if error else "completed",
