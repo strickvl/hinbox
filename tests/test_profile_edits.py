@@ -305,6 +305,21 @@ def test_the_date_check_leaves_a_disagreement_the_model_listed(monkeypatch):
     assert "DateVerdicts" not in calls
 
 
+def test_a_sentence_disputed_before_is_not_disputed_again(monkeypatch):
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    fake, calls = _date_model(ProfileEditList(edits=[]))
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    first = pe.edit_profile(
+        "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
+    )
+    second = pe.edit_profile(
+        "person", "Nashiri", first, MOVED_ARTICLE, "a10", model="openai/x"
+    )
+    assert second["text"].count("Another report differs") == 1
+    assert second["edit_report"]["date_check"]["date_pairs"] == 0
+    assert calls.count("DateVerdicts") == 1  # only the first article was judged
+
+
 def test_a_failed_date_check_fails_the_update(monkeypatch):
     """So the pipeline leaves the article unlinked and tries it again."""
     monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")

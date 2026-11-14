@@ -30,6 +30,9 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 EDIT_DATE_CHECK_ENV = "HINBOX_EDIT_DATE_CHECK"
 _CITATION = re.compile(r"\^\[[^\]]+\]")
+# A sentence already followed by a dispute: this check's own ("Another report
+# differs: ..."), or the edit model's ("... instead.", "sources disagree")
+_DISPUTE_AFTER = re.compile(r"^Another report differs:|\binstead\b|\bdisagree", re.I)
 
 
 def edit_date_check_enabled() -> bool:
@@ -55,6 +58,7 @@ def date_check_edits(
     and a report (pairs found, verdicts, the sentences written).
 
     ``disputed``: profile sentences the model already listed as disagreements.
+    Sentences already followed by a dispute sentence are skipped too.
     """
     from src.engine.date_disputes import find_date_disputes
     from src.engine.fact_list import _call, _prompt
@@ -62,13 +66,21 @@ def date_check_edits(
     from src.evals.profile_cases import _sentences
     from src.utils.step_timing import timed_step
 
+    sentences = _sentences(old_text)
     rows = [
         {"id": str(i), "claim": _norm(s), "text": s}
-        for i, s in enumerate(_sentences(old_text))
+        for i, s in enumerate(sentences)
         if _CITATION.search(s)
     ]
     done = {_norm(s) for s in disputed}
-    skip = {r["id"] for r in rows if r["claim"] in done}
+    # A sentence disputed before is left alone, so a later article giving the
+    # same other date doesn't add a second "Another report differs"
+    already = {
+        str(i)
+        for i in range(len(sentences) - 1)
+        if _DISPUTE_AFTER.search(_norm(sentences[i + 1]))
+    }
+    skip = {r["id"] for r in rows if r["claim"] in done or r["id"] in already}
 
     def ask(name: str, user: str, schema: Any) -> Any:
         with timed_step(f"profile.{name}"):
