@@ -389,6 +389,32 @@ def _messages(
     ]
 
 
+def _date_check(
+    generate: Any,
+    model: str,
+    domain: str,
+    entity_type: str,
+    entity_name: str,
+    old_text: str,
+    article_text: str,
+    article_id: str,
+    disagreements: List[Any],
+) -> Tuple[List[Any], Dict[str, Any]]:
+    """With ``HINBOX_EDIT_DATE_CHECK=on``, the ``add`` edits for the date
+    conflicts the model's own list missed (``edit_date_check.py``) and its
+    report; nothing and {} when off. A failed call raises, like a failed edit
+    call: the update fails, the article isn't linked, and the next run tries
+    again, instead of the article being marked done unchecked."""
+    from src.engine.edit_date_check import date_check_edits, edit_date_check_enabled
+
+    if not edit_date_check_enabled():
+        return [], {}
+    return date_check_edits(
+        generate, model, domain, entity_type, entity_name, old_text,
+        article_text, article_id, [d.profile_sentence for d in disagreements],
+    )  # fmt: skip
+
+
 def _dispute_asker(generate: Any, model: str, entity_type: str, entity_name: str):
     """The model call ``guard_edits()`` makes to check "sources disagree"
     sentences (``dispute_check.py``), or None when the check is off."""
@@ -486,7 +512,14 @@ def edit_profile(
     )
     # A historian's corrections (only inside correction_scope(), during a run)
     edits, by_corrections = guard_corrections(old_text, edits)
+    dated, date_report = _date_check(
+        generate, model, domain, entity_type, entity_name, old_text,
+        article_text, article_id, response.disagreements,
+    )  # fmt: skip
+    edits = list(edits) + dated
     text, report = apply_edits(old_text, edits, sections[0] if sections else None)
+    if date_report:
+        report["date_check"] = date_report
     report["routed"] = bool(sections)
     report["guard"] = guarded
     report["corrections"] = by_corrections

@@ -233,3 +233,115 @@ def test_local_models_get_the_local_prompt(monkeypatch):
     assert "(local models)" in seen["system"] and "{" not in seen["system"]
     pe.edit_profile("person", "N", {"text": TEXT}, "x", "a9", model="openai/x")
     assert "(local models)" not in seen["system"]
+
+
+# --- the date check after the edits (edit_date_check.py) ---------------------
+
+MOVED = "Nashiri was moved to Guantánamo in September 2006 by order of Bush.^[a1]"
+MOVED_ARTICLE = (
+    "The hearing went on. Bush ordered Nashiri moved to Guantánamo in "
+    "September 2005 for a military trial."
+)
+
+
+def _date_model(edit_list, verdict="conflict", fail=False):
+    from src.engine.date_disputes import DateVerdicts
+
+    calls = []
+
+    def fake_generate(messages, response_model, model, max_tokens):
+        calls.append(response_model.__name__)
+        if response_model is DateVerdicts:
+            if fail:
+                raise RuntimeError("server down")
+            return DateVerdicts.model_validate(
+                {"verdicts": [{"pair": 1, "event": "his transfer", "verdict": verdict,
+                               "sentence": "Nashiri was moved in September 2005."}]}
+            )  # fmt: skip
+        return edit_list
+
+    return fake_generate, calls
+
+
+def test_the_date_check_adds_a_conflict_the_model_missed(monkeypatch):
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    fake, calls = _date_model(ProfileEditList(edits=[]))
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    out = pe.edit_profile(
+        "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
+    )
+    assert out["text"] == (
+        MOVED + " Another report differs: Nashiri was moved in September 2005.^[a9]"
+    )
+    assert out["edit_report"]["date_check"]["date_verdicts"] == ["conflict"]
+    assert calls == ["ProfileEditList", "DateVerdicts"]
+
+
+def test_the_date_check_is_off_unless_turned_on(monkeypatch):
+    monkeypatch.delenv("HINBOX_EDIT_DATE_CHECK", raising=False)
+    fake, calls = _date_model(ProfileEditList(edits=[]))
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    out = pe.edit_profile(
+        "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
+    )
+    assert out["text"] == MOVED and calls == ["ProfileEditList"]
+    assert "date_check" not in out["edit_report"]
+
+
+def test_the_date_check_leaves_a_disagreement_the_model_listed(monkeypatch):
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    monkeypatch.setenv("HINBOX_DISPUTE_CHECK", "off")  # its own call, not this one
+    listed = ProfileEditList(
+        disagreements=[{"profile_sentence": MOVED, "article_says": "September 2005"}],
+        edits=[_edit("add", MOVED, "A later report gives 2005 instead.^[a9]")],
+    )
+    fake, calls = _date_model(listed)
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    out = pe.edit_profile(
+        "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
+    )
+    assert "Another report differs" not in out["text"]
+    assert out["edit_report"]["date_check"]["date_pairs"] == 0
+    assert "DateVerdicts" not in calls
+
+
+def test_a_sentence_disputed_before_is_not_disputed_again(monkeypatch):
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    fake, calls = _date_model(ProfileEditList(edits=[]))
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    first = pe.edit_profile(
+        "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
+    )
+    second = pe.edit_profile(
+        "person", "Nashiri", first, MOVED_ARTICLE, "a10", model="openai/x"
+    )
+    assert second["text"].count("Another report differs") == 1
+    assert second["edit_report"]["date_check"]["date_pairs"] == 0
+    assert calls.count("DateVerdicts") == 1  # only the first article was judged
+
+
+def test_a_failed_date_check_fails_the_update(monkeypatch):
+    """So the pipeline leaves the article unlinked and tries it again."""
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    fake, _ = _date_model(
+        ProfileEditList(edits=[_edit("add", "END", "He was tried.^[a9]")]), fail=True
+    )
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    with pytest.raises(RuntimeError, match="server down"):
+        pe.edit_profile(
+            "person", "Nashiri", {"text": MOVED}, MOVED_ARTICLE, "a9", model="openai/x"
+        )
+
+
+def test_a_failed_date_check_keeps_the_old_profile_and_article_unlinked(monkeypatch):
+    from src.engine.profiles import VersionedProfile, update_profile
+
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    fake, _ = _date_model(ProfileEditList(edits=[]), fail=True)
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    old = {"text": MOVED, "sources": ["a1"]}
+    new, _, _ = update_profile(
+        "people", "Nashiri", old, VersionedProfile(), MOVED_ARTICLE, "a9",
+        model="openai/x", approach="edit",
+    )  # fmt: skip
+    assert new["text"] == MOVED and "a9" not in new.get("sources", [])
