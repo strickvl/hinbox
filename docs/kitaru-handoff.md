@@ -122,7 +122,7 @@ A step span used to record only the prompts sent to the model, not the arguments
 
 ### What the trial on 14 Nov showed
 
-The workspace now has an agent `hinbox-profile-update` (version 1, its `working_dir` this session's worktree) holding 5 eval step sessions (one entity, the American Civil Liberties Union; 3 `irrelevant` and 2 `new_fact` dev cases; tag `eval-dev-20261114`), the evaluator, and the replays of one `new_fact` case:
+The workspace now has an agent `hinbox-profile-update` (see "Where replays run" for its versions) holding 5 eval step sessions (one entity, the American Civil Liberties Union; 3 `irrelevant` and 2 `new_fact` dev cases; tag `eval-dev-20261114`), the evaluator, and the replays of one `new_fact` case:
 
 | Replay | Result |
 |---|---|
@@ -132,9 +132,26 @@ The workspace now has an agent `hinbox-profile-update` (version 1, its `working_
 
 A pipeline step (`update_profile()`, from the 4-update trace of PR #140) was replayed locally with `--inputs`/`--out` and passed too; it was not sent to the workspace.
 
+### Where replays run
+
+From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
+
+1. Run `git pull` in that worktree to pick up new code.
+2. Start the worker there: `just kitaru-worker --job-id <job> --claim agent --claim evaluator`.
+3. Name its agent version in every replay: `kitaru replay create <session> --agent hinbox-profile-update@3 …`.
+
+The agent versions:
+
+| Version | `working_dir` | Use |
+|---|---|---|
+| 1 | the PR worktree the trial ran from | the 5 baselines are bound to it, so a replay without `--agent` runs it and fails once that worktree is gone |
+| 2 | the main checkout | don't: it is usually on another branch |
+| 3 | `.worktrees/kitaru-replay` | the one to use; an unchanged replay on it passed every check on 14 Nov |
+
+Register a new version when a change should be replayed against older baselines, such as a prompt edit in a worktree of its own.
+
 ### Still open
 
-- **The agent version points at this worktree.** Register version 2 with `working_dir` the main checkout once this is merged, or replays fail when the worktree is removed.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
 - **An experiment over a cohort** (the regression suite): freeze the step sessions into a cohort and replay all of them against a new agent version, e.g. one whose checkout has an edited `profile_edit.cloud.md`.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
