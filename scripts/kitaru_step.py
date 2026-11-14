@@ -47,7 +47,7 @@ from scripts.kitaru_traces import step_sessions
 
 STEP = "profile.update"
 # Recorded beside update_profile()'s arguments but not one of them
-NOT_ARGUMENTS = ("call", "answering_model", "labels")
+NOT_ARGUMENTS = ("call", "answering_model", "labels", "guarded_corrections")
 
 
 def hinbox_model(name: str) -> str:
@@ -91,7 +91,18 @@ def apply_override(inputs: Dict[str, Any], override: Any) -> Dict[str, Any]:
 
 
 def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any]]:
-    """The function the recorded step ran, and the arguments to call it with."""
+    """The function the recorded step ran, and the arguments to call it with.
+
+    Refuses a pipeline step that ran with a historian's corrections guarded:
+    the replay has no correction scope, so the guard would let a struck
+    sentence back in and the replay would differ for that reason alone.
+    """
+    if inputs.get("guarded_corrections"):
+        raise ValueError(
+            f"This step ran with {inputs['guarded_corrections']} of the "
+            "historian's sentences guarded (struck or written), which a replay "
+            "can't restore yet; replaying it would let them be rewritten"
+        )
     args = {k: v for k, v in inputs.items() if k not in NOT_ARGUMENTS}
     if inputs.get("call") == "edit_profile":
         from src.evals.profile_update import edit_step

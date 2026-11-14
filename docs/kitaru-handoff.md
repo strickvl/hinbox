@@ -138,6 +138,7 @@ A pipeline step (`update_profile()`, from the 4-update trace of PR #140) was rep
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
 - **An experiment over a cohort** (the regression suite): freeze the step sessions into a cohort and replay all of them against a new agent version, e.g. one whose checkout has an edited `profile_edit.cloud.md`.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
+- **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 - **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
 
 ### How replay changes map onto Hinbox

@@ -106,6 +106,13 @@ def test_a_pipeline_step_runs_update_profile_with_the_model_that_answered():
     assert "answering_model" not in args and "versioned_profile" in args
 
 
+def test_a_step_that_guarded_corrections_is_refused():
+    with pytest.raises(ValueError, match="2 of the historian's sentences"):
+        ks.step_call({**_inputs(call=None), "guarded_corrections": 2})
+    fn, args = ks.step_call({**_inputs(), "guarded_corrections": 0})
+    assert "guarded_corrections" not in args
+
+
 # --- the re-run becomes a session ---------------------------------------------
 
 

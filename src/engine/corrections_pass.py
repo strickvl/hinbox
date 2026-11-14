@@ -194,6 +194,14 @@ def current_rules() -> Optional[PageRules]:
     return _CURRENT.get()
 
 
+def guarded_count() -> int:
+    """How many struck and historian-written sentences the edit guard protects
+    in the current ``correction_scope()`` (0 outside one). A step records it
+    so a replay, which has no such scope, can refuse the step."""
+    rules = current_rules()
+    return len(rules.struck) + len(rules.written) if rules else 0
+
+
 def _restated(text: str, rules: PageRules) -> Optional[Dict[str, Any]]:
     """The strike this claim says again: the same words, or the same words
     with filler round them ("The article states that …"), each way round

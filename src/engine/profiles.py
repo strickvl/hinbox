@@ -759,6 +759,8 @@ def update_profile(
         approach=approach,
         chars_before=len(str(existing_profile.get("text") or "")),
     )
+    from src.engine.corrections_pass import guarded_count
+
     record_step_input(
         entity_type=entity_type,
         entity_name=entity_name,
@@ -772,6 +774,7 @@ def update_profile(
         model=model,
         answering_model=_prompt_model(model_type, model),
         approach=approach,
+        guarded_corrections=guarded_count(),  # a replay can't restore them
     )
     if approach not in ("edit", "rewrite", "facts"):
         raise ValueError(f"Unknown profile update approach: {approach!r}")
