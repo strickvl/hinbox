@@ -320,6 +320,25 @@ def test_a_sentence_disputed_before_is_not_disputed_again(monkeypatch):
     assert calls.count("DateVerdicts") == 1  # only the first article was judged
 
 
+def test_only_a_real_dispute_marks_a_sentence_as_disputed(monkeypatch):
+    from src.engine.edit_date_check import _is_dispute
+
+    assert _is_dispute("Another report differs: Nashiri was moved in 2005.^[a9]")
+    assert _is_dispute("A later report gives the year as 2005 instead.^[a9]")
+    assert _is_dispute("The sources disagree on the year.^[a9]")
+    assert not _is_dispute("His lawyers instead sought a civilian trial.^[a2]")
+    assert not _is_dispute("The two men disagree about the plan.^[a2]")
+    # ...so the sentence before an unrelated "instead" is still checked
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    fake, calls = _date_model(ProfileEditList(edits=[]))
+    monkeypatch.setattr(pe, "cloud_generation", fake)
+    profile = {"text": MOVED + " His lawyers instead sought a civilian trial.^[a2]"}
+    out = pe.edit_profile(
+        "person", "Nashiri", profile, MOVED_ARTICLE, "a9", model="openai/x"
+    )
+    assert "Another report differs" in out["text"] and "DateVerdicts" in calls
+
+
 def test_a_failed_date_check_fails_the_update(monkeypatch):
     """So the pipeline leaves the article unlinked and tries it again."""
     monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
