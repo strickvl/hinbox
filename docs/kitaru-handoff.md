@@ -273,6 +273,29 @@ To check whether Haiku's lead on the hard cohort holds for ordinary cases, `just
 - **The verdict:** Luna stays the profile model. One run each is not decisive (Luna's dev score ranged from 73 to 78 across 14-15 Nov), but Haiku would need a clear lead to be worth 65% more, and it trades small advantages instead: better on hard new facts, worse at holding back on irrelevant articles.
 - **To run a Haiku eval**, use `uv run --env-file .env ...`. The shell has no `ANTHROPIC_API_KEY`, and without it every case errors.
 
+### Match-check replays (15 Nov)
+
+The second step type. A `match_check` step answers "is this new mention the same entity as this existing profile?". Its sessions (`--step match_check`) carry the merge eval pair's hand label (`eval_label`). Agent `hinbox-match-check` v1 runs `_check_match()` again from `.worktrees/kitaru-replay`, and evaluator `hinbox-match-check-checks@1` scores `match_ok` (agrees with the label), `false_merge` and `missed_merge`.
+
+**Cohort `match-check-hard`** (tag `merge-hard-20261115`): the 28 merge v2 pairs that at least one of 38 earlier eval runs got wrong, 6 labelled the same and 22 different. Luna's baselines are from 15 Nov. Two runs each:
+
+| | Run 1 | Run 2 | False merges | Missed merges |
+|---|---|---|---|---|
+| Luna baseline | 20/28 | | 6 | 2 |
+| `match-luna-unchanged` | 19/28 | 21/28 | 7, 5 | 2, 2 |
+| `match-haiku-fork` | 22/28 | 22/28 | 4, 4 | 2, 2 |
+
+- **Noise:** Luna's two runs disagree on 4 of 28 pairs, Haiku's on none. About 2 points of Haiku's lead could be Luna's own variation.
+- **Luna's misses:** it merges related but separate things. It joined Heather Rosenberg into her husband Evan's profile in one run, because both profiles mention her ombudsman job. It also merges sibling events of the Rosenberg custody story ("DCF taking legal custody" with "Conflict between…", "Rosenbergs refuse to reclaim…"). It doesn't count "New York" as New York City.
+- **Haiku's misses:**
+  - It merged "Ron DeSantis" with "Cliff Li" and with "Zhonggang Li" in both runs. But both pairs are broken: the evidence mined for "Ron DeSantis" describes Li, and DeSantis appears only as the governor Li campaigned for. Haiku judged the text, Luna the name. Those two pairs test the mining more than the model.
+  - It kept "Miami Beach" apart from "Miami Beach", because one profile is about concerts on the beach and the other about a school soccer team.
+- **Both fail:**
+  - "Guantanamo Bay Navy Base" against "U.S. Navy base", whose label "different" is arguable.
+  - "Evan Rosenberg" against "Evan D. Rosenberg", which both miss.
+  - "Rosenbergs given time to retrieve son" against "Boy's stay in psychiatric treatment center".
+- **Verdict:** no change. Haiku leads, more so without the two broken pairs, but 26 usable pairs and two runs are too few to switch the match model, and cost and speed weren't measured. The replay itself works: 112 replays, none failed.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
@@ -291,7 +314,7 @@ The agent versions:
 | 4 | `.worktrees/kitaru-prompt-disputes` | the prompt experiment above; only for comparing against it |
 | 5 | `.worktrees/kitaru-replay`, `HINBOX_EDIT_DATE_CHECK=on` | the date check after the edits |
 
-Register a new version when a change should be replayed against older baselines, such as a prompt edit in a worktree of its own.
+Register a new version when a change should be replayed against older baselines, such as a prompt edit in a worktree of its own. Match checks have their own agent, `hinbox-match-check`: v1 is `.worktrees/kitaru-replay`. Start its worker with `--claim agent=<v1's version id>`.
 
 ### Still open
 
@@ -300,7 +323,8 @@ Register a new version when a change should be replayed against older baselines,
 - **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
-- **`match_check` replays** are built: `--step match_check` sessions carry the merge pair's hand label (`eval_label`), `kitaru_step.py` re-runs `_check_match()`, and `hinbox-match-check-checks` scores `match_ok`, `false_merge` and `missed_merge`. No cohort has been run yet.
+- **The two broken DeSantis merge pairs** (`merge_v2`, pairs `cf7020e5…`, `4fcdea19…`): the evidence for "Ron DeSantis" is about Cliff Li. Fix the mined context or drop the pairs, then score again.
+- **Match checks on local Qwen:** fork `match-check-hard` onto an `ollama/` model once beast is back. The replay asks it locally, since `backend` follows the model.
 
 ### How replay changes map onto Hinbox
 
