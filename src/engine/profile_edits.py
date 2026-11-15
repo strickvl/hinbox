@@ -399,15 +399,17 @@ def _date_check(
     article_text: str,
     article_id: str,
     disagreements: List[Any],
+    local: bool,
 ) -> Tuple[List[Any], Dict[str, Any]]:
-    """With ``HINBOX_EDIT_DATE_CHECK=on``, the ``add`` edits for the date
+    """When the date check is on (``HINBOX_EDIT_DATE_CHECK``: cloud models by
+    default), the ``add`` edits for the date
     conflicts the model's own list missed (``edit_date_check.py``) and its
     report; nothing and {} when off. A failed call raises, like a failed edit
     call: the update fails, the article isn't linked, and the next run tries
     again, instead of the article being marked done unchecked."""
     from src.engine.edit_date_check import date_check_edits, edit_date_check_enabled
 
-    if not edit_date_check_enabled():
+    if not edit_date_check_enabled(local):
         return [], {}
     return date_check_edits(
         generate, model, domain, entity_type, entity_name, old_text,
@@ -514,7 +516,7 @@ def edit_profile(
     edits, by_corrections = guard_corrections(old_text, edits)
     dated, date_report = _date_check(
         generate, model, domain, entity_type, entity_name, old_text,
-        article_text, article_id, response.disagreements,
+        article_text, article_id, response.disagreements, local,
     )  # fmt: skip
     edits = list(edits) + dated
     text, report = apply_edits(old_text, edits, sections[0] if sections else None)

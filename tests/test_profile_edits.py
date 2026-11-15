@@ -277,8 +277,20 @@ def test_the_date_check_adds_a_conflict_the_model_missed(monkeypatch):
     assert calls == ["ProfileEditList", "DateVerdicts"]
 
 
-def test_the_date_check_is_off_unless_turned_on(monkeypatch):
+def test_the_date_check_is_on_for_cloud_models_only_by_default(monkeypatch):
+    from src.engine.edit_date_check import edit_date_check_enabled
+
     monkeypatch.delenv("HINBOX_EDIT_DATE_CHECK", raising=False)
+    assert edit_date_check_enabled(local=False)
+    assert not edit_date_check_enabled(local=True)  # Qwen not measured yet
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "on")
+    assert edit_date_check_enabled(local=True)
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "off")
+    assert not edit_date_check_enabled(local=False)
+
+
+def test_the_date_check_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv("HINBOX_EDIT_DATE_CHECK", "off")
     fake, calls = _date_model(ProfileEditList(edits=[]))
     monkeypatch.setattr(pe, "cloud_generation", fake)
     out = pe.edit_profile(

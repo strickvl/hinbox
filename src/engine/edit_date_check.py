@@ -20,8 +20,16 @@ fact-list updater already has (``date_disputes.py``):
    old sentence, "Another report differs: ...^[article]", so both dates stay
    with their own sources.
 
-Off by default, as in the fact-list updater, where it wrote 1-3 wrong disputes
-per 160 eval cases on Luna: ``HINBOX_EDIT_DATE_CHECK=on`` turns it on.
+On by default for cloud models, off for local ones (``HINBOX_EDIT_DATE_CHECK``:
+``cloud`` by default, ``on`` for every model, ``off``). Over 276 eval cases on
+Luna (dev, train and test splits and two Kitaru cohorts, 15 Nov) it wrote
+one wrong dispute (Spath: "Nashiri was moved in 2004", out of the CIA site,
+paired with "began his military custody at Guantánamo in September 2006"),
+found two real errors in stored profiles (Khadr's plea year, Abbasi's
+release) and passed 5 of 8 planted disputes on train and test against 2.
+The fact-list updater's version had written 1-3 wrong disputes per 160
+cases. Local Qwen is not measured; earlier notes have it calling pairs about
+two different things conflicts.
 """
 
 import os
@@ -46,8 +54,13 @@ def _is_dispute(sentence: str) -> bool:
     return bool(differs and _SOURCES.search(sentence))
 
 
-def edit_date_check_enabled() -> bool:
-    return os.getenv(EDIT_DATE_CHECK_ENV, "off").strip().lower() in {"on", "1", "yes"}
+def edit_date_check_enabled(local: bool) -> bool:
+    """On for a cloud model unless ``HINBOX_EDIT_DATE_CHECK=off``; on for a
+    local one only with ``on``."""
+    value = os.getenv(EDIT_DATE_CHECK_ENV, "cloud").strip().lower()
+    if value in {"on", "1", "yes"}:
+        return True
+    return value == "cloud" and not local
 
 
 def _norm(sentence: str) -> str:

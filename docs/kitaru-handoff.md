@@ -188,7 +188,7 @@ Two things to take from it. A prompt change needs repeat runs before a 1 or 2 ca
 
 `profile_view()` now keeps every passage with a sentence the article dates differently (`date_pairs()`), so the model sees both years. That changed the view in 7 of 46 long-profile eval cases, and the 6 that weren't Khadr's case 30 passed as often as before. But with both years shown, Luna still listed no disagreement for Khadr's case 30, in two runs out of two.
 
-So the check now runs in code too. `HINBOX_EDIT_DATE_CHECK=on` (off by default) runs the fact-list prototype's date check after the edit-list updater's edits (`src/engine/edit_date_check.py`):
+So the check now runs in code too. `HINBOX_EDIT_DATE_CHECK` (on for cloud models by default since 15 Nov, see below; `on`, `off`) runs the fact-list prototype's date check after the edit-list updater's edits (`src/engine/edit_date_check.py`):
 
 1. code pairs each dated article sentence with the profile's cited sentences that give it another year;
 2. one model call judges each pair;
@@ -210,6 +210,18 @@ The trial ran as experiment `edit-date-check` on agent version 5. That version i
 - **The rest of the cohort:** on the 28 cases that aren't disputed, the code formed 2 pairs and the model rejected both.
 - **Dev split (81 cases):** with the check on, 77 passed against 73 off. Disputed went from 0/5 to 3/5, irrelevant from 36 to 37 of 38, and new_fact stayed at 37/38.
 - **Wrong disputes:** none. Of the 7 disputes written across the cohorts and the dev split, every one was real. One was on a real `new_fact` case: the profile says Khadr "pleaded guilty to war crimes in 2011", the article says October 2010, and the article is right.
+
+**The wider check (train and test splits, 161 cases, Luna):**
+
+| Split | Off | On | Disputed off | Disputed on |
+|---|---|---|---|---|
+| train (82) | 78 | 76 | 2/4 | 4/4 |
+| test (79) | 61 | 65 | 0/4 | 1/4 |
+
+- **The pass/fail flips:** every case that went from pass to fail with the check on got no edit from it. That is the model's own run-to-run noise, mostly 3 or 4 sentences added on an irrelevant article.
+- **The disputes it wrote:** 5. Three were on disputed cases, all right. One found a real error in Camp X-Ray's profile: Abbasi's release, January 2008 against the correct January 2005. One is wrong: in Spath's profile, "Nashiri was moved in 2004" (out of the CIA site) was paired with "began his U.S. military custody at Guantánamo in September 2006", two different moves.
+- **Across all the runs:** 1 wrong dispute in 276 cases.
+- **The verdict:** since 15 Nov the check is on by default for cloud models. It stays off for local models until Qwen is measured.
 
 ### Where replays run
 
@@ -235,7 +247,8 @@ Register a new version when a change should be replayed against older baselines,
 
 - **Repeat runs.** Run each experiment two or three times on the hard cohort before reading a 2-case difference as real.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **Turning the edit date check on by default.** See the next section: so far it has written no wrong dispute. Before switching it on, run it on the train and test splits and a short pipeline run, and count wrong "Another report differs" sentences.
+- **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
+- **A short pipeline run** with the check on, counting wrong disputes in real updates rather than eval cases.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 - **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
