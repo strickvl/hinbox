@@ -250,6 +250,29 @@ Six runs on `profile-update-hard`, all on agent version 3 (main, with the date c
 - **Irrelevant articles:** Luna held back slightly better, 7 of 12 against Haiku's 5. Haiku added too much on Camp Justice and the hunger strike, but passed U.S. Southern Command every time, which Luna passed 2 times in 3.
 - **What it suggests:** on hard cases, Haiku as the profile model is about 2 cases in 19 better, and much steadier. Switching (`HINBOX_PROFILE_MODEL`) is a separate decision: these are only hard cases, cost isn't compared yet, and Haiku is weaker on irrelevant articles. A full dev-split run with Haiku would settle it.
 
+### Haiku on the full dev split (15 Nov)
+
+To check whether Haiku's lead on the hard cohort holds for ordinary cases, `just eval profile-update --split dev` ran once on each model, both on main with the date check on:
+
+| Kind | Cases | Luna | Haiku |
+|---|---|---|---|
+| `new_fact` | 38 | 36 | 36 |
+| `irrelevant` | 38 | 38 | 36 |
+| `disputed` | 5 | 4 | 3 |
+| all | 81 | 78 | 75 |
+
+| | Calls | Input tokens | Output tokens | Cost at $0.10 / $0.50 per M |
+|---|---|---|---|---|
+| Luna | 92 | 391k | 25k | $0.051 |
+| Haiku | 94 | 637k | 41k | $0.084 |
+
+- **No damage on either side:** neither model collapsed a profile, lost cited sentences or invented a citation.
+- **Irrelevant articles:** Haiku failed two USS Cole cases by adding 3 sentences where 2 is the limit. That's the same tendency as on the hard cohort.
+- **New facts:** tied. Each model failed two cases the other passed, all by leaving the new article uncited.
+- **Cost:** both list at the same price (Luna's from third-party trackers), but Haiku counts the same prompts as about 1.6x the tokens and writes about 1.65x the output. So an update costs about 65% more on Haiku.
+- **The verdict:** Luna stays the profile model. One run each is not decisive (Luna's dev score ranged from 73 to 78 across 14-15 Nov), but Haiku would need a clear lead to be worth 65% more, and it trades small advantages instead: better on hard new facts, worse at holding back on irrelevant articles.
+- **To run a Haiku eval**, use `uv run --env-file .env ...`. The shell has no `ANTHROPIC_API_KEY`, and without it every case errors.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
@@ -272,7 +295,6 @@ Register a new version when a change should be replayed against older baselines,
 
 ### Still open
 
-- **Haiku as the profile model:** a full eval run (`just eval profile-update --model anthropic/claude-haiku-5-5 --split dev`), with cost, against Luna, after the repeat runs above.
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
 - **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
