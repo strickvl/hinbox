@@ -406,12 +406,40 @@ The check-on runs again (the check-off runs don't change):
 - **Qwen's misses this time:** the Cole/The Sullivans pair is still formed; Qwen called it `different` this run. Expect it to be written sometimes.
 - **Luna's new wrong dispute:** September 11 trial case 39, "the six men were transferred to Guantánamo in 2006" against the Senate report's CIA site at Guantánamo in 2003-04: two different moves, like Spath's. The fix doesn't touch these; the pair was judged in the earlier run too, so it's Luna's own variation.
 - **Across all runs:** Luna 3 wrong in 518 cases, Qwen with the fix 0 in 242 (with the Cole pair still able to give 1).
-- **The decision:** `HINBOX_EDIT_DATE_CHECK` is now `on` by default for every model; `cloud` keeps the old behaviour.
+- **The decision then:** `HINBOX_EDIT_DATE_CHECK` became `on` by default for every model (PR #158). The pilot below reversed it.
+
+**5. A 40-article local pipeline run (15 Nov).** `just process --local --limit 40 --relevance-check --force-reprocess` in `.worktrees/local-pilot`, on main `970e01b` (with #158, so the date check on), against Luna's pilot on the same 40 articles. It needs `uv sync --extra local-embeddings` for `--local`.
+
+| | Luna (cloud) | Qwen (local) |
+|---|---|---|
+| Time | 16 min | 30 min, then a resume |
+| Relevant articles finished | 27 of 27 | 25 of 27 |
+| People / organizations / locations / events | 134 / 68 / 104 / 195 | 132 / 107 / 99 / 134 |
+| Cited sentences lost | 0 | 0 |
+| Repeated sentences | 0 | 3 |
+| "Sources disagree" sentences | 0 | 1 |
+| Date check: pairs, conflicts, disputes written | 10, 0, 0 | 36, 7, 6 |
+| Name-variant duplicates | 1 | 1 |
+| Same name in two tables | 4 | 17 |
+| Claims not supported / partly supported (judge) | 11 / 69 of 1,000 (Haiku) | 37 / 58 of 1,507 (Qwen) |
+
+- **The 6 disputes, all wrong:**
+  - **Two different detainees:** "Captured in Turkey in 2006, he got to Guantánamo in April 2007" (Hadi al Iraqi) was set against Nashiri's black-site dates, and a 2002 capture in Pakistan against Hadi's 2006 capture in Turkey.
+  - **Two different events:** Hadi's arrival at Camp 7 in 2007 against the CIA's Guantánamo sites of 2003-04, and against "no new captives since March 2008" (Taliban).
+  - **Dates that agree:** bin Attash "captured by the CIA in 2003" and taken to Guantánamo "more than three years" later, against "Bush sent them to Guantánamo in 2006".
+  - **One with nothing to dispute**, in Guantánamo Bay's profile.
+- **Why the eval missed this:** its cases are mostly single-person profiles. Hub profiles like the CIA, the Taliban and al-Qaida hold many detainees' capture and transfer dates, so the code forms many pairs, and Qwen calls them conflicts where Luna calls them `different`. Two of the six got past the pronoun rule because a place name ("Guantánamo", "Turkey") was the name both sentences shared.
+- **The decision:** `HINBOX_EDIT_DATE_CHECK` is back to `cloud` by default: off for local models. The pronoun rule and the name guard stay, since they only remove pairs or wording.
+- **Two articles that never finish:**
+  - **Article 931322f5:** Qwen's location extraction repeats `{"name": "U.S.", "type": "country"}` until the 8,192-token limit, the same way on every retry.
+  - **The first article merged (17fe80a6):** it fails on every run that starts with a cold embedding model. The four merge threads each load the local embedding model at once, and `_get_model()` in `src/utils/embeddings/local.py` has no lock. The first run got an SSL error from Hugging Face, the resume a `NoneType` path.
+- **Other differences:** Qwen files 17 names in both the locations and the organizations tables (Luna 4), among them Pentagon, White House, Sudan and Uruguay. Its grounding judge is the local one, so its counts aren't comparable with Haiku's.
 
 ### Still open
 
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
+- **Qwen's extraction loop:** a reply that repeats one location until the output limit (article 931322f5 above). Options: keep the items before the loop, or retry once with a repetition penalty.
 - **Two-event date pairs:** every wrong dispute left (Spath, the September 11 trial, Qwen's Cole/The Sullivans) pairs two events of one kind (two moves, two attacks). The words beside both dates match ("moved to Guantánamo", "attack on the USS"), so code can't tell them apart; only the model can.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 
