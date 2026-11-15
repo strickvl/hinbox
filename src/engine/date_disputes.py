@@ -24,11 +24,21 @@ other way round:
 3. **Write** (code): for a ``conflict``, the article's version goes right
    after the old sentence, cited to the article, so both dates stay with their
    own sources. The sentence must state the article's differing year or
-   month, or code uses the article's own sentence instead.
+   month and name no one the article's sentence (or the one before it)
+   doesn't, or code uses the article's own sentence instead.
+
+Who "he" is: an article sentence that names its person only as "he", "him",
+"her"... is paired only when it or the sentence before it shares a name with
+the profile sentence. On 15 Nov local Qwen read "Military prosecutors first
+swore out charges against him in 2008, alleging he hid mines..." (him: the
+Afghan detainee Obaidullah, named the sentence before) as being about
+Nashiri, set it against Nashiri's "had not yet sworn out charges" and wrote
+it with Nashiri's name, a false claim in his profile.
 """
 
 import os
 import re
+import unicodedata
 from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 
 from pydantic import BaseModel, Field, field_validator
@@ -84,6 +94,15 @@ _STOP = set(
     "some such only over under before since during until again could should "
     "being these those does just made like year years month later earlier "
     "says told report article reported according".split()
+)
+# A person named only by a pronoun: see "Who 'he' is" above
+_PRONOUN = re.compile(r"\b(?:he|him|his|himself|she|her|hers|herself)\b", re.I)
+_NAME = re.compile(r"\b[A-Z][\w'’-]+")
+# Capitalised words that start sentences but name no one
+_NOT_NAMES = set(
+    "the a an in on at by of for to but and or as he she his her it its they "
+    "their this that these those after before once when while under over "
+    "since during another".split()
 )
 
 
@@ -193,6 +212,36 @@ def dates_share_context(article_sentence: str, profile_sentence: str) -> bool:
     )
 
 
+def _plain(word: str) -> str:
+    word = re.sub(r"['’]s$", "", word)
+    return (
+        unicodedata.normalize("NFKD", word).encode("ascii", "ignore").decode().lower()
+    )
+
+
+def _names(text: str) -> Set[str]:
+    """Capitalised words (names, places, outlets), months and sentence
+    openers like "The" left out, accents and possessive 's dropped."""
+    found = set()
+    for m in _NAME.finditer(_CITATION.sub("", text)):
+        word = re.sub(r"['’]s$", "", m.group())
+        if _MONTH.fullmatch(word):
+            continue
+        plain = _plain(word)
+        if len(plain) >= 3 and plain not in _NOT_NAMES:
+            found.add(plain)
+    return found
+
+
+def unclear_person(sentence: str, context: str, profile_sentence: str) -> bool:
+    """The article sentence names its person only by a pronoun ("he", "her"),
+    and neither it nor the sentence before shares a name with the profile
+    sentence, so "he" may be someone else."""
+    if not _PRONOUN.search(_CITATION.sub("", sentence)):
+        return False
+    return not (_names(sentence) | _names(context)) & _names(profile_sentence)
+
+
 def _same_subject(a: str, b: str) -> bool:
     mine = {w[:5] for w in _content_words(a)}
     theirs = {w[:5] for w in _content_words(b)}
@@ -225,6 +274,8 @@ def date_pairs(
                 continue
             if shared >= MIN_DATE_SHARED and share >= DATE_PAIR_OVERLAP:
                 context = sentences[i - 1] if i else ""
+                if unclear_person(sentence, context, row["claim"]):
+                    continue
                 found.append((share, shared, i, row, sentence, context))
     found.sort(key=lambda f: (-f[0], -f[1], f[2]))
     pairs: List[Dict[str, Any]] = []
@@ -258,16 +309,22 @@ def dispute_text(verdict_sentence: str, pair: Dict[str, Any], article_id: str) -
     """The sentence code writes after the old one, cited to the article.
 
     The model's sentence is used only when it states the article's differing
-    date and no year the article sentence doesn't give; otherwise (empty, it
-    copied the profile's date, or it made up a third one) the article's own
-    sentence is written.
+    date, no year the article sentence doesn't give, and no name that neither
+    it nor the sentence before it gives; otherwise (empty, it copied the
+    profile's date, it made up a third one, or it put a name to "he" or "the
+    destroyer": Qwen wrote "James Pohl is associated with the October 2001
+    bombing" from a sentence about Nashiri) the article's own sentence is
+    written.
     """
     body = _CITATION.sub("", verdict_sentence).strip()
     article_years = _dates(pair["sentence"])[0]
+    source = f"{pair['sentence']} {pair.get('context', '')}"
+    given = {_plain(w) for w in re.findall(r"[\w'’-]+", _CITATION.sub("", source))}
     if (
         not body
         or not dates_differ(body, pair["row"]["claim"])
         or not _dates(body)[0] <= article_years
+        or not _names(body) <= given
     ):
         body = _CITATION.sub("", pair["sentence"]).strip()
     body = body.removeprefix(DISPUTE_PREFIX.strip()).strip()

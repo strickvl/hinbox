@@ -387,13 +387,32 @@ Beast came back early, so both runs from the plan for Monday ran on 15 Nov, agai
     - **USS Cole case 39:** Qwen set "Nashiri is the alleged architect of the October 2000 attack on the USS Cole" against "the failed January 2000 attack on USS The Sullivans": two different attacks, the same mistake as Luna's Spath dispute.
     - **al Nashiri case 5:** worse. The article's "Military prosecutors first swore out charges against him in 2008, alleging he hid mines…" is about an Afghan detainee. Qwen wrote it as "…against Abd al Rahim al Nashiri…", so the profile gained a false claim, citing a real article, that Nashiri hid mines in Khost.
 - **Against Luna:** 2 wrong in 242 cases against Luna's 1 in 276; 2 wrong of 9 written against 1 of 12.
-- **The decision:** the check stays off for local models. It gains 2 disputed cases, and for that it would let Qwen write a false claim into a profile. A possible fix for a later change: accept an article sentence only if it names the entity itself, not by "him" or "he", which would have stopped the Nashiri dispute.
+- **The first decision:** the check stays off for local models. It gains 2 disputed cases, and for that it would let Qwen write a false claim into a profile.
+
+**4. The fix, and the check on for local models (15 Nov, later).** Requiring the entity's name in the article sentence would have lost good disputes: Khadr's says "Guantánamo's youngest captive", Pohl's "the destroyer". Two narrower rules in `date_disputes.py` instead:
+- **Who "he" is:** an article sentence that names its person only as "he", "him", "her"... is paired only when it, or the sentence before it, shares a name with the profile sentence (`unclear_person()`). Nashiri's "charges against him in 2008" followed a sentence naming Obaidullah, and the profile sentence named Holder and Nashiri, so it is no longer paired. Over the 242 cases, without a model, the rule drops 2 of 60 pairs: that one, and Camp Justice's 2002 arrest against the 2001 attacks, also two events.
+- **No added names:** the model's wording is used only when every name in it is in the article sentence or the one before; otherwise code writes the article's own sentence. This replaced Qwen's "James Pohl is associated with the October 2001 bombing" with the article's sentence.
+
+The check-on runs again (the check-off runs don't change):
+
+| | Passed | Disputed | Disputes written | Wrong |
+|---|---|---|---|---|
+| Qwen, check off | 213/242 | 5/13 | | |
+| Qwen, on, before the fix | 213/242 | 9/13 | 9 | 2 |
+| Qwen, on, with the fix | 212/242 | 8/13 | 6 | 0 |
+| Luna, on, before the fix | 219/242 | 9/13 | 9 | 1 |
+| Luna, on, with the fix | 216/242 | 8/13 | 11 | 2 |
+
+- **Qwen's misses this time:** the Cole/The Sullivans pair is still formed; Qwen called it `different` this run. Expect it to be written sometimes.
+- **Luna's new wrong dispute:** September 11 trial case 39, "the six men were transferred to Guantánamo in 2006" against the Senate report's CIA site at Guantánamo in 2003-04: two different moves, like Spath's. The fix doesn't touch these; the pair was judged in the earlier run too, so it's Luna's own variation.
+- **Across all runs:** Luna 3 wrong in 518 cases, Qwen with the fix 0 in 242 (with the Cole pair still able to give 1).
+- **The decision:** `HINBOX_EDIT_DATE_CHECK` is now `on` by default for every model; `cloud` keeps the old behaviour.
 
 ### Still open
 
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **The date check on local models:** a check that the article sentence names the entity itself, then measure Qwen again (see "Local Qwen on beast").
+- **Two-event date pairs:** every wrong dispute left (Spath, the September 11 trial, Qwen's Cole/The Sullivans) pairs two events of one kind (two moves, two attacks). The words beside both dates match ("moved to Guantánamo", "attack on the USS"), so code can't tell them apart; only the model can.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 
 ### How replay changes map onto Hinbox
