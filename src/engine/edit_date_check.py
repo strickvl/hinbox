@@ -20,8 +20,8 @@ fact-list updater already has (``date_disputes.py``):
    old sentence, "Another report differs: ...^[article]", so both dates stay
    with their own sources.
 
-On by default for cloud models, off for local ones (``HINBOX_EDIT_DATE_CHECK``:
-``cloud`` by default, ``on`` for every model, ``off``). Over 276 eval cases on
+Off by default (``HINBOX_EDIT_DATE_CHECK``: ``off`` by default, ``cloud`` for
+cloud models only, ``on`` for every model). Over 276 eval cases on
 Luna (dev, train and test splits and two Kitaru cohorts, 15 Nov) it wrote
 one wrong dispute (Spath: "Nashiri was moved in 2004", out of the CIA site,
 paired with "began his military custody at Guantánamo in September 2006"),
@@ -40,7 +40,16 @@ while Luna's run on the same articles wrote none: the hub profiles (CIA,
 Taliban, al-Qaida, Guantánamo Bay) hold many detainees' capture and transfer
 dates, and Qwen called pairs about two detainees, or two dates that agree
 ("captured in 2003", "taken to Guantánamo more than three years" later,
-against 2006), conflicts. Off for local models again.
+against 2006), conflicts. Off for local models again. A 150-article Luna run
+(15 Nov) then had 9 ``conflict`` verdicts, all wrong: 5 set one detainee's
+dates against another's ("He has been in U.S. military custody since August
+2002", about Darbi, against al Hadi's April 2007 arrival, Spath's retirement
+and a Keystone visit; the only shared name was "Guantánamo"), 2 called a
+plea deal's planned Feb. 20, 2018 return a conflict with the May 2018
+transfer, 1 paired two different events, and 1 paired "Sept. 5, 2017" with
+"September and November 2017". So in pipeline runs it had written 15
+disputes, none right; its gains are on the eval's planted disputes, and real
+articles rarely give one past event two dates. Off for every model.
 """
 
 import os
@@ -66,9 +75,9 @@ def _is_dispute(sentence: str) -> bool:
 
 
 def edit_date_check_enabled(local: bool) -> bool:
-    """On for a cloud model unless ``HINBOX_EDIT_DATE_CHECK=off``; on for a
-    local one only with ``on``."""
-    value = os.getenv(EDIT_DATE_CHECK_ENV, "cloud").strip().lower()
+    """Off unless ``HINBOX_EDIT_DATE_CHECK`` is ``on`` (every model) or
+    ``cloud`` (cloud models only)."""
+    value = os.getenv(EDIT_DATE_CHECK_ENV, "off").strip().lower()
     if value == "cloud":
         return not local
     return value not in {"off", "0", "no"}
