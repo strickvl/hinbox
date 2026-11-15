@@ -215,3 +215,5 @@ ACLU, FBI and Justice Department are organizations, Trump is a person, Tren de A
 - Forgetting to include both specific and general geographic references
 - Using incorrect location types for the context
 - Extracting agencies, courts, companies, people or groups as locations (they belong in the other extraction prompts)
+
+List each location only once, even when the article mentions it many times.

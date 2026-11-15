@@ -434,12 +434,35 @@ The check-on runs again (the check-off runs don't change):
   - **Article 931322f5:** Qwen's location extraction repeats `{"name": "U.S.", "type": "country"}` until the 8,192-token limit, the same way on every retry.
   - **The first article merged (17fe80a6):** it fails on every run that starts with a cold embedding model. The four merge threads each load the local embedding model at once, and `_get_model()` in `src/utils/embeddings/local.py` has no lock. The first run got an SSL error from Hugging Face, the resume a `NoneType` path.
 - **Other differences:** Qwen files 17 names in both the locations and the organizations tables (Luna 4), among them Pentagon, White House, Sudan and Uruguay. Its grounding judge is the local one, so its counts aren't comparable with Haiku's.
+- **The re-run after #160:** with the embedding lock on main, 17fe80a6 finished. The earlier resume had failed it with the `NoneType` error even with the model already downloaded, so the race did show on a warm start too.
+
+**6. The extraction loop (15 Nov).** Qwen lists every mention of a place in article order (Guantánamo twice in the first dozen items), then gets stuck writing `{"name": "U.S.", "type": "country"}` until the 8,192-token limit. The reply is cut off mid-JSON and can't be read, so the article gets no locations and is retried on every run. Each try costs 4 calls of about a minute, all at temperature 0.
+
+The recorded request for article 931322f5, sent again to beast with one change at a time, 2 runs each. Luna found 41 places in this article:
+
+| Change | Finished | Places | Of Luna's 41 |
+|---|---|---|---|
+| None | 0 of 2 | 13 before the cut | 8 |
+| `repeat_penalty` 1.1 | 2 of 2 | 12 (stops early) | 7 |
+| `frequency_penalty` 0.5 | 1 of 2 | 43, or cut off | 31, or 8 |
+| `maxItems: 80` in the schema | 2 of 2 | 14 (the loop fills the cap) | 9 |
+| Prompt: "List each location only once, even when the article mentions it many times." | 2 of 2 | 35 | 33 |
+
+- **Why not keep the items before the loop:** here that's 13 places of Luna's 41. The article would finish without Senegal, Slovakia, Montenegro or Sudan, and nothing would show it.
+- **On the pilot's 27 other location extractions** (the recorded requests, unchanged and with the prompt line, 3-4 passes each):
+  - **Loops:** unchanged, 3 of 108 calls were cut off, all on one article that loops 3 runs in 4. With the line, 0 of 81.
+  - **Against Luna:** both found 170 of the 213 places Luna found; the line added 74 names Luna doesn't have, against 80 and 89 in two unchanged passes.
+  - **Tokens:** 20,814 for 81 calls with the line, 51,810 for 108 without.
+  - **Noise:** two unchanged passes on identical requests gave different lists for 15 of 27 articles (llama.cpp with 4 slots isn't deterministic at temperature 0), so a single-article difference means little.
+- **The change:** the sentence is now the last line of `configs/guantanamo/prompts/locations.md`, for cloud and local models alike. It changes the prompt's hash, so every article's locations are extracted again on the next run (the extraction cache misses).
+- **In the pipeline:** `just process --local --limit 40 --relevance-check` in `.worktrees/local-pilot` with the new prompt finished 931322f5 in 148 s, the last of the pilot's 27 relevant articles. 35 locations now cite it, among them Slovakia, Montenegro, Sudan and the United Arab Emirates.
 
 ### Still open
 
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **Qwen's extraction loop:** a reply that repeats one location until the output limit (article 931322f5 above). Options: keep the items before the loop, or retry once with a repetition penalty.
+- **Retrying a cut-off reply:** a reply that reaches the token limit at temperature 0 is asked again 3 more times, the same way. One retry, or none, would do.
+- **The other extraction prompts:** only the locations prompt loops so far. Organizations lists are as long (up to 35 items in the pilot) and might need the same line.
 - **Two-event date pairs:** every wrong dispute left (Spath, the September 11 trial, Qwen's Cole/The Sullivans) pairs two events of one kind (two moves, two attacks). The words beside both dates match ("moved to Guantánamo", "attack on the USS"), so code can't tell them apart; only the model can.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 
