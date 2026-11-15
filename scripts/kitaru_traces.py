@@ -21,10 +21,11 @@ then, for each part:
     kitaru session import <part> --importer kitaru/kitaru-jsonl@latest \\
         --agent hinbox@latest --media-type application/x-ndjson --wait
 
-With ``--step profile.update`` each span of that step becomes its own session
-instead (``step_sessions()``), whose inputs are the step's recorded
-arguments: the unit a Kitaru replay re-runs. Import those under their own
-agent (``hinbox-profile-update``), not beside the article sessions.
+With ``--step profile.update`` (or ``--step match_check``) each span of that
+step becomes its own session instead (``step_sessions()``), whose inputs are
+the step's recorded arguments: the unit a Kitaru replay re-runs. Import those
+under the step's own agent (``hinbox-profile-update``, ``hinbox-match-check``),
+not beside the article sessions.
 
 The parts hold article text: keep them off GitHub (the repo is public).
 """
@@ -310,11 +311,29 @@ def session(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
 # An eval item's labels that its step sessions carry in their metadata
 EVAL_KEYS = (
     "eval_item_id",
+    "eval_label",
     "eval_kind",
     "eval_split",
     "eval_expected",
     "eval_claim_label",
 )
+
+
+# The reason a failed match-check call returns with ``is_match=False``
+# (``FAILED_CHECK`` in ``src/engine/match_checker.py``): no verdict
+FAILED_MATCH_CHECK = "API error"
+
+
+def _step_error(outputs: Any) -> Optional[str]:
+    """The error a step recorded in its result: a failed profile update's
+    ``error``, or a match check whose call failed."""
+    if not isinstance(outputs, dict):
+        return None
+    if outputs.get("error"):
+        return str(outputs["error"])
+    result = outputs.get("result")
+    reason = str(result.get("reason") or "") if isinstance(result, dict) else ""
+    return reason if reason.startswith(FAILED_MATCH_CHECK) else None
 
 
 def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]:
@@ -346,9 +365,7 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
         sub_rows, nodes = _nodes(subtree)
         step_node = nodes[sub_rows.index(span)]
         outputs = _decode(attrs.get("output.value"))
-        error = step_node["error"] or (
-            outputs.get("error") if isinstance(outputs, dict) else None
-        )
+        error = step_node["error"] or _step_error(outputs)
         labels = _labels(attrs)
         about = labels.get("entity_name") or " vs ".join(
             str(labels[k]) for k in ("new_name", "existing_name") if labels.get(k)

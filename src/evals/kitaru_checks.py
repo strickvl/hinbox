@@ -16,6 +16,9 @@ the eval's own verdict, ``case_passed()``: at most 2 added sentences for an
 ``step_results()`` turns those scores into the rows a Kitaru evaluator
 returns (``scripts/kitaru_evaluators/profile_update_checks.py`` wraps each in
 an ``EvaluationResult``), kept here so they are tested without Kitaru.
+``match_results()`` does the same for a ``match_check`` step session
+(``scripts/kitaru_evaluators/match_check_checks.py``): the model's answer,
+and whether it agrees with a merge eval pair's hand label.
 """
 
 from typing import Any, Dict, List, Optional
@@ -199,3 +202,48 @@ def step_results(
     ]
     case = case_result(s)
     return rows + ([case] if case else [])
+
+
+def match_results(
+    outputs: Optional[Dict[str, Any]], labels: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
+    """A ``match_check`` step's verdict as Kitaru evaluation rows.
+
+    ``is_match`` and ``confidence`` are what the model answered. For a merge
+    eval pair, whose hand label (``eval_label``: the same entity or not) its
+    step session holds in its inputs, ``match_ok`` says whether the answer
+    agrees, and ``false_merge``/``missed_merge`` which way it was wrong: a
+    false merge joins two entities' profiles, so it costs more than a missed
+    one. A call that failed (``check_failed()``) has no verdict: every row
+    fails.
+    """
+    from src.engine.match_checker import FAILED_CHECK
+
+    result = (outputs or {}).get("result") or {}
+    reason = str(result.get("reason") or "")
+    if "is_match" not in result or reason.startswith(FAILED_CHECK):
+        failed = reason or "the step recorded no verdict"
+        return [{"name": "match_ok", "score": False, "explanation": failed}]
+    said = bool(result["is_match"])
+    rows: List[Dict[str, Any]] = [
+        {"name": "is_match", "score": said, "explanation": reason[:500]},
+        {
+            "name": "confidence",
+            "score": float(result.get("confidence") or 0.0),
+            "min_score": 0.0,
+            "max_score": 1.0,
+        },
+    ]
+    label = (labels or {}).get("eval_label")
+    if not isinstance(label, bool):
+        return rows
+    words = {True: "the same", False: "different"}
+    return rows + [
+        {
+            "name": "match_ok",
+            "score": said == label,
+            "explanation": f"answered {words[said]}, labelled {words[label]}",
+        },
+        {"name": "false_merge", "score": said and not label},
+        {"name": "missed_merge", "score": label and not said},
+    ]

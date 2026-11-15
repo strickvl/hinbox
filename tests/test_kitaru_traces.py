@@ -321,3 +321,30 @@ def test_parts_hold_whole_sessions_under_the_limit(tmp_path):
     assert sessions == [["hinbox:a"], ["hinbox:b", "hinbox:c"]]
     assert [len(s["nodes"]) for p in parts for s in _read(p)] == [2, 2, 1]
     assert all(os.path.getsize(p) <= one + 10 for p in parts)
+
+
+def test_a_merge_pairs_step_carries_its_label_and_a_failed_call_fails():
+    from scripts.kitaru_traces import FAILED_MATCH_CHECK
+    from src.engine.match_checker import FAILED_CHECK
+
+    assert FAILED_MATCH_CHECK == FAILED_CHECK
+    item = _row(
+        "t1",
+        "t1-root",
+        name="eval merge:person:A|B",
+        attrs={"hinbox.eval_item_id": "merge:person:A|B", "hinbox.eval_label": False},
+    )
+    attrs = {
+        "hinbox.new_name": "A",
+        "hinbox.existing_name": "B",
+        "input.value": json.dumps({"new_name": "A", "existing_profile_text": "B."}),
+        "output.value": json.dumps({"result": {"is_match": False, "reason": "x"}}),
+    }
+    step = _row("t1", "k1", "t1-root", "match_check", attrs)
+    (s,) = step_sessions([item, step], "match_check")
+    assert s["inputs"]["labels"]["eval_label"] is False
+    assert (s["name"], s["status"]) == ("match_check: A vs B", "completed")
+    failed = {"result": {"is_match": False, "reason": f"{FAILED_CHECK}: timeout"}}
+    step["attributes"]["output.value"] = json.dumps(failed)
+    (f,) = step_sessions([item, step], "match_check")
+    assert (f["status"], f["error"]) == ("failed", f"{FAILED_CHECK}: timeout")

@@ -1,23 +1,27 @@
-"""Run one recorded ``profile.update`` step again and record it in Kitaru.
+"""Run one recorded ``profile.update`` or ``match_check`` step again and record
+it in Kitaru.
 
 Kitaru's worker starts this script for a replay of a step session (one that
-``scripts/kitaru_traces.py --step profile.update`` wrote). The session's
-inputs are the step's own arguments; this script:
+``scripts/kitaru_traces.py --step profile.update`` or ``--step match_check``
+wrote). The session's inputs are the step's own arguments; this script:
 
 1. reads them from the task (``KITARU_TASK_INPUTS``, or the task's spec when
    they were too long for the environment);
 2. applies the replay's model override, if any (``KITARU_REPLAY_ID``);
 3. calls the function the step ran, with those arguments: ``update_profile()``
    for a pipeline step, ``edit_step()`` (``edit_profile()``) for an eval step,
-   as the recorded ``call`` says;
+   as the recorded ``call`` says, and ``_check_match()`` for a match check
+   (its ``backend`` set from the model, so a local model is asked locally; a
+   failed call fails the run, since its ``is_match=False`` is no verdict);
 4. turns the spans that call left (the step and its model calls) into a
    session with the same code that converts traces for import
    (``step_sessions()``), so a replay and its baseline have the same shape;
 5. writes it to Kitaru in one request (``origin: replay``) and exits 1 if
    the step raised.
 
-Register it as the step agent's run command,
-``kitaru agent register hinbox-profile-update --spec spec.yaml``, with::
+Register it as each step agent's run command,
+``kitaru agent register hinbox-profile-update --spec spec.yaml`` (and
+``hinbox-match-check``), with::
 
     version:
       run_spec:
@@ -28,8 +32,9 @@ Register it as the step agent's run command,
 (Hinbox has no tools; Instructor's tool call is structured output.) Run the
 worker with ``just kitaru-worker``, which gives it ``.env``'s API keys. Of the
 replay overrides only ``model`` is applied; ``system_prompt``, ``prompt`` and
-``model_params`` fail the run, since one step makes several calls with
-different prompts. Every replay makes live model calls.
+``model_params`` fail the run, since a step's prompts are built in code (a
+profile update makes several calls with different ones). Every replay makes
+live model calls.
 
 Outside a worker, ``--inputs <json> --out <file>`` runs a step from a file of
 recorded inputs and writes the session as a Kitaru JSONL line instead.
@@ -45,7 +50,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from scripts.kitaru_traces import step_sessions
 
-STEP = "profile.update"
+PROFILE_STEP = "profile.update"
+MATCH_STEP = "match_check"
 # Recorded beside update_profile()'s arguments but not one of them
 NOT_ARGUMENTS = ("call", "answering_model", "labels", "guarded_corrections")
 
@@ -55,6 +61,12 @@ def hinbox_model(name: str) -> str:
     before the first slash is the provider's (``openrouter:anthropic/x``);
     one after it is a tag (``ollama/qwen2.5:32b``), kept."""
     return name.replace(":", "/", 1) if ":" in name.split("/", 1)[0] else name
+
+
+def step_name(inputs: Dict[str, Any]) -> str:
+    """Which step recorded these arguments: only ``_check_match()`` takes an
+    existing profile's text."""
+    return MATCH_STEP if "existing_profile_text" in inputs else PROFILE_STEP
 
 
 def _model_of(inputs: Dict[str, Any]) -> str:
@@ -74,9 +86,10 @@ def apply_override(inputs: Dict[str, Any], override: Any) -> Dict[str, Any]:
     ]
     if unsupported:
         raise ValueError(
-            f"Replay override {', '.join(unsupported)} is not supported: a "
-            "profile update makes several model calls with different prompts. "
-            "Test a prompt change as a new agent version instead."
+            f"Replay override {', '.join(unsupported)} is not supported: the "
+            "step's prompts are built in code (a profile update makes several "
+            "calls with different ones). Test a prompt change as a new agent "
+            "version instead."
         )
     model = getattr(override, "model", None)
     if not model:
@@ -88,6 +101,17 @@ def apply_override(inputs: Dict[str, Any], override: Any) -> Dict[str, Any]:
         if hinbox_model(old) in (current, current.split("/", 1)[-1]):
             return {**inputs, "model": hinbox_model(new)}
     raise ValueError(f"The model override has no entry for {current!r}")
+
+
+def _match_check(**args: Any) -> Any:
+    """``_check_match()``, raising when its call failed: the checker then
+    returns ``is_match=False``, which a replay must not count as a verdict."""
+    from src.engine.match_checker import _check_match, check_failed
+
+    result = _check_match(**args)
+    if check_failed(result):
+        raise RuntimeError(result.reason)
+    return result
 
 
 def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any]]:
@@ -104,6 +128,11 @@ def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any
             "can't restore yet; replaying it would let them be rewritten"
         )
     args = {k: v for k, v in inputs.items() if k not in NOT_ARGUMENTS}
+    if step_name(inputs) == MATCH_STEP:
+        return _match_check, {
+            **args,
+            "backend": "local" if args["model"].startswith("ollama/") else "cloud",
+        }
     if inputs.get("call") == "edit_profile":
         from src.evals.profile_update import edit_step
 
@@ -133,17 +162,19 @@ def _capture() -> Any:
     return exporter
 
 
-def recorded_session(rows: List[Dict[str, Any]], replay: bool) -> Dict[str, Any]:
-    """The step's session from the re-run's spans."""
-    step = next((r for r in rows if r["name"] == STEP), None)
+def recorded_session(
+    rows: List[Dict[str, Any]], replay: bool, name: str = PROFILE_STEP
+) -> Dict[str, Any]:
+    """The ``name`` step's session from the re-run's spans."""
+    step = next((r for r in rows if r["name"] == name), None)
     if step is None:
-        raise RuntimeError(f"The re-run left no {STEP} span")
+        raise RuntimeError(f"The re-run left no {name} span")
     trace_id = step["context"]["trace_id"]
     sessions = step_sessions(
-        [r for r in rows if r["context"]["trace_id"] == trace_id], STEP
+        [r for r in rows if r["context"]["trace_id"] == trace_id], name
     )
     if len(sessions) != 1:
-        raise RuntimeError(f"Expected one {STEP} step, found {len(sessions)}")
+        raise RuntimeError(f"Expected one {name} step, found {len(sessions)}")
     session = sessions[0]
     session["framework"] = "hinbox"
     if replay:  # the re-run is no article of its own
@@ -188,7 +219,8 @@ def run_step(
             json.loads(s.to_json(indent=None)) for s in exporter.get_finished_spans()
         ]
         tracing.shutdown_tracing()
-    return with_labels(recorded_session(rows, replay), inputs), error
+    session = recorded_session(rows, replay, step_name(inputs))
+    return with_labels(session, inputs), error
 
 
 def ingest_request(session: Dict[str, Any], replay: bool) -> Any:
