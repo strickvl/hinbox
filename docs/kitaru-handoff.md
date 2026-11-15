@@ -488,11 +488,12 @@ The recorded request for article 931322f5, sent again to beast with one change a
   - **One article, three profiles:** article 16a6826d says of Darbi, "He has been in U.S. military custody since August 2002 and was brought to Guantánamo in March 2003". The sentence before names "an Iraqi man" and "al-Qaida", so the pronoun rule found a shared name. The check wrote it as "Another report differs" into Abd al Hadi al Iraqi's, the Department of Defense's and al-Qaida's profiles.
   - **The other two:** Darbi's plea deal in Donald Trump's profile, and a 2017 spinal operation against "Capture of Abd al Hadi al Iraqi in Turkey".
   - **Not yet checked by hand:** the other 3, in Darbi's own profile, Guantanamo Bay Navy Base and the transfer of the CIA's high-value detainees.
+  - **The traces:** the run's 165 date-check calls gave 9 `conflict` verdicts, all wrong. 5 set one detainee's dates against another's (the only shared name was "Guantánamo", from the article sentence itself), 2 called Darbi's plea deal ("return to his homeland on Feb. 20, 2018") a conflict with his May 2018 transfer instead of `later`, 1 set KSM's 2006 arrival against the 2007-08 FBI interrogations, and 1 set "Sept. 5, 2017" against "September and November 2017", which agree.
   - **What it means:** the 40-article pilot's failure was not Qwen's alone. The eval's cases are mostly single-person profiles, while in a pipeline run hub and group profiles take most pairs, and a "he" in an article about several detainees passes the name test.
+- **The decision:** `HINBOX_EDIT_DATE_CHECK` is `off` by default for every model. In pipeline runs it had written 15 disputes (Luna 9, Qwen 6), none right; real articles rarely give one past event two dates. `cloud` and `on` still run it, for the eval or a new experiment.
 
 ### Still open
 
-- **The date check on cloud models too:** in the 150-article Luna run it wrote at least 5 wrong disputes into 5 profiles. Options: off for every model in pipeline runs, or a pronoun rule that wants a person's name (not "al-Qaida" or "Turkey") in the sentence before.
 - **Long profile updates cut off at the token limit:** 4 articles in the local 150-article run.
 - **Loading the local embedding model offline** when it is already downloaded (`local_files_only`), so a network error can't fail an article.
 
