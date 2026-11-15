@@ -20,8 +20,8 @@ fact-list updater already has (``date_disputes.py``):
    old sentence, "Another report differs: ...^[article]", so both dates stay
    with their own sources.
 
-On by default for every model (``HINBOX_EDIT_DATE_CHECK``: ``on`` by default,
-``cloud`` for cloud models only, ``off``). Over 276 eval cases on
+On by default for cloud models, off for local ones (``HINBOX_EDIT_DATE_CHECK``:
+``cloud`` by default, ``on`` for every model, ``off``). Over 276 eval cases on
 Luna (dev, train and test splits and two Kitaru cohorts, 15 Nov) it wrote
 one wrong dispute (Spath: "Nashiri was moved in 2004", out of the CIA site,
 paired with "began his military custody at Guantánamo in September 2006"),
@@ -34,7 +34,13 @@ earlier attack on The Sullivans, and an article's "him" (another detainee)
 rewritten as Nashiri, a false claim in his profile. With the pronoun rule and
 the name guard in ``date_disputes.py`` it passed 8 of 13 planted disputes
 against 5 with the check off and wrote 6 disputes, all right (Qwen called the
-Cole pair ``different`` this time), so it is on for local models too.
+Cole pair ``different`` this time), so it was turned on for local models.
+A 40-article local pipeline run (15 Nov) then wrote 6 disputes, all wrong,
+while Luna's run on the same articles wrote none: the hub profiles (CIA,
+Taliban, al-Qaida, Guantánamo Bay) hold many detainees' capture and transfer
+dates, and Qwen called pairs about two detainees, or two dates that agree
+("captured in 2003", "taken to Guantánamo more than three years" later,
+against 2006), conflicts. Off for local models again.
 """
 
 import os
@@ -60,9 +66,9 @@ def _is_dispute(sentence: str) -> bool:
 
 
 def edit_date_check_enabled(local: bool) -> bool:
-    """On unless ``HINBOX_EDIT_DATE_CHECK=off``; with ``cloud``, on for cloud
-    models only."""
-    value = os.getenv(EDIT_DATE_CHECK_ENV, "on").strip().lower()
+    """On for a cloud model unless ``HINBOX_EDIT_DATE_CHECK=off``; on for a
+    local one only with ``on``."""
+    value = os.getenv(EDIT_DATE_CHECK_ENV, "cloud").strip().lower()
     if value == "cloud":
         return not local
     return value not in {"off", "0", "no"}
