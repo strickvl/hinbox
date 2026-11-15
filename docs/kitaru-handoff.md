@@ -458,11 +458,47 @@ The recorded request for article 931322f5, sent again to beast with one change a
 - **In the pipeline:** `just process --local --limit 40 --relevance-check` in `.worktrees/local-pilot` with the new prompt finished 931322f5 in 148 s, the last of the pilot's 27 relevant articles. 35 locations now cite it, among them Slovakia, Montenegro, Sudan and the United Arab Emirates.
 - **Cut-off replies are asked twice, not 3 times:** Instructor tries a request 3 times, and in the pilot's traces every attempt of each cut-off request was cut off again, about a minute of a server slot each. `_instructor_retries()` in `src/utils/llm.py` now stops after 2 attempts when the last reply ran out of tokens; other failures (a reply that doesn't fit the schema) still get 3. The article is marked incomplete and tried again on the next run, as before.
 
+**7. 150 articles, local and Luna on the same commit (15 Nov).** Both on main `934d978` (with #161 and #162), in `.worktrees/local-150` and `.worktrees/luna-150`, nothing cached:
+- **Local:** `just process --local --limit 150 --relevance-check --force-reprocess`, then one resume (the same command without `--force-reprocess`).
+- **Luna:** `just process --limit 150 --relevance-check --force-reprocess`, so the edit date check was on (`cloud`) and Haiku judged grounding.
+- **Grounding:** the local run's claims were judged by Qwen in the run, then by Haiku again with `scripts/grounding_bench.py run --model anthropic/claude-haiku-5-5` (373 calls, 11 minutes), so the grounding rows below share a judge.
+
+| | Local Qwen | Luna |
+|---|---|---|
+| Time | 13,436 s (124 s per article), then a resume | 5,385 s (47 s per article) |
+| Articles done / not relevant | 113 / 30, 3 still incomplete | 115 / 31, 0 incomplete |
+| People / organizations / locations / events | 325 / 312 / 262 / 541 | 277 / 173 / 220 / 646 |
+| Cited sentences lost | 0 | 0 |
+| Sentences repeating another | 53 | 3 |
+| "Sources disagree" sentences | 17 (date check off) | 13 (8 from the date check) |
+| Possible duplicate pairs | 21 | 4 |
+| Same name in two tables | 65 | 17 |
+| Linked article the profile never cites | 9 | 80 |
+| Claims (Haiku): not supported / partial / unclear | 207 / 1,642 / 13 of 7,231 (2.9% / 22.7%) | 41 / 406 / 3 of 3,973 (1.0% / 10.2%) |
+| Profiles with a problem claim | 364 of 1,440 | 217 of 1,316 |
+
+- **Qwen's incomplete articles:** 8 after the first pass.
+  - **The locations loop:** 3 articles, despite the #161 line, among them 931322f5, which finished in the 40-article pilot (it loops 3 runs in 4). Each cut-off reply got 2 calls, so #162 works.
+  - **Profile updates cut off at the 16,384-token limit:** 4, on long profiles (Aden, Jim Coyne, al-Qaida, the CIA).
+  - **The embedding model:** 1 people merge failed on the first article, with an SSL error from Hugging Face while loading a model already on disk.
+  - **After the resume:** 5 finished; two locations loops and one failed people match check are left.
+- **Qwen's duplicates:** "U.S." / "United States", "Navy" / "U.S. Navy", "Southern Command" / "U.S. Southern Command", and plural pairs ("Black Site" / "Black Sites"). Luna's 4 include "New York" / "New York City", which both models also miss in the merge eval.
+- **The two judges on the same local claims:** Haiku moved 1,271 of Qwen's `supported` to `partial` and 59 to `not_supported`, and 122 of Qwen's `not_supported` to `partial` or `supported`. Qwen's own counts (255 not supported, 382 partial) look closer to Luna's than they are.
+- **Luna's date check on hub profiles: at least 5 of its 8 disputes are wrong.**
+  - **One article, three profiles:** article 16a6826d says of Darbi, "He has been in U.S. military custody since August 2002 and was brought to Guantánamo in March 2003". The sentence before names "an Iraqi man" and "al-Qaida", so the pronoun rule found a shared name. The check wrote it as "Another report differs" into Abd al Hadi al Iraqi's, the Department of Defense's and al-Qaida's profiles.
+  - **The other two:** Darbi's plea deal in Donald Trump's profile, and a 2017 spinal operation against "Capture of Abd al Hadi al Iraqi in Turkey".
+  - **Not yet checked by hand:** the other 3, in Darbi's own profile, Guantanamo Bay Navy Base and the transfer of the CIA's high-value detainees.
+  - **What it means:** the 40-article pilot's failure was not Qwen's alone. The eval's cases are mostly single-person profiles, while in a pipeline run hub and group profiles take most pairs, and a "he" in an article about several detainees passes the name test.
+
 ### Still open
+
+- **The date check on cloud models too:** in the 150-article Luna run it wrote at least 5 wrong disputes into 5 profiles. Options: off for every model in pipeline runs, or a pronoun rule that wants a person's name (not "al-Qaida" or "Turkey") in the sentence before.
+- **Long profile updates cut off at the token limit:** 4 articles in the local 150-article run.
+- **Loading the local embedding model offline** when it is already downloaded (`local_files_only`), so a network error can't fail an article.
 
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **The other extraction prompts:** only the locations prompt loops so far. Organizations lists are as long (up to 35 items in the pilot) and might need the same line.
+- **The extraction loop:** the locations line cut it but didn't end it: 3 of about 116 articles still looped in the 150-article run. Only the locations prompt loops so far; organizations lists are as long (up to 35 items in the pilot) and might need the same line.
 - **Two-event date pairs:** every wrong dispute left (Spath, the September 11 trial, Qwen's Cole/The Sullivans) pairs two events of one kind (two moves, two attacks). The words beside both dates match ("moved to Guantánamo", "attack on the USS"), so code can't tell them apart; only the model can.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 
