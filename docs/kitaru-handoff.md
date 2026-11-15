@@ -221,7 +221,7 @@ The trial ran as experiment `edit-date-check` on agent version 5. That version i
 - **The pass/fail flips:** every case that went from pass to fail with the check on got no edit from it. That is the model's own run-to-run noise, mostly 3 or 4 sentences added on an irrelevant article.
 - **The disputes it wrote:** 5. Three were on disputed cases, all right. One found a real error in Camp X-Ray's profile: Abbasi's release, January 2008 against the correct January 2005. One is wrong: in Spath's profile, "Nashiri was moved in 2004" (out of the CIA site) was paired with "began his U.S. military custody at Guantánamo in September 2006", two different moves.
 - **Across all the runs:** 1 wrong dispute in 276 cases.
-- **The verdict:** since 15 Nov the check is on by default for cloud models. It stays off for local models until Qwen is measured.
+- **The verdict:** since 15 Nov the check is on by default for cloud models. It stays off for local models: see "Local Qwen on beast" below.
 
 **A pipeline run with the check on (15 Nov):** 40 articles on Luna, main `2837f9b`, 17 minutes, exit 0. The relevance check left 27 to process.
 
@@ -335,39 +335,65 @@ The agent versions:
 
 Register a new version when a change should be replayed against older baselines, such as a prompt edit in a worktree of its own. Match checks have their own agent, `hinbox-match-check`: v1 is `.worktrees/kitaru-replay`. Start its worker with `--claim agent=<v1's version id>`.
 
-### Monday on beast: local Qwen runs
+### Local Qwen on beast (15 Nov)
 
-Two runs wait for beast, the GPU machine with the local Qwen server. Its address, login and server setup are in the agent's memory notes (`beast-ollama-gpu`), not here.
+Beast came back early, so both runs from the plan for Monday ran on 15 Nov, against the `llama-qwen36` server (llama.cpp, 4 slots, 32k context, model `ollama/local-qwen36-32k`).
 
-**Connect first.**
-- **Reach the server:** reach the `llama-qwen36` server (llama.cpp, port 8080, 4 slots) through a tunnel: `ssh -N -L 18080:127.0.0.1:8080 <beast>`.
-- **Point Hinbox at it:** run with `OLLAMA_API_URL=http://127.0.0.1:18080/v1` and `HINBOX_OLLAMA_NUM_CTX=32768` (llama-server has no `/api/show`, so Hinbox can't read the context size itself).
-- **Model name:** `ollama/local-qwen36-32k`.
-- **Check it answers** before a long run: `curl -s http://127.0.0.1:18080/v1/models`.
+**How to connect.** The server's address, login and setup are in the agent's memory notes (`beast-ollama-gpu`), not here.
+- **Tunnel:** `ssh -f -N -L 18080:127.0.0.1:8080 <beast>`, so macOS's Local Network block can't cut Python off.
+- **Environment:** `OLLAMA_API_URL=http://127.0.0.1:18080/v1` and `HINBOX_OLLAMA_NUM_CTX=32768`, set in the shell. llama-server has no `/api/show`, so Hinbox can't read the context size itself. A shell variable wins over `.env` under `uv run --env-file .env`, so `.env`'s Ollama address doesn't get in the way.
 
-**1. The edit date check on local Qwen.** The check is off for local models by default (`HINBOX_EDIT_DATE_CHECK=cloud`). This run decides whether it should be on.
-- **Run:** for each split, run it with the check off and then on:
-  - `HINBOX_EDIT_DATE_CHECK=off just eval profile-update --model ollama/local-qwen36-32k --split dev`
-  - the same with `=on`
-  - then `train` and `test`. That's 6 runs, about 240 cases each way.
-- **Compare:** the passes per kind, on against off, the same way as the Luna table above.
-- **Count the disputes:** list every dispute the check wrote. In each run file (`eval/runs/profile_update-…jsonl`) they are `report.date_check.date_dispute_texts`. Judge each one by hand against the article, as Spath's wrong one was judged above. Earlier notes have Qwen calling pairs about two different events conflicts, so count those.
-- **Decision rule:** Luna wrote 1 wrong dispute in 276 cases. If Qwen's rate is close and the disputed cases gain, make the check the default for local models too: change `edit_date_check_enabled()` in `src/engine/edit_date_check.py` so `cloud` also covers `ollama/`, or rename the default. Then update CLAUDE.md and README.
+**1. Match checks on the hard pairs** (experiment `match-qwen-fork`, cohort `match-check-hard` v3, override `{"model": {"openai:gpt-6-luna": "ollama:local-qwen36-32k"}}`, two runs, 56 replays, none failed):
 
-**2. Match checks on local Qwen** (Kitaru fork of the hard merge pairs):
-- **Cohort:** `match-check-hard` **v3** (`hard-28-desantis-stub`). Its DeSantis pairs carry the fixed evidence. v2 is a copy of v1 made by mistake: don't use it.
-- **Experiment:** `kitaru experiment create match-qwen-fork --agent hinbox-match-check --evaluator hinbox-match-check-checks@1 --override '{"model": {"openai:gpt-6-luna": "ollama:local-qwen36-32k"}}'`.
-- **Runs:** then `kitaru experiment run start match-qwen-fork --cohort-version <v3 id> --agent hinbox-match-check@1 --baseline-evaluation-mode if_missing`, twice. `kitaru cohort version list match-check-hard` gives the v3 id.
-- **Worker:** in `.worktrees/kitaru-replay`, after `git pull`, start `just kitaru-worker --claim agent=<hinbox-match-check v1 version id> --claim evaluator --concurrency 4`, with the tunnel up and `OLLAMA_API_URL`/`HINBOX_OLLAMA_NUM_CTX` set in that worktree's `.env` or shell. The replay asks Qwen locally, since `backend` follows the model.
-- **Compare:** against Luna's 19 and 21 and Haiku's 24 and 24 (22 before the DeSantis fix), and look at which pairs it merges wrongly. A second check without Kitaru is `just eval merge --model ollama/local-qwen36-32k --split all` (all 191 pairs; Qwen 3.6 through Ollama scored 0.9884 balanced accuracy on the 58-pair test split on 24 Oct).
+| | Run 1 | Run 2 | Same (of 6) | Different (of 22) |
+|---|---|---|---|---|
+| Luna | 19 | 21 | 4, 4 | 15, 17 |
+| Haiku | 22 (24 with the fixed DeSantis text) | 22 (24) | 4, 4 | 18, 18 |
+| Qwen | 24 | 22 | 4, 5 | 20, 17 |
 
-**Record the results** in this doc with a small PR, as with each experiment above. The run files and Kitaru sessions hold article text, so they stay off GitHub.
+- **Caveat:** the Luna and Haiku runs used cohort v1, whose DeSantis text was Li's profile. Qwen ran on v3, which has the fix.
+- **Where Qwen is better:** it kept the sibling Rosenberg/DCF events apart and Heather and Evan Rosenberg apart, and matched "New York" with "New York City". Luna got each of those wrong at least once.
+- **Where it is wrong:** it merged "Ron DeSantis" with "Cliff Li" in both runs, even with his stub as the evidence. The stub's sentence names "Zhonggang Li" as the activist who campaigned for DeSantis. Qwen matched that name to Cliff Li's "also known as Zhonggang Li" and forgot that the new entity is DeSantis.
+- **Noise:** its two runs disagree on 4 of 28 pairs, like Luna's; Haiku's agree on all 28.
+- **Both runs fail, like every model:** "Guantanamo Bay Navy Base" against "U.S. Navy base", and "Evan Rosenberg" against "Evan D. Rosenberg".
+
+**2. All 191 merge pairs** (`just eval merge --model ollama/local-qwen36-32k --split all`, twice):
+
+| | Run 1 | Run 2 | False merges | Missed (of 25) | Median per call |
+|---|---|---|---|---|---|
+| Luna | 185/191 | 186/191 | 4, 3 | 2, 2 | 2.0 s |
+| Haiku | 185/191 | 187/191 | 4, 2 | 2, 2 | 2.9 s |
+| Qwen | 186/191 | 187/191 | 4, 3 | 1, 1 | 3.9 s |
+
+- **A three-way tie.** Every run of every model merges "Guantanamo Bay Navy Base" with "U.S. Navy base" (labelled different) and keeps "Evan Rosenberg" apart from "Evan D. Rosenberg" (labelled same).
+- **The other same pairs:** Luna also misses "New York"/"New York City" every run and Haiku "Miami Beach"/"Miami Beach". Qwen finds both, so it misses 1 same pair, not 2.
+- **Qwen's own false merges:** "Threat to refuse participation in pretrial hearing" with a related defense-team event (both runs), "Rosenbergs given time to retrieve son" with "Boy's stay in psychiatric treatment center" (both runs, as Haiku does), and DeSantis with Cliff Li (once).
+- **Replay against eval:** in the two Kitaru replays Qwen kept the Rosenberg pair apart and merged DeSantis/Cliff Li both times; in these two eval runs it is the reverse for the Rosenberg pair. Both paths build the same prompt from the same pair, so this looks like Qwen's own variation on borderline pairs.
+- **Speed:** about twice Luna's time per call, through 4 slots on beast, at no API cost. On this set, a `--local` run's match checks are as accurate as a cloud run's.
+
+**3. The edit date check on Qwen.** `HINBOX_EDIT_DATE_CHECK=off`, then `=on`, on the dev, train and test splits (`--eval-dir` a copy of the eval data with the same cases as Luna's runs). Each run took about 3 minutes.
+
+| Split | Off | On | Disputed off | Disputed on |
+|---|---|---|---|---|
+| dev (81) | 79 | 79 | 3/5 | 4/5 |
+| train (82) | 72 | 75 | 2/4 | 3/4 |
+| test (79) | 62 | 59 | 0/4 | 2/4 |
+| all (242) | 213 | 213 | 5/13 | 9/13 |
+
+- **What the check itself changed:** of the 20 cases that flipped between the off and on runs, the check edited 3. It fixed two disputed cases (Khadr's case 30 and Pohl's case 5) and broke one irrelevant case (USS Cole case 39). The other 17 flips got no edit from it: Qwen's own run-to-run noise, including the drop on test.
+- **Disputes written:** 9, each judged by hand against its old sentence.
+  - **Right, 7:** six are against the year a disputed case changed (the Red Cross's camps opening, Khadr's grenade and plea, al Nashiri's transfer, Pohl's Cole date). One found Khadr's profile's wrong plea year again: the profile says 2011, the article October 2010, and the article is right. Pohl's is clumsy ("James Pohl is associated with the October 2001 bombing").
+  - **Wrong, 2:**
+    - **USS Cole case 39:** Qwen set "Nashiri is the alleged architect of the October 2000 attack on the USS Cole" against "the failed January 2000 attack on USS The Sullivans": two different attacks, the same mistake as Luna's Spath dispute.
+    - **al Nashiri case 5:** worse. The article's "Military prosecutors first swore out charges against him in 2008, alleging he hid mines…" is about an Afghan detainee. Qwen wrote it as "…against Abd al Rahim al Nashiri…", so the profile gained a false claim, citing a real article, that Nashiri hid mines in Khost.
+- **Against Luna:** 2 wrong in 242 cases against Luna's 1 in 276; 2 wrong of 9 written against 1 of 12.
+- **The decision:** the check stays off for local models. It gains 2 disputed cases, and for that it would let Qwen write a false claim into a profile. A possible fix for a later change: accept an article sentence only if it names the entity itself, not by "him" or "he", which would have stopped the Nashiri dispute.
 
 ### Still open
 
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **The edit date check on local models** and **match checks on local Qwen**: see "Monday on beast" above.
+- **The date check on local models:** a check that the article sentence names the entity itself, then measure Qwen again (see "Local Qwen on beast").
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 
 ### How replay changes map onto Hinbox
