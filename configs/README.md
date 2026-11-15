@@ -43,6 +43,7 @@ Markdown files with extraction instructions:
 - `locations.md` - How to extract locations
 - `events.md` - How to extract events
 - `relevance.md` - How to determine source relevance to your research
+- `date_check.md` - How a profile update judges a profile sentence and an article sentence that give one thing different dates (on for cloud models; `HINBOX_EDIT_DATE_CHECK`)
 
 ## Example Research Domains
 

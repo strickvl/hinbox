@@ -200,3 +200,20 @@ def test_write_entities_table_no_temp_file_on_success(tmp_path):
 
     tmp_files = glob.glob(str(base_dir / "*.tmp"))
     assert tmp_files == []
+
+
+def test_a_new_domain_gets_every_prompt_a_default_run_loads():
+    """``scripts/init_domain.py`` copies ``configs/template``; a prompt the
+    pipeline loads by default with no fallback must be there, or a new
+    domain's updates fail (the edit date check's ``date_check.md``, on for
+    cloud models, had none)."""
+    from pathlib import Path
+
+    template = Path("configs/template/prompts")
+    for name in (
+        "relevance", "people", "organizations", "locations", "events",
+        "profile_generation", "profile_reflection", "profile_edit",
+        "profile_update", "date_check",
+    ):  # fmt: skip
+        assert (template / f"{name}.md.template").exists(), name
+    assert "Guant" not in (template / "date_check.md.template").read_text()
