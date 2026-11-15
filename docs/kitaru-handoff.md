@@ -223,6 +223,16 @@ The trial ran as experiment `edit-date-check` on agent version 5. That version i
 - **Across all the runs:** 1 wrong dispute in 276 cases.
 - **The verdict:** since 15 Nov the check is on by default for cloud models. It stays off for local models until Qwen is measured.
 
+**A pipeline run with the check on (15 Nov):** 40 articles on Luna, main `2837f9b`, 17 minutes, exit 0. The relevance check left 27 to process.
+
+- **Pairs:** in 181 profile updates, code found dated pairs in 7 updates, 10 pairs in all. So the check made 7 extra calls in the whole run.
+- **Verdicts:** the model called all 10 `different`, and all 10 were, checked by hand.
+  - **Two events, 8 pairs:** the 9/11 accused's arrival in 2006 against the 2007 FBI interrogations; a hearing in March 2019 against a judge who presided from 2012.
+  - **A publication date, 1 pair:** "originally published October 19, 2018" against calls made in 2001.
+  - **Dates that agree, 1 pair:** bin Attash "captured in 2003 and taken to Guantánamo more than three years later", against the profile's 2006.
+- **Disputes written:** none, and no real conflict was missed.
+- **What it means:** in ordinary updates the check is cheap and quiet. It matters in the rare update where an article does contradict a profile.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
@@ -248,7 +258,6 @@ Register a new version when a change should be replayed against older baselines,
 - **Repeat runs.** Run each experiment two or three times on the hard cohort before reading a 2-case difference as real.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
 - **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
-- **A short pipeline run** with the check on, counting wrong disputes in real updates rather than eval cases.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
 - **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
