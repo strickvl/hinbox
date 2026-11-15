@@ -233,6 +233,23 @@ The trial ran as experiment `edit-date-check` on agent version 5. That version i
 - **Disputes written:** none, and no real conflict was missed.
 - **What it means:** in ordinary updates the check is cheap and quiet. It matters in the rare update where an article does contradict a profile.
 
+### Repeat runs on the hard cohort (15 Nov)
+
+Six runs on `profile-update-hard`, all on agent version 3 (main, with the date check on for cloud models): three of `luna-unchanged-hard`, three of `haiku-fork-hard`. Every replay completed.
+
+| Kind | Cases | Luna (3 runs) | Haiku (3 runs) |
+|---|---|---|---|
+| `new_fact` | 9 | 4, 7, 5 | 9, 9, 9 |
+| `disputed` | 6 | 5, 5, 5 | 4, 4, 4 |
+| `irrelevant` | 4 | 3, 2, 2 | 2, 2, 1 |
+| all | 19 | 12, 14, 12 | 15, 15, 14 |
+
+- **Noise:** two Luna runs disagree on 18% of cases, about 3 of 19. Two Haiku runs disagree on 4%, under 1. One Luna run can be off by about 3 cases; a Haiku run is close to its average.
+- **New facts:** Haiku passed 27 of 27, Luna 16 of 27. Nearly every Luna failure added the fact but left the article uncited. Camp Justice and Abu Zubaydah's case 20 failed in all three Luna runs.
+- **Disputes:** with the date check, Luna passed Pohl and both Khadr cases in every run. Haiku failed Khadr's case 20 in all three, for a reason not yet looked into. The Red Cross case fails for both, because code can't pair it.
+- **Irrelevant articles:** Luna held back slightly better, 7 of 12 against Haiku's 5. Haiku added too much on Camp Justice and the hunger strike, but passed U.S. Southern Command every time, which Luna passed 2 times in 3.
+- **What it suggests:** on hard cases, Haiku as the profile model is about 2 cases in 19 better, and much steadier. Switching (`HINBOX_PROFILE_MODEL`) is a separate decision: these are only hard cases, cost isn't compared yet, and Haiku is weaker on irrelevant articles. A full dev-split run with Haiku would settle it.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
@@ -255,7 +272,8 @@ Register a new version when a change should be replayed against older baselines,
 
 ### Still open
 
-- **Repeat runs.** Run each experiment two or three times on the hard cohort before reading a 2-case difference as real.
+- **Haiku as the profile model:** a full eval run (`just eval profile-update --model anthropic/claude-haiku-5-5 --split dev`), with cost, against Luna, after the repeat runs above.
+- **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
 - **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
