@@ -21,8 +21,10 @@ from typing import (
 )
 
 import instructor
+from instructor.core.exceptions import IncompleteOutputException
 from openai import OpenAI
 from pydantic import BaseModel, create_model
+from tenacity import Retrying
 
 from src.constants import (
     BASE_DELAY,
@@ -217,6 +219,22 @@ def _is_retryable(error_str: str) -> bool:
         or "rate limit" in lowered
         or "try again" in lowered
     )
+
+
+def _instructor_retries() -> Retrying:
+    """Instructor's own 3 attempts, but 2 when a reply ran out of tokens.
+
+    A reply cut off at ``max_tokens`` comes back cut off again: in the 15 Nov
+    local pilot all 3 attempts of each cut-off request were cut off (local Qwen
+    repeating "U.S." until 8,192 tokens), about a minute of a server slot each.
+    """
+
+    def stop(state: Any) -> bool:
+        error = state.outcome.exception() if state.outcome else None
+        cut_off = isinstance(error, IncompleteOutputException)
+        return state.attempt_number >= (2 if cut_off else 3)
+
+    return Retrying(stop=stop)
 
 
 # OpenAI reasoning models reject ``max_tokens`` and a non-default temperature
@@ -495,6 +513,7 @@ def _structured_request(
     base_delay = BASE_DELAY
 
     request_kwargs = dict(kwargs)
+    request_kwargs.setdefault("max_retries", _instructor_retries())
     if target.sdk != "anthropic" and not target.is_local:
         request_kwargs.setdefault("parallel_tool_calls", False)
 
