@@ -9,7 +9,12 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 
 from scripts import kitaru_step as ks
-from src.evals.kitaru_checks import case_result, step_checks, step_results
+from src.evals.kitaru_checks import (
+    case_result,
+    match_results,
+    step_checks,
+    step_results,
+)
 
 OLD = "## Background\nThe ACLU sued over the camp.^[a1] It filed again in 2009.^[a1]"
 
@@ -303,3 +308,74 @@ def test_every_check_is_a_valid_kitaru_result():
     ]
     assert len(names) == len(set(names))
     json.dumps(step_results(_inputs(), new))  # plain JSON for the task result
+
+
+# --- match_check steps ----------------------------------------------------------
+
+
+def _match_inputs(**extra):
+    return {
+        "backend": "cloud",
+        "new_name": "Camp 7",
+        "existing_name": "Camp Seven",
+        "new_profile_text": "Camp 7 held the former CIA prisoners.",
+        "existing_profile_text": "Camp Seven is the secret prison.^[a1]",
+        "entity_type": "locations",
+        "model": "openai/gpt-6-luna",
+        **extra,
+    }
+
+
+def test_a_match_check_runs_check_match_asked_where_the_model_runs(monkeypatch):
+    from src.engine.match_checker import MatchCheckResult
+
+    seen = {}
+
+    def fake(**kwargs):
+        seen.update(kwargs)
+        return MatchCheckResult(is_match=True, confidence=0.9, reason="same camp")
+
+    monkeypatch.setattr("src.engine.match_checker._check_match", fake)
+    labels = {"eval_label": True, "eval_item_id": "merge:location:Camp 7|Camp Seven"}
+    inputs = ks.apply_override(
+        _match_inputs(labels=labels), _override(model="ollama:qwen3.6:35b")
+    )
+    fn, args = ks.step_call(inputs)
+    fn(**args)
+    assert seen["model"] == "ollama/qwen3.6:35b" and seen["backend"] == "local"
+    assert "labels" not in seen
+
+
+def test_a_replayed_match_check_is_a_session_the_evaluator_scores(monkeypatch):
+    def down(*args, **kwargs):
+        raise ConnectionError("model down")
+
+    for name in ("text_generation", "cloud_generation"):
+        monkeypatch.setattr(f"src.engine.match_checker.{name}", down)
+    session, error = ks.run_step(
+        _match_inputs(labels={"eval_label": False}), replay=True
+    )
+    # a failed call is no "different" verdict: the run and its session fail
+    assert isinstance(error, RuntimeError)
+    assert session["status"] == "failed" and session["error"].startswith("API error")
+    assert session["name"] == "match_check: Camp 7 vs Camp Seven"
+    assert session["inputs"]["labels"] == {"eval_label": False}
+    (row,) = match_results(session["outputs"], session["inputs"]["labels"])
+    assert row["name"] == "match_ok" and row["score"] is False
+
+
+def test_match_results_say_which_way_the_answer_was_wrong():
+    out = {"result": {"is_match": True, "confidence": 0.8, "reason": "both camps"}}
+    rows = {r["name"]: r["score"] for r in match_results(out, {"eval_label": False})}
+    assert rows == {
+        "is_match": True,
+        "confidence": 0.8,
+        "match_ok": False,
+        "false_merge": True,
+        "missed_merge": False,
+    }
+    unlabelled = {r["name"] for r in match_results(out)}
+    assert unlabelled == {"is_match", "confidence"}
+    evaluation = pytest.importorskip("kitaru.api_models.v1.evaluation")
+    for r in match_results(out, {"eval_label": True}):
+        evaluation.EvaluationResult(**r)

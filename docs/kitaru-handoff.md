@@ -300,7 +300,7 @@ Register a new version when a change should be replayed against older baselines,
 - **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
 - **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
-- **`match_check`** records its arguments too; a second step type would need its own `--step match_check` sessions, `call` route and evaluator.
+- **`match_check` replays** are built: `--step match_check` sessions carry the merge pair's hand label (`eval_label`), `kitaru_step.py` re-runs `_check_match()`, and `hinbox-match-check-checks` scores `match_ok`, `false_merge` and `missed_merge`. No cohort has been run yet.
 
 ### How replay changes map onto Hinbox
 
