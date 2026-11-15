@@ -28,8 +28,12 @@ paired with "began his military custody at Guantánamo in September 2006"),
 found two real errors in stored profiles (Khadr's plea year, Abbasi's
 release) and passed 5 of 8 planted disputes on train and test against 2.
 The fact-list updater's version had written 1-3 wrong disputes per 160
-cases. Local Qwen is not measured; earlier notes have it calling pairs about
-two different things conflicts.
+cases. On local Qwen (the same 242 dev, train and test cases, 15 Nov) it
+left the pass count unchanged (213 either way), fixed 2 planted disputes,
+and 2 of the 9 disputes it wrote were wrong: the USS Cole bombing paired with
+the earlier attack on The Sullivans, and an article's "him" (another
+detainee) rewritten as Nashiri, which put a false claim in the profile.
+Hence off for local models.
 """
 
 import os
