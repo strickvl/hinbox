@@ -31,8 +31,11 @@ Register it as each step agent's run command,
 
 (Hinbox has no tools; Instructor's tool call is structured output.) Run the
 worker with ``just kitaru-worker``, which gives it ``.env``'s API keys. Of the
-replay overrides only ``model`` is applied; ``system_prompt``, ``prompt`` and
-``model_params`` fail the run, since a step's prompts are built in code (a
+replay overrides ``model`` and ``model_params`` are applied: the parameters
+(``temperature``, ``max_tokens``, ``top_p``, ``seed``, ``reasoning_effort``) go
+on every model call the step makes, over Hinbox's own choice
+(``set_model_params()``), and any other key fails the run. ``system_prompt``
+and ``prompt`` fail it too, since a step's prompts are built in code (a
 profile update makes several calls with different ones). Every replay makes
 live model calls.
 
@@ -81,9 +84,7 @@ def apply_override(inputs: Dict[str, Any], override: Any) -> Dict[str, Any]:
     """
     if override is None:
         return inputs
-    unsupported = [
-        f for f in ("system_prompt", "prompt", "model_params") if getattr(override, f)
-    ]
+    unsupported = [f for f in ("system_prompt", "prompt") if getattr(override, f)]
     if unsupported:
         raise ValueError(
             f"Replay override {', '.join(unsupported)} is not supported: the "
@@ -112,6 +113,16 @@ def _match_check(**args: Any) -> Any:
     if check_failed(result):
         raise RuntimeError(result.reason)
     return result
+
+
+def apply_model_params(override: Any) -> None:
+    """Put the override's ``model_params`` on every model call this process
+    makes; an unsupported key raises."""
+    params = getattr(override, "model_params", None)
+    if params:
+        from src.utils.llm import set_model_params
+
+        set_model_params(dict(params))
 
 
 def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any]]:
@@ -298,7 +309,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         ap.error("outside a Kitaru worker, pass --out")
     replay = bool(os.environ.get("KITARU_REPLAY_ID"))
     if replay:
-        inputs = apply_override(inputs, asyncio.run(_replay_override()))
+        override = asyncio.run(_replay_override())
+        inputs = apply_override(inputs, override)
+        apply_model_params(override)
     session, error = run_step(inputs, replay)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as f:

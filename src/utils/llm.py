@@ -235,10 +235,40 @@ _OUTPUT_TOKEN_CAPS: Tuple[Tuple[re.Pattern, int], ...] = (
 )
 
 
+# Parameters a Kitaru replay's ``model_params`` override sets on every call
+# (``scripts/kitaru_step.py``); empty in the pipeline
+MODEL_PARAM_KEYS = ("temperature", "max_tokens", "top_p", "seed", "reasoning_effort")
+_PARAM_OVERRIDE: Dict[str, Any] = {}
+
+
+def set_model_params(params: Optional[Dict[str, Any]]) -> None:
+    """Set (or with ``None`` clear) the parameters every later call sends,
+    over what Hinbox would choose. Process-wide: for a one-step replay only."""
+    unknown = sorted(set(params or {}) - set(MODEL_PARAM_KEYS))
+    if unknown:
+        raise ValueError(
+            f"Unsupported model_params {unknown}; supported: {list(MODEL_PARAM_KEYS)}"
+        )
+    _PARAM_OVERRIDE.clear()
+    _PARAM_OVERRIDE.update(params or {})
+
+
 def _sampling_kwargs(
     target: ProviderTarget, max_tokens: int, temperature: float
 ) -> Dict[str, Any]:
-    """Length/temperature/reasoning parameters the target model accepts."""
+    """Length/temperature/reasoning parameters the target model accepts, with
+    a replay's ``set_model_params()`` on top (``max_tokens`` under the name
+    the model takes)."""
+    kwargs = _model_sampling_kwargs(target, max_tokens, temperature)
+    extra = dict(_PARAM_OVERRIDE)
+    if "max_tokens" in extra and "max_completion_tokens" in kwargs:
+        extra["max_completion_tokens"] = extra.pop("max_tokens")
+    return {**kwargs, **extra}
+
+
+def _model_sampling_kwargs(
+    target: ProviderTarget, max_tokens: int, temperature: float
+) -> Dict[str, Any]:
     model = target.api_model
     for pattern, cap in _OUTPUT_TOKEN_CAPS:
         if pattern.match(model):
