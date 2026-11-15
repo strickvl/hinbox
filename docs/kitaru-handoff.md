@@ -302,6 +302,19 @@ The second step type. A `match_check` step answers "is this new mention the same
   - **Scored again:** Luna and Haiku both answer "different" on both pairs, twice each. So Haiku's corrected score on the cohort is 24/28. The Kitaru cohort still holds the old sessions; a `match-check-hard` v2 would need new baselines for those two pairs.
 - **Verdict:** no change. Haiku leads, more so with the DeSantis pairs fixed (24 against 19-21), but 28 pairs and two runs are too few to switch the match model, and cost and speed weren't measured. The replay itself works: 112 replays, none failed.
 
+### Haiku as the match model: all 191 pairs (15 Nov)
+
+To check whether Haiku's lead on the hard pairs holds, `just eval merge --split all` ran twice on each model, with the DeSantis fix in:
+
+| | Run 1 | Run 2 | False merges | Missed (of 25) | Median per call | Tokens in / out per run |
+|---|---|---|---|---|---|---|
+| Luna | 185/191 | 186/191 | 4, 3 | 2, 2 | 2.0 s | 215k / 23k |
+| Haiku | 185/191 | 187/191 | 4, 2 | 2, 2 | 2.9 s | 331k / 107k |
+
+- **A tie:** both models miss the same two pairs every run ("Evan Rosenberg" against "Evan D. Rosenberg", "Guantanamo Bay Navy Base" against "U.S. Navy base"). The rest are one or two flips per run: Luna on Rosenberg custody events and "New York"/"New York City", Haiku on "Miami Beach"/"Miami Beach" and one event pair.
+- **Cost:** Haiku writes about 4.6x the output (its reasoning is longer), so a match check costs about 2.6x as much at the same $0.10 / $0.50 list price, and takes about 45% longer. The match check runs once for every candidate pair, so this matters more than for the profile update.
+- **Verdict:** Luna stays the match model. The hard-pair lead (24 against 19-21) came from 28 pairs picked because some model got them wrong.
+
 ### Where replays run
 
 From a worktree of their own, `.worktrees/kitaru-replay` (branch `kitaru-replay`, tracking `origin/main`, with its own `.env` and `uv sync --extra kitaru --extra anthropic`), so a replay never runs whatever branch the main checkout is on. To use it:
@@ -322,13 +335,40 @@ The agent versions:
 
 Register a new version when a change should be replayed against older baselines, such as a prompt edit in a worktree of its own. Match checks have their own agent, `hinbox-match-check`: v1 is `.worktrees/kitaru-replay`. Start its worker with `--claim agent=<v1's version id>`.
 
+### Monday on beast: local Qwen runs
+
+Two runs wait for beast, the GPU machine with the local Qwen server. Its address, login and server setup are in the agent's memory notes (`beast-ollama-gpu`), not here.
+
+**Connect first.**
+- **Reach the server:** reach the `llama-qwen36` server (llama.cpp, port 8080, 4 slots) through a tunnel: `ssh -N -L 18080:127.0.0.1:8080 <beast>`.
+- **Point Hinbox at it:** run with `OLLAMA_API_URL=http://127.0.0.1:18080/v1` and `HINBOX_OLLAMA_NUM_CTX=32768` (llama-server has no `/api/show`, so Hinbox can't read the context size itself).
+- **Model name:** `ollama/local-qwen36-32k`.
+- **Check it answers** before a long run: `curl -s http://127.0.0.1:18080/v1/models`.
+
+**1. The edit date check on local Qwen.** The check is off for local models by default (`HINBOX_EDIT_DATE_CHECK=cloud`). This run decides whether it should be on.
+- **Run:** for each split, run it with the check off and then on:
+  - `HINBOX_EDIT_DATE_CHECK=off just eval profile-update --model ollama/local-qwen36-32k --split dev`
+  - the same with `=on`
+  - then `train` and `test`. That's 6 runs, about 240 cases each way.
+- **Compare:** the passes per kind, on against off, the same way as the Luna table above.
+- **Count the disputes:** list every dispute the check wrote. In each run file (`eval/runs/profile_update-…jsonl`) they are `report.date_check.date_dispute_texts`. Judge each one by hand against the article, as Spath's wrong one was judged above. Earlier notes have Qwen calling pairs about two different events conflicts, so count those.
+- **Decision rule:** Luna wrote 1 wrong dispute in 276 cases. If Qwen's rate is close and the disputed cases gain, make the check the default for local models too: change `edit_date_check_enabled()` in `src/engine/edit_date_check.py` so `cloud` also covers `ollama/`, or rename the default. Then update CLAUDE.md and README.
+
+**2. Match checks on local Qwen** (Kitaru fork of the hard merge pairs):
+- **Cohort:** `match-check-hard` **v3** (`hard-28-desantis-stub`). Its DeSantis pairs carry the fixed evidence. v2 is a copy of v1 made by mistake: don't use it.
+- **Experiment:** `kitaru experiment create match-qwen-fork --agent hinbox-match-check --evaluator hinbox-match-check-checks@1 --override '{"model": {"openai:gpt-6-luna": "ollama:local-qwen36-32k"}}'`.
+- **Runs:** then `kitaru experiment run start match-qwen-fork --cohort-version <v3 id> --agent hinbox-match-check@1 --baseline-evaluation-mode if_missing`, twice. `kitaru cohort version list match-check-hard` gives the v3 id.
+- **Worker:** in `.worktrees/kitaru-replay`, after `git pull`, start `just kitaru-worker --claim agent=<hinbox-match-check v1 version id> --claim evaluator --concurrency 4`, with the tunnel up and `OLLAMA_API_URL`/`HINBOX_OLLAMA_NUM_CTX` set in that worktree's `.env` or shell. The replay asks Qwen locally, since `backend` follows the model.
+- **Compare:** against Luna's 19 and 21 and Haiku's 24 and 24 (22 before the DeSantis fix), and look at which pairs it merges wrongly. A second check without Kitaru is `just eval merge --model ollama/local-qwen36-32k --split all` (all 191 pairs; Qwen 3.6 through Ollama scored 0.9884 balanced accuracy on the 58-pair test split on 24 Oct).
+
+**Record the results** in this doc with a small PR, as with each experiment above. The run files and Kitaru sessions hold article text, so they stay off GitHub.
+
 ### Still open
 
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
-- **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
+- **The edit date check on local models** and **match checks on local Qwen**: see "Monday on beast" above.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
-- **Match checks on local Qwen:** fork `match-check-hard` onto an `ollama/` model once beast is back. The replay asks it locally, since `backend` follows the model.
 
 ### How replay changes map onto Hinbox
 
