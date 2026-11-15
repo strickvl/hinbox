@@ -189,3 +189,6 @@ discovery_do_not_commit/
 
 design/
 .claude/
+
+# Git worktrees for runs and experiments (CLAUDE.md: put them here)
+.worktrees/

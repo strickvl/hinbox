@@ -112,7 +112,7 @@ A step span used to record only the prompts sent to the model, not the arguments
 2. **One session per step (done).** `just kitaru-traces <traces...> --out <dir> --step profile.update` writes each `profile.update` span that recorded its arguments as its own session (`step_sessions()`): its inputs are exactly those arguments (what a replay gets in `KITARU_TASK_INPUTS`), its outputs the recorded result, its nodes the step's spans and model calls; it fails when the step span failed or recorded an `error`. Its `external_id` is `hinbox:<trace id>:<span id>`, and its metadata names the step, the article ID and title, and the article's own session (`article_session`). A step span without recorded arguments (traces from before #139) is left out. Import these under their own agent, `hinbox-profile-update`, which the replay script will be registered as. Checked on 14 Nov with four real updates imported into a scratch agent: the session's inputs held the old profile, article text, dates and model.
 3. **A replay script (done)**, `scripts/kitaru_step.py`, the agent's run command (`uv run --extra kitaru python -m scripts.kitaru_step`). It:
    - reads the step's inputs with `kitaru.task.get_task_inputs()` (from `KITARU_TASK_INPUTS`, or the task spec when they were too long for the environment);
-   - reads the override with `client.replays.get(KITARU_REPLAY_ID)` and applies `model` (`provider:model` → `provider/model`; a map matches the step's model in either spelling or without the provider). `system_prompt`, `prompt` and `model_params` fail the run with a message saying why;
+   - reads the override with `client.replays.get(KITARU_REPLAY_ID)` and applies `model` (`provider:model` → `provider/model`; a map matches the step's model in either spelling or without the provider). `model_params` goes on every model call through `set_model_params()` (15 Nov); `system_prompt` and `prompt` fail the run with a message saying why;
    - calls the function the step ran, `update_profile()` (with the model that answered, so a replay doesn't pick up another environment's defaults) or `edit_step()`, with tracing on and the finished spans also kept in memory;
    - turns those spans into a session with `step_sessions()`, the same code that converts traces for import, so a replay is laid out like its baseline;
    - sends session and nodes in one request with Kitaru's own `ingest_session()`, and exits 1 if the step raised.
@@ -294,7 +294,13 @@ The second step type. A `match_check` step answers "is this new mention the same
   - "Guantanamo Bay Navy Base" against "U.S. Navy base", whose label "different" is arguable.
   - "Evan Rosenberg" against "Evan D. Rosenberg", which both miss.
   - "Rosenbergs given time to retrieve son" against "Boy's stay in psychiatric treatment center".
-- **Verdict:** no change. Haiku leads, more so without the two broken pairs, but 26 usable pairs and two runs are too few to switch the match model, and cost and speed weren't measured. The replay itself works: 112 replays, none failed.
+- **The DeSantis pairs, fixed after the runs:**
+  - **Why the evidence was wrong:** `mine_merge_pairs.py` copies each entity's saved profile. The February tables it mined (`data/guantanamo/entities`, from before stub profiles) had "Ron DeSantis" saved with a profile about Li, the article's main subject.
+  - **Other bad profiles:** a check of every mined profile's first sentence found the same fault in "Houston" (about Cindy Yang at FIU), "Miami" (about the lawyer Alan Mishael), "Brown" (several Browns) and a few unlabelled pairs. Only the DeSantis pairs were unfair; in the others the wrong text makes "different" easier, not harder.
+  - **Today's pipeline:** the same check found no profile about someone else in the 13 Nov full run, the 8 Nov Luna run or the 15 Nov pilot. A new entity's stub holds only the sentences that name it.
+  - **The fix:** both pairs' DeSantis text is now his stub from the same article, the one sentence that names him (eval data, not in git; backup `merge_candidates_v2.jsonl.bak-before-desantis-stub`).
+  - **Scored again:** Luna and Haiku both answer "different" on both pairs, twice each. So Haiku's corrected score on the cohort is 24/28. The Kitaru cohort still holds the old sessions; a `match-check-hard` v2 would need new baselines for those two pairs.
+- **Verdict:** no change. Haiku leads, more so with the DeSantis pairs fixed (24 against 19-21), but 28 pairs and two runs are too few to switch the match model, and cost and speed weren't measured. The replay itself works: 112 replays, none failed.
 
 ### Where replays run
 
@@ -321,9 +327,7 @@ Register a new version when a change should be replayed against older baselines,
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
 - **The edit date check on local models.** Run the same check with local Qwen on beast (back on from Monday 16 Nov): `HINBOX_EDIT_DATE_CHECK=on just eval profile-update --model ollama/<qwen> --split <dev|train|test>` against `=off`, then count wrong "Another report differs" sentences. Earlier notes have Qwen calling pairs about two different things conflicts. If it holds up, make `on` the default for local models too.
-- **`model_params`** (temperature etc.): would need a hook in `_sampling_kwargs()`; refused for now.
 - **Pages with historian corrections.** A pipeline update runs inside `correction_scope()`, where `guard_corrections()` keeps struck sentences out and the historian's own sentences unchanged. A replay has no such scope, so `update_profile()` now records `guarded_corrections` (how many struck and written sentences were guarded) and the replay refuses a step where it is above 0. Restoring the rules (recording the active correction lines and putting them back in scope) would let those pages replay too. Sessions recorded before this field existed can't be checked.
-- **The two broken DeSantis merge pairs** (`merge_v2`, pairs `cf7020e5…`, `4fcdea19…`): the evidence for "Ron DeSantis" is about Cliff Li. Fix the mined context or drop the pairs, then score again.
 - **Match checks on local Qwen:** fork `match-check-hard` onto an `ollama/` model once beast is back. The replay asks it locally, since `backend` follows the model.
 
 ### How replay changes map onto Hinbox
@@ -331,7 +335,7 @@ Register a new version when a change should be replayed against older baselines,
 | Kitaru override | Fit with Hinbox |
 |---|---|
 | `model` | Easy. `update_profile(model=…)` exists, as do `HINBOX_<TASK>_MODEL` variables. Kitaru writes models as `provider:name`; Hinbox uses `openai/gpt-6-luna` and `ollama/…`, so translate between them. |
-| `model_params` (temperature etc.) | Easy: apply them in the `create` wrapper, after `_sampling_kwargs()`. Claude 5-family models take no `temperature`. |
+| `model_params` (temperature etc.) | Done: `set_model_params()` puts them on top of `_sampling_kwargs()` for every call. A key the model refuses (`temperature` on a Claude 5-family model) fails the call. |
 | `system_prompt` | Awkward. One `profile.update` makes several model calls: the edit call, the dispute check, and the reorganise, placement and split calls. Each has its own prompt, so "replace the system prompt" doesn't say which one. Better: test a prompt change by registering a new agent version whose working directory is a git worktree with the edited prompt file. Kitaru replays a baseline against any agent version (`agent_version_id`; see `replay-and-overrides.md`). |
 | `prompt` (user prompt) | No sensible mapping; declare it unsupported. |
 | Tool policies | Not applicable (no tools). Every replay makes live model calls, which costs money or local GPU time. |

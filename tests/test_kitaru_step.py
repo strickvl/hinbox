@@ -81,6 +81,18 @@ def test_prompt_overrides_are_refused():
         ks.apply_override(_inputs(), _override(system_prompt="Be brief."))
 
 
+def test_model_params_go_on_every_call_and_unknown_ones_fail(monkeypatch):
+    from src.utils import llm
+
+    monkeypatch.setattr(llm, "_PARAM_OVERRIDE", {})
+    override = _override(model_params={"temperature": 0.5})
+    assert ks.apply_override(_inputs(), override) == _inputs()
+    ks.apply_model_params(override)
+    assert llm._PARAM_OVERRIDE == {"temperature": 0.5}
+    with pytest.raises(ValueError, match="stop"):
+        ks.apply_model_params(_override(model_params={"stop": ["\\n"]}))
+
+
 # --- which function a step runs -----------------------------------------------
 
 
