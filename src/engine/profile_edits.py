@@ -401,7 +401,7 @@ def _date_check(
     disagreements: List[Any],
     local: bool,
 ) -> Tuple[List[Any], Dict[str, Any]]:
-    """When the date check is on (``HINBOX_EDIT_DATE_CHECK``: cloud models by
+    """When the date check is on (``HINBOX_EDIT_DATE_CHECK``: every model by
     default), the ``add`` edits for the date
     conflicts the model's own list missed (``edit_date_check.py``) and its
     report; nothing and {} when off. A failed call raises, like a failed edit

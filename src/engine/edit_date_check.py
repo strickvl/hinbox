@@ -20,8 +20,8 @@ fact-list updater already has (``date_disputes.py``):
    old sentence, "Another report differs: ...^[article]", so both dates stay
    with their own sources.
 
-On by default for cloud models, off for local ones (``HINBOX_EDIT_DATE_CHECK``:
-``cloud`` by default, ``on`` for every model, ``off``). Over 276 eval cases on
+On by default for every model (``HINBOX_EDIT_DATE_CHECK``: ``on`` by default,
+``cloud`` for cloud models only, ``off``). Over 276 eval cases on
 Luna (dev, train and test splits and two Kitaru cohorts, 15 Nov) it wrote
 one wrong dispute (Spath: "Nashiri was moved in 2004", out of the CIA site,
 paired with "began his military custody at Guantánamo in September 2006"),
@@ -29,11 +29,12 @@ found two real errors in stored profiles (Khadr's plea year, Abbasi's
 release) and passed 5 of 8 planted disputes on train and test against 2.
 The fact-list updater's version had written 1-3 wrong disputes per 160
 cases. On local Qwen (the same 242 dev, train and test cases, 15 Nov) it
-left the pass count unchanged (213 either way), fixed 2 planted disputes,
-and 2 of the 9 disputes it wrote were wrong: the USS Cole bombing paired with
-the earlier attack on The Sullivans, and an article's "him" (another
-detainee) rewritten as Nashiri, which put a false claim in the profile.
-Hence off for local models.
+first wrote 2 wrong disputes of 9: the USS Cole bombing paired with the
+earlier attack on The Sullivans, and an article's "him" (another detainee)
+rewritten as Nashiri, a false claim in his profile. With the pronoun rule and
+the name guard in ``date_disputes.py`` it passed 8 of 13 planted disputes
+against 5 with the check off and wrote 6 disputes, all right (Qwen called the
+Cole pair ``different`` this time), so it is on for local models too.
 """
 
 import os
@@ -59,12 +60,12 @@ def _is_dispute(sentence: str) -> bool:
 
 
 def edit_date_check_enabled(local: bool) -> bool:
-    """On for a cloud model unless ``HINBOX_EDIT_DATE_CHECK=off``; on for a
-    local one only with ``on``."""
-    value = os.getenv(EDIT_DATE_CHECK_ENV, "cloud").strip().lower()
-    if value in {"on", "1", "yes"}:
-        return True
-    return value == "cloud" and not local
+    """On unless ``HINBOX_EDIT_DATE_CHECK=off``; with ``cloud``, on for cloud
+    models only."""
+    value = os.getenv(EDIT_DATE_CHECK_ENV, "on").strip().lower()
+    if value == "cloud":
+        return not local
+    return value not in {"off", "0", "no"}
 
 
 def _norm(sentence: str) -> str:

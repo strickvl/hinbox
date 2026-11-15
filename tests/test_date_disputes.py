@@ -299,3 +299,41 @@ def test_the_dates_must_sit_next_to_shared_words():
         "Khadr pleaded guilty to war crimes in October 2010.",
         "He had pleaded guilty to war crimes in 2011 in exchange for return to Canada.",
     )
+
+
+def test_a_he_with_no_shared_name_is_not_paired():
+    # Qwen, 15 Nov: "him" is Obaidullah, named the sentence before, but the
+    # dispute was written into Nashiri's profile with Nashiri's name
+    profile = (
+        "# Nashiri\n\n## Charges\n\n"
+        "In April 2011, prosecutors swore out charges against Nashiri and sought "
+        "the death penalty.^[a1]\n"
+    )
+    obaidullah = (
+        "Obaidullah, born in Khost in 1980, has never gone before a war court. "
+    )
+    charges = (
+        "Military prosecutors first swore out charges against him in 2008, "
+        "alleging he hid mines in Afghanistan."
+    )
+    assert not date_pairs(rows_from_profile(profile), obaidullah + charges, set())
+    # The same sentence after one naming Nashiri: "him" is the profile's person
+    nashiri = "Nashiri, held at Guantánamo, has never gone before a war court. "
+    assert date_pairs(rows_from_profile(profile), nashiri + charges, set())
+
+
+def test_the_models_sentence_may_not_add_a_name():
+    pair = date_pairs(rows_from_profile(PROFILE), ARTICLE, set())[0]
+    added = dispute_text(
+        "Ramzi planned the USS Cole bombing of Oct. 12, 1999.", pair, "a9"
+    )
+    assert "Ramzi" not in added and added.startswith(
+        "Another report differs: Seventeen sailors died"
+    )
+    kept = dispute_text(
+        "The USS Cole was bombed off Aden on Oct. 12, 1999.", pair, "a9"
+    )
+    assert (
+        kept
+        == "Another report differs: The USS Cole was bombed off Aden on Oct. 12, 1999.^[a9]"
+    )
