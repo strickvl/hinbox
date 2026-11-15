@@ -71,8 +71,12 @@ def version_texts(row: Dict[str, Any]) -> List[str]:
 
 
 REPEAT_OVERLAP = 0.8
+# The date check writes its own as "Another report differs: ..."; a 15 Nov
+# local run's six were all missed by the first two patterns
 _DISPUTE = re.compile(
-    r"\b(sources? (?:disagree|differ|conflict)|conflicting (?:accounts|reports))", re.I
+    r"\b(sources? (?:disagree|differ|conflict)|conflicting (?:accounts|reports)"
+    r"|another report differs)",
+    re.I,
 )
 
 

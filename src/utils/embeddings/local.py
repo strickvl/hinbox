@@ -6,6 +6,7 @@ run the application when local embeddings are not used. The actual
 sentence-transformers import happens lazily inside `_get_model()`.
 """
 
+import threading
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.logging_config import get_logger
@@ -36,40 +37,54 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         super().__init__(config)
         # Use Any for runtime to avoid requiring the class at import time
         self._model: Optional[Any] = None
+        # The four per-type merge threads share this provider and all ask for
+        # the model on the first article. Unlocked, each started its own load:
+        # in a 15 Nov local run all four loads failed with an SSL error from
+        # Hugging Face, and on the rerun the people merge failed with
+        # "expected str ... not NoneType" while the others loaded, so the
+        # first article failed both times
+        self._load_lock = threading.Lock()
 
     def _get_model(self):
-        """Lazy load the model.
+        """Lazy load the model, once, whichever thread asks first.
 
         Raises RuntimeError with actionable guidance if sentence-transformers
         (and its PyTorch dependency) is not installed.
         """
-        if self._model is None:
-            # Handle model name transformations
-            model_name = self._transform_model_name(self.config.model_name)
-            logger.info(f"Loading local embedding model: {model_name}")
-
-            try:
-                from sentence_transformers import SentenceTransformer  # type: ignore
-            except ImportError as e:
-                raise RuntimeError(
-                    "Local embeddings require the optional dependency "
-                    "'sentence-transformers' (and PyTorch).\n\n"
-                    "  Install:  pip install 'hinbox[local-embeddings]'\n"
-                    "  Or switch: set EMBEDDING_MODE=cloud (env var)\n"
-                    "             or embeddings.mode: cloud (config YAML)\n"
-                ) from e
-
-            resolved_device = _resolve_device(self.config.device)
-            if resolved_device is not None:
-                self._model = SentenceTransformer(model_name, device=resolved_device)
-            else:
-                self._model = SentenceTransformer(model_name)
-
-            logger.info(
-                f"Successfully loaded local embedding model: {model_name} "
-                f"(device={self._model.device})"
-            )
+        if self._model is not None:
+            return self._model
+        with self._load_lock:
+            if self._model is None:
+                self._model = self._load_model()
         return self._model
+
+    def _load_model(self) -> Any:
+        # Handle model name transformations
+        model_name = self._transform_model_name(self.config.model_name)
+        logger.info(f"Loading local embedding model: {model_name}")
+
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+        except ImportError as e:
+            raise RuntimeError(
+                "Local embeddings require the optional dependency "
+                "'sentence-transformers' (and PyTorch).\n\n"
+                "  Install:  pip install 'hinbox[local-embeddings]'\n"
+                "  Or switch: set EMBEDDING_MODE=cloud (env var)\n"
+                "             or embeddings.mode: cloud (config YAML)\n"
+            ) from e
+
+        resolved_device = _resolve_device(self.config.device)
+        if resolved_device is not None:
+            model = SentenceTransformer(model_name, device=resolved_device)
+        else:
+            model = SentenceTransformer(model_name)
+
+        logger.info(
+            f"Successfully loaded local embedding model: {model_name} "
+            f"(device={model.device})"
+        )
+        return model
 
     def _transform_model_name(self, model_name: str) -> str:
         """Transform model names to sentence-transformers format."""

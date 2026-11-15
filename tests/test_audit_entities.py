@@ -35,11 +35,15 @@ def test_repeats_and_disputes():
         "Judge Pohl suppressed the FBI interrogation accounts of the suspects^[a]. "
         "Prosecutors appealed the ruling^[a]. "
         "Judge Pohl suppressed the FBI interrogation accounts of the suspects^[b]. "
-        "Sources disagree on the date of the ruling^[c]."
+        "Sources disagree on the date of the ruling^[c]. "
+        "Another report differs: The ruling came in 2013.^[d]"
     )
     repeats, disputes = repeats_and_disputes(text)
     assert len(repeats) == 1 and repeats[0].endswith("^[b].")
-    assert disputes == ["Sources disagree on the date of the ruling^[c]."]
+    assert disputes == [
+        "Sources disagree on the date of the ruling^[c].",
+        "Another report differs: The ruling came in 2013.^[d]",
+    ]
     assert cited("x^[a, b] y^[c]") == ["a", "b", "c"]
 
 
