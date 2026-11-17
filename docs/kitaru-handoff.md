@@ -1,6 +1,6 @@
 # Handoff: using Kitaru to improve Hinbox
 
-Written 14 Nov 2026 at the end of a cloud session, and updated the same day in a local session that rebased the branch onto `main`, imported a real run into the cloud Kitaru workspace and changed the import route (see "Part 1"). Branch: `claude/determined-rubin-swvdij`.
+Written 14 Nov 2026 at the end of a cloud session, and updated the same day in a local session that rebased the branch onto `main`, imported a real run into the cloud Kitaru workspace and changed the import route (see "Part 1"). Kept up to date through 17 Nov by the local session that built Part 2 and ran the local-model comparisons; "Where things stand (17 Nov)" below is the place to start. All of this work is merged into `main` (up to PR #164).
 
 ## The goal
 
@@ -16,6 +16,30 @@ Part 1 is done (PR #138). Part 2 is built and was tried on the cloud workspace o
 - **Hinbox writes Kitaru's own session format.** `just kitaru-traces` turns Hinbox's trace files into `kitaru-jsonl` sessions, and they import into the cloud workspace with the built-in `kitaru/kitaru-jsonl` importer. The first try used Kitaru's `kitaru/phoenix` importer on the raw spans: everything imported, but the viewer showed model calls as raw JSON and steps as empty nodes (details below; Kitaru issue [zenml-io/kitaru#1517](https://github.com/zenml-io/kitaru/issues/1517)).
 - **Replay is possible, but only if one Kitaru session is one pipeline step** (one `profile.update`, one `match_check`), not one article. Hinbox would need to start recording each step's arguments, plus a small replay script. Details under "Part 2".
 - A correction to an earlier assumption: Hinbox does not keep traces in SQLite. It writes `{output_dir}/traces/run-<timestamp>.jsonl`. The SQLite file is Phoenix's own database under `~/.phoenix/` when you run `just phoenix`.
+
+## Where things stand (17 Nov)
+
+**Done and merged.**
+- **Part 1 and Part 2:** traces import into Kitaru (`just kitaru-traces`), `profile.update` and `match_check` steps become their own sessions, `scripts/kitaru_step.py` replays them with a model or `model_params` override, and two evaluators score them (`hinbox-profile-update-checks`, `hinbox-match-check-checks`). The cloud workspace holds the trials and cohort experiments described under "Part 2".
+- **What the replays and evals led to:**
+  - the edit date check was built (`src/engine/edit_date_check.py`), tuned on the eval, then turned off for every model by default (#164), because in pipeline runs it wrote 15 disputes and none were right;
+  - local Qwen was measured on beast: its match checks are as accurate as Luna's on the merge eval;
+  - four fixes for local runs: a lock on loading the embedding model (#160), "list each location only once" in the locations prompt (#161), a cut-off reply asked twice instead of 3 times (#162), and the date check off for local models (#159, then #164 for all).
+- **The comparison:** a 150-article run each with local Qwen and with Luna on the same commit, audited and judged by the same model (Haiku), is section 7 of "Local Qwen on beast". In short: Qwen is 2.6 times slower, leaves 3 articles incomplete, and writes profiles with far more repeated sentences (53 against 3), names in two tables (65 against 17) and duplicate pairs (21 against 4). With Haiku judging both, 2.9% of its claims are not supported and 22.7% partial, against Luna's 1.0% and 10.2%.
+
+**What is on disk, not in git** (article text, keep it local):
+- **`.worktrees/local-150`:** the local run's tables after one resume (3 articles still incomplete). Its environment may have lost the `local-embeddings` extra when the Haiku re-judge ran `uv run --extra anthropic`, so run `uv sync --extra local-embeddings --extra anthropic` before resuming it. `data/guantanamo/analysis/` holds both runs' audits (`audit_local-150.txt`, `audit_luna-150.txt`), the Haiku re-judge (`local150_haiku.json`, read it with `uv run python -m scripts.grounding_bench compare <file>`) and the Luna run's 165 date-check calls pulled from its traces (`luna150_date_check_calls.json`).
+- **`.worktrees/luna-150`:** the Luna run's tables and its trace file (168 MB, every `profile.update` and `match_check` with recorded arguments). Its tables still hold the 8 wrong "Another report differs" sentences from before #164.
+- **`.worktrees/local-pilot`:** the 40-article local pilot. **`.worktrees/kitaru-replay`:** where the Kitaru worker runs (see "Where replays run").
+- **Beast:** reached through an SSH tunnel on port 18080; the address and setup are in the agent's memory notes, not here.
+
+**What I would do next, in this order.**
+1. **Load the local embedding model offline** when it is already on disk (`local_files_only=True`, or `HF_HUB_OFFLINE`, in `LocalEmbeddingProvider._get_model()`, falling back to a download only when the model is missing). Today a Hugging Face network error while loading a model already on disk fails the first article's merges. A few lines and a test.
+2. **Long profile updates cut off at the 16,384-token limit:** 4 articles in the local run (Aden, Jim Coyne, al-Qaida, the CIA). Start from those spans in `local-150`'s trace file: see whether Qwen's edit reply runs away (repeated edits, reasoning inside `article_says`, as in the kind-twins join) or is honestly long. A runaway wants a stop rule or a schema cap; a long reply wants fewer edits per call.
+3. **Why Qwen's profiles repeat themselves:** 53 sentences that restate another against Luna's 3. `guard_edits()` drops only exact restatements, word for word in order; the audit counts 80% word overlap. Pull a sample of the 53 from the audit, see which guard rule each slipped past, and replay a few of those `profile.update` steps through Kitaru with a prompt or guard change. This is the replay setup's first real use on a local run.
+4. **Names in two tables and duplicates on local runs:** "U.S." / "United States", "Navy" / "U.S. Navy" as separate pages, and Pentagon, White House and countries as both locations and organizations. The merge eval says Qwen's match checks are fine, so look first at what never reaches the match check (the name-variant rules: "U.S." against "United States" is an equivalence-group question) and at `drop_misfiled_organizations()`.
+5. **The extraction loop:** 3 of about 116 articles still loop despite the #161 line. `frequency_penalty` 0.5 finished 1 of 2 loops in the earlier test; asking a cut-off locations reply once more with that penalty is the cheapest thing to try.
+6. **Kitaru items:** more baselines (step sessions from a small sample of `luna-150`'s or `local-150`'s traces, not the whole file), Haiku and Khadr's case 20, and replaying pages with historian corrections (all under "Still open").
 
 ## Part 1: importing traces (done)
 
@@ -496,7 +520,6 @@ The recorded request for article 931322f5, sent again to beast with one change a
 
 - **Long profile updates cut off at the token limit:** 4 articles in the local 150-article run.
 - **Loading the local embedding model offline** when it is already downloaded (`local_files_only`), so a network error can't fail an article.
-
 - **Haiku and Khadr's case 20:** find why Haiku fails it in every run while Luna passes.
 - **More baselines.** Replays need step sessions: a few more eval cases, or a short pipeline run's `--step profile.update` sessions. Keep it to a small sample: they hold article text.
 - **The extraction loop:** the locations line cut it but didn't end it: 3 of about 116 articles still looped in the 150-article run. Only the locations prompt loops so far; organizations lists are as long (up to 35 items in the pilot) and might need the same line.
