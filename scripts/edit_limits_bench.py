@@ -18,8 +18,10 @@ one still has. ``--limits off`` sends the plain schema (a control: at
 temperature 0 the old reply should come back).
 
 Writes ``results.jsonl`` (one row per prompt), ``review.md`` (the new edits,
-for reading) and prints the counts. Both files hold article-derived text:
-keep them off GitHub.
+for reading) and prints the counts. If the trace recorded the full profile
+update inputs, the results include the applied claim changes. Review those
+with ``python -m scripts.edit_limits_acceptance``. This applies deterministic
+guards and routing, with no follow-up dispute model call. Keep the files local.
 """
 
 import argparse
@@ -33,6 +35,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from scripts.edit_limits_acceptance import claim_changes
 from scripts.export_training_data import (
     _input_messages,
     _json_or_text,
@@ -46,6 +49,7 @@ from src.engine.edit_guards import guard_edits
 from src.engine.edit_limits import LimitedEditList, without_cut_off
 from src.engine.profile_edits import ProfileEditList, apply_edits
 from src.engine.profile_notes import is_profile_note
+from src.engine.section_routing import routing_sections
 from src.evals.profile_cases import _sentences as split_sentences
 
 SCHEMA_NAMES = ("ProfileEditList", "LimitedEditList")
@@ -103,6 +107,8 @@ def scan(paths: Iterable[str]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
                 span = json.loads(line)
                 attrs = span.get("attributes") or {}
                 kept = {k: attrs[k] for k in _NOTE_KEYS if k in attrs}
+                if span.get("name") == "profile.update" and attrs.get("input.value"):
+                    kept["profile_step_where"] = (path, number)
                 span_id = span["context"]["span_id"]
                 notes[span_id] = (span.get("parent_id"), kept)
                 call = edit_call(span)
@@ -132,10 +138,19 @@ def _note(notes: Dict[str, Any], span_id: Optional[str], key: str) -> Any:
 def load(picked: List[Dict[str, Any]], notes: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The picked calls in full, read again from their lines."""
     wanted = {c["where"]: c for c in picked}
+    step_locations = {
+        where: _note(notes, row["span"], "profile_step_where")
+        for where, row in wanted.items()
+    }
+    step_lines = {where for where in step_locations.values() if where}
+    steps: Dict[Tuple[str, int], Any] = {}
     full: Dict[Tuple[str, int], Dict[str, Any]] = {}
-    for path in sorted({where[0] for where in wanted}):
+    for path in sorted({where[0] for where in set(wanted) | step_lines}):
         with open(path, encoding="utf-8") as f:
             for number, line in enumerate(f):
+                if (path, number) in step_lines:
+                    attrs = json.loads(line)["attributes"]
+                    steps[(path, number)] = _json_or_text(attrs["input.value"])
                 slim = wanted.get((path, number))
                 if slim is None:
                     continue
@@ -146,6 +161,8 @@ def load(picked: List[Dict[str, Any]], notes: Dict[str, Any]) -> List[Dict[str, 
                     "entity": _note(notes, slim["span"], "hinbox.entity_name"),
                     "article": _note(notes, slim["span"], "hinbox.article_id"),
                 }
+    for where, row in full.items():
+        row["profile_step"] = steps.get(step_locations[where])
     return [full[c["where"]] for c in picked]
 
 
@@ -218,18 +235,18 @@ def _notes(edits: List[Any]) -> int:
     )
 
 
-def compare(call: Dict[str, Any], new_text: str) -> Dict[str, Any]:
+def compare(call: Dict[str, Any], new_text: str, limits: bool = True) -> Dict[str, Any]:
     """What the limits left of a reply, beside the recorded one."""
     old, new = parse_reply(call["reply"]), parse_reply(new_text)
     row: Dict[str, Any] = {"parsed": new is not None, "old_parsed": old is not None}
     row["reply_text"] = new_text
     if new is None:
         return row
-    edits, cut = without_cut_off(new)
+    edits, cut = without_cut_off(new) if limits else (new.edits, [])
     found = _PROFILE.search(call["messages"][-1]["content"])
     profile = found.group(1) if found else ""
     old_sentences, new_sentences = _sentences(old), set(_sentences(new))
-    # What the pipeline's code guards then leave (no model check, no dates)
+    # Legacy traces may only have the excerpt the model saw.
     guarded = guard_edits(profile, edits)[0]
     return {
         **row,
@@ -245,7 +262,25 @@ def compare(call: Dict[str, Any], new_text: str) -> Dict[str, Any]:
         "old_sentences": len(old_sentences),
         "old_sentences_kept": sum(s in new_sentences for s in old_sentences),
         "new_edits": [e.model_dump() for e in edits],
+        **_applied_claim_changes(call.get("profile_step"), edits),
     }
+
+
+def _applied_claim_changes(
+    step: Optional[Dict[str, Any]], edits: List[Any]
+) -> Dict[str, Any]:
+    if not isinstance(step, dict) or step.get("guarded_corrections") != 0:
+        return {}
+    existing = step["existing_profile"]
+    before = existing["text"]
+    article_id = step["new_article_id"]
+    dates = step.get("article_dates") or {}
+    guarded, _ = guard_edits(before, edits, dates.get(article_id), dates)
+    sections = routing_sections(
+        existing, step["entity_type"], step.get("kind"), step["domain"]
+    )
+    after, _ = apply_edits(before, guarded, sections[0] if sections else None)
+    return {"claim_changes": claim_changes(before, after, article_id)}
 
 
 def replay(call: Dict[str, Any], model: str, limits: bool) -> Dict[str, Any]:
@@ -266,6 +301,7 @@ def replay(call: Dict[str, Any], model: str, limits: bool) -> Dict[str, Any]:
     }
     row = {k: call[k] for k in ("key", "group", "step", "entity", "article")}
     row["old_finish"] = call["finish"]
+    row["limits"] = "on" if limits else "off"
     started = time.monotonic()
     try:
         response = _create_raw_client(target).chat.completions.create(
@@ -279,7 +315,7 @@ def replay(call: Dict[str, Any], model: str, limits: bool) -> Dict[str, Any]:
         "seconds": round(time.monotonic() - started, 1),
         "finish": choice.finish_reason,
         "tokens": getattr(response.usage, "completion_tokens", None),
-        **compare(call, choice.message.content or ""),
+        **compare(call, choice.message.content or "", limits),
     }
 
 

@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
+from scripts import edit_limits_acceptance as checks
 from scripts import edit_limits_bench as bench
 from src.engine import edit_limits as el
 from src.engine.profile_edits import ProfileEditList
@@ -87,6 +88,64 @@ def test_compare_counts_what_the_limits_left(tmp_path):
         "old_parsed": True,
         "reply_text": '{"edits": [{"op"',
     }
+
+
+def test_claim_review_uses_full_profile_and_only_applied_edits(tmp_path):
+    spans = _span(1, "truncated", "length")
+    parent = spans[0]
+    parent["name"] = "profile.update"
+    archived = {
+        "existing_profile": {"text": PROFILE + "\nTransferred in 2004.^[a3]"},
+        "entity_type": "location",
+        "domain": "guantanamo",
+        "new_article_id": "a9",
+        "guarded_corrections": 0,
+    }
+    parent["attributes"]["input.value"] = json.dumps(archived)
+    path = tmp_path / "trace.jsonl"
+    path.write_text("".join(json.dumps(span) + "\n" for span in spans))
+    calls, notes = bench.scan([str(path)])
+    [call] = bench.load(bench.pick(calls, 1, 0), notes)
+    reply = _reply("Returned to court in 2009.^[a9]")
+    changes = bench.compare(call, reply)["claim_changes"]
+    assert changes["old_kept"] == changes["old_cited"] == 3
+    assert [a["claim"] for a in changes["additions"]] == ["Returned to court in 2009"]
+
+    cut = bench.compare(call, _reply("Added fact.^[a9]", anchor="x" * el.ANCHOR_CHARS))
+    assert cut["claim_changes"]["additions"] == []
+
+
+def test_acceptance_requires_supported_novelty_and_flags_bad_attribution():
+    after = PROFILE + "\nReceived a hearing in 2009.^[a9]\nMoved in 2010.^[a9]"
+    changes = checks.claim_changes(PROFILE, after, "a9")
+    first, second = changes["additions"]
+    row = {"finish": "stop", "parsed": True, "claim_changes": changes}
+    assert checks.acceptance(row, {})["status"] == "unverified"
+
+    reviews = {
+        first["id"]: {"verdict": "new_supported"},
+        second["id"]: {"verdict": "unsupported", "reason": "The article says 2012"},
+    }
+    failed = checks.acceptance(row, reviews)
+    assert failed["status"] == "fail"
+    assert failed["unsupported"] == [{**second, "reason": "The article says 2012"}]
+    assert failed["new_supported"] == [first]
+
+    reviews[second["id"]] = {"verdict": "already_covered"}
+    assert checks.acceptance(row, reviews)["status"] == "pass"
+    reviews[first["id"]] = {"verdict": "off_topic"}
+    assert checks.acceptance(row, reviews)["reason"] == (
+        "no new supported fact from the incoming article"
+    )
+
+    before = PROFILE + "\nArrived in 2001.^[a3]"
+    lost = {**row, "claim_changes": checks.claim_changes(before, after, "a9")}
+    assert (
+        checks.acceptance(lost, reviews)["reason"] == "old cited claims changed or lost"
+    )
+    uncited = checks.claim_changes(PROFILE, PROFILE + "\nEscaped in 2001.", "a9")
+    no_source = checks.acceptance({**row, "claim_changes": uncited}, {})
+    assert no_source["unsupported"][0]["reason"] == "missing citation"
 
 
 def test_replay_sends_the_recorded_request_with_the_limited_schema(
