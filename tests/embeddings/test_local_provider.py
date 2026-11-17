@@ -1,12 +1,37 @@
-"""The local embedding model loads once, however many merge threads ask."""
+"""Local embedding model loading."""
 
 import sys
 import threading
 import time
 from types import SimpleNamespace
 
+import pytest
+
 from src.utils.embeddings.base import EmbeddingConfig
 from src.utils.embeddings.local import LocalEmbeddingProvider
+
+
+@pytest.mark.parametrize("cached", [True, False], ids=["cached", "missing"])
+def test_loads_from_cache_before_trying_to_download(monkeypatch, cached):
+    attempts = []
+
+    class Model:
+        device = "cpu"
+
+        def __init__(self, name, *, local_files_only=False, **kwargs):
+            attempts.append(local_files_only)
+            if local_files_only and not cached:
+                raise OSError("Model files are missing from the cache")
+            if not local_files_only and cached:
+                raise OSError("Network is unavailable")
+
+    monkeypatch.setitem(
+        sys.modules, "sentence_transformers", SimpleNamespace(SentenceTransformer=Model)
+    )
+    provider = LocalEmbeddingProvider(EmbeddingConfig(model_name="all-MiniLM-L6-v2"))
+
+    assert isinstance(provider._get_model(), Model)
+    assert attempts == ([True] if cached else [True, False])
 
 
 def test_four_threads_load_the_model_once(monkeypatch):

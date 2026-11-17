@@ -7,6 +7,7 @@ sentence-transformers import happens lazily inside `_get_model()`.
 """
 
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.logging_config import get_logger
@@ -75,10 +76,16 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             ) from e
 
         resolved_device = _resolve_device(self.config.device)
-        if resolved_device is not None:
+        try:
+            model = SentenceTransformer(
+                model_name, device=resolved_device, local_files_only=True
+            )
+        except OSError:
+            # Transformers also raises OSError when a cached model is incomplete.
+            if Path(model_name).is_dir():
+                raise
+            logger.info(f"Retrying embedding model load with Hub access: {model_name}")
             model = SentenceTransformer(model_name, device=resolved_device)
-        else:
-            model = SentenceTransformer(model_name)
 
         logger.info(
             f"Successfully loaded local embedding model: {model_name} "
