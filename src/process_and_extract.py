@@ -39,6 +39,7 @@ from src.engine.corrections_pass import (
     write_report,
 )
 from src.engine.grounding_pass import run_profile_grounding_postprocess
+from src.engine.judge_swap import judge_server
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
 from src.utils.article_window import ordered_window
@@ -914,7 +915,15 @@ def main():
         # time (the server went away) is asked again; current ones cost nothing
         if not args.skip_grounding:
             log("\nRunning profile grounding verification...", level="processing")
-            with timed_step("grounding_pass"):
+            with (
+                judge_server(
+                    model_type,
+                    lambda: save_entities_then_status(
+                        entities, base_dir, status_tracker
+                    ),
+                ),
+                timed_step("grounding_pass"),
+            ):
                 grounding_counts = run_profile_grounding_postprocess(
                     entities=entities,
                     rows=processed_rows,
