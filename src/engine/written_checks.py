@@ -145,7 +145,27 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
             continue
         if not present(_fold(tok).strip("'-")):
             missing.append(tok)
+    # Who did it: "Pakistani forces captured", "CIA agents captured" need
+    # that actor beside a force word in a note, not just the country or the
+    # agency somewhere in it (21 Nov: al Sharabi's note names no captor; the
+    # CIA page's note on al Hawsawi says Pakistani authorities arrested him)
+    for m in _ACTOR.finditer(sentence):
+        actor = _fold(m.group(1)).rstrip(".")
+        actor = actor[:6] if len(actor) > 6 else actor  # "Pakistani", "Pakistan's"
+        near = rf"\b{re.escape(actor)}\w*\W+(?:\w+\W+){{0,2}}(?:{_FORCES})\b"
+        if not re.search(near, hay):
+            missing.append(f"{m.group(1)} {m.group(2)}")
     return list(dict.fromkeys(missing))
+
+
+_FORCES = (
+    "forces|force|authorities|agents|officers|officials|police|troops|"
+    "intelligence|operatives|soldiers|security"
+)
+_ACTOR = re.compile(
+    rf"\b([A-Z][\w.]*(?:-[A-Z][\w.]*)?)\s+({_FORCES})\s+(?:\w+\s+){{0,2}}?"
+    r"(?:captured|arrested|seized|detained|raided|apprehended|abducted|caught|took)\b"
+)
 
 
 def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None:

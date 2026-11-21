@@ -107,6 +107,17 @@ _COMMENT = re.compile(
 )
 
 
+# The old profile's own "sources disagree" sentences: on 21 Nov "one article
+# identifies the detainee rebranded as a 'forever prisoner' as Suhayl al
+# Sharabi ... rather than Paracha" came back on the Karachi page in two
+# models' runs as if it were a fact about Karachi
+_OLD_DISPUTE = re.compile(
+    r"^(?:sources|accounts|reports) (?:disagree|differ)|^another report differs|"
+    r"\bidentif(?:y|ies|ied)\b[^.]*\brather than\b",
+    re.IGNORECASE,
+)
+
+
 def page_notes(entity: Dict[str, Any], keep_context: bool = True) -> List[Note]:
     """The page's notes in text order, without those tagged ``other`` (and
     ``context`` ones when ``keep_context`` is false)."""
@@ -126,8 +137,8 @@ def page_notes(entity: Dict[str, Any], keep_context: bool = True) -> List[Note]:
         tag = str((tags.get(key) or {}).get("verdict") or "")
         if tag == "other" or (tag == "context" and not keep_context):
             continue
-        if _COMMENT.match(key):  # the old profile's own comment, no fact
-            continue
+        if _COMMENT.match(key) or _OLD_DISPUTE.search(key):
+            continue  # the old profile's own comment or "sources disagree", no fact
         heading = ""
         for at, title in heads:
             if at <= c.start:
@@ -468,7 +479,9 @@ def _pieces(w: "Written", max_n: int) -> List["Written"]:
     """``w`` cut into its sentences, each without note references; a
     sentence that named notes keeps those, else it keeps the item's."""
     raw = " ".join(str(w.text or "").split())
-    parts = [strip_refs(t, max_n) for t in split_sentences(_brackets(raw))] or [("", [])]
+    parts = [strip_refs(t, max_n) for t in split_sentences(_brackets(raw))] or [
+        ("", [])
+    ]
     named = [n for _, refs in parts for n in refs]
     out = []
     for text, refs in parts:
@@ -565,7 +578,11 @@ def write_page(
         model_check,
         summary_check,
     )
-    from src.engine.written_conflicts import tell_conflicts, unnarrate
+    from src.engine.written_conflicts import (
+        drop_one_sided,
+        tell_conflicts,
+        unnarrate,
+    )
     from src.engine.written_plan import write_planned
     from src.engine.written_revise import fill_unused, recite, revise
 
@@ -617,6 +634,7 @@ def write_page(
             conflicts = (report.get("plan") or {}).get("conflicts") or []
             written = tell_conflicts(written, shown, name, what, conflicts, ask, report)
             written = unnarrate(written, shown, name, conflicts, ask, report)
+            drop_one_sided(written, conflicts)
             summary_check(written, shown, name)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}

@@ -197,3 +197,41 @@ def test_two_notes_left_out_as_repeating_each_other_bring_one_back():
     )  # fmt: skip
     restore_repeats(plan, by_n, "Tom Vale")
     assert plan.parts[0].notes == [1, 2] and [o.note for o in plan.left_out] == [3]
+
+
+def test_one_side_stated_as_fact_beside_the_disagreement_goes():
+    from src.engine.written_conflicts import drop_one_sided
+
+    c = Conflict(about="capture", one_side="Sept. 11, 2002", one_notes=[2],
+                 other_side="April 29, 2003", other_notes=[3]).model_dump()  # fmt: skip
+    told = Written("One account dates Tom Vale's capture to Sept. 11, 2002; two "
+                   "later reports give April 29, 2003.", [2, 3], "Arrests")  # fmt: skip
+    plain = Written("A raid on September 11 captured Tom Vale.", [2], "Arrests")
+    other = Written(
+        "Police arrested Tom Vale and Ann Roe on April 29, 2003.", [3], "Arrests"
+    )
+    drop_one_sided([told, plain, other], [c])
+    assert plain.dropped and not other.dropped and not told.dropped  # Ann Roe kept
+
+
+def test_a_named_captor_must_stand_beside_a_force_word_in_the_notes():
+    from src.engine.written_checks import missing_details
+
+    note = ["Lee Moss was captured in Port Elm, Elmland, in May 2002."]
+    assert missing_details(
+        "In May 2002, Elmlandish forces captured Lee Moss.", note, "Port Elm"
+    )
+    note = ["Elmland's security forces arrested Lee Moss in May 2002."]
+    assert not missing_details(
+        "Elmlandish forces arrested Lee Moss in May 2002.", note, "X"
+    )
+
+
+def test_the_old_profiles_disagreement_sentences_are_not_notes():
+    from src.engine.written_page import _OLD_DISPUTE
+
+    assert _OLD_DISPUTE.search("Sources disagree on when Tom Vale was captured.")
+    assert _OLD_DISPUTE.search(
+        "One article identifies the man as Lee Moss rather than Tom Vale."
+    )
+    assert not _OLD_DISPUTE.search("Police arrested Tom Vale rather than Lee Moss.")

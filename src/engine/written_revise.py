@@ -73,6 +73,13 @@ _PROBLEMS = {
 }
 
 
+def _swollen(old: str, new: str) -> bool:
+    """An opening summary's rewrite that grew or quotes: on 21 Nov Luna
+    replaced "The sections also describe ..." with 75 words copying the
+    page's sentences, a review board's quotes among them."""
+    return len(new.split()) > len(old.split()) or any(q in new for q in '"“”')
+
+
 def revise_messages(
     batch: Sequence[Written], notes: Sequence[Note], name: str
 ) -> List[Dict[str, str]]:
@@ -119,6 +126,8 @@ def revise(
             ):
                 continue
             text = strip_refs(" ".join(str(r.text or "").split()))[0]
+            if old.summary and _swollen(old.text, text):
+                continue
             if text and text != old.text:
                 new[id(old)] = Written(
                     text, list(old.notes), old.section, old.para,

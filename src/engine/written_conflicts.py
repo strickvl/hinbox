@@ -111,7 +111,8 @@ _SOURCE_WORDS = {"a", "an", "another", "one", "the", "in", "on", "by", "accordin
 
 def lost_or_added(old: str, new: str) -> bool:
     """The rewrite dropped a capitalised name the sentence had ("the
-    International Red Cross reported" became a bare date, 21 Nov), or put
+    International Red Cross reported" became a bare date, 21 Nov), added one
+    it lacked ("CIA agents captured him", where no captor was named), or put
     in a day of the month it lacked (a 2014 description of feeding became
     "On November 19, 2014, Army guards shackled ...")."""
     from src.engine.written_checks import _CAP, _COMMON, _DAY
@@ -122,7 +123,32 @@ def lost_or_added(old: str, new: str) -> bool:
         )
 
     days = lambda t: {m.group(0).lower() for m in _DAY.finditer(t)}  # noqa: E731
-    return bool(caps(old) - caps(new)) or bool(days(new) - days(old))
+    return bool(caps(old) ^ caps(new)) or bool(days(new) - days(old))
+
+
+def drop_one_sided(written: List[Written], conflicts: Sequence[Dict[str, Any]]) -> None:
+    """Drop a kept section sentence that states one side of a disagreement
+    as plain fact in a section where a kept sentence tells it, when it cites
+    only that disagreement's notes, gives one of the disputed dates, and
+    names no person the telling sentence leaves out. On 21 Nov three runs of
+    four told bin Attash's two capture dates and then also said, as fact,
+    "a Pakistani-U.S. raid on September 11 captured Walid bin Attash"."""
+    from src.engine.written_checks import _numbers
+    from src.engine.written_plan import _surnames
+
+    for c in conflicts:
+        sides = set((c.get("one_notes") or []) + (c.get("other_notes") or []))
+        values = _numbers(f"{c.get('one_side')} {c.get('other_side')}")
+        told = [w for w in written if not w.dropped and w.section and tells(w, c)]
+        for w in written:
+            if w.dropped or not w.section or w in told or not set(w.notes) <= sides:
+                continue
+            mine = [t for t in told if t.section == w.section]
+            if not mine or not values & _numbers(w.text):
+                continue
+            people = _surnames(w.text, "")
+            if people and people <= set().union(*(_surnames(t.text, "") for t in mine)):
+                w.dropped = "states one side of a disagreement the section tells"
 
 
 def unnarrate(
