@@ -269,7 +269,10 @@ is stated as fact, or a word goes further than the notes ("the first" for \
 the notes give about one person or event is given to another.
 - not_supported: its notes do not say this.
 
-Judge only by the notes shown with each sentence, not by what you know."""
+Each note starts with its article's date in brackets. A sentence may use \
+that date for when something was said, reported or true ("In May 2016, he \
+said ...", "By 2016 ..."); that counts as in the notes. Judge only by the \
+notes shown with each sentence, not by what you know."""
 
 
 def _what(entity_type: str, kind: Optional[str]) -> str:
@@ -386,6 +389,8 @@ class Written:
     dropped: str = ""  # why it was dropped, "" when kept
     check: str = ""  # the model check's verdict
     problem: str = ""
+    summary: bool = False  # an opening sentence summing up the sections
+    revised: str = ""  # the dropped sentence this one rewrites
 
 
 # A note reference written into the sentence: "[N1, N2]", "(N12)", "{11, 14}",
@@ -452,7 +457,17 @@ def _pieces(w: "Written", max_n: int) -> List["Written"]:
     return out
 
 
-def flatten(page: WPage, max_n: int = 999) -> List[Written]:
+def flatten(page: WPage, max_n: int = 999, summary: bool = False) -> List[Written]:
+    """The page's sentences in order. With ``summary``, opening sentences
+    after the first are marked as summing up the sections."""
+    out = _flatten(page, max_n)
+    if summary:
+        for w in [w for w in out if not w.section][1:]:
+            w.summary = True
+    return out
+
+
+def _flatten(page: WPage, max_n: int) -> List[Written]:
     out = [Written(s.text, list(s.notes or []), "", 0) for s in page.opening or []]
     p = 1
     for sec in page.sections or []:
@@ -569,6 +584,39 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
         seen.append(words)
 
 
+# An opening sentence about the page instead of its subject
+_ABOUT_PAGE = re.compile(
+    r"\b(?:this|the) (?:entry|page|article|record)\b|\bthese notes\b|\bthe notes\b",
+    re.IGNORECASE,
+)
+
+
+def summary_check(written: List[Written], notes: Sequence[Note], name: str) -> None:
+    """An opening sentence summing up the sections is checked against the
+    sections' kept sentences and their notes, not its own notes alone: a
+    summary in general words is never in one note (on 21 Nov most were
+    dropped that way, and the openings were left one sentence long)."""
+    by_n = {n.n: n for n in notes}
+    body = [w for w in written if w.section and not w.dropped]
+    sources = [w.text for w in body] + [
+        f"{by_n[n].text} {by_n[n].date}" for w in body for n in w.notes if n in by_n
+    ]
+    for w in written:
+        if not w.summary or w.dropped:
+            continue
+        if _ABOUT_PAGE.search(w.text):
+            w.dropped = "talks about the page"
+            continue
+        w.notes = [n for n in w.notes if n in by_n] or [
+            n for b in body for n in b.notes[:1]
+        ][:6]
+        gaps = missing_details(w.text, sources, name)
+        if gaps:
+            w.dropped = "not in the sections: " + ", ".join(gaps[:5])
+        else:
+            w.check = "summary"
+
+
 def check_messages(
     batch: Sequence[Written], notes: Sequence[Note], name: str
 ) -> List[Dict[str, str]]:
@@ -576,7 +624,9 @@ def check_messages(
     parts = []
     for i, w in enumerate(batch, 1):
         shown = [by_n[n] for n in w.notes[:MAX_NOTES_SHOWN] if n in by_n]
-        lines = "\n".join(f"  - {n.text[:CHECK_NOTE_CHARS]}" for n in shown)
+        lines = "\n".join(
+            f"  - [{n.date or 'no date'}] {n.text[:CHECK_NOTE_CHARS]}" for n in shown
+        )
         parts.append(f"Sentence {i}: {w.text}\nIts notes:\n{lines}")
     return [
         {"role": "system", "content": CHECK.format(name=name)},
@@ -592,10 +642,23 @@ def model_check(
     written: List[Written], notes: Sequence[Note], name: str, ask: Ask,
     report: Dict[str, Any],
 ) -> None:  # fmt: skip
-    """Drop sentences the model calls not supported by their notes."""
-    kept = [w for w in written if not w.dropped]
-    for start in range(0, len(kept), CHECK_BATCH):
-        batch = kept[start : start + CHECK_BATCH]
+    """Drop sentences the model calls wrong or not supported by their notes.
+    Sentences left without a usable answer are asked again once, four at a
+    time (on 21 Nov local Qwen answered for 26 of 54 sentences)."""
+    todo = [w for w in written if not w.dropped and not w.summary and not w.check]
+    _check(todo, notes, name, ask, report, CHECK_BATCH)
+    again = [w for w in todo if not w.check]
+    _check(again, notes, name, ask, report, 4)
+    for w in again:
+        w.check = w.check or "unchecked"
+
+
+def _check(
+    kept: List[Written], notes: Sequence[Note], name: str, ask: Ask,
+    report: Dict[str, Any], size: int,
+) -> None:  # fmt: skip
+    for start in range(0, len(kept), size):
+        batch = kept[start : start + size]
         try:
             reply = ask(check_messages(batch, notes, name), SentenceChecks, 4096)
         except Exception as exc:
@@ -608,7 +671,9 @@ def model_check(
             if not 1 <= c.sentence <= len(batch):
                 continue
             w = batch[c.sentence - 1]
-            if c.starts_with and _first_words(c.starts_with) != _first_words(w.text):
+            if c.starts_with and _first_words(c.starts_with, 2) != _first_words(
+                w.text, 2
+            ):
                 continue  # the answer is about another sentence
             verdict = str(c.verdict or "").strip().lower().replace(" ", "_")
             if verdict not in ("supported", "partial", "wrong", "not_supported"):
@@ -658,6 +723,7 @@ def write_page(
     The record's ``model`` is the model, with "#plan" after it for the
     planned approach, so both can be stored side by side."""
     from src.engine.written_plan import write_planned
+    from src.engine.written_revise import revise
 
     name = str(entity.get("name") or entity.get("title") or "")
     what = _what(entity_type, entity.get("type") or entity.get("event_type"))
@@ -684,11 +750,15 @@ def write_page(
         except Exception as exc:
             return {"model": key, "error": str(exc)[:300], "report": report}
         report["calls"] += 1
-    written = flatten(page, max((n.n for n in shown), default=0))
-    code_check(written, shown, name)
+    written = flatten(
+        page, max((n.n for n in shown), default=0), summary=approach == "plan"
+    )
+    code_check([w for w in written if not w.summary], shown, name)
     drop_repeats(written)
     if check:
         model_check(written, shown, name, ask, report)
+        written = revise(written, shown, name, ask, report)
+    summary_check(written, shown, name)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}
     used = {k for w in kept for n in w.notes for k in by_n[n].keys}
@@ -714,6 +784,7 @@ def write_page(
                 "dropped": w.dropped,
                 "check": w.check,
                 "problem": w.problem,
+                "revised": w.revised,
             }
             for w in written
         ],  # fmt: skip

@@ -78,6 +78,9 @@ attributed. Loaded words (terrorist, jihadist, mastermind, extremist) \
 appear only in quotation marks or attributed to whoever used them. Quoted \
 words stay exactly as quoted.
 - {conflicts}
+- Each note shows its article's date. You may use it for when something \
+was said or reported, as the month and year ("In May 2007, Zaki said"), \
+never as the day of the event itself.
 - Write about the events, not about the notes: never "the notes say", \
 "in the note" or "according to the notes".
 - The opening says what {name} is: don't say it again here.
@@ -98,9 +101,10 @@ several men in the city in 2002 and 2003 and handed them to U.S. custody"), \
 so a reader who stops here knows what the page tells. Don't copy a \
 section's sentence, and don't list every name and date.
 
-Use only what the notes and sections say, and keep who said what. Write \
-about {name}, never about "the notes", "this record" or why {name} \
-"matters". Every sentence lists the numbers of the notes it uses in its \
+Use only what the notes and sections say, and keep who said what. Use the \
+past tense for what has ended (a man released in 2016 "was held"). Write \
+about {name}, never about "the entry", "the notes", "this record" or why \
+{name} "matters". Every sentence lists the numbers of the notes it uses in its \
 notes field; never write note numbers into the sentence itself."""
 
 CONFLICTS = """You read the notes for one section of an encyclopedia entry \
@@ -120,10 +124,12 @@ empty list."""
 
 NO_CONFLICT = "When two notes give different dates or numbers for the same thing, give both and cite both."
 WEIGH = (
-    "These notes disagree, and the section must say how: {items}. Weigh them: "
-    "say which account more of the notes, the later reports or the more direct "
-    "source (an official record, the Red Cross, a court filing) support, give "
-    "the other too, and cite both. Don't just say the sources disagree."
+    "These notes disagree: {items}. Tell it as one event with two accounts, in "
+    "one or two sentences that cite both sides, and say how many and which "
+    'sources give each ("One account dates his capture to Sept. 11, 2002; '
+    'three later reports, among them the Red Cross, give April 29, 2003."). '
+    "Don't judge which is right in your own words, and don't tell it as two "
+    "events."
 )
 
 
@@ -190,17 +196,37 @@ def _outline(plan: Plan) -> str:
     return "\n".join(f"- {p.heading}: {p.covers}" for p in plan.parts)
 
 
-def clean_conflicts(conflicts: Sequence[Conflict], allowed: Any) -> List[Conflict]:
+def _counts_over_time(c: Conflict, dates: Dict[int, str]) -> bool:
+    """Two counts with no year in either side, from articles of different
+    months ("40 prisoners" in October 2018, "41 captives" in February): a
+    count that changed, not a contradiction."""
+    if re.search(r"\b(?:19|20)\d\d\b", f"{c.one_side} {c.other_side}"):
+        return False
+    one = {dates.get(n, "")[:7] for n in c.one_notes} - {""}
+    other = {dates.get(n, "")[:7] for n in c.other_notes} - {""}
+    return bool(one and other) and not one & other
+
+
+def clean_conflicts(
+    conflicts: Sequence[Conflict], allowed: Any, dates: Optional[Dict[int, str]] = None
+) -> List[Conflict]:
     """Conflicts with notes on both sides (among ``allowed``), the sides'
-    values not fitting inside each other."""
-    out = []
+    values not fitting inside each other, not a count that changed over
+    time, and not the same notes twice."""
+    out, seen = [], set()
     for c in conflicts:
         one = [n for n in dict.fromkeys(c.one_notes) if n in allowed]
         other = [
             n for n in dict.fromkeys(c.other_notes) if n in allowed and n not in one
         ]
-        if one and other and not _compatible(c.one_side, c.other_side):
-            out.append(c.model_copy(update={"one_notes": one, "other_notes": other}))
+        c = c.model_copy(update={"one_notes": one, "other_notes": other})
+        key = frozenset(one + other)
+        if not one or not other or key in seen or _compatible(c.one_side, c.other_side):
+            continue
+        if _counts_over_time(c, dates or {}):
+            continue
+        seen.add(key)
+        out.append(c)
     return out
 
 
@@ -310,7 +336,7 @@ def failed(report: Dict[str, Any], step: str, exc: Exception) -> None:
 
 def find_conflicts(
     plan: Plan, part: PlanPart, notes_text: str, name: str, what: str, ask: Any,
-    report: Dict[str, Any],
+    report: Dict[str, Any], dates: Optional[Dict[int, str]] = None,
 ) -> List[Conflict]:  # fmt: skip
     """One call on one part's notes: which of them contradict each other.
     Its own step because inside the plan call Luna found none on Karachi
@@ -324,7 +350,24 @@ def find_conflicts(
         failed(report, f"conflicts {part.heading}", exc)
         return []
     report["calls"] = report.get("calls", 0) + 1
-    return clean_conflicts(reply.conflicts or [], set(part.notes))
+    return clean_conflicts(reply.conflicts or [], set(part.notes), dates)
+
+
+def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
+    """A note left out as "repeats N" that holds a name, number or date note
+    N lacks goes back in, after N (on 21 Nov Luna left Bin Atef's 2009
+    clearance out as repeating a note that never gave it)."""
+    from src.engine.written_page import missing_details
+
+    for o in list(plan.left_out):
+        m = re.search(r"repeats\D*(\d+)", o.why or "")
+        n = int(m.group(1)) if m else 0
+        part = next((p for p in plan.parts if n in p.notes), None)
+        if part is None or o.note not in by_n or n not in by_n:
+            continue
+        if missing_details(by_n[o.note].text, [by_n[n].text], name):
+            part.notes.insert(part.notes.index(n) + 1, o.note)
+            plan.left_out.remove(o)
 
 
 def write_planned(
@@ -349,9 +392,14 @@ def write_planned(
     if not plan.parts:
         report["plan"] = {"identity": plan.identity, "parts": []}
         return None
+    restore_repeats(plan, by_n, name)
+    dates = {n.n: n.date for n in notes}
     for part in plan.parts:
         shown = block([by_n[n] for n in part.notes])
-        plan.conflicts += find_conflicts(plan, part, shown, name, what, ask, report)
+        plan.conflicts += find_conflicts(
+            plan, part, shown, name, what, ask, report, dates
+        )
+    plan.conflicts = clean_conflicts(plan.conflicts, set(by_n), dates)
     report["plan"] = {
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],

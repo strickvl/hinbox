@@ -101,6 +101,8 @@ def _ask(page, checks=None, facts=None):
             return WPage.model_validate(page)
         if model is SentenceChecks:
             return SentenceChecks.model_validate(checks or {"checks": []})
+        if model.__name__ == "Revisions":
+            return model.model_validate({"revisions": []})
         return Facts.model_validate(facts)
 
     return ask, calls
@@ -127,7 +129,8 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
     page = write_page(
         _city(), "locations", "m", ask, [("Overview", "what it is")], approach="single"
     )
-    assert calls == [WPage, SentenceChecks] and page["model"] == "m"
+    assert calls[:2] == [WPage, SentenceChecks] and page["model"] == "m"
+    assert calls[2].__name__ == "Revisions" and len(calls) == 3
     assert page["text"] == (
         "Port Elm is a harbour city in the north of Elmland.^[a1]\n\n"
         "## Arrests\n\n"
@@ -227,7 +230,7 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     assert page["model"] == "m#plan"
     assert [m for m, _, _ in seen] == [Plan, Conflicts, WBody, WParagraph]
     section_prompt, section_notes = seen[2][1], seen[2][2]
-    assert "Weigh them" in section_prompt
+    assert "one event with two accounts" in section_prompt
     assert "arrest year: 2004 (notes 2) against 2005 (notes 3)" in section_prompt
     assert "March 5" not in section_prompt and "another part" not in section_prompt
     assert "N1 " not in section_notes and "N2 " in section_notes  # its notes only
@@ -243,6 +246,50 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     assert [s["dropped"] for s in page["sentences"]][
         -1
     ] == "repeats an earlier sentence"
+
+
+def test_a_dropped_sentence_is_rewritten_once_and_checked_again():
+    from src.engine.written_page import Written, page_notes
+    from src.engine.written_revise import Revisions, revise
+
+    notes = page_notes(_city())
+    bad = Written("Police and Interpol arrested Tom Vale in 2004.", [2], "Arrests", 1)
+    bad.dropped = "not in its notes: Interpol"
+    seen = []
+
+    def ask(msgs, model, max_tokens):
+        seen.append(model)
+        if model is Revisions:
+            assert "Problem: not in its notes: Interpol" in msgs[1]["content"]
+            return Revisions.model_validate({"revisions": [
+                {"sentence": 1, "starts_with": "Police and Interpol",
+                 "text": "Police arrested Tom Vale in Port Elm in 2004."}]})  # fmt: skip
+        return SentenceChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": "Police arrested Tom", "problem": "none",
+             "verdict": "supported"}]})  # fmt: skip
+
+    report = {}
+    out = revise([bad], notes, "Port Elm", ask, report)
+    assert [w.text for w in out][1] == "Police arrested Tom Vale in Port Elm in 2004."
+    assert out[1].revised == bad.text and not out[1].dropped
+    assert out[1].check == "supported" and seen == [Revisions, SentenceChecks]
+    assert (report["revised"], report["revised_kept"]) == (1, 1)
+
+
+def test_an_opening_summary_is_checked_against_the_sections():
+    from src.engine.written_page import Written, summary_check
+
+    notes = page_notes(_city())
+    written = [
+        Written("Port Elm is a harbour city.", [1]),
+        Written("Police made arrests there in 2004 and 2005.", [], summary=True),
+        Written("The entry covers its arrests.", [2], summary=True),
+        Written("Police arrested Tom Vale there in March 2004.", [2], "Arrests", 1),
+        Written("Ann Roe was arrested in May 2005.", [3], "Arrests", 1),
+    ]
+    summary_check(written, notes, "Port Elm")
+    assert written[1].check == "summary" and written[1].notes == [2, 3]
+    assert written[2].dropped == "talks about the page"
 
 
 def test_long_notes_are_condensed_into_facts_that_keep_their_notes(monkeypatch):
@@ -303,3 +350,29 @@ def test_the_reader_shows_the_written_page_first_and_its_notes_in_the_panel(
         "Notes behind"
         not in client.get(f"/panel?t=people&k=Yusuf%20Qadir&a={A1}&c=1").text
     )
+
+
+def test_counts_from_different_months_and_false_repeats_are_caught():
+    from src.engine.written_page import page_notes
+    from src.engine.written_plan import (
+        Conflict,
+        LeftOut,
+        Plan,
+        PlanPart,
+        clean_conflicts,
+        restore_repeats,
+    )
+
+    counts = Conflict(about="prisoners", one_side="40 prisoners", one_notes=[1],
+                      other_side="41 captives", other_notes=[2])  # fmt: skip
+    dates = {1: "2018-10-02", 2: "2018-02-10"}
+    assert clean_conflicts([counts], {1, 2}, dates) == []
+    assert (
+        len(clean_conflicts([counts, counts], {1, 2}, {})) == 1
+    )  # same month: kept once
+    notes = {n.n: n for n in page_notes(_city())}
+    plan = Plan(identity="", why_it_matters="", opening_notes=[],
+                parts=[PlanPart(heading="Arrests", covers="", notes=[2])],
+                left_out=[LeftOut(note=3, why="repeats 2")])  # fmt: skip
+    restore_repeats(plan, notes, "Port Elm")  # note 3 names Ann Roe, note 2 does not
+    assert plan.parts[0].notes == [2, 3] and plan.left_out == []
