@@ -70,7 +70,8 @@ Write the section "{heading}" ({covers}) from its numbered notes below.
 
 Rules:
 - Write as a careful historian for a general reader: plain, neutral words, \
-with the dates in the sentences, in date order. Tell it in order, joining related facts: \
+with the dates in the sentences (the month as well as the year when the \
+note gives it), in date order. Tell it in order, joining related facts: \
 several similar facts become one sentence or one paragraph, not one \
 sentence each. Use short paragraphs, each about one thing.
 - Use only what the notes say. Never add a name, number, date, place, \

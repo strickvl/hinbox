@@ -73,6 +73,7 @@ _MONTHS = (
     "november december jan feb mar apr jun jul aug sep sept oct nov dec"
 ).split()
 _NUMBER = re.compile(r"\d[\d,.]*\d|\d")
+_ISO = re.compile(r"\b((?:19|20)\d\d)-\d\d-\d\d\b")
 _CAP = re.compile(r"\b[A-Z][\w'’-]*")
 # Words that can start a sentence or a clause without being a name
 _COMMON = set(
@@ -110,7 +111,10 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
     one of the notes' words shares its first five letters ("Pakistani" for
     "Pakistan")."""
     hay = _fold(" ".join(sources) + " " + name)
-    digits = hay.replace(",", "")
+    # Whole numbers only, and an article's date only as its year: on 21 Nov
+    # a Jakarta fill's "14 deaths" (10 dead plus three wounded, added up)
+    # passed because "14" was inside another number of its notes
+    digits = set(_NUMBER.findall(_ISO.sub(lambda m: m.group(1), hay.replace(",", ""))))
     words = set(re.findall(r"[\w']+", hay))
     words |= {w[:-2] for w in words if w.endswith("'s")}
     stems = {w[:5] for w in words if len(w) >= 5}
@@ -130,7 +134,7 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
 
     missing = []
     for num in _NUMBER.findall(sentence):
-        if num.replace(",", "").rstrip(".") not in digits:
+        if num.replace(",", "").rstrip(".") not in {d.rstrip(".") for d in digits}:
             missing.append(num)
     for m in _CAP.finditer(sentence):
         tok = m.group(0)
@@ -292,6 +296,7 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
     seen: List[set] = []
     section: Dict[str, Tuple[set, set]] = {}
     nums_said: set = set()
+    mine: Dict[str, List[Tuple[set, set]]] = {}
     for w in written:
         if w.dropped or not w.section:
             continue
@@ -304,10 +309,18 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
         )
         # A number or date not said yet makes it new (Qwen's Sept. 11, 2002
         # capture of bin Attash was dropped as a repeat of his April 2003 one)
-        if (again or told) and nums <= nums_said:
+        # The same numbers as one earlier sentence of its section, most of
+        # its words too: round 18 told Bin Atef's January 2016 transfer and
+        # the Pentagon's age for him twice in a row in other words
+        twice = len(nums) >= 2 and any(
+            nums <= n_old and len(words & w_old) >= 0.6 * len(words)
+            for w_old, n_old in mine.get(w.section, [])
+        )
+        if (again or told or twice) and nums <= nums_said:
             w.dropped = "repeats an earlier sentence"
             continue
         seen.append(words)
+        mine.setdefault(w.section, []).append((words, nums))
         said |= words
         cited |= set(w.notes)
         nums_said |= nums

@@ -156,7 +156,8 @@ Write a sentence or two for each of those notes, so the section tells \
 what they say; each goes into the section at its place in date order, \
 after what happened before it, so it must read well there on its own \
 (name people in full rather than "he" or "his"). Use only what \
-the notes say, keep who said what, say when the event or statement was \
+the notes say, keep who said what, never add up or swap numbers (the \
+dead and the wounded are different counts), say when the event or statement was \
 (month and year; never "a 2016 report said" or "a news account \
 described"), and don't repeat what the section already says. Leave out a note that only comments or judges and \
 gives no fact ("this highlights ...", "the city represents ..."). A note \
@@ -188,7 +189,7 @@ def fill_unused(
     plan put Daniel Pearl's killing into an arrests part in 3 runs of 4 and
     the section writer left it out, with nothing to say so."""
     from src.engine.written_checks import drop_repeats
-    from src.engine.written_groups import place_after
+    from src.engine.written_groups import place_after, sentence_when
     from src.engine.written_page import (
         close_quotes,
         notes_block,
@@ -241,9 +242,10 @@ def fill_unused(
         # Each into its place in the section's date order, after the sentence
         # telling the note before it; new sections at the section's end
         order = {n: i for i, n in enumerate(part.get("notes") or [])}
+        when = sentence_when(by_n)
         end = max((w.para for w in mine), default=0) + 1000
         for w in [a for a in added if a.section == heading]:
-            at = place_after(out, heading, w.notes, order)
+            at = place_after(out, heading, w, order, when)
             w.para = (
                 out[at].para
                 if at >= 0 and out[at].section == heading

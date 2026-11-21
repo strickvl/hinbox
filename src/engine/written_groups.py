@@ -13,23 +13,52 @@ that order. A filled sentence goes after the last kept sentence of its
 section that tells an earlier note, not at the end.
 """
 
-from typing import Any, Dict, List, Sequence, Tuple
+import re
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 GROUP_MAX = 3
 
 
-def event_when(note: Any) -> Tuple[int, int]:
-    """(year, month) the note's text names first, else its article's date,
-    else (9999, 0) so undated notes go last."""
-    from src.engine.written_checks import _MONTH_N, _WHEN
+_MONTH_RE = (
+    r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+)
+# "September 11, 2002", "Sept. 10-11, 2002", "April 2003", "2002": round 18
+# read "September 11, 2002" as 2002 with no month, so on every Karachi draw
+# bin Attash's September 2002 capture came before Hamdoun's February arrest
+_DATE = re.compile(
+    rf"\b(?:{_MONTH_RE}\.?\s+(?:(\d{{1,2}})(?:\s*[-–]\s*\d{{1,2}})?,?\s+)?)?"
+    r"((?:19|20)\d\d)\b",
+    re.IGNORECASE,
+)
+_MONTH_OF = {
+    m: i
+    for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)
+}
 
-    m = _WHEN.search(note.text)
-    if m:
-        return int(m.group(2)), _MONTH_N.get((m.group(1) or "").lower(), 0)
+When = Tuple[int, int, int]
+
+
+def text_when(text: str) -> Optional[When]:
+    """(year, month, day) of the first date ``text`` names, 0 for an
+    unnamed month or day; None when it names no year."""
+    m = _DATE.search(text or "")
+    if not m:
+        return None
+    month = _MONTH_OF.get((m.group(1) or "")[:3].lower(), 0)
+    return int(m.group(3)), month, int(m.group(2) or 0)
+
+
+def event_when(note: Any) -> When:
+    """The date the note's text names first, else its article's date, else
+    (9999, 0, 0) so undated notes go last."""
+    found = text_when(note.text)
+    if found:
+        return found
     date = str(note.date or "")
     if len(date) >= 7 and date[:4].isdigit() and date[5:7].isdigit():
-        return int(date[:4]), int(date[5:7])
-    return 9999, 0
+        return int(date[:4]), int(date[5:7]), 0
+    return 9999, 0, 0
 
 
 def group_notes(notes: Sequence[Any], name: str) -> List[List[Any]]:
@@ -43,7 +72,8 @@ def group_notes(notes: Sequence[Any], name: str) -> List[List[Any]]:
     for n in ordered:
         if groups and len(groups[-1]) < GROUP_MAX:
             last = groups[-1]
-            same_month = event_when(n) == event_when(last[-1]) and event_when(n)[1]
+            when, before = event_when(n), event_when(last[-1])
+            same_month = when[:2] == before[:2] and when[1]
             people = set().union(*(_surnames(x.text, name) for x in last))
             if same_month or (_surnames(n.text, name) & people):
                 last.append(n)
@@ -65,24 +95,46 @@ def groups_block(groups: Sequence[Sequence[Any]], block: Any) -> str:
 
 
 def place_after(
-    out: List[Any], section: str, notes: Sequence[int], order: Dict[int, int]
-) -> int:
-    """Index in ``out`` after which a sentence citing ``notes`` goes: after
-    the last kept sentence of ``section`` telling only earlier notes of the
-    section's order; before its first sentence when none does; at the end of
-    the section when its notes have no place in the order."""
-    mine = [i for i, w in enumerate(out) if w.section == section]
+    out: List[Any], section: str, w: Any, order: Dict[int, int],
+    when: Callable[[Any], When],
+) -> int:  # fmt: skip
+    """Index in ``out`` after which the filled sentence ``w`` goes in
+    ``section``. A sentence naming a date goes after the last kept sentence
+    there dated no later (round 18 put a June 2017 fill on Bin Atef's page
+    before his 2009 clearance, by the note before it in the list); one
+    naming none goes after the last kept sentence telling only earlier
+    notes of the section's ``order``. Before the section's first sentence
+    when none fits; at its end when its notes have no place in the order."""
+    mine = [i for i, x in enumerate(out) if x.section == section]
     if not mine:
         return len(out) - 1
-    keys = [order[n] for n in notes if n in order]
+    kept = [i for i in mine if not out[i].dropped]
+    own = text_when(w.text)
+    if own:
+        before = [i for i in kept if when(out[i]) <= own]
+        return before[-1] if before else mine[0] - 1
+    keys = [order[n] for n in w.notes if n in order]
     if not keys:
         return mine[-1]
     key = min(keys)
     before = [
         i
-        for i in mine
-        if not out[i].dropped
-        and any(n in order for n in out[i].notes)
+        for i in kept
+        if any(n in order for n in out[i].notes)
         and max(order[n] for n in out[i].notes if n in order) < key
     ]
     return before[-1] if before else mine[0] - 1
+
+
+def sentence_when(by_n: Dict[int, Any]) -> Callable[[Any], When]:
+    """A written sentence's date: the first it names, else its notes'
+    earliest."""
+
+    def when(w: Any) -> When:
+        own = text_when(w.text)
+        if own:
+            return own
+        dates = [event_when(by_n[n]) for n in w.notes if n in by_n]
+        return min(dates) if dates else (9999, 0, 0)
+
+    return when

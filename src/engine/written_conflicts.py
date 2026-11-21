@@ -34,7 +34,8 @@ them the Red Cross, give April 29, 2003."). Use only what the notes say; \
 don't judge which is right. Every sentence lists the numbers of the notes \
 it uses in its notes field; never write note numbers into the sentence \
 itself. If the notes do not really disagree (two different people or \
-events, or both can be true), give an empty list."""
+events, counts of different things such as the dead and the wounded, or \
+both can be true), give an empty list."""
 
 
 def tells(w: Written, c: Dict[str, Any]) -> bool:
