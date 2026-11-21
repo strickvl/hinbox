@@ -118,14 +118,18 @@ def code_fixes(
     return profile, fixed
 
 
-def model_problems(profile: Optional[Dict[str, Any]]) -> List[str]:
-    """Problems only a model call can fix: no usable text, or no headings."""
+def model_problems(
+    profile: Optional[Dict[str, Any]], want_headings: bool = True
+) -> List[str]:
+    """Problems only a model call can fix: no usable text, or no headings
+    (``want_headings`` False: the profile is kept flat, see
+    ``section_reorganise.py``)."""
     if profile is None:
         return ["unparseable"]
     text = str(profile.get("text") or "")
     if len(text.strip()) < PROFILE_QC_MIN_TEXT_LENGTH:
         return ["too_short"]
-    if not HEADING_RE.search(text):
+    if want_headings and not HEADING_RE.search(text):
         return ["no_headings"]
     return []
 
@@ -153,6 +157,7 @@ def create_with_checks(
     generation_messages: List[Dict[str, Any]],
     article_id: str,
     entity_type: str,
+    want_headings: bool = True,
 ) -> Tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
     """Draft once, fix in code, and make at most one repair call.
 
@@ -164,7 +169,7 @@ def create_with_checks(
     profile = parse_draft(draft(generation_messages))
     history: List[Dict[str, Any]] = []
     calls = 1
-    problems = model_problems(profile)
+    problems = model_problems(profile, want_headings)
     if problems and problems[0] in ("unparseable", "too_short"):
         retry = generation_messages + [
             {
@@ -177,7 +182,7 @@ def create_with_checks(
             profile = parse_draft(draft(retry)) or profile
         calls += 1
         history.append({"iteration": 1, "check": "code", "problems": problems})
-        problems = model_problems(profile)
+        problems = model_problems(profile, want_headings)
     if profile is None:
         return None, history
     profile, fixed = code_fixes(profile, article_id, entity_type)
@@ -200,7 +205,7 @@ def create_with_checks(
             fixed.append("headings_added")
         else:
             fixed.append("headings_repair_refused")
-    remaining = model_problems(profile)
+    remaining = model_problems(profile, want_headings)
     history.append(
         {
             "iteration": len(history) + 1,

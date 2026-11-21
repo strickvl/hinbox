@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from src.engine import VersionedProfile, create_profile, update_profile
 from src.engine.profiles import EntityProfile, _update_profile_internal
+from src.engine.section_reorganise import flatten_text
 from src.utils.file_ops import read_entities_from_file, write_entities_table
 
 GOOD_TEXT = (
@@ -134,7 +135,8 @@ class TestEditUpdateIsTheDefault:
             profile, _, _ = update_profile(
                 "person", "Alice Smith", old, VersionedProfile(), "text", "art-002"
             )
-        assert profile["text"] == old["text"]
+        # The page is short, so the heading its draft made up is dropped
+        assert profile["text"] == flatten_text(old["text"])
         assert profile["sources"] == ["art-001"]
 
     def test_unknown_approach_is_rejected(self):

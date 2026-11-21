@@ -18,6 +18,7 @@ from src.constants import (
     PROFILE_UPDATE_APPROACH,
 )
 from src.engine.profile_create import CREATE_APPROACHES, create_with_checks
+from src.engine.section_reorganise import flat_profile, reorganise_enabled
 from src.exceptions import (
     ProfileGenerationError,
     ProfileUpdateError,
@@ -234,6 +235,7 @@ def generate_profile_with_reflection(
             generation_messages=generation_messages,
             article_id=article_id,
             entity_type=entity_type,
+            want_headings=not reorganise_enabled(entity_type),
         )
         final_text = json.dumps(profile) if profile else ""
         return _finish_generated_profile(
@@ -673,57 +675,15 @@ def _split_sections(
     domain: str = "guantanamo",
     old_text: Optional[str] = None,
 ) -> Dict:
-    """File an update's new pieces under their starter headings when the
-    profile was reorganised before (``section_place.py``, given ``old_text``).
-    Give a long profile its kind's starter headings once when
-    ``HINBOX_SECTION_REORGANISE`` is on (``section_reorganise.py``) and move
-    an over-long opening's facts into their sections (``opening_sort.py``), then split
-    over-long sections into sub-sections when ``HINBOX_SECTION_SPLIT`` is on
-    (``section_split.py``); the update's model answers both."""
-    from src.engine.opening_sort import sort_opening
-    from src.engine.section_reorganise import reorganise_enabled, reorganise_profile
-    from src.engine.section_split import split_enabled, split_profile
+    """Starter headings, placement and section splits (``section_steps.py``),
+    answered by the update's model."""
+    from src.engine.section_steps import run_section_steps
 
-    if not profile:
-        return profile
     local = _resolve_mode(model_type, model) == GenerationMode.LOCAL
-    if reorganise_enabled(entity_type, local):
-        if old_text is not None:
-            from src.engine.section_place import place_profile
-
-            profile, report = place_profile(
-                profile, old_text, entity_type, entity_name, kind, domain,
-                _prompt_model(model_type, model), local,
-            )  # fmt: skip
-            annotate(section_place=report and report["status"])
-            from src.engine.section_subplace import subplace_profile
-
-            profile, report = subplace_profile(
-                profile, old_text, entity_type, entity_name,
-                _prompt_model(model_type, model), local,
-            )  # fmt: skip
-            annotate(
-                section_subplace=report and report["status"],
-                section_subplace_moved=report and sum(report.get("moved", {}).values()),
-                section_subplace_refused=report and report.get("refused"),
-            )
-        profile, report = reorganise_profile(
-            profile, entity_type, entity_name, kind, domain,
-            _prompt_model(model_type, model), local,
-        )  # fmt: skip
-        annotate(section_reorganise=report and report["status"])
-        profile, report = sort_opening(
-            profile, entity_type, entity_name, kind, domain,
-            _prompt_model(model_type, model), local,
-        )  # fmt: skip
-        annotate(opening_sort=report and report["status"])
-    if not split_enabled(entity_type, local):
-        return profile
-    split, reports = split_profile(
-        profile, entity_type, entity_name, _prompt_model(model_type, model), local
-    )
-    annotate(section_splits=[f"{r['section']}: {r['status']}" for r in reports] or None)
-    return split
+    return run_section_steps(
+        profile, entity_type, entity_name, _prompt_model(model_type, model),
+        local, kind, domain, old_text,
+    )  # fmt: skip
 
 
 @timed("profile.update")
@@ -862,6 +822,8 @@ def create_profile(
 
         # Extract the actual text from nested/parsed fields before logging
         profile_dict = extract_profile_text(profile_dict)
+        if reorganise_enabled(entity_type):  # flat until an update sorts it
+            profile_dict = flat_profile(profile_dict)
         profile_dict = _apply_profile_qc(profile_dict, entity_name)
         _annotate_profile(profile_dict)
 

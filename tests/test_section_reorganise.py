@@ -10,6 +10,8 @@ from typing import Any, Dict, List
 
 from src.engine import section_reorganise
 from src.engine.section_reorganise import (
+    flat_profile,
+    flatten_text,
     plan_sections,
     reorganise_profile,
     reorganise_text,
@@ -162,7 +164,8 @@ def test_a_failed_call_keeps_the_profile_and_is_tried_again(monkeypatch):
         profile, "person", "KSM", "detainee", "guantanamo", "m", False,
         ask=_asker(RuntimeError("no answer"), []),
     )  # fmt: skip
-    assert out is profile and report["status"] == "failed"
+    assert report["status"] == "failed" and "reorganised" not in out
+    assert out["text"] == flatten_text(TEXT)  # flat until it is sorted
     out, report = reorganise_profile(
         profile, "person", "KSM", "detainee", "guantanamo", "m", False,
         ask=_asker(GOOD, []),
@@ -424,7 +427,7 @@ def test_a_heading_marked_not_in_the_profile_yet_still_names_the_starter():
 def test_single_newline_paragraphs_are_paragraphs_too(monkeypatch):
     # r8: model-written profiles put one newline between paragraphs, so each
     # section was one blank-line block; the reorganise must still see lines
-    monkeypatch.setattr(section_reorganise, "MIN_PARAGRAPHS", 2)
+    monkeypatch.setattr(section_reorganise, "MIN_PIECES", 2)
     text = (
         f"{OPENING}\n\n### Background\n" + "\n".join(MIXED_PARAS[:3])
         + "\n\n### Legal Proceedings\n" + "\n".join(MIXED_PARAS[3:]) + "\n"
@@ -450,21 +453,22 @@ def test_a_sentence_wrapped_over_two_lines_stays_one_piece():
 
 
 def test_a_refused_reorganise_is_asked_again_once_the_profile_grows(monkeypatch):
-    # Local replay: al Nashiri's was refused once ("1 sections") and the
-    # profile stayed flat for 29 more articles
+    # Local replay: al Nashiri's was refused once and the profile stayed
+    # flat for 29 more articles
     monkeypatch.setattr(section_reorganise, "REORGANISE_CHARS", 100)
     one = SectionSplit(subsections=[
-        SubSection(heading="Military commission or legal case", paragraphs=list(range(1, 8)))
+        SubSection(heading="Military commission or legal case", paragraphs=[1, 2])
     ])  # fmt: skip
+    flat = flatten_text(TEXT)
     seen: List[Any] = []
     args = ("person", "KSM", "detainee", "guantanamo", "m", False)
     out, report = reorganise_profile({"text": TEXT}, *args, ask=_asker(one, seen))
-    assert report["reason"] == "1 sections" and out["reorganised"] == "refused"
-    assert out["reorganise_refused_chars"] == len(TEXT) and out["text"] == TEXT
+    assert "paragraphs placed" in report["reason"] and out["reorganised"] == "refused"
+    assert out["reorganise_refused_chars"] == len(flat) and out["text"] == flat
     same, report = reorganise_profile(out, *args, ask=_asker(GOOD, seen))
     assert same is out and report is None and len(seen) == 1
     # Uncited text at the end isn't numbered, so GOOD still places every piece
-    grown = {**out, "text": TEXT + "\nHe wrote poems in prison." * 20}
+    grown = {**out, "text": flat + "\nHe wrote poems in prison." * 20}
     done, report = reorganise_profile(grown, *args, ask=_asker(GOOD, seen))
     assert len(seen) == 2 and done["reorganised"] == "done"
     assert "reorganise_refused_chars" not in done
@@ -489,3 +493,65 @@ def test_lines_moved_into_their_own_paragraphs_are_the_same_sentences():
     lines = "He was captured.^[a1]\nal Nashiri was transferred.^[a2]\n2003 was the year.^[a3]"
     assert _sentences(lines) == _sentences(lines.replace("\n", "\n\n"))
     assert _sentences(lines) != _sentences(lines.replace("2003", "2004"))
+
+
+def test_a_short_profile_loses_its_made_up_headings_without_a_model_call():
+    # 15 Nov runs: 9 in 10 written profiles were under 8,000 characters and
+    # kept headings such as "Role in the Article" from their first draft
+    text = "Camp Echo is a lock-up.^[a1]\n### Role in the Article\nLawyers meet there.^[a2]"
+    seen: List[Any] = []
+    out, report = reorganise_profile(
+        {"text": text}, "location", "Camp Echo", None, "guantanamo", "m", True,
+        ask=_asker(GOOD, seen),
+    )  # fmt: skip
+    assert out["text"] == "Camp Echo is a lock-up.^[a1]\n\nLawyers meet there.^[a2]"
+    assert report is None and not seen and "reorganised" not in out
+    assert _sentences(out["text"]) == _sentences(text)
+
+
+def test_flat_profile_leaves_sorted_and_fact_list_profiles_alone():
+    from src.engine.fact_list import FACT_ROWS_KEY
+
+    text = "### Background\n\nHe was born in 1964.^[a0]\n"
+    for profile in (
+        {"text": text, "reorganised": "done"},
+        {"text": text, FACT_ROWS_KEY: "[]"},
+    ):
+        assert flat_profile(profile) is profile
+    assert flat_profile({"text": text})["text"] == "He was born in 1964.^[a0]\n"
+
+
+def test_a_flat_profile_keeps_its_first_paragraph_as_the_opening():
+    flat = flatten_text(TEXT)
+    assert "###" not in flat and flat.startswith(OPENING)
+    new, report = reorganise_text(
+        flat, "person", "KSM", STARTER, _asker(GOOD, []), min_chars=100
+    )
+    assert report["status"] == "done"
+    assert new.startswith(OPENING + "\n\n### ")
+
+
+def test_one_heading_for_every_piece_is_accepted():
+    # Bench, 21 Nov: Qwen filed all of a defense lawyer's 7,722 characters
+    # under "Cases and decisions"; refused, the page stayed without sections
+    one = SectionSplit(subsections=[
+        SubSection(heading="Military commission or legal case", paragraphs=list(range(1, 8)))
+    ])  # fmt: skip
+    new, report = reorganise_text(
+        TEXT, "person", "KSM", STARTER, _asker(one, []), min_chars=100
+    )
+    assert report["status"] == "done"
+    assert new.count("### ") == 1 and "### Military commission or legal case" in new
+
+
+def test_which_tables_get_starter_headings(monkeypatch):
+    from src.engine.section_reorganise import reorganise_enabled
+
+    monkeypatch.delenv("HINBOX_SECTION_REORGANISE", raising=False)
+    for local in (False, True):
+        assert reorganise_enabled("person", local)
+        assert reorganise_enabled("organizations", local)
+        assert reorganise_enabled("location", local)
+        assert not reorganise_enabled("event", local)
+    monkeypatch.setenv("HINBOX_SECTION_REORGANISE", "on")
+    assert reorganise_enabled("event")
