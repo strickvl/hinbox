@@ -218,6 +218,46 @@ def test_entity_page_shows_trust_line_and_sections(client):
     assert "2003-04-02" in html  # dates from epoch seconds
 
 
+def test_off_topic_sentences_are_hidden_behind_a_toggle(client, tmp_path):
+    import json
+    import time
+
+    from src.utils.corrections import sentence_key
+
+    html = client.get("/people/Yusuf%20Qadir").text
+    assert 'id="show-off"' not in html  # no tags, nothing hidden
+    dispute = (
+        "Sources disagree on the year he arrived: 2006 in one report, 2007 in another."
+    )
+    tags = {
+        sentence_key("He was force-fed for several weeks."): {"verdict": "other"},
+        sentence_key(dispute): {"verdict": "other"},
+        sentence_key("Yusuf Qadir is a made-up detainee held at the base."): {
+            "verdict": "about"
+        },
+    }
+    person = {
+        "name": "Yusuf Qadir",
+        "type": "detainee",
+        "articles": _arts(A1, A2, A3),
+        "profile": {"text": TEXT, "sources": [A1, A2, A3],
+                    "note_relevance_json": json.dumps(tags)},
+        "profile_grounding": _report(),
+    }  # fmt: skip
+    time.sleep(0.01)  # the store reloads when the file's time changes
+    write_entities_table("people", [person], str(tmp_path / "entities"))
+    html = client.get("/people/Yusuf%20Qadir").text
+    assert (
+        'id="show-off"' in html and "2 sentences on this page are mainly about" in html
+    )
+    assert 'class="s v-not_supported off" id="claim-3"' in html
+    # A dispute about something else leaves the "sources disagree" list
+    assert 'id="disagree"' not in html
+    # Claim numbers are unchanged, so the panel still finds the sentence
+    panel = client.get(f"/panel?t=people&k=Yusuf%20Qadir&a={A3}&c=3").text
+    assert "force-fed" in panel
+
+
 def test_old_version_has_no_marks(client):
     html = client.get("/people/Yusuf%20Qadir?version=1").text
     assert "version 1</b> of 2" in html

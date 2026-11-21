@@ -102,6 +102,15 @@ h1 { font-family: var(--serif); font-size: 38px; line-height: 1.12; margin: 4px 
 .prose p, .prose ul, .prose ol { margin: 0 0 14px; }
 .prose li { margin-bottom: 6px; }
 .s { border-radius: 2px; transition: background .15s; scroll-margin-top: 80px; }
+/* Sentences tagged as mainly about something else: hidden until the reader ticks the box (no script needed) */
+.off-toggle { position: absolute; opacity: 0; pointer-events: none; }
+.off-note label { cursor: pointer; }
+.off-note .off-show, .off-note .off-hide { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.off-toggle:focus-visible + .off-note { outline: 2px solid var(--primary); outline-offset: 2px; }
+.off-toggle:not(:checked) + .off-note .off-hide, .off-toggle:checked + .off-note .off-show { display: none; }
+.off-toggle:not(:checked) ~ .prose :is(.s.off, sup.c.off, .op) { display: none; }
+.off-toggle:not(:checked) ~ .prose :is(p, li):has(.s.off):not(:has(.s:not(.off))) { display: none; }
+.off-toggle:checked ~ .prose .s.off { color: var(--ink-3); }
 .v-partial.s { text-decoration: underline wavy var(--amber); text-decoration-thickness: 1px; text-underline-offset: 5px; text-decoration-skip-ink: none; }
 .v-not_supported.s { text-decoration: underline wavy var(--red); text-decoration-thickness: 1px; text-underline-offset: 5px; text-decoration-skip-ink: none; }
 .v-unchecked.s, .v-unclear.s, .v-missing_source.s { text-decoration: underline dotted var(--grey); text-decoration-thickness: 2px; text-underline-offset: 5px; }

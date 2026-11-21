@@ -475,6 +475,7 @@ def edit_profile(
     from src.engine.corrections_pass import guard_corrections
     from src.engine.edit_guards import guard_edits
     from src.engine.section_routing import routing_note, routing_sections
+    from src.utils.note_tags import off_topic_keys
 
     local = (model or "").startswith("ollama/") if local is None else local
     generate = local_generation if local else cloud_generation
@@ -508,6 +509,7 @@ def edit_profile(
             dates.get(article_id),
             dates,
             ask=_dispute_asker(generate, model, entity_type, entity_name),
+            off_topic=off_topic_keys(existing_profile),
         )
         if guard
         else (response.edits, {})

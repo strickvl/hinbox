@@ -65,6 +65,11 @@
   {% endif %}
 
   <main style="min-width:0">
+    {% set n_off = rendered.off_count() if rendered else 0 %}
+    {% if n_off %}
+    <input type="checkbox" id="show-off" class="off-toggle">
+    <p class="banner off-note"><label for="show-off">{{ n_off }} sentence{{ 's' if n_off != 1 }} on this page {{ 'are' if n_off != 1 else 'is' }} mainly about other subjects, so {{ 'they are' if n_off != 1 else 'it is' }} hidden. <span class="off-show">Show {{ 'them' if n_off != 1 else 'it' }}</span><span class="off-hide">Hide {{ 'them' if n_off != 1 else 'it' }} again</span></label></p>
+    {% endif %}
     <article class="prose" id="prose">
       {% if body %}{{ body }}{% else %}<p class="empty">No profile text yet.</p>{% endif %}
     </article>

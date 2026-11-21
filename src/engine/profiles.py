@@ -36,6 +36,7 @@ from src.utils.llm import (
     text_generation,
 )
 from src.utils.outcomes import PhaseOutcome
+from src.utils.profile_text import repair_profile
 from src.utils.profiles import extract_profile_text
 from src.utils.quality_controls import run_profile_qc
 from src.utils.step_timing import timed
@@ -97,6 +98,7 @@ def _apply_profile_qc(profile: Optional[Dict], entity_name: str) -> Optional[Dic
     """
     if not isinstance(profile, dict):
         return profile
+    profile, _ = repair_profile(profile)  # escaped newlines, doubled markers
     profile, repaired = repair_profile_citations(profile)
     profile, report = run_profile_qc(profile=profile)
     flags = list(report.flags) + (["citation_ids_repaired"] if repaired else [])
