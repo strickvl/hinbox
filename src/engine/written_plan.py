@@ -541,6 +541,24 @@ def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
             plan.left_out.remove(o)
 
 
+def restore_orphans(plan: Plan, by_n: Dict[int, Any]) -> None:
+    """A note the plan neither put in a part nor left out goes into the part
+    sharing most words with it. On 21 Nov one Luna plan of the Karachi page
+    dropped Suhayl al Sharabi's capture this way, and as it was in no part
+    and not in the list of notes left out, no later stage noticed."""
+    from src.engine.written_checks import _content
+
+    placed = {n for p in plan.parts for n in p.notes} | {o.note for o in plan.left_out}
+    placed |= set(opening_notes(plan))  # the opening tells them (an "Overview" part's)
+    for n, note in by_n.items():
+        if n in placed or not plan.parts:
+            continue
+        words = _content(note.text)
+        best = max(plan.parts, key=lambda p: sum(
+            len(words & _content(by_n[k].text)) for k in p.notes if k in by_n))  # fmt: skip
+        best.notes.append(n)
+
+
 def write_planned(
     notes: Sequence[Any], name: str, what: str, headings: Sequence[Tuple[str, str]],
     words: int, ask: Any, report: Dict[str, Any], block: Any, page_model: Any,
@@ -565,6 +583,7 @@ def write_planned(
         return None
     restore_repeats(plan, by_n, name)
     restore_on_topic(plan, by_n, name, what)
+    restore_orphans(plan, by_n)
     dates = {n.n: n.date for n in notes}
     for part in plan.parts:
         mine = [by_n[n] for n in part.notes]

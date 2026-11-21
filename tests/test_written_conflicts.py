@@ -235,3 +235,36 @@ def test_the_old_profiles_disagreement_sentences_are_not_notes():
         "One article identifies the man as Lee Moss rather than Tom Vale."
     )
     assert not _OLD_DISPUTE.search("Police arrested Tom Vale rather than Lee Moss.")
+
+
+def test_notes_the_plan_forgot_go_back_in():
+    from src.engine.written_plan import restore_orphans
+
+    by_n = {
+        1: _note(1, "Port Elm is a harbour city."),
+        2: _note(2, "Police captured Tom Vale in Port Elm in March 2004."),
+        3: _note(3, "Police arrested Tom Vale again in May 2005."),
+        4: _note(4, "Port Elm's harbour has two piers."),
+    }
+    plan = Plan(
+        identity="", why_it_matters="", opening_notes=[1],
+        parts=[PlanPart(heading="City", covers="", notes=[1]),
+               PlanPart(heading="Arrests", covers="", notes=[2])],
+        left_out=[LeftOut(note=4, why="no fact")],
+    )  # fmt: skip
+    restore_orphans(plan, by_n)
+    assert plan.parts[1].notes == [2, 3] and plan.parts[0].notes == [1]
+
+
+def test_two_accounts_with_different_counts_are_not_unnarrated_and_quotes_close():
+    from src.engine.written_conflicts import _two_counts
+    from src.engine.written_page import strip_refs
+
+    assert _two_counts(
+        "It killed 11 and injured more than 100, one report said; another reported more than 80."
+    )
+    assert not _two_counts("In May 2005, a news account said police arrested Tom Vale.")
+    assert (
+        strip_refs("He said to “let them write it down.")[0]
+        == "He said to “let them write it down.”"
+    )

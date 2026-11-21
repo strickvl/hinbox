@@ -17,6 +17,7 @@ citing one of its notes.
 get one rewrite, as the revise stage does for any dropped sentence.
 """
 
+import re
 from typing import Any, Dict, List, Sequence
 
 from src.engine.written_checks import NARRATES, code_check, model_check
@@ -151,6 +152,21 @@ def drop_one_sided(written: List[Written], conflicts: Sequence[Dict[str, Any]]) 
                 w.dropped = "states one side of a disagreement the section tells"
 
 
+def _two_counts(text: str) -> bool:
+    """ "one report says ... more than 100 wounded; another reported ...
+    more than 80": two accounts giving different numbers, a disagreement
+    to keep, not filler to cut (GPT-6 Luna's Jakarta page, 21 Nov)."""
+    from src.engine.written_checks import _numbers
+
+    halves = re.split(
+        r"\b(?:another|a second|a later|other)\b", text, maxsplit=1, flags=re.I
+    )
+    if len(halves) < 2:
+        return False
+    one, two = _numbers(halves[0]), _numbers(halves[1])
+    return bool(one and two and one != two)
+
+
 def unnarrate(
     written: List[Written], notes: Sequence[Note], name: str,
     conflicts: Sequence[Dict[str, Any]], ask: Ask, report: Dict[str, Any],
@@ -163,7 +179,7 @@ def unnarrate(
     for w in written:
         if w.dropped or not w.section or not NARRATES.search(w.text):
             continue
-        if any(tells(w, c) for c in conflicts):
+        if any(tells(w, c) for c in conflicts) or _two_counts(w.text):
             continue
         w.dropped = (
             'check: it narrates the sources ("a news account described", '

@@ -412,7 +412,18 @@ def strip_refs(text: str, max_n: int = 999) -> Tuple[str, List[int]]:
     out = re.sub(r"\s*\[\d{4}-\d\d-\d\d(?:\s*[;,]\s*\d{4}-\d\d-\d\d)*\]", "", out)
     out = re.sub(r"\s+([.,;:])", r"\1", " ".join(out.split()))
     out = re.sub(r"\.\.$", ".", out)
-    return out, found
+    return close_quotes(out), found
+
+
+def close_quotes(text: str) -> str:
+    """``text`` with an opened quotation closed at its end (GPT-6 Luna's
+    Zaki page, 21 Nov: '... “let out their steam on paper instead of
+    taking it out on the guard force.' and no closing mark)."""
+    if text.count("“") > text.count("”"):
+        return text + "”"
+    if text.count('"') % 2:
+        return text + '"'
+    return text
 
 
 def _brackets(text: str) -> str:

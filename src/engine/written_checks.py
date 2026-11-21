@@ -267,6 +267,17 @@ _ABOUT_PAGE = re.compile(
 )
 
 
+# An opening summary about the sources, not the subject: "Reports described
+# arrests and intelligence raids in Karachi ...; other accounts placed a
+# detainee there" (GPT-6 Luna, 21 Nov)
+_ABOUT_REPORTS = re.compile(
+    r"\b(?:reports|accounts|articles|sources|news accounts)\s+(?:also\s+)?"
+    r"(?:describe|described|say|said|cover|covered|mention|mentioned|place|placed|"
+    r"note|noted|discuss|discussed|detail|detailed)\b",
+    re.IGNORECASE,
+)
+
+
 def summary_check(written: List[Written], notes: Sequence[Note], name: str) -> None:
     """An opening sentence summing up the sections is checked against the
     sections' kept sentences and their notes, not its own notes alone: a
@@ -280,7 +291,7 @@ def summary_check(written: List[Written], notes: Sequence[Note], name: str) -> N
     for w in written:
         if not w.summary or w.dropped:
             continue
-        if _ABOUT_PAGE.search(w.text):
+        if _ABOUT_PAGE.search(w.text) or _ABOUT_REPORTS.search(w.text):
             w.dropped = "talks about the page"
             continue
         words = _content(w.text)
