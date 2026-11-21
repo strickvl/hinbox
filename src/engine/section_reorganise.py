@@ -1,13 +1,19 @@
-"""Give a long flat profile the starter headings of its kind, moving text word for word.
+"""Give a profile the starter headings of its kind, moving text word for word.
 
-Scenario: after 20 articles, Khalid Sheik Mohammed's profile is 8,100
-characters under the two or three headings its first draft made up
-("### Background", "### Legal Proceedings"), with 80% of the text under the
-second. Profiles never gain headings after the first draft, so it stays that
-way however long it grows.
+Scenario: a detainee's profile is 3,544 characters under the headings its
+first draft made up from one article ("### Background / Role / Karachi",
+"### Current Situation"). Profiles never gain headings after the first
+draft, so it keeps them however long it grows. In the 15 Nov 150-article
+runs 9 in 10 written profiles were under 8,000 characters, the size this
+step used to wait for, and each table had 29 to 213 different heading names
+("Role in the Article", "Limits of Available Information").
 
-Once a profile passes ``HINBOX_SECTION_REORGANISE_CHARS`` (default 8,000)
-after an update, it is reorganised once:
+So a profile only ever has its kind's starter headings, or none:
+
+- Up to ``HINBOX_SECTION_REORGANISE_CHARS`` (default 2,500, about 400
+  words) it is flat: code drops the heading lines the draft or an update
+  made up (``flatten_text()``), with no model call.
+- Past that size, after it is created or updated, it is reorganised once:
 
 1. The domain config lists starter headings per entity type and kind
    (``profiles.starter_headings``): a detainee gets Background, Capture and
@@ -15,9 +21,9 @@ after an update, it is reorganised once:
    events and locations get their own lists, or ``default``.
 2. Code numbers the profile's paragraphs with ``section_split._units()``, so
    a piece always ends at a citation and every cited claim keeps its text.
-   Text before the first heading stays on top as the opening when it ends at
-   a citation and is short (``OPENING_CHARS``). The old heading lines are
-   dropped.
+   Text before the first heading (the first paragraph of a flat profile)
+   stays on top as the opening when it ends at a citation and is short
+   (``OPENING_CHARS``). The old heading lines are dropped.
 3. One model call is shown the numbered paragraphs and the starter headings
    (each with what it is for, from the config) and answers only with
    headings and paragraph numbers. It may add a heading
@@ -34,13 +40,16 @@ after an update, it is reorganised once:
 ``profile["reorganised"]`` records the outcome (``done`` or ``refused``), so
 it is done once per entity; a refused answer is asked again once the profile
 has grown 25% past its size then (``reorganise_refused_chars``), and a failed
-call (no answer, prompt too long) on the next update. The section split
-(``section_split.py``) then runs as before on any section still too long.
+call (no answer, prompt too long) on the next update. Until it is done the
+profile stays flat. The section split (``section_split.py``) then runs as
+before on any section still too long.
 
-``HINBOX_SECTION_REORGANISE`` sets which tables this runs for: ``people`` by
-default, ``on`` for every table, ``off``, or a comma list
-(``section_split.tables_enabled()``). Over 8 Luna dev runs reorganised
-person profiles passed 87/96 against 42/48 flat; events 75/96 against 43/48.
+``HINBOX_SECTION_REORGANISE`` sets which tables this runs for: ``people``,
+``organizations`` and ``locations`` by default (``DEFAULT_TABLES``), ``on``
+for every table, ``off``, or a comma list. Events are left out: on 41
+hand-labelled sentences from short event pages local Qwen filed 25 and 28
+under the right heading (Luna 27 and 27), against 24 and 32 of 35 for
+locations (Luna 31 and 30) and 187 to 196 of 204 for people.
 """
 
 import os
@@ -64,11 +73,12 @@ from src.logging_config import get_logger
 logger = get_logger("engine.section_reorganise")
 
 REORGANISE_ENV = "HINBOX_SECTION_REORGANISE"
-REORGANISE_CHARS = int(os.getenv("HINBOX_SECTION_REORGANISE_CHARS", "8000"))
+REORGANISE_CHARS = int(os.getenv("HINBOX_SECTION_REORGANISE_CHARS", "2500"))
+DEFAULT_TABLES = "people,organizations,locations"
 MARK_KEY = "reorganised"
 REFUSED_CHARS_KEY = "reorganise_refused_chars"  # size when it was refused
 RETRY_GROWTH = 1.25
-MIN_PARAGRAPHS = 6
+MIN_PIECES = 4  # cited pieces; fewer stay flat
 OPENING_CHARS = 1500  # a longer opening is numbered with the rest
 MAX_NEW_HEADINGS = 2
 DEFAULT_LEVEL = 3
@@ -151,11 +161,38 @@ def piece_chars() -> int:
 
 
 def reorganise_enabled(entity_type: Optional[str] = None, local: bool = False) -> bool:
-    """On for people by default with a cloud model, off with a local one
-    (``section_split.tables_enabled()``)."""
+    """Whether ``entity_type`` gets starter headings: ``DEFAULT_TABLES``
+    unless ``HINBOX_SECTION_REORGANISE`` says otherwise, for cloud and local
+    models alike (``section_split.tables_enabled()``)."""
     from src.engine.section_split import tables_enabled
 
-    return tables_enabled(REORGANISE_ENV, entity_type, local)
+    return tables_enabled(REORGANISE_ENV, entity_type, local, DEFAULT_TABLES)
+
+
+def flatten_text(text: str) -> str:
+    """``text`` without its heading lines, each replaced by a paragraph
+    break so the text above and below one stays two paragraphs."""
+    lines = text.splitlines()
+    skip = {i for i, _, _ in _headings(lines)}
+    if not skip:
+        return text
+    kept = "\n".join("" if i in skip else line for i, line in enumerate(lines))
+    flat = re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", kept).strip()
+    return flat + ("\n" if text.endswith("\n") else "")
+
+
+def flat_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """``profile`` without made-up headings, unless it has its starter
+    headings already (or is a fact list, which builds its own)."""
+    from src.engine.fact_list import FACT_ROWS_KEY
+
+    text = str(profile.get("text") or "")
+    if profile.get(MARK_KEY) == "done" or profile.get(FACT_ROWS_KEY):
+        return profile
+    flat = flatten_text(text)
+    if flat == text or _sentences(flat) != _sentences(text):
+        return profile
+    return {**profile, "text": flat}
 
 
 def _starter_entries(
@@ -201,6 +238,9 @@ def _opening_and_body(text: str) -> Tuple[str, str]:
     lines = text.splitlines()
     heads = _headings(lines)
     first = heads[0][0] if heads else 0
+    if not heads:  # a flat profile: its first paragraph, when more follow
+        blank = next((i for i, line in enumerate(lines) if i and not line.strip()), 0)
+        first = blank if "".join(lines[blank:]).strip() else 0
     opening = "\n".join(lines[:first]).strip()
     # Number it with the rest when it ends uncited (its last claim would change)
     # or is long: Trump's 7,588 characters above his first heading were most
@@ -300,8 +340,6 @@ def plan_sections(
             placed[n] = placed[near]
             groups[placed[n]].append(n)
     kept = {h: sorted(ns) for h, ns in groups.items() if ns}
-    if len(kept) < 2:
-        return None, f"{len(kept)} sections"
     order = [h for h in starter if h in kept]
     order += sorted((h for h in kept if h not in starter), key=lambda h: kept[h][0])
     return [(h, kept[h]) for h in order], ""
@@ -333,14 +371,12 @@ def reorganise_text(
     opening, body = _opening_and_body(text)
     sentences = pieces_mode() == "sentences"
     units, tail, spans = numbered_pieces(body)
-    # Whether to reorganise at all is decided as before, on whole paragraphs
-    paragraphs = len(_units(body)[0])
     report: Dict[str, Any] = {
-        "chars": len(text), "paragraphs": paragraphs, "pieces": len(units),
-        "pieces_mode": pieces_mode(),
+        "chars": len(text), "paragraphs": len(_units(body)[0]),
+        "pieces": len(units), "pieces_mode": pieces_mode(),
     }  # fmt: skip
-    if paragraphs < MIN_PARAGRAPHS:
-        return text, {**report, "status": "skipped", "reason": "few paragraphs"}
+    if len(units) < MIN_PIECES:
+        return text, {**report, "status": "skipped", "reason": "few pieces"}
     shown = spans if sentences else None
     try:
         if place is not None:
@@ -401,7 +437,8 @@ def reorganise_profile(
     ask: Optional[Ask] = None,
 ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     """``profile`` with starter headings, once per entity, and the report
-    (None when it was not tried)."""
+    (None when it was not tried). Until that is done the profile is flat:
+    a short one, and one whose answer was refused or whose call failed."""
     from src.config_loader import get_domain_config
     from src.engine.fact_list import FACT_ROWS_KEY
 
@@ -414,11 +451,11 @@ def reorganise_profile(
     retry = (
         profile.get(MARK_KEY) == "refused" and len(text) >= refused_at * RETRY_GROWTH
     )
-    if (
-        (profile.get(MARK_KEY) and not retry)
-        or profile.get(FACT_ROWS_KEY)
-        or len(text) <= REORGANISE_CHARS
-    ):
+    if profile.get(MARK_KEY) == "done" or profile.get(FACT_ROWS_KEY):
+        return profile, None
+    profile = flat_profile(profile)
+    text = str(profile.get("text") or "")
+    if (profile.get(MARK_KEY) and not retry) or len(text) <= REORGANISE_CHARS:
         return profile, None
     config = get_domain_config(domain).load_config()
     starter = starter_headings(config, entity_type, kind)

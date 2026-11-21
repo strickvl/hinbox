@@ -338,6 +338,7 @@ def test_profile_update_records_its_arguments_and_result(spans, monkeypatch):
     from src.engine import profile_edits
     from src.engine.profiles import VersionedProfile, update_profile
 
+    monkeypatch.setenv("HINBOX_SECTION_REORGANISE", "off")  # not what is traced
     old_text = "## Background\n" + "Spath was a judge.^[a1] " * 700  # 16,800 chars
     article = "Vance Spath ruled on Tuesday. " * 400
     edited = {

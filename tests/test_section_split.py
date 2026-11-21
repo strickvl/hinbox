@@ -233,6 +233,7 @@ def test_update_profile_splits_after_the_edit_when_on(monkeypatch):
     from src.engine import profiles
 
     monkeypatch.setenv("HINBOX_SECTION_SPLIT", "on")
+    monkeypatch.setenv("HINBOX_SECTION_REORGANISE", "off")  # keep its headings
     monkeypatch.setattr(section_split, "SPLIT_CHARS", 200)
     monkeypatch.setenv("HINBOX_SPLIT_REFILE", "off")
     monkeypatch.setattr(

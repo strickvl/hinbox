@@ -120,15 +120,18 @@ DEFAULT_LOCAL_TABLES = "people"
 
 
 def tables_enabled(
-    env: str, entity_type: Optional[str] = None, local: bool = False
+    env: str,
+    entity_type: Optional[str] = None,
+    local: bool = False,
+    default: Optional[str] = None,
 ) -> bool:
     """Whether the step named by ``env`` runs for ``entity_type``: ``off``,
-    ``on`` (every table) or a comma list of tables, default ``people`` for a
-    cloud model and ``off`` for a local one (``DEFAULT_LOCAL_TABLES``).
-    With no ``entity_type``, whether it runs for any table."""
+    ``on`` (every table) or a comma list of tables. Unset, it is ``default``,
+    or ``DEFAULT_TABLES`` for a cloud model and ``DEFAULT_LOCAL_TABLES`` for
+    a local one. With no ``entity_type``, whether it runs for any table."""
     from src.engine.hub_profiles import _PLURAL
 
-    default = DEFAULT_LOCAL_TABLES if local else DEFAULT_TABLES
+    default = default or (DEFAULT_LOCAL_TABLES if local else DEFAULT_TABLES)
     value = os.getenv(env, default).strip().lower()
     if value in ("off", "0", "false", ""):
         return False
