@@ -57,8 +57,19 @@ def event_when(note: Any) -> When:
         return found
     date = str(note.date or "")
     if len(date) >= 7 and date[:4].isdigit() and date[5:7].isdigit():
-        return int(date[:4]), int(date[5:7]), 0
+        year, month = int(date[:4]), int(date[5:7])
+        # "On April 21, 84 were on hunger strike": a day with no year is in
+        # the article's year, or the year before when its month is later
+        # (round 20 left the camp's hunger-strike section unsorted by day)
+        m = _DAY_ONLY.search(note.text)
+        if m:
+            day_month = _MONTH_OF.get(m.group(1)[:3].lower(), 0)
+            return year - (day_month > month), day_month, int(m.group(2))
+        return year, month, 0
     return 9999, 0, 0
+
+
+_DAY_ONLY = re.compile(rf"\b{_MONTH_RE}\.?\s+(\d{{1,2}})\b(?!,?\s+(?:19|20)\d\d)", re.I)
 
 
 def group_notes(notes: Sequence[Any], name: str) -> List[List[Any]]:

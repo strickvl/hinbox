@@ -1,177 +1,208 @@
-"""A last stage that reads the whole finished page once: facts told twice in
-different sections, and sentences in different sections that contradict
-each other.
+"""A last stage over the whole finished page: facts told twice in different
+places, and sentences that give different accounts of one thing without
+saying so.
 
-Why: on 21 Nov (round 19) a full read of the long pages found what no
-earlier stage could see, because every earlier stage looks at one section
-or one plan part at a time. The CIA page gave Khalid Sheik Mohammed's 183
-waterboardings four times and said in one section that Majid Khan was "not
-subjected to waterboarding" and in another that CIA agents waterboarded him
-twice, with nothing to say the accounts differ. So one call is shown the
-page's kept sentences, numbered under their headings, and lists:
+Why: every earlier stage looks at one section or one plan part at a time,
+and on 21 Nov (round 19) a full read of the long pages found the CIA page
+giving Khalid Sheik Mohammed's 183 waterboardings four times, and Majid
+Khan "not subjected to waterboarding" in one section and waterboarded twice
+in another. Round 20 asked one call to read the whole page and list such
+faults: over 31 pages it listed almost nothing (not the 183, not
+Rishikof's fine waived, then not dismissed, then struck down), three of
+its four "repeat" drops took a real fact off the page (Bin al Shibh held
+at the ISI facility, Khadr's abuse allegations), and one of its two
+rewrites merged when Rishikof was fired with why.
 
-- repeats: a sentence that says nothing an earlier one doesn't. Code drops
-  it only when its numbers and the people it names are all in that earlier
-  sentence too, so a sentence adding a date or a name is never lost.
-- contradictions: two sentences that cannot both be true of the same
-  thing. One more call rewrites the pair from both sentences' notes as one
-  passage telling both accounts, checked like any sentence; when it is kept
-  it takes the earlier sentence's place and both old sentences are dropped.
+So it is now split into small steps:
+
+1. Code picks candidate pairs: two kept sentences sharing most of their
+   words, or a number that is not a year and two other words.
+2. One call judges each pair: "same" (the second tells again a fact the
+   first tells), "conflict" (two accounts of one thing, neither saying so)
+   or "different" (different events, people, days, or a count that changed).
+3. A "same" second sentence is dropped only when code finds nothing in it
+   that the first lacks (words, numbers, people); otherwise it is rewritten
+   once to keep only what it adds. A "conflict" second sentence is
+   rewritten once from its own notes as another account ("Another account
+   dates ..."); the first stays as it is. Every rewrite goes through the
+   usual checks, and when one fails the old sentence stays: a repeat is
+   better than a lost fact.
 """
 
-from typing import Any, Dict, List, Sequence
+import re
+from typing import Any, Dict, List, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.engine.written_page import Ask, Note, Written
 
-REVIEW = """You read a finished encyclopedia entry about the {what} \
-"{name}", sentence by sentence (numbered, under their headings), and list \
-two kinds of fault.
+MAX_PAIRS = 16
 
-1. repeats: a sentence that tells again a fact an earlier sentence \
-already told (in any section) and adds nothing to it: no new date, number, \
-name, place or detail. Give its number and the earlier sentence's number.
-2. contradictions: two sentences that cannot both be true about the same \
-person and the same thing (one says he was not waterboarded, another that \
-he was; one says a fine was waived, another that it stood), with neither \
-saying the accounts differ. Two different events, two different people, a \
-state that changed over time, or a later decision are not contradictions. \
-Give both numbers and, in a few words, what they disagree about.
+JUDGE = """You check pairs of sentences from one encyclopedia entry about \
+the {what} "{name}". For each pair say how sentence B stands to sentence A:
 
-List only clear cases. If there are none, give empty lists."""
+- "same": B tells again a fact A already tells (it may add other facts \
+too).
+- "conflict": A and B give different accounts of the same thing (the same \
+event, person and question: a date, a count on the same day, whether \
+something happened), and neither says that accounts differ.
+- "different": anything else: different events, people, places or days; \
+a count or a state that changed over time; a later decision; one sentence \
+giving more detail than the other without disagreeing.
+
+Give the pair's number, B's first three words copied, and the verdict. \
+When unsure, say "different"."""
 
 
-class Repeat(BaseModel):
+class PairVerdict(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    sentence: int
-    repeats: int = Field(description="The earlier sentence it repeats")
+    pair: int
+    starts_with: str = Field(default="", description="B's first three words, copied")
+    verdict: str = Field(description='"same", "conflict" or "different"')
 
 
-class Contradiction(BaseModel):
+class Verdicts(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    first: int
-    second: int
-    about: str = ""
+    pairs: List[PairVerdict]
 
 
-class Review(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    repeats: List[Repeat] = Field(default_factory=list)
-    contradictions: List[Contradiction] = Field(default_factory=list)
+# A sentence that already says the accounts differ
+_TOLD = re.compile(
+    r"\bdiffer|\bdisagree|\banother (?:account|report)|\bother accounts?\b|"
+    r"\baccounts\b",
+    re.I,
+)
+_YEARLIKE = re.compile(r"^(?:19|20)\d\d$")
 
 
-BOTH = """You fix two sentences of an encyclopedia entry about the {what} \
-"{name}" that contradict each other ({about}). Below are the two \
-sentences, then the notes they were written from (sentences from news \
-articles, each with its article's date).
+def _facts(w: Written, name: str) -> Tuple[set, set, set]:
+    from src.engine.written_checks import _content, _numbers
+    from src.engine.written_plan import _surnames
 
-Write one or two sentences to replace both. Keep every other fact the two \
-sentences give. Tell the disputed point as two accounts, each with its \
-source and date as the notes give them ("A 2014 Senate report says ...; \
-an earlier account says ..."), without judging which is right. If the \
-notes show the two are about different things or different times, say \
-that plainly instead. Use only what the notes say. Every sentence lists \
-the numbers of the notes it uses in its notes field; never write note \
-numbers into the sentence itself."""
+    return _content(w.text), _numbers(w.text), _surnames(w.text, name)
 
 
-def review_messages(
-    kept: Sequence[Written], name: str, what: str
+def candidate_pairs(kept: Sequence[Written], name: str) -> List[Tuple[int, int]]:
+    """Index pairs (earlier, later) of section sentences worth judging, most
+    alike first, at most ``MAX_PAIRS``."""
+    facts = [_facts(w, name) for w in kept]
+    scored = []
+    for j, b in enumerate(kept):
+        if not b.section:
+            continue
+        for i in range(j):
+            if not kept[i].section:
+                continue
+            (wa, na, _), (wb, nb, _) = facts[i], facts[j]
+            shared = wa & wb
+            small = min(len(wa), len(wb)) or 1
+            counts = {n for n in na & nb if not _YEARLIKE.match(n) and len(n) > 1}
+            if (len(shared) >= 4 and len(shared) >= 0.5 * small) or (
+                counts and len(shared) >= 2
+            ):
+                scored.append((-len(shared) / small, i, j))
+    scored.sort()
+    return [(i, j) for _, i, j in scored[:MAX_PAIRS]]
+
+
+def _adds_nothing(b: Written, a: Written, name: str) -> bool:
+    """Every word, number and person of ``b`` is in ``a``."""
+    (wa, na, pa), (wb, nb, pb) = _facts(a, name), _facts(b, name)
+    return bool(wb) and wb <= wa and nb <= na and pb <= pa
+
+
+def judge_messages(
+    kept: Sequence[Written], pairs: Sequence[Tuple[int, int]], name: str, what: str
 ) -> List[Dict[str, str]]:
-    lines, section = [], None
-    for i, w in enumerate(kept, 1):
-        if w.section != section:
-            section = w.section
-            lines.append(f"## {section or 'Opening'}")
-        lines.append(f"S{i}: {w.text}")
+    body = "\n\n".join(
+        f"Pair {k}:\nA: {kept[i].text}\nB: {kept[j].text}"
+        for k, (i, j) in enumerate(pairs, 1)
+    )
     return [
-        {"role": "system", "content": REVIEW.format(what=what, name=name)},
-        {"role": "user", "content": "\n".join(lines)},
+        {"role": "system", "content": JUDGE.format(what=what, name=name)},
+        {"role": "user", "content": body},
     ]
 
 
-def _covered(later: Written, earlier: Written, name: str) -> bool:
-    """Every number and person of ``later`` is in ``earlier``."""
-    from src.engine.written_checks import _numbers
-    from src.engine.written_plan import _surnames
+def _trim(a: Written) -> str:
+    return (
+        "check: it tells again what an earlier sentence of the entry tells "
+        f'("{a.text}"). Keep only what it adds to that sentence, as a '
+        "sentence that reads well on its own; give it up if it adds nothing"
+    )
 
-    return _numbers(later.text) <= _numbers(earlier.text) and _surnames(
-        later.text, name
-    ) <= _surnames(earlier.text, name)
+
+def _other_account(a: Written) -> str:
+    return (
+        "check: it gives a different account from an earlier sentence of "
+        f'the entry ("{a.text}") without saying so. Tell it as another '
+        "account of the same thing, with its source and date as its notes "
+        'give them ("Another account dates ... to ..."); if its notes show '
+        "it is about a different thing or time, make that plain instead"
+    )
 
 
 def review_page(
     written: List[Written], notes: Sequence[Note], name: str, what: str,
     ask: Ask, report: Dict[str, Any],
 ) -> List[Written]:  # fmt: skip
-    """``written`` with repeats across sections dropped and each
-    contradiction told as two accounts, or left as it was when the rewrite
-    fails its checks."""
-    from src.engine.written_checks import code_check, model_check
-    from src.engine.written_page import (
-        close_quotes,
-        notes_block,
-        split_sentences,
-        strip_refs,
-    )
-    from src.engine.written_revise import Fill
+    """``written`` with repeats across the page trimmed or dropped and
+    unflagged disagreements told as another account."""
+    from src.engine.written_checks import _first_words
+    from src.engine.written_conflicts import lost_or_added
+    from src.engine.written_revise import revise
 
     kept = [w for w in written if not w.dropped]
-    if len(kept) < 4:
+    pairs = candidate_pairs(kept, name)
+    stats = {"pairs": len(pairs), "same": 0, "conflict": 0, "dropped": 0}
+    report["review"] = stats
+    if not pairs:
         return written
     try:
-        reply = ask(review_messages(kept, name, what), Review, 2048)
+        reply = ask(judge_messages(kept, pairs, name, what), Verdicts, 2048)
     except Exception as exc:
         report.setdefault("review_errors", []).append(str(exc)[:200])
         return written
     report["calls"] = report.get("calls", 0) + 1
-    num = lambda k: kept[k - 1] if 1 <= k <= len(kept) else None  # noqa: E731
-    dropped = 0
-    for r in reply.repeats or []:
-        later, earlier = num(r.sentence), num(r.repeats)
-        if later is None or earlier is None or r.repeats >= r.sentence:
+    marked: Dict[int, str] = {}  # id of a sentence to rewrite -> "same"/"conflict"
+    for v in reply.pairs or []:
+        if not 1 <= v.pair <= len(pairs):
             continue
-        if later.dropped or earlier.dropped or not later.section:
+        a, b = (kept[k] for k in pairs[v.pair - 1])
+        if v.starts_with and _first_words(v.starts_with, 2) != _first_words(b.text, 2):
             continue
-        if _covered(later, earlier, name):
-            later.dropped = "repeats an earlier sentence of the page"
-            dropped += 1
-    by_n = {n.n: n for n in notes}
-    out = list(written)
-    told, fresh = 0, []
-    for c in (reply.contradictions or [])[:4]:
-        a, b = num(min(c.first, c.second)), num(max(c.first, c.second))
-        if a is None or b is None or a is b or a.dropped or b.dropped:
+        verdict = (v.verdict or "").strip().lower()
+        if a.dropped or b.dropped or id(b) in marked:
             continue
-        ns = [n for n in dict.fromkeys(a.notes + b.notes) if n in by_n]
-        if not ns:
+        if verdict == "same":
+            stats["same"] += 1
+            if _adds_nothing(b, a, name):
+                b.dropped = "repeats an earlier sentence of the page"
+                stats["dropped"] += 1
+            else:
+                b.dropped, marked[id(b)] = _trim(a), "same"
+        elif verdict == "conflict":
+            stats["conflict"] += 1
+            if any(_TOLD.search(w.text) for w in (a, b)):
+                continue  # one of them already says so
+            b.dropped, marked[id(b)] = _other_account(a), "conflict"
+    if not marked:
+        return written
+    out = revise(
+        written, notes, name, ask, report,
+        pick=lambda w: id(w) in marked, tag="reviewed",
+    )  # fmt: skip
+    # A rewrite that failed, or a sentence given up, stays as it was
+    restored = 0
+    for i, w in enumerate(out):
+        if id(w) not in marked:
             continue
-        msgs = [
-            {"role": "system", "content": BOTH.format(what=what, name=name, about=c.about or "see the sentences")},
-            {"role": "user", "content": f"Sentence A: {a.text}\nSentence B: {b.text}\n\nTheir notes:\n{notes_block([by_n[n] for n in ns])}"},
-        ]  # fmt: skip
-        try:
-            fix = ask(msgs, Fill, 1024)
-        except Exception as exc:
-            report.setdefault("review_errors", []).append(str(exc)[:200])
-            continue
-        report["calls"] += 1
-        new = []
-        for s in fix.sentences or []:
-            text, refs = strip_refs(" ".join(str(s.text or "").split()))
-            cited = [n for n in dict.fromkeys(list(s.notes or []) + refs) if n in by_n]
-            for one in split_sentences(text) if text else []:
-                new.append(Written(close_quotes(one), cited or ns, a.section, a.para))
-        code_check(new, notes, name)
-        model_check(new, notes, name, ask, report)
-        if not new or any(w.dropped for w in new):
-            continue  # both stay as they were
-        a.dropped = b.dropped = "told again with both accounts"
-        at = out.index(a)
-        out[at + 1 : at + 1] = new
-        fresh += new
-        told += 1
-    report["review"] = {"repeats": dropped, "contradictions": told,
-                        "listed": len(reply.contradictions or [])}  # fmt: skip
+        nxt = out[i + 1] if i + 1 < len(out) else None
+        ok = nxt is not None and nxt.revised == w.text and not nxt.dropped
+        if ok and marked[id(w)] == "conflict" and lost_or_added(w.text, nxt.text):
+            nxt.dropped, ok = "rewrite lost a source or added a day", False
+        if not ok:
+            w.dropped = ""
+            restored += 1
+    stats["restored"] = restored
     return out

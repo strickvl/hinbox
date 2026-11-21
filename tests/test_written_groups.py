@@ -110,14 +110,14 @@ def test_the_captor_rule_accepts_him_on_the_captives_own_page():
     assert missing_details(sentence, notes, "Port Elm")
 
 
-def test_the_page_review_drops_a_bare_repeat_and_tells_a_contradiction():
+def test_the_page_review_judges_pairs_code_picks_and_rewrites_small():
     from src.engine.written_checks import SentenceChecks
-    from src.engine.written_review import Review, review_page
-    from src.engine.written_revise import Fill
+    from src.engine.written_review import Verdicts, candidate_pairs, review_page
+    from src.engine.written_revise import Revisions
 
     notes = [
         _note(1, "Port Elm is a harbour city.", "2003-01-02"),
-        _note(2, "Police held Tom Vale 183 days in Port Elm.", "2004-01-01"),
+        _note(2, "Police held Tom Vale 183 days in the Port Elm jail.", "2004-01-01"),
         _note(
             3, "A 2014 report says Tom Vale was not beaten in Port Elm.", "2014-12-01"
         ),
@@ -127,33 +127,59 @@ def test_the_page_review_drops_a_bare_repeat_and_tells_a_contradiction():
     ]
     out = [
         Written("Port Elm is a harbour city.", [1]),
-        Written("Police held Tom Vale for 183 days.", [2], "Arrests", 1),
-        Written("A 2014 report says Tom Vale was not beaten.", [3], "Arrests", 1),
-        Written("Guards beat Tom Vale, an earlier account says.", [4], "Prison", 2),
-        Written("Tom Vale was held for 183 days.", [2], "Prison", 2),
-        Written("Tom Vale was held for 183 days by Ann Roe.", [2], "Prison", 2),
-    ]
-    both = "A 2014 report says Tom Vale was not beaten; an earlier account says guards beat him."
+        Written("Police held Tom Vale for 183 days in the city jail.", [2], "Arrests", 1),
+        Written("A 2014 report says guards did not beat Tom Vale in the city jail.", [3], "Arrests", 1),
+        Written("Guards beat Tom Vale in the city jail.", [4], "Prison", 2),
+        Written("Police held Tom Vale for 183 days.", [2], "Prison", 2),
+        Written("Police held Tom Vale for 183 days in the city jail, far from home.", [2], "Prison", 2),
+    ]  # fmt: skip
+    kept = [w for w in out if not w.dropped]
+    pairs = candidate_pairs(kept, "Port Elm")
+    assert (2, 3) in pairs and (1, 4) in pairs and (1, 5) in pairs
+    assert all(i < j and kept[i].section for i, j in pairs)  # never the opening
+    other = "Another account says guards beat Tom Vale in the city jail."
 
     def ask(msgs, model, max_tokens):
-        if model is Review:
-            return Review.model_validate({
-                "repeats": [{"sentence": 5, "repeats": 2}, {"sentence": 6, "repeats": 2}],
-                "contradictions": [{"first": 4, "second": 3, "about": "beating"}]})  # fmt: skip
-        if model is Fill:
-            return Fill.model_validate({"sentences": [{"text": both, "notes": [3, 4]}]})
+        if model is Verdicts:
+            body = msgs[1]["content"]
+            verdicts = []
+            for k, (i, j) in enumerate(pairs, 1):
+                v = {(2, 3): "conflict", (1, 4): "same", (1, 5): "same"}.get(
+                    (i, j), "different"
+                )
+                verdicts.append({"pair": k, "starts_with": kept[j].text, "verdict": v})
+            assert "Pair 1:" in body
+            return Verdicts.model_validate({"pairs": verdicts})
+        if model is Revisions:
+            revs = []
+            for k, part in enumerate(msgs[1]["content"].split("Sentence ")[1:], 1):
+                if part.split(": ", 1)[1].startswith("Guards beat"):
+                    revs.append(
+                        {"sentence": k, "starts_with": "Guards beat Tom", "text": other}
+                    )
+                else:  # the trim gives up
+                    revs.append(
+                        {"sentence": k, "starts_with": "Police held Tom", "text": ""}
+                    )
+            return Revisions.model_validate({"revisions": revs})
         return SentenceChecks.model_validate({"checks": [
-            {"sentence": 1, "starts_with": "A 2014 report", "problem": "none",
-             "verdict": "supported"}]})  # fmt: skip
+            {"sentence": 1, "starts_with": other, "problem": "none", "verdict": "supported"}]})  # fmt: skip
 
     report = {"calls": 0}
     res = review_page(out, notes, "Port Elm", "place", ask, report)
-    kept = [w.text for w in res if not w.dropped]
-    assert "Tom Vale was held for 183 days." not in kept  # a bare repeat
-    assert "Tom Vale was held for 183 days by Ann Roe." in kept  # adds a name
-    assert both in kept and kept.index(both) == 2  # in the earlier one's place
-    assert not any("Guards beat" in t for t in kept)
-    assert report["review"]["repeats"] == 1 and report["review"]["contradictions"] == 1
+    kept_now = [w.text for w in res if not w.dropped]
+    assert "Police held Tom Vale for 183 days." not in kept_now  # adds nothing
+    # It adds "far from home": the trim gave up, so it stays as it was
+    assert (
+        "Police held Tom Vale for 183 days in the city jail, far from home." in kept_now
+    )
+    assert (
+        other in kept_now and "Guards beat Tom Vale in the city jail." not in kept_now
+    )
+    assert (
+        "A 2014 report says guards did not beat Tom Vale in the city jail." in kept_now
+    )
+    assert report["review"]["dropped"] == 1 and report["review"]["restored"] == 1
 
 
 def test_a_lost_identity_sentence_is_put_back_first():
@@ -162,11 +188,14 @@ def test_a_lost_identity_sentence_is_put_back_first():
     notes = [_note(1, "Tom Vale is a lawyer in Port Elm.", "2005-05-06")]
     out = [Written("His career is described.", [1], summary=True, dropped="talks about the page"),
            Written("He taught law.", [1], "Career", 1)]  # fmt: skip
-    assert ensure_identity(out, notes, "Tom Vale", "a lawyer in Port Elm", [1])
+    assert ensure_identity(out, notes, "Tom Vale", "A lawyer in Port Elm", [1])
     assert out[0].text == "Tom Vale is a lawyer in Port Elm." and out[0].notes == [1]
     assert not ensure_identity(out, notes, "Tom Vale", "a lawyer", [1])  # already named
     lost = [Written("He taught law.", [1], "Career", 1)]
-    assert not ensure_identity(lost, notes, "Tom Vale", "a lawyer in Elmland", [1])
+    assert not ensure_identity(lost, notes, "Tom Vale", "a judge in Elmland", [1])
+    # The whole identity fails the check; its first part is used
+    assert ensure_identity(lost, notes, "Tom Vale", "a lawyer and Elmland judge", [1])
+    assert lost[0].text == "Tom Vale is a lawyer."
 
 
 def test_an_articles_date_on_a_continuing_state_is_caught():

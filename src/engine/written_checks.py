@@ -253,7 +253,8 @@ _LASTING = re.compile(
     r"(?:In|By)\s+(?:[A-Z][a-z]+\.?\s+)?\d{4},\s+[^,;]{0,60}?\b(?:did not want|"
     r"was described as|is described as|was listed as|was identified as|had been "
     r"cleared|was cleared|was known as|was serving as|was still|remained|"
-    r"was assigned|had been assigned|became|was in charge|was overseeing)\b"
+    r"was assigned|had been assigned|became|was in charge|was overseeing|"
+    r"was directly involved|was involved|had been|had \w+ed|was among those)\b"
 )
 
 # "a news account described", "another account says": sources narrated

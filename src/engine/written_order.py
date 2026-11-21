@@ -12,6 +12,7 @@ sentence is moved before the first sentence of its section that is dated
 later than it.
 """
 
+import re
 from typing import List, Optional, Sequence, Tuple
 
 from src.engine.written_page import Note, Written
@@ -93,10 +94,21 @@ def ensure_identity(
     known = {n.n for n in notes}
     cited = [n for n in opening if n in known][:3] or [n.n for n in notes[:1]]
     what = identity.strip().rstrip(".")
-    text = what if what.lower().startswith(name.lower()) else f"{name} is {what}"
-    first = Written(text[0].upper() + text[1:] + ".", cited)
-    code_check([first], notes, name)
-    if first.dropped:
-        return False
-    written.insert(0, first)
-    return True
+    if what.lower().startswith(name.lower()):
+        what = what[len(name) :].strip().removeprefix("is ").strip()
+    first_word, _, rest = what.partition(" ")
+    if first_word.lower() in ("a", "an", "the"):  # "is A detention facility"
+        what = f"{first_word.lower()} {rest}"
+    # The whole identity, else its first part: round 20's Rishikof identity
+    # ("An American lawyer and former convening authority ...") was turned
+    # down by the code check and the page had no first sentence
+    tries = [what] + [
+        p.strip() for p in re.split(r",| and | who | which ", what)[:1] if p.strip()
+    ]
+    for t in dict.fromkeys(tries):
+        first = Written(f"{name} is {t}.", list(cited))
+        code_check([first], notes, name)
+        if not first.dropped:
+            written.insert(0, first)
+            return True
+    return False
