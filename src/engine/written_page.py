@@ -422,6 +422,10 @@ _COMMON = set(
 )
 
 
+# "U.S." in the notes covers "United States" and "American" in a sentence
+_US_WORDS = {"united", "states", "america", "american", "americans", "u", "s"}
+
+
 def _fold(text: str) -> str:
     text = unicodedata.normalize("NFKD", text)
     text = "".join(c for c in text if not unicodedata.combining(c))
@@ -437,19 +441,25 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
     digits = hay.replace(",", "")
     words = set(re.findall(r"[\w']+", hay))
     stems = {w[:5] for w in words if len(w) >= 5}
+    if re.search(r"\bu\.?s\b|\bunited states\b", hay):
+        words |= _US_WORDS
+
+    def present(low: str) -> bool:
+        if len(low) < 2 or low in _COMMON or low in _MONTHS or low in words:
+            return True
+        if low.endswith("'s") and low[:-2] in words:
+            return True
+        if "-" in low:  # "Bush-era": each part
+            return all(present(part) for part in low.split("-") if part)
+        return len(low) >= 5 and low[:5] in stems
+
     missing = []
     for num in _NUMBER.findall(sentence):
         if num.replace(",", "").rstrip(".") not in digits:
             missing.append(num)
     for tok in _CAP.findall(sentence):
-        low = _fold(tok).strip("'-")
-        if not low or low in _COMMON:
-            continue
-        if low in _MONTHS or low in words or low.rstrip("'s") in words:
-            continue
-        if len(low) >= 5 and low[:5] in stems:
-            continue
-        missing.append(tok)
+        if not present(_fold(tok).strip("'-")):
+            missing.append(tok)
     return list(dict.fromkeys(missing))
 
 

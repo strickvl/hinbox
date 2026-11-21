@@ -111,7 +111,7 @@ def main() -> None:
             page["report"]["seconds"] = secs
             r = page["report"]
             print(
-                f"{model} {t}/{ent.get('name')}: {page.get('error') or 'ok'} in {secs}s; "
+                f"{model} {t}/{ent.get('name') or ent.get('title')}: {page.get('error') or 'ok'} in {secs}s; "
                 f"notes {r.get('notes')} shown {r.get('shown')} used {r.get('notes_used')}; "
                 f"sentences {r.get('sentences')} kept {r.get('kept')} "
                 f"(dropped code {r.get('dropped_code')}, check {r.get('dropped_check')}, "
