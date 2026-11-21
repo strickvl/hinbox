@@ -54,9 +54,20 @@ class Revisions(BaseModel):
 
 
 def revisable(w: Written) -> bool:
+    if w.summary:  # an opening summary about the page, or with a stray detail
+        return w.dropped in ("talks about the page",) or w.dropped.startswith(
+            "not in the sections"
+        )
     return bool(w.notes) and (
         w.dropped.startswith("not in its notes") or w.dropped.startswith("check")
     )
+
+
+_PROBLEMS = {
+    "talks about the page": "it talks about the entry itself; state the facts "
+    'instead, as a sentence about the subject (local Qwen wrote "The entry '
+    'covers his capture ...")',
+}
 
 
 def revise_messages(
@@ -70,7 +81,7 @@ def revise_messages(
             for n in w.notes
             if n in by_n
         )
-        problem = w.dropped.removeprefix("check: ")
+        problem = _PROBLEMS.get(w.dropped, w.dropped.removeprefix("check: "))
         parts.append(f"Sentence {i}: {w.text}\nProblem: {problem}\nIts notes:\n{lines}")
     return [
         {"role": "system", "content": REVISE.format(name=name)},
@@ -84,7 +95,7 @@ def revise(
 ) -> List[Written]:  # fmt: skip
     """``written`` with a rewrite after each dropped sentence the model could
     fix; the rewrites are checked like any sentence."""
-    todo = [w for w in written if revisable(w) and not w.summary]
+    todo = [w for w in written if revisable(w)]
     new: Dict[int, Written] = {}
     for start in range(0, len(todo), CHECK_BATCH):
         batch = todo[start : start + CHECK_BATCH]
@@ -105,10 +116,12 @@ def revise(
             text = " ".join(str(r.text or "").split())
             if text and text != old.text:
                 new[id(old)] = Written(
-                    text, list(old.notes), old.section, old.para, revised=old.text
-                )
+                    text, list(old.notes), old.section, old.para,
+                    summary=old.summary, revised=old.text,
+                )  # fmt: skip
     fresh = list(new.values())
-    code_check(fresh, notes, name)
+    # A rewritten opening summary is checked by ``summary_check()`` after this
+    code_check([w for w in fresh if not w.summary], notes, name)
     model_check(fresh, notes, name, ask, report)
     report["revised"] = len(fresh)
     report["revised_kept"] = sum(1 for w in fresh if not w.dropped)

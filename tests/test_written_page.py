@@ -376,3 +376,47 @@ def test_counts_from_different_months_and_false_repeats_are_caught():
                 left_out=[LeftOut(note=3, why="repeats 2")])  # fmt: skip
     restore_repeats(plan, notes, "Port Elm")  # note 3 names Ann Roe, note 2 does not
     assert plan.parts[0].notes == [2, 3] and plan.left_out == []
+
+
+def test_a_fact_told_again_in_other_words_from_the_same_notes_is_dropped():
+    from src.engine.written_page import WPage, Written, drop_repeats, flatten
+
+    page = WPage.model_validate({"opening": [], "sections": [{"heading": "Arrests",
+        "paragraphs": [{"sentences": [
+            {"text": "Police arrested Tom Vale in Port Elm in March 2004.", "notes": [2]},
+            {"text": "Ann Roe was arrested in May 2005.", "notes": [3]},
+            {"text": "The article states that police arrested Tom Vale in March 2004 in Port Elm, Elmland.", "notes": [2]},
+        ]}]}]})  # fmt: skip
+    written = flatten(page)
+    assert written[2].text.startswith("Police arrested Tom Vale in March 2004")
+    drop_repeats(written)
+    assert [w.dropped for w in written] == ["", "", "repeats an earlier sentence"]
+    # mostly the same words, but from a note not yet cited: kept
+    other = [Written("Police arrested Tom Vale.", [2], "A", 1),
+             Written("Tom Vale was held by police in Port Elm.", [3], "A", 1)]  # fmt: skip
+    drop_repeats(other)
+    assert other[1].dropped == ""
+
+
+def test_an_opening_summary_about_the_page_is_rewritten():
+    from src.engine.written_page import Written, summary_check
+    from src.engine.written_revise import Revisions, revise
+
+    notes = page_notes(_city())
+    written = [
+        Written("Port Elm is a harbour city.", [1]),
+        Written("The entry covers the arrests made there.", [], summary=True),
+        Written("Police arrested Tom Vale there in March 2004.", [2], "Arrests", 1),
+    ]
+    summary_check(written, notes, "Port Elm")
+    assert written[1].dropped == "talks about the page"
+
+    def ask(msgs, model, max_tokens):
+        assert model is Revisions and "talks about the entry" in msgs[1]["content"]
+        return Revisions.model_validate({"revisions": [
+            {"sentence": 1, "starts_with": "The entry",
+             "text": "Police arrested Tom Vale there in 2004."}]})  # fmt: skip
+
+    out = revise(written, notes, "Port Elm", ask, {})
+    summary_check(out, notes, "Port Elm")
+    assert out[2].summary and out[2].check == "summary" and not out[2].dropped

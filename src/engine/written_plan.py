@@ -56,7 +56,8 @@ mention), "no fact" (a vague or judging sentence, "the city represents \
 ..."), or "repeats N" (says less than note N, which is used). Use most \
 notes: a note about a major event that happened at or to {name} (an \
 attack, a killing, a capture, a trial) is never left out, even when it \
-names other people.
+names other people. For a place, a note on something that happened there \
+(an arrest, a raid, a killing) is about the place, not "someone else".
 5. opening_notes: the notes that say what {name} is."""
 
 SECTION = """You write one section of an encyclopedia entry about the \
@@ -81,6 +82,9 @@ words stay exactly as quoted.
 - Each note shows its article's date. You may use it for when something \
 was said or reported, as the month and year ("In May 2007, Zaki said"), \
 never as the day of the event itself.
+- Name a person in full (as the notes give the name) the first time the \
+section mentions them. Don't join facts from different dates into one \
+sentence unless each keeps its own date.
 - Write about the events, not about the notes: never "the notes say", \
 "in the note" or "according to the notes".
 - The opening says what {name} is: don't say it again here.
@@ -128,8 +132,8 @@ WEIGH = (
     "one or two sentences that cite both sides, and say how many and which "
     'sources give each ("One account dates his capture to Sept. 11, 2002; '
     'three later reports, among them the Red Cross, give April 29, 2003."). '
-    "Don't judge which is right in your own words, and don't tell it as two "
-    "events."
+    "Don't judge which is right in your own words, don't tell it as two "
+    "events, and don't state either account as fact elsewhere in the section."
 )
 
 
@@ -357,7 +361,7 @@ def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
     """A note left out as "repeats N" that holds a name, number or date note
     N lacks goes back in, after N (on 21 Nov Luna left Bin Atef's 2009
     clearance out as repeating a note that never gave it)."""
-    from src.engine.written_page import missing_details
+    from src.engine.written_page import _content, missing_details
 
     for o in list(plan.left_out):
         m = re.search(r"repeats\D*(\d+)", o.why or "")
@@ -365,7 +369,8 @@ def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
         part = next((p for p in plan.parts if n in p.notes), None)
         if part is None or o.note not in by_n or n not in by_n:
             continue
-        if missing_details(by_n[o.note].text, [by_n[n].text], name):
+        extra = _content(by_n[o.note].text) - _content(by_n[n].text)
+        if missing_details(by_n[o.note].text, [by_n[n].text], name) or len(extra) >= 3:
             part.notes.insert(part.notes.index(n) + 1, o.note)
             plan.left_out.remove(o)
 

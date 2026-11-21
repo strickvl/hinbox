@@ -265,8 +265,9 @@ leave out details of its notes, or put them in other words; that is fine.
 - partial: the facts are right, but a claim the notes attribute to someone \
 is stated as fact, or a word goes further than the notes ("the first" for \
 "one of the first", "always" for once).
-- wrong: a name, date, number or place differs from the notes, or a fact \
-the notes give about one person or event is given to another.
+- wrong: a name, date, number or place differs from the notes, a fact \
+the notes give about one person or event is given to another, or facts \
+from different dates are joined as if they happened at one time.
 - not_supported: its notes do not say this.
 
 Each note starts with its article's date in brackets. A sentence may use \
@@ -444,6 +445,19 @@ def split_sentences(text: str) -> List[str]:
     return [t for t in out if t]
 
 
+# A sentence opening by narrating its source ("The article states that ...")
+_NARRATES = re.compile(
+    r"^(?:the|this|one) (?:article|report|note|source)s? (?:states?|says?|"
+    r"reports?|notes?|mentions?) that\s+",
+    re.IGNORECASE,
+)
+
+
+def _unnarrate(text: str) -> str:
+    out = _NARRATES.sub("", text, count=1)
+    return out[:1].upper() + out[1:] if out != text else text
+
+
 def _pieces(w: "Written", max_n: int) -> List["Written"]:
     """``w`` cut into its sentences, each without note references; a
     sentence that named notes keeps those, else it keeps the item's."""
@@ -453,7 +467,7 @@ def _pieces(w: "Written", max_n: int) -> List["Written"]:
     out = []
     for text, refs in parts:
         notes = list(dict.fromkeys(refs or w.notes or named))
-        out.append(Written(text, notes, w.section, w.para))
+        out.append(Written(_unnarrate(text), notes, w.section, w.para))
     return out
 
 
@@ -572,16 +586,27 @@ def _content(text: str) -> set:
 def drop_repeats(written: List[Written], share: float = 0.8) -> None:
     """Drop a section sentence whose words are nearly all in one earlier
     section sentence (a one-sentence section saying again what the first
-    section said; on 21 Nov Luna's Karachi page said one fact three times)."""
+    section said; on 21 Nov Luna's Karachi page said one fact three times),
+    or that cites only notes earlier sentences of its section cited and
+    whose words are nearly all in those sentences (local Qwen told one
+    arrest three times in three wordings)."""
     seen: List[set] = []
+    section: Dict[str, Tuple[set, set]] = {}
     for w in written:
         if w.dropped or not w.section:
             continue
         words = _content(w.text)
-        if words and any(len(words & old) >= share * len(words) for old in seen):
+        said, cited = section.setdefault(w.section, (set(), set()))
+        again = words and any(len(words & old) >= share * len(words) for old in seen)
+        told = (
+            words and set(w.notes) <= cited and len(words & said) >= 0.75 * len(words)
+        )
+        if again or told:
             w.dropped = "repeats an earlier sentence"
             continue
         seen.append(words)
+        said |= words
+        cited |= set(w.notes)
 
 
 # An opening sentence about the page instead of its subject
@@ -757,8 +782,11 @@ def write_page(
     drop_repeats(written)
     if check:
         model_check(written, shown, name, ask, report)
-        written = revise(written, shown, name, ask, report)
     summary_check(written, shown, name)
+    if check:
+        written = revise(written, shown, name, ask, report)
+        summary_check(written, shown, name)
+        report["revised_kept"] = sum(1 for w in written if w.revised and not w.dropped)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}
     used = {k for w in kept for n in w.notes for k in by_n[n].keys}
