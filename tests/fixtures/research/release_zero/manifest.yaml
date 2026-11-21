@@ -1,0 +1,123 @@
+schema_version: 1
+corpus:
+  id: release-zero-rights-safe
+  title: Release 0 rights-safe research contract fixture
+  version: "2026-07-15.1"
+  frozen_at: "2026-07-15"
+  evaluation_scope: infrastructure_fidelity
+  scope_note: >-
+    All included records are synthetic. They test manifest, locator, conflict,
+    qualifier, OCR-correction, and omission behavior. They provide no evidence
+    about Mullah Abdul Salam Zaeef or any other historical person.
+  frozen_order:
+    - synthetic-account-a
+    - synthetic-account-b
+    - synthetic-image-page
+
+sources:
+  - import_key: synthetic-account-a
+    title: Synthetic recollected account
+    creator: Hinbox test authors
+    source_type: synthetic_memoir_passage
+    status: included
+    expected_source_form: born_digital_text
+    language: en
+    evaluation_phenomena: [conflicting_date, material_qualifier]
+    rights:
+      redistribution: committed_test_fixture
+      training_eligibility: synthetic_fixture_only
+      note: Created for this repository; contains no historical claim.
+    representations:
+      - kind: original_text
+        path: sources/account-a.txt
+        sha256: e0fde30a8c3abfcb74a29fa2a0fe81897345c1d57b21ba0093c35008e5d36f02
+        review_state: author_verified
+
+  - import_key: synthetic-account-b
+    title: Synthetic copied register entry
+    creator: Hinbox test authors
+    source_type: synthetic_register_passage
+    status: included
+    expected_source_form: born_digital_text
+    language: en
+    evaluation_phenomena: [conflicting_date, material_qualifier, source_dependency]
+    rights:
+      redistribution: committed_test_fixture
+      training_eligibility: synthetic_fixture_only
+      note: Created for this repository; contains no historical claim.
+    representations:
+      - kind: original_text
+        path: sources/account-b.txt
+        sha256: 95e933cd922cbe70a1f0425f958d5d6f29b42d657e3369a503e15f41d3f6a508
+        review_state: author_verified
+
+  - import_key: synthetic-image-page
+    title: Synthetic image-backed page with OCR error
+    creator: Hinbox test authors
+    source_type: synthetic_page_image
+    status: included
+    expected_source_form: image_backed_page
+    language: en
+    evaluation_phenomena: [ocr_correction, omission, material_qualifier]
+    rights:
+      redistribution: committed_test_fixture
+      training_eligibility: synthetic_fixture_only
+      note: Created for this repository; names no real person.
+    representations:
+      - kind: original_page_image
+        path: sources/page-01.svg
+        sha256: 17c6f65a25a83487563abcaa92aa55ec89ab88ae22aaf73a6ae16aba34489d77
+        review_state: author_verified
+        page: 1
+      - kind: raw_ocr
+        path: sources/page-01.ocr.txt
+        sha256: a04cf2a3c14e7a4a219534bc81687624e197396cbc0de4b430a7da98daeade40
+        review_state: known_error
+        derived_from: original_page_image
+      - kind: corrected_transcription
+        path: sources/page-01.corrected.txt
+        sha256: f81d7534443421fb04d48821d550462319f91e1334fc17a5f54cf3387099e1a3
+        review_state: author_verified
+        derived_from: raw_ocr
+
+  - import_key: local-zaeef-corpus-slot
+    title: Local Zaeef evaluation corpus, not supplied
+    creator: unknown_until_local_manifest_is_prepared
+    source_type: mixed_local_corpus
+    status: unprocessed
+    expected_source_form: local_corpus_slot
+    language: und
+    evaluation_phenomena: []
+    rights:
+      redistribution: local_only_pending_rights_review
+      training_eligibility: unknown_not_eligible_by_default
+      note: No source bytes or bibliographic claims are committed in this slot.
+    representations: []
+
+  - import_key: inaccessible-zaeef-material-slot
+    title: Known but presently inaccessible material placeholder
+    creator: unknown
+    source_type: unavailable_material
+    status: unavailable
+    expected_source_form: local_corpus_slot
+    language: und
+    evaluation_phenomena: []
+    rights:
+      redistribution: unavailable
+      training_eligibility: prohibited_without_source_specific_review
+      note: Replace with bibliographic detail only when actually known.
+    representations: []
+
+  - import_key: existing-miami-herald-parquet
+    title: Existing Miami Herald article collection
+    creator: Miami Herald article authors
+    source_type: newspaper_collection
+    status: excluded
+    expected_source_form: local_corpus_slot
+    language: en
+    evaluation_phenomena: []
+    rights:
+      redistribution: existing_local_data_rights_not_assessed_for_fixture
+      training_eligibility: unknown_not_eligible_by_default
+      note: Excluded from the committed Release 0 fixture and checksum inventory.
+    representations: []
