@@ -547,3 +547,36 @@ def test_small_safety_rules():
           Written("Police arrested Tom Vale there in March 2004.", [2], "Arrests", 1)]  # fmt: skip
     summary_check(w, notes, "Port Elm")
     assert w[1].dropped == "repeats the first sentence"
+
+
+def test_a_sentence_citing_the_wrong_note_gets_its_sections_right_one():
+    from src.engine.written_page import Written, code_check
+    from src.engine.written_revise import recite
+
+    notes = page_notes(_city())
+    w = [Written("Police arrested Ann Roe in May 2005.", [2], "Arrests", 1)]
+    code_check(w, notes, "Port Elm")
+    assert w[0].dropped.startswith("not in its notes")
+    recite(w, notes, "Port Elm", [{"heading": "Arrests", "notes": [2, 3]}])
+    assert w[0].dropped == "" and w[0].notes == [3]
+
+
+def test_a_filled_note_about_another_event_gets_its_own_section():
+    from src.engine.written_page import Written
+    from src.engine.written_revise import Fill, fill_unused
+
+    notes = page_notes(_city())
+    written = [
+        Written("Police arrested Tom Vale there in March 2004.", [2], "Arrests", 1)
+    ]
+
+    def ask(msgs, model, max_tokens):
+        if model is Fill:
+            return Fill.model_validate({"sentences": [
+                {"text": "Police arrested Ann Roe in Port Elm in May 2005.", "notes": [3],
+                 "heading": "## Ann Roe's arrest"}]})  # fmt: skip
+        return SentenceChecks.model_validate({"checks": []})
+
+    out = fill_unused(written, notes, "Port Elm", "place",
+                      [{"heading": "Arrests", "notes": [2, 3]}], ask, {})  # fmt: skip
+    assert out[1].section == "Ann Roe's arrest" and out[1].filled

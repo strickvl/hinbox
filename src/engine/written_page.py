@@ -394,6 +394,7 @@ class Written:
     problem: str = ""
     summary: bool = False  # an opening sentence summing up the sections
     revised: str = ""  # the dropped sentence this one rewrites
+    filled: bool = False  # written for planned notes no sentence used
 
 
 # A note reference written into the sentence: "[N1, N2]", "(N12)", "{11, 14}",
@@ -833,7 +834,7 @@ def write_page(
     The record's ``model`` is the model, with "#plan" after it for the
     planned approach, so both can be stored side by side."""
     from src.engine.written_plan import write_planned
-    from src.engine.written_revise import fill_unused, revise
+    from src.engine.written_revise import fill_unused, recite, revise
 
     name = str(entity.get("name") or entity.get("title") or "")
     what = _what(entity_type, entity.get("type") or entity.get("event_type"))
@@ -867,6 +868,8 @@ def write_page(
     if approach == "plan":
         give_identity_a_note(written, report, shown)
     code_check([w for w in written if not w.summary], shown, name)
+    if approach == "plan":
+        recite(written, shown, name, (report.get("plan") or {}).get("parts") or [])
     drop_repeats(written)
     if check:
         model_check(written, shown, name, ask, report)
@@ -905,6 +908,7 @@ def write_page(
                 "check": w.check,
                 "problem": w.problem,
                 "revised": w.revised,
+                "filled": w.filled,
             }
             for w in written
         ],  # fmt: skip

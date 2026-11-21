@@ -144,9 +144,13 @@ its article's date).
 
 Write sentences for those notes to go at the end of the section, in a \
 short paragraph or two, so the section tells what they say. Use only what \
-the notes say, keep who said what, say when (month and year), and don't \
-repeat what the section already says. Leave out a note that doesn't \
-belong in this section. Every sentence lists the numbers of the notes it \
+the notes say, keep who said what, say when the event or statement was \
+(month and year; never "a 2016 report said"), and don't repeat what the \
+section already says. Leave out a note that only comments or judges and \
+gives no fact ("this highlights ...", "the city represents ..."). A note \
+about a different major event (a killing, an attack, a trial) gets its \
+own short section: give its sentences a short plain heading in \
+"heading"; leave "heading" empty for sentences that belong here. Every sentence lists the numbers of the notes it \
 uses in its notes field; never write note numbers into the sentence \
 itself. If nothing should be added, give an empty list."""
 
@@ -155,6 +159,7 @@ class FillSentence(BaseModel):
     model_config = ConfigDict(extra="ignore")
     text: str
     notes: List[int]
+    heading: str = Field(default="", description="A new section's heading, or ''")
 
 
 class Fill(BaseModel):
@@ -200,8 +205,10 @@ def fill_unused(
         for s in reply.sentences or []:
             text, refs = strip_refs(" ".join(str(s.text or "").split()))
             ns = [n for n in dict.fromkeys(list(s.notes or []) + refs) if n in by_n]
+            own = " ".join(str(s.heading or "").strip("# ").split())
             if text:
-                added.append(Written(text, ns, heading, para))
+                added.append(Written(text, ns, own or heading, para, filled=True))
+        added.sort(key=lambda w: w.section != heading)  # new sections after
         at = max(
             (i for i, w in enumerate(out) if w.section == heading), default=len(out) - 1
         )
@@ -213,3 +220,32 @@ def fill_unused(
     report["filled"] = len(fresh)
     report["filled_kept"] = sum(1 for w in fresh if not w.dropped)
     return out
+
+
+def recite(
+    written: List[Written], notes: Sequence[Note], name: str,
+    parts: Sequence[Dict[str, Any]],
+) -> None:  # fmt: skip
+    """A sentence the code check dropped for details its notes lack gets the
+    notes of its section that hold them, when some do (up to 4, those
+    sharing most words with it). On 21 Nov one Luna run's Bin Atef section
+    came back citing the wrong note numbers; every sentence then failed
+    both checks, though its planned notes said exactly what they said."""
+    from src.engine.written_page import _content, missing_details
+
+    by_n = {n.n: n for n in notes}
+    planned = {p.get("heading") or "": p.get("notes") or [] for p in parts}
+    for w in written:
+        if not w.dropped.startswith("not in its notes") or w.section not in planned:
+            continue
+        words = _content(w.text)
+        ranked = sorted(
+            (n for n in planned[w.section] if n in by_n),
+            key=lambda n: -len(words & _content(by_n[n].text)),
+        )
+        for k in range(1, 5):
+            pick = ranked[:k]
+            srcs = [f"{by_n[n].text} {by_n[n].date}" for n in pick]
+            if pick and not missing_details(w.text, srcs, name):
+                w.notes, w.dropped = pick, ""
+                break
