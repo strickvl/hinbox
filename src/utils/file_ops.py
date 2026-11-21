@@ -16,6 +16,7 @@ import pyarrow.parquet as pq
 
 from src.logging_config import get_logger
 from src.utils.entity_keys import plain_kind, plain_kinds
+from src.utils.profile_text import repair_profile
 
 # Get logger for this module
 logger = get_logger("utils.file_ops")
@@ -425,8 +426,13 @@ def _keyed_rows(table: str, path: str) -> Dict[Any, Dict[str, Any]]:
     """
     if not os.path.exists(path):
         return {}
-    fields, out, kept_apart = _KEY_FIELDS[table], {}, 0
+    fields, out, kept_apart, mended = _KEY_FIELDS[table], {}, 0, 0
     for raw in pq.read_table(path).to_pylist():
+        # Escaped newlines and doubled citation markers, mended once on load
+        # so the run saves the mended text and grounding checks it
+        if isinstance(raw.get("profile"), dict):
+            raw["profile"], did = repair_profile(raw["profile"])
+            mended += did
         row = plain_kinds(raw)
         key = _key(row, fields)
         if key in out:
@@ -437,6 +443,8 @@ def _keyed_rows(table: str, path: str) -> Dict[Any, Dict[str, Any]]:
             while key in out:
                 key, n = (*tuple(raw.get(f, "") for f in fields), n), n + 1
         out[key] = row
+    if mended:
+        logger.info(f"{table}: mended escaped newlines or doubled markers in {mended}")
     if kept_apart:
         logger.warning(
             f"{table}: {kept_apart} saved rows share a name and kind with "

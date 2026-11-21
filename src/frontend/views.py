@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from markupsafe import Markup
 
 from src.utils.grounding_passages import find_once, long_enough
+from src.utils.note_tags import off_topic_keys
 
 from . import corrections_view as cv
 from .data_access import SPECS, TABLES, Entity, Source, Store, pretty_type, to_date
@@ -190,6 +191,7 @@ def entity_page(
         link="/sources/{article}" + domain_query,
         show_verdicts=old is None,
         overlay=cv.overlay_for(store, cs, ent) if old is None else None,
+        off_topic=off_topic_keys(ent.profile) if old is None else (),
     )
     counts = rp.counts()
     issues = [
@@ -250,7 +252,7 @@ def entity_page(
             "verdict": c.verdict if rp.checked else "",
         }
         for c in rp.claims
-        if c.is_dispute
+        if c.is_dispute and not c.off
     ]
     return {
         "ent": ent,

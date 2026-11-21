@@ -73,6 +73,12 @@ it never calls a model. Run it with `just frontend`.
   about with `resolve_correction()` (`find_page()`: the page it names, else
   the page a join put it into or a split moved its sources to), as the
   pipeline does, so both agree.
+- **Notes about something else are hidden, never moved.** `render_profile(off_topic=)`
+  marks each claim tagged `other` (`src/utils/note_tags.py`) with the class
+  `off`; `entity.html` hides them behind a checkbox until the reader asks.
+  Moving them would change their neighbours' claim text and the claim
+  numbers the panel and the correction forms use. Pass the keys on the
+  entity page's current version only.
 - The server listens on 127.0.0.1 unless `HINBOX_FRONTEND_HOST` is set.
 - The repository is public: tests use made-up tables only. Never commit
   screenshots or fixtures from a real run. README screenshots come from

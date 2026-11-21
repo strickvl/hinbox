@@ -10,6 +10,7 @@ Examples::
     just eval profile-update --rescore <run file>   # re-score saved profiles
     just eval placement --model ollama/local-qwen36-32k --split dev
     just eval subplacement --model ollama/local-qwen36-32k --labels <file>
+    just eval note-relevance --model ollama/local-qwen36-32k --labels <file>
     just eval show                       # print the scoreboard
     just eval show --grid                # latest score per model and prompt
 """
@@ -32,6 +33,7 @@ from src.evals.datasets import (
     load_relevance_items,
     stub_existing_profiles,
 )
+from src.evals.note_relevance import run_note_relevance_eval
 from src.evals.placement import run_placement
 from src.evals.profile_create import run_profile_create
 from src.evals.profile_update import (
@@ -222,6 +224,7 @@ def main() -> None:
             "profile-create",
             "placement",
             "subplacement",
+            "note-relevance",
             "show",
         ),  # fmt: skip
     )
@@ -288,7 +291,10 @@ def main() -> None:
     )
     place = parser.add_argument_group("placement")
     place.add_argument(
-        "--labels", default=None, help="default: {eval_dir}/placement_labels.jsonl"
+        "--labels",
+        default=None,
+        help="default: {eval_dir}/placement_labels.jsonl (note-relevance: "
+        "{eval_dir}/note_labels.jsonl)",
     )
     place.add_argument("--batch", type=int, default=8, help="sentences per call")
     place.add_argument(
@@ -356,6 +362,9 @@ def main() -> None:
         return
     if args.task == "subplacement":
         run_subplacement(args, parser, eval_dir)
+        return
+    if args.task == "note-relevance":
+        run_note_relevance_eval(args, parser, eval_dir)
         return
 
     if args.task == "relevance":

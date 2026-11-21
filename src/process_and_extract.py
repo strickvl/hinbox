@@ -40,6 +40,7 @@ from src.engine.corrections_pass import (
 )
 from src.engine.grounding_pass import run_profile_grounding_postprocess
 from src.engine.judge_swap import judge_server
+from src.engine.note_relevance import relevance_pass
 from src.exceptions import ArticleLoadError
 from src.logging_config import console, get_logger, log, set_show_profiles, set_verbose
 from src.utils.article_window import ordered_window
@@ -955,6 +956,7 @@ def main():
             why = unreachable()
             if why:
                 raise ModelServerUnreachable(f"during grounding, {why}")
+        relevance_pass(entities, model_type, cc["grounding_workers"])
     except KeyboardInterrupt:
         log("Interrupted: saving entities merged so far...", level="warning")
         save_entities_then_status(entities, base_dir, status_tracker)
@@ -972,7 +974,6 @@ def main():
         if fixes:
             write_report(fixes_path, fixes)
         sys.exit(1)
-
     # Write results and statistics
     write_results_and_statistics(
         processed_rows,

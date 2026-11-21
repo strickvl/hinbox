@@ -21,7 +21,7 @@ Nothing here calls a model; it only reads saved fields.
 import html
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import markdown
 
@@ -61,6 +61,7 @@ _DISPUTE = re.compile(
 # Private-use characters mark where claim spans start and end; they pass
 # through Markdown untouched and are swapped for HTML afterwards
 _OPEN, _MID, _CLOSE, _CITE = "", "", "", ""
+_PUNCT = ""  # wraps the full stop after a hidden claim's marker
 
 
 @dataclass
@@ -82,6 +83,9 @@ class Claim:
     # article id -> the article words the checker's verdict rests on, as
     # stored (each already found word for word in the article)
     passages: Dict[str, List[str]] = field(default_factory=dict)
+    # Tagged as mainly about something else (src/engine/note_relevance.py):
+    # hidden on the entity page until the reader asks to see it
+    off: bool = False
 
     @property
     def verdict(self) -> str:
@@ -187,6 +191,9 @@ class RenderedProfile:
         for c in self.claims:
             out[c.verdict] = out.get(c.verdict, 0) + 1
         return out
+
+    def off_count(self) -> int:
+        return sum(1 for c in self.claims if c.off)
 
     def citation_total(self) -> int:
         return sum(max(1, len(c.articles)) for c in self.claims)
@@ -369,13 +376,19 @@ def render_profile(
     link: str = "/sources/{article}",
     show_verdicts: bool = True,
     overlay: Optional["Overlay"] = None,
+    off_topic: Iterable[str] = (),
 ) -> RenderedProfile:
     """Render a profile's Markdown with numbered citations and verdict marks.
 
     ``link`` is the citation's fallback URL (``{article}`` and ``{claim}``
     are filled in). ``show_verdicts=False`` renders an older version, whose
     text the stored report doesn't describe. ``overlay`` draws a historian's
-    corrections on top (pass it for the current version only).
+    corrections on top (pass it for the current version only). ``off_topic``
+    holds the keys of notes tagged as about something else
+    (``off_topic_keys()``); their spans get the class ``off``, which the page
+    hides until the reader asks. Nothing moves, so claim numbers, the panel
+    and the correction forms are unchanged. A struck sentence or a
+    historian's own is never hidden.
     """
     text = shift_headings(text or "")
     mine: Dict[str, Dict[str, Any]] = {}
@@ -384,6 +397,9 @@ def render_profile(
     claims, markers = parse_claims(text)
     checked = show_verdicts and attach_verdicts(claims, report)
     unmatched = _apply_overlay(claims, overlay, mine) if overlay else []
+    off = set(off_topic)
+    for c in claims:
+        c.off = bool(off) and not c.correction and sentence_key(c.text) in off
     order: List[str] = []
     for m in markers:
         for aid in m.articles:
@@ -399,12 +415,18 @@ def render_profile(
         if c.end > c.start:
             shown = checked or c.checker or c.correction == "struck"
             v = c.verdict if shown else "supported"
-            edits.append((c.start, 1, 0, f"{_OPEN}{c.index}|{v}|{c.correction}{_MID}"))
+            tag = f"{c.index}|{v}|{c.correction}|{'off' if c.off else ''}"
+            edits.append((c.start, 1, 0, f"{_OPEN}{tag}{_MID}"))
             edits.append((c.end, 0, 0, _CLOSE))
     subs: List[str] = []
     for m in markers:
         edits.append((m.start, 2, m.end - m.start, f"{_CITE}{len(subs)}{_CITE}"))
-        subs.append(_sup(m.articles, claims[m.claim], order, checked, link))
+        sup = _sup(m.articles, claims[m.claim], order, checked, link)
+        subs.append(sup.replace('"c"', '"c off"', 1) if claims[m.claim].off else sup)
+    for c in claims:  # a hidden claim's own full stop hides with it
+        end = claim_end(markers, c.index) if c.off else -1
+        if end >= 0 and text[end : end + 1] in (".", ",", ";", ":"):
+            edits.append((end, 3, 1, f"{_PUNCT}{text[end]}{_PUNCT}"))
     out = text
     for pos, _, n, token in sorted(edits, key=lambda e: (e[0], e[1]), reverse=True):
         out = out[:pos] + token + out[pos + n :]
@@ -414,14 +436,15 @@ def render_profile(
     )
     body = re.sub(f"{_CITE}(\\d+){_CITE}", lambda m: subs[int(m.group(1))], body)
     body = re.sub(
-        f"{_OPEN}(\\d+)\\|(\\w+)\\|(\\w*){_MID}",
+        f"{_OPEN}(\\d+)\\|(\\w+)\\|(\\w*)\\|(\\w*){_MID}",
         lambda m: (
-            f'<span class="s v-{m.group(2)}{" c-" + m.group(3) if m.group(3) else ""}"'
-            f' id="claim-{m.group(1)}">'
+            f'<span class="s v-{m.group(2)}{" c-" + m.group(3) if m.group(3) else ""}'
+            f'{" off" if m.group(4) else ""}" id="claim-{m.group(1)}">'
         ),
         body,
     )
     body = body.replace(_CLOSE, "</span>")
+    body = re.sub(f"{_PUNCT}(.){_PUNCT}", r'<span class="op">\1</span>', body)
     body = _MINE_RE.sub(lambda m: html.escape(_words(mine[m.group(0)])), body)
     # Give headings the anchors the contents list links to
     it = iter(sections)

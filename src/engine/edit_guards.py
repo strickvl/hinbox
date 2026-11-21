@@ -433,15 +433,36 @@ def _to_check(sentence: str, profile: List[str], anchor: str) -> bool:
     return bool(_disputed_olds(sentence, profile, anchor))
 
 
+def _off_topic_dispute(
+    sentence: str, profile: List[str], anchor: str, off_topic: List[str]
+) -> bool:
+    """A dispute or comparison whose disputed sentences all lie in notes
+    tagged as about something else."""
+    from src.utils.note_tags import is_off_topic
+
+    claim = _claim(sentence)
+    if not (_NARRATOR.search(claim) or _SOFT_DISPUTE.search(claim)):
+        return False
+    olds = _disputed_olds(sentence, profile, anchor)
+    return bool(olds) and all(is_off_topic(o, off_topic) for o in olds)
+
+
 def guard_edits(
     text: str,
     edits: List[ProfileEdit],
     article_date: Any = None,
     source_dates: Optional[Dict[str, Any]] = None,
     ask: Optional[Ask] = None,
+    off_topic: Optional[List[str]] = None,
 ) -> Tuple[List[ProfileEdit], Dict[str, Any]]:
     """The edits with repeated and invented-dispute sentences taken out, and
     "sources disagree" sentences that are later updates rewritten as one.
+
+    ``off_topic`` holds the keys of the profile's notes tagged as about
+    something else (``off_topic_keys()`` in ``src/utils/note_tags.py``): a
+    new dispute whose disputed sentences all lie in those notes is dropped,
+    since it argues about something else (a city's page disputing a
+    detainee's age).
 
     ``article_date`` is the new article's published date and
     ``source_dates`` the published date of each article the profile cites
@@ -461,6 +482,7 @@ def guard_edits(
     known = [s for s in _sentences(replaced) if not s.startswith("#")]
     profile = list(known)
     report: Dict[str, Any] = {"repeats": [], "disputes": [], "later_updates": []}
+    report["off_topic_disputes"] = []
     cited = paragraph_citations(replaced) if ask else {}
     # Per edit: (span, new text) swaps and how many facts stay
     swaps: List[List[Tuple[Tuple[int, int], str]]] = []
@@ -487,6 +509,10 @@ def guard_edits(
                 ask and _anchor_differs(sentence, profile, edit.anchor)
             ):
                 report["disputes"].append(sentence[:200])
+            elif off_topic and _off_topic_dispute(
+                sentence, profile, edit.anchor, off_topic
+            ):
+                report["off_topic_disputes"].append(sentence[:200])
             elif new := later_update(sentence, profile, when, dates, edit.anchor) or "":
                 report["later_updates"].append([sentence[:200], new[:200]])
                 facts_left[n] += 1
