@@ -247,7 +247,8 @@ passed through it.
 7. When notes give different dates or numbers for the same thing, say so in \
 one sentence that gives both and cites both. Don't set two different things \
 against each other.
-8. Every sentence lists the numbers of the notes it uses (at least one).
+8. Every sentence lists the numbers of the notes it uses (at least one) in \
+its notes field; never write note numbers into the sentence itself.
 9. Length: about {words} words in all. Leave out minor details before you \
 leave out a main fact."""
 
@@ -385,7 +386,71 @@ class Written:
     problem: str = ""
 
 
-def flatten(page: WPage) -> List[Written]:
+# A note reference written into the sentence: "[N1, N2]", "(N12)", "{11, 14}",
+# "(notes 2, 3)", or bare numbers in parentheses, "(14, 3)", when all are
+# note numbers
+_REF = re.compile(
+    r"\s*([\[({])\s*((?:notes?\s*|N\s*)?\d{1,3}"
+    r"(?:\s*(?:,|;|and|&|-|–)\s*(?:N\s*)?\d{1,3})*)\s*[\])}]",
+    re.IGNORECASE,
+)
+
+
+def strip_refs(text: str, max_n: int = 999) -> Tuple[str, List[int]]:
+    """``text`` without the note references a model wrote into it, and the
+    note numbers they named. Luna's section calls did this on 21 Nov ("...
+    in 2002 [N1]."), and the code check then dropped 64 of 90 sentences for
+    names and numbers "not in its notes"."""
+    found: List[int] = []
+
+    def cut(m: "re.Match[str]") -> str:
+        body = m.group(2)
+        nums = [int(x) for x in re.findall(r"\d+", body)]
+        marked = m.group(1) in "[{" or re.match(r"(?i)notes?|n", body)
+        if not marked and not all(1 <= x <= max_n for x in nums):
+            return m.group(0)
+        found.extend(nums)
+        return ""
+
+    out = _REF.sub(cut, text)
+    out = re.sub(r"\s+([.,;:])", r"\1", " ".join(out.split()))
+    return out, found
+
+
+# A sentence end: ". " before a capital, except after an initial or a short
+# abbreviation ("U.S. Army", "Gen. Smith", "J. Doe")
+_END = re.compile(r"(?<=[.!?])[\"”’)]?\s+(?=[\"“]?[A-Z])")
+_ABBR = re.compile(
+    r"(?:\b[A-Z]|\b[A-Z]\.[A-Z]|\b(?:Mr|Mrs|Ms|Dr|Gen|Col|Lt|Sgt|Capt|Adm|Maj|Gov|Sen|Rep|St|Jr|Sr|No|Vol|Co|Inc|Ltd|vs))\.$"
+)
+
+
+def split_sentences(text: str) -> List[str]:
+    """One item a model gave as several sentences, cut into sentences."""
+    out, start = [], 0
+    for m in _END.finditer(text):
+        if _ABBR.search(text[start : m.start()]):
+            continue
+        out.append(text[start : m.start()].strip())
+        start = m.end()
+    out.append(text[start:].strip())
+    return [t for t in out if t]
+
+
+def _pieces(w: "Written", max_n: int) -> List["Written"]:
+    """``w`` cut into its sentences, each without note references; a
+    sentence that named notes keeps those, else it keeps the item's."""
+    raw = " ".join(str(w.text or "").split())
+    parts = [strip_refs(t, max_n) for t in split_sentences(raw)] or [("", [])]
+    named = [n for _, refs in parts for n in refs]
+    out = []
+    for text, refs in parts:
+        notes = list(dict.fromkeys(refs or w.notes or named))
+        out.append(Written(text, notes, w.section, w.para))
+    return out
+
+
+def flatten(page: WPage, max_n: int = 999) -> List[Written]:
     out = [Written(s.text, list(s.notes or []), "", 0) for s in page.opening or []]
     p = 1
     for sec in page.sections or []:
@@ -396,8 +461,7 @@ def flatten(page: WPage) -> List[Written]:
                 for s in para.sentences or []
             ]
             p += 1
-    for w in out:
-        w.text = " ".join(str(w.text or "").split())
+    out = [piece for w in out for piece in _pieces(w, max_n)]
     return [w for w in out if w.text]
 
 
@@ -457,7 +521,14 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
     for num in _NUMBER.findall(sentence):
         if num.replace(",", "").rstrip(".") not in digits:
             missing.append(num)
-    for tok in _CAP.findall(sentence):
+    for m in _CAP.finditer(sentence):
+        tok = m.group(0)
+        # A sentence's first word is capitalised anyway ("Reports say ...",
+        # "Known as ..."): checked only when the next word is capitalised too
+        if not sentence[: m.start()].strip(" \"'“‘(") and not re.match(
+            r"[\w'’-]*\s+[A-Z]", sentence[m.start() :]
+        ):
+            continue
         if not present(_fold(tok).strip("'-")):
             missing.append(tok)
     return list(dict.fromkeys(missing))
@@ -592,7 +663,7 @@ def write_page(
         except Exception as exc:
             return {"model": key, "error": str(exc)[:300], "report": report}
         report["calls"] += 1
-    written = flatten(page)
+    written = flatten(page, max((n.n for n in shown), default=0))
     code_check(written, shown, name)
     if check:
         model_check(written, shown, name, ask, report)

@@ -73,6 +73,25 @@ def test_the_code_check_catches_added_names_numbers_and_dates():
     )  # months pass
 
 
+def test_note_references_written_into_sentences_are_taken_out():
+    from src.engine.written_page import WPage, flatten
+
+    page = WPage.model_validate({"opening": [{"text": (
+        "Port Elm is a city {1}. Police arrested Tom Vale there in 2004 (N2, N3)."),
+        "notes": []}], "sections": [{"heading": "Arrests", "paragraphs": [{"sentences": [
+        {"text": "The U.S. Army took Ann Roe in 2005 [3].", "notes": [3]},
+        {"text": "The port had 4,000 workers (2004).", "notes": [1]}]}]}]})  # fmt: skip
+    got = [(w.text, w.notes) for w in flatten(page, max_n=3)]
+    assert got == [
+        ("Port Elm is a city.", [1]),
+        ("Police arrested Tom Vale there in 2004.", [2, 3]),
+        ("The U.S. Army took Ann Roe in 2005.", [3]),
+        ("The port had 4,000 workers (2004).", [1]),  # a year, not a note
+    ]
+    # A sentence's ordinary first word is not taken for a name
+    assert missing_details("Reports differ on the date.", ["a date"], "X") == []
+
+
 def _ask(page, checks=None, facts=None):
     calls = []
 
@@ -91,7 +110,7 @@ PAGE = {
     "opening": [{"text": "Port Elm is a harbour city in the north of Elmland.", "notes": [1]}],
     "sections": [{"heading": "Arrests", "paragraphs": [{"sentences": [
         {"text": "Police arrested Tom Vale there in March 2004 and Ann Roe in May 2005.", "notes": [2, 3]},
-        {"text": "Interpol helped with both arrests.", "notes": [2, 3]},  # invented
+        {"text": "Both arrests were helped by Interpol.", "notes": [2, 3]},  # invented
         {"text": "Both were later freed.", "notes": [3]},
         {"text": "A sentence citing nothing real.", "notes": [9]},
     ]}]}],
@@ -123,7 +142,7 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
     )
     assert r["notes_used"] == 3 and r["headings"] == ["Arrests"]
     dropped = {s["text"]: s["dropped"] for s in page["sentences"]}
-    assert dropped["Interpol helped with both arrests."].endswith("Interpol")
+    assert dropped["Both arrests were helped by Interpol."].endswith("Interpol")
     assert dropped["A sentence citing nothing real."] == "cites no note"
     # The prompt offered the kind's headings and the right length
     profile = {}
@@ -144,7 +163,23 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
             {"heading": "## Empty", "covers": "nothing", "notes": [9]},
         ],
         "left_out": [],
-        "conflicts": [{"about": "arrest year", "notes": [2, 3]}],
+        "conflicts": [
+            {
+                "about": "arrest year",
+                "one_side": "2004",
+                "one_notes": [2],
+                "other_side": "2005",
+                "other_notes": [3],
+            },
+            # an exact date and a vaguer one that fits it: no conflict
+            {
+                "about": "arrest",
+                "one_side": "March 2004",
+                "one_notes": [2],
+                "other_side": "March 5, 2004",
+                "other_notes": [3],
+            },
+        ],
         "opening_notes": [1],
     }
     body = {"paragraphs": [{"sentences": [
@@ -162,8 +197,10 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     assert [m for m, _, _ in seen] == [Plan, WBody, WParagraph]
     section_prompt, section_notes = seen[1][1], seen[1][2]
     assert (
-        "Weigh them" in section_prompt and "arrest year (notes 2, 3)" in section_prompt
+        "Weigh them" in section_prompt
+        and "arrest year: 2004 (notes 2) against 2005 (notes 3)" in section_prompt
     )
+    assert "March 5" not in section_prompt
     assert "N1 " not in section_notes and "N2 " in section_notes  # its notes only
     assert page["text"].startswith("Port Elm is a harbour city")
     assert "## Arrests" in page["text"] and "Empty" not in page["text"]

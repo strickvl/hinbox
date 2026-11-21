@@ -22,6 +22,7 @@ The result is a ``WPage``, so the checks and storage in ``written_page.py``
 are the same for both ways of writing.
 """
 
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,22 +36,31 @@ write the entry yet; decide what it should say.
 in Pakistan", "a Yemeni man held at Guantánamo", "a U.S. Navy judge").
 2. why_it_matters: one sentence on why {name} matters in these notes.
 3. parts: the entry's sections, 1 to {max_parts}, in the order a reader \
-needs them. Put the parts most about {name} itself first, and a part that \
-is mainly about one other person or thing last. Headings that suit this \
-kind of page:
+needs them. The opening (written separately) says what {name} is, so no \
+part is an overview, introduction or summary. Put the parts most about \
+{name} itself first, and a part that is mainly about one other person or \
+thing last. The usual topics for this kind of page are:
 {headings}
-Use one of these where it fits, or a short plain heading of your own that \
-names a topic (never a single date or article). For each part give its \
-heading, a few words on what it tells, and the numbers of its notes, in \
-the order they should be told (usually date order). Each note goes in one \
-part at most.
+Name each part after what its notes tell, in a few plain words ("Arrests \
+in 2002 and 2003", "Military commission case", "Release to Oman"), not a \
+general word like "Background", "Role" or "Notable events", and never a \
+single date or article. For each part give its heading, a few words on \
+what it tells, and the numbers of its notes, in the order they should be \
+told (usually date order). Each note goes in one part at most.
 4. left_out: notes to leave out: notes mainly about someone or something \
 else, where {name} is only a setting or a passing mention; vague or \
 judging sentences with no fact in them ("the city represents ..."); and \
-notes that say less than another note already chosen.
-5. conflicts: pairs of note groups that give different dates, numbers or \
-places for the same event. Don't list two different events, or a later \
-change (a new count, a new post) that does not contradict the earlier one.
+notes that say less than another note already chosen. Keep a note about a \
+major event that happened at or to {name} (an attack, a killing, a \
+capture, a trial) even when it names other people.
+5. conflicts: only real contradictions: two accounts of the same event \
+that cannot both be true, such as two different years or places for one \
+capture. For each, what it is about, what one side says and its notes, \
+what the other side says and its notes. Not a conflict: an exact date and \
+a vaguer one that fits it ("April 2003" and "April 29, 2003"); two \
+descriptions that can both be true ("Saudi-born" and "Yemeni"); a count \
+or post that changed over time (40 captives one year, 41 another); two \
+different events. Most pages have none.
 6. opening_notes: the notes that say what {name} is."""
 
 SECTION = """You write one section of an encyclopedia entry about the \
@@ -72,7 +82,11 @@ attributed. Loaded words (terrorist, jihadist, mastermind, extremist) \
 appear only in quotation marks or attributed to whoever used them. Quoted \
 words stay exactly as quoted.
 - {conflicts}
-- Every sentence lists the numbers of the notes it uses.
+- Write about the events, not about the notes: never "the notes say", \
+"in the note" or "according to the notes".
+- The opening already says what {name} is: don't say it again.
+- Every sentence lists the numbers of the notes it uses in its notes \
+field; never write note numbers into the sentence itself.
 - About {words} words. Don't repeat what other sections cover."""
 
 OPENING = """You write the opening of an encyclopedia entry about the \
@@ -80,12 +94,16 @@ OPENING = """You write the opening of an encyclopedia entry about the \
 is planned like this:
 {outline}
 
-Write one to three sentences. The first says plainly what {name} is \
-({identity}). The next say why {name} matters in this record ({why}), \
-summing up the sections, so a reader who stops here knows the main facts.
+Write one to three sentences. The first says only what {name} is \
+({identity}), in one short sentence, with no one person's story in it. The \
+next sum up the main facts the sections tell ({why}), so a reader who \
+stops here knows them. State the facts themselves: never "{name} matters \
+because", "in this record" or "in these notes".
 
-Use only what the notes below say, and keep who said what. Every sentence \
-lists the numbers of the notes it uses."""
+Use only what the notes below say, and keep who said what. Write about \
+{name}, not about the notes ("the notes say"). Every sentence lists the \
+numbers of the notes it uses in its notes field; never write note numbers \
+into the sentence itself."""
 
 NO_CONFLICT = "When two notes give different dates or numbers for the same thing, give both and cite both."
 WEIGH = (
@@ -106,7 +124,32 @@ class PlanPart(BaseModel):
 class Conflict(BaseModel):
     model_config = ConfigDict(extra="ignore")
     about: str = Field(description="The one event or number they disagree on")
-    notes: List[int]
+    one_side: str = Field(description="What one group of notes says")
+    one_notes: List[int]
+    other_side: str = Field(description="What the other group of notes says")
+    other_notes: List[int]
+
+    @property
+    def notes(self) -> List[int]:
+        return list(dict.fromkeys(self.one_notes + self.other_notes))
+
+    def describe(self) -> str:
+        nums = lambda ns: ", ".join(str(n) for n in ns)  # noqa: E731
+        return (
+            f"{self.about}: {self.one_side} (notes {nums(self.one_notes)}) against "
+            f"{self.other_side} (notes {nums(self.other_notes)})"
+        )
+
+
+# Parts the opening already covers
+_GENERIC = {"overview", "introduction", "summary", "about", "general"}
+
+
+def _compatible(a: str, b: str) -> bool:
+    """One side's numbers all in the other's: an exact date against a vaguer
+    one that fits it ("April 2003", "April 29, 2003"), so no conflict."""
+    na, nb = set(re.findall(r"\d+", a)), set(re.findall(r"\d+", b))
+    return bool(na and nb) and (na <= nb or nb <= na)
 
 
 class Plan(BaseModel):
@@ -128,23 +171,32 @@ def clean_plan(plan: Plan, numbers: Sequence[int], max_parts: int = 6) -> Plan:
     known = set(numbers)
     seen: set = set()
     parts = []
+    first: List[int] = []
     for part in plan.parts[:max_parts]:
         ns = [
             n for n in dict.fromkeys(part.notes or []) if n in known and n not in seen
         ]
         seen.update(ns)
         heading = " ".join(str(part.heading or "").strip("# ").split())
-        if ns and heading:
+        if ns and heading.lower() in _GENERIC:
+            first += ns  # an overview part: its notes go to the opening
+        elif ns and heading:
             parts.append(PlanPart(heading=heading, covers=part.covers or "", notes=ns))
-    conflicts = [
-        Conflict(about=c.about, notes=[n for n in c.notes if n in seen])
-        for c in plan.conflicts or []
-    ]
+    conflicts = []
+    for c in plan.conflicts or []:
+        one = [n for n in c.one_notes if n in seen]
+        other = [n for n in c.other_notes if n in seen and n not in one]
+        if one and other and not _compatible(c.one_side, c.other_side):
+            conflicts.append(
+                c.model_copy(update={"one_notes": one, "other_notes": other})
+            )
     return Plan(
         identity=plan.identity or "", why_it_matters=plan.why_it_matters or "",
-        parts=parts, left_out=[n for n in plan.left_out or [] if n in known],
-        conflicts=[c for c in conflicts if len(c.notes) >= 2],
-        opening_notes=[n for n in plan.opening_notes or [] if n in known],
+        parts=parts,
+        left_out=[n for n in plan.left_out or [] if n in known and n not in seen],
+        conflicts=conflicts,
+        opening_notes=list(dict.fromkeys(
+            [n for n in plan.opening_notes or [] if n in known] + first)),
     )  # fmt: skip
 
 
@@ -165,11 +217,7 @@ def section_messages(
     plan: Plan, part: PlanPart, notes_text: str, name: str, what: str, words: int
 ) -> List[Dict[str, str]]:
     mine = set(part.notes)
-    items = [
-        f"{c.about} (notes {', '.join(str(n) for n in c.notes)})"
-        for c in plan.conflicts
-        if mine & set(c.notes)
-    ]
+    items = [c.describe() for c in plan.conflicts if mine & set(c.notes)]
     conflicts = WEIGH.format(items="; ".join(items)) if items else NO_CONFLICT
     system = SECTION.format(
         what=what, name=name, identity=plan.identity, outline=_outline(plan),
@@ -236,7 +284,7 @@ def write_planned(
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],
         "left_out": plan.left_out,
-        "conflicts": [{"about": c.about, "notes": c.notes} for c in plan.conflicts],
+        "conflicts": [c.model_dump() for c in plan.conflicts],
     }  # fmt: skip
     if not plan.parts:
         return None
