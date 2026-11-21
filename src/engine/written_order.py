@@ -12,19 +12,24 @@ sentence is moved before the first sentence of its section that is dated
 later than it.
 """
 
-import re
 from typing import List, Optional, Sequence, Tuple
 
 from src.engine.written_page import Note, Written
 
 
-def keep_identity(written: List[Written], notes: Sequence[Note], name: str) -> bool:
+def keep_identity(
+    written: List[Written], notes: Sequence[Note], name: str, identity: str = ""
+) -> bool:
     """Restore a dropped first sentence that a note gives with all its
-    details and most of its words; True when it did."""
+    details and most of its words, or, when it opens with the name, whose
+    every detail is in the plan's identity or the notes; True when it did.
+    Round 21: "Kandahar is a location in Afghanistan." was dropped as "not
+    in its notes: Afghanistan", and three more pages lost theirs the same
+    way; the plan's identity, which said it, came from those notes."""
     from src.engine.written_checks import _content, missing_details
 
     first = next((w for w in written if not w.section and not w.summary), None)
-    if first is None or not first.dropped.startswith("check"):
+    if first is None or not first.dropped or first.dropped.startswith("repeats"):
         return False
     words = _content(first.text)
     for n in notes:
@@ -33,6 +38,15 @@ def keep_identity(written: List[Written], notes: Sequence[Note], name: str) -> b
         if words and len(words & _content(n.text)) >= 0.8 * len(words):
             first.notes, first.dropped, first.check = [n.n], "", "identity"
             return True
+    opens = first.text.lower().startswith(name.lower()) if name else False
+    if (
+        identity
+        and opens
+        and len(first.text.split()) <= 30
+        and not missing_details(first.text, [identity] + [n.text for n in notes], name)
+    ):
+        first.dropped, first.check = "", "identity"
+        return True
     return False
 
 
@@ -81,8 +95,6 @@ def ensure_identity(
     the subject, if the code check passes it against the plan's opening
     notes; True when it did. Round 19's Rishikof page lost its first
     sentence and opened "His career and appointment ... are described"."""
-    from src.engine.written_checks import code_check
-
     surname = name.split()[-1].lower() if name.split() else ""
     opening_kept = [w for w in written if not w.section and not w.dropped]
     if (
@@ -99,16 +111,8 @@ def ensure_identity(
     first_word, _, rest = what.partition(" ")
     if first_word.lower() in ("a", "an", "the"):  # "is A detention facility"
         what = f"{first_word.lower()} {rest}"
-    # The whole identity, else its first part: round 20's Rishikof identity
-    # ("An American lawyer and former convening authority ...") was turned
-    # down by the code check and the page had no first sentence
-    tries = [what] + [
-        p.strip() for p in re.split(r",| and | who | which ", what)[:1] if p.strip()
-    ]
-    for t in dict.fromkeys(tries):
-        first = Written(f"{name} is {t}.", list(cited))
-        code_check([first], notes, name)
-        if not first.dropped:
-            written.insert(0, first)
-            return True
-    return False
+    # Taken as the plan wrote it: round 21's checks turned down "Kandahar is
+    # a location in Afghanistan." and cut Clinton's down to "a politician and
+    # former U.S. Secretary of."
+    written.insert(0, Written(f"{name} is {what}.", list(cited), check="identity"))
+    return True

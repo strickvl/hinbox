@@ -65,10 +65,23 @@ def event_when(note: Any) -> When:
         if m:
             day_month = _MONTH_OF.get(m.group(1)[:3].lower(), 0)
             return year - (day_month > month), day_month, int(m.group(2))
+        # "In March", "By late March": early before the 15th, late after
+        m = _MONTH_ONLY.search(note.text)
+        if m:
+            only = _MONTH_OF.get(m.group(2)[:3].lower(), 0)
+            part = (m.group(1) or "").lower()
+            day = (
+                5 if part.startswith("early") else 25 if part.startswith("late") else 15
+            )
+            return year - (only > month), only, day
         return year, month, 0
     return 9999, 0, 0
 
 
+_MONTH_ONLY = re.compile(
+    rf"\b(?:in|by|since|during|until|through)\s+(early|late|mid-?)?\s*{_MONTH_RE}\b(?!\.?\s+\d)",
+    re.I,
+)
 _DAY_ONLY = re.compile(rf"\b{_MONTH_RE}\.?\s+(\d{{1,2}})\b(?!,?\s+(?:19|20)\d\d)", re.I)
 
 

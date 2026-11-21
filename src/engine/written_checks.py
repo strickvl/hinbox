@@ -225,6 +225,8 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
                 'check: it talks about the page ("not detailed here"); '
                 "say only what the notes say"
             )
+        elif _EMPTY_DIFFER.search(w.text) and not _numbers(_YEAR_RE.sub(" ", w.text)):
+            w.dropped = "says only that counts differ, giving none"
         elif _LASTING.match(w.text) and from_article_dates(w.text, cited):
             w.dropped = (
                 "check: it puts the article's date on a lasting fact or a "
@@ -235,6 +237,17 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
                 "check: it puts the article's date on an older report; "
                 "leave the report undated unless its notes date it"
             )
+
+
+# "In March 2013, a report noted that the number of hunger strikers ...
+# differed from the counts recorded in April": nothing said (round 21, two
+# draws of the camp page)
+_EMPTY_DIFFER = re.compile(
+    r"\b(?:numbers?|counts?|figures?|tall(?:y|ies)|totals?)\b[^.;]{0,120}?"
+    r"\b(?:differed|differ|differs|diverged|varied)\b",
+    re.I,
+)
+_YEAR_RE = re.compile(r"\b(?:19|20)\d\d\b")
 
 
 # "In April 2018, the Senate torture report said": an article's date put on
@@ -254,7 +267,8 @@ _LASTING = re.compile(
     r"was described as|is described as|was listed as|was identified as|had been "
     r"cleared|was cleared|was known as|was serving as|was still|remained|"
     r"was assigned|had been assigned|became|was in charge|was overseeing|"
-    r"was directly involved|was involved|had been|had \w+ed|was among those)\b"
+    r"was directly involved|was involved|had been|had \w+ed|was among those|"
+    r"served as|authorized|justified)\b"
 )
 
 # "a news account described", "another account says": sources narrated
@@ -336,7 +350,9 @@ _ABOUT_PAGE = re.compile(
     r"|\bthe notes\b"
     # "Sections cover staffing ...", "... and its legal fallout are
     # described" (round 19, the camp page and Rishikof)
-    r"|^\W*sections?\b"
+    r"|^\W*(?:other )?sections?\b"
+    # "They also recount Paracha's removal" (round 21, Karachi's opening)
+    r"|^\W*they also\b|\brecount(?:s|ed)?\b"
     r"|\b(?:are|is) (?:described|covered|detailed|discussed|outlined)\W*$",
     re.IGNORECASE,
 )

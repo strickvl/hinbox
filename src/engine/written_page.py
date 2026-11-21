@@ -636,7 +636,9 @@ def write_page(
     drop_repeats(written)
     if check:
         model_check(written, shown, name, ask, report)
-        report["identity_kept"] = keep_identity(written, shown, name)
+        report["identity_kept"] = keep_identity(
+            written, shown, name, (report.get("plan") or {}).get("identity") or ""
+        )
     summary_check(written, shown, name)
     if check:
         written = revise(written, shown, name, ask, report)
@@ -657,6 +659,9 @@ def write_page(
             drop_one_sided(written, conflicts)
             written = review_page(written, shown, name, what, ask, report)
             plan = report.get("plan") or {}
+            report["identity_kept"] = report.get("identity_kept") or keep_identity(
+                written, shown, name, plan.get("identity") or ""
+            )
             report["identity_added"] = ensure_identity(
                 written, shown, name, plan.get("identity") or "",
                 plan.get("opening_notes") or [],

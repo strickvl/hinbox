@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.engine.written_page import Ask, Note, Written
 
-MAX_PAIRS = 16
+MAX_PAIRS = 24
 
 JUDGE = """You check pairs of sentences from one encyclopedia entry about \
 the {what} "{name}". For each pair say how sentence B stands to sentence A:
@@ -93,12 +93,19 @@ def candidate_pairs(kept: Sequence[Written], name: str) -> List[Tuple[int, int]]
         for i in range(j):
             if not kept[i].section:
                 continue
-            (wa, na, _), (wb, nb, _) = facts[i], facts[j]
+            (wa, na, pa), (wb, nb, pb) = facts[i], facts[j]
             shared = wa & wb
             small = min(len(wa), len(wb)) or 1
             counts = {n for n in na & nb if not _YEARLIKE.match(n) and len(n) > 1}
-            if (len(shared) >= 4 and len(shared) >= 0.5 * small) or (
-                counts and len(shared) >= 2
+            years = {n for n in na & nb if _YEARLIKE.match(n)}
+            # A person or most words plus a year: round 21 never paired Bin
+            # Atef's "36" with "mid-30s", nor Karachi's April 2003 arrests
+            # told twice
+            dated = years and ((pa & pb) or len(shared) >= 4)
+            if (
+                (len(shared) >= 4 and len(shared) >= 0.5 * small)
+                or (counts and len(shared) >= 2)
+                or (dated and len(shared) >= 3)
             ):
                 scored.append((-len(shared) / small, i, j))
     scored.sort()
@@ -109,6 +116,22 @@ def _adds_nothing(b: Written, a: Written, name: str) -> bool:
     """Every word, number and person of ``b`` is in ``a``."""
     (wa, na, pa), (wb, nb, pb) = _facts(a, name), _facts(b, name)
     return bool(wb) and wb <= wa and nb <= na and pb <= pa
+
+
+def _marks(text: str) -> set:
+    """Numbers, dates and capitalised words past the first word."""
+    from src.engine.written_checks import _numbers
+
+    caps = {w.lower() for w in re.findall(r"\b[A-Z][\w'’-]+", text)[1:]}
+    return _numbers(text) | caps
+
+
+def _lost(old: Written, first: Written, new: Written) -> bool:
+    """The trim of ``old`` dropped a name, date or number the first sentence
+    lacks. Round 21: a Rishikof trim kept one clause and lost the summons to
+    William Castle's office, the clearances and the March 2018 filing; two
+    Speer trims lost Capt. Justin Swick; three lost the year."""
+    return bool((_marks(old.text) - _marks(first.text)) - _marks(new.text))
 
 
 def judge_messages(
@@ -164,7 +187,7 @@ def review_page(
         report.setdefault("review_errors", []).append(str(exc)[:200])
         return written
     report["calls"] = report.get("calls", 0) + 1
-    marked: Dict[int, str] = {}  # id of a sentence to rewrite -> "same"/"conflict"
+    marked: Dict[int, Tuple[str, Written]] = {}  # id -> (verdict, first sentence)
     for v in reply.pairs or []:
         if not 1 <= v.pair <= len(pairs):
             continue
@@ -180,12 +203,12 @@ def review_page(
                 b.dropped = "repeats an earlier sentence of the page"
                 stats["dropped"] += 1
             else:
-                b.dropped, marked[id(b)] = _trim(a), "same"
+                b.dropped, marked[id(b)] = _trim(a), ("same", a)
         elif verdict == "conflict":
             stats["conflict"] += 1
             if any(_TOLD.search(w.text) for w in (a, b)):
                 continue  # one of them already says so
-            b.dropped, marked[id(b)] = _other_account(a), "conflict"
+            b.dropped, marked[id(b)] = _other_account(a), ("conflict", a)
     if not marked:
         return written
     out = revise(
@@ -199,8 +222,11 @@ def review_page(
             continue
         nxt = out[i + 1] if i + 1 < len(out) else None
         ok = nxt is not None and nxt.revised == w.text and not nxt.dropped
-        if ok and marked[id(w)] == "conflict" and lost_or_added(w.text, nxt.text):
+        kind, first = marked[id(w)]
+        if ok and kind == "conflict" and lost_or_added(w.text, nxt.text):
             nxt.dropped, ok = "rewrite lost a source or added a day", False
+        if ok and kind == "same" and _lost(w, first, nxt):
+            nxt.dropped, ok = "trim lost a name, date or number", False
         if not ok:
             w.dropped = ""
             restored += 1

@@ -191,11 +191,21 @@ def test_a_lost_identity_sentence_is_put_back_first():
     assert ensure_identity(out, notes, "Tom Vale", "A lawyer in Port Elm", [1])
     assert out[0].text == "Tom Vale is a lawyer in Port Elm." and out[0].notes == [1]
     assert not ensure_identity(out, notes, "Tom Vale", "a lawyer", [1])  # already named
+    # Taken as the plan wrote it, whatever the code check would say
     lost = [Written("He taught law.", [1], "Career", 1)]
-    assert not ensure_identity(lost, notes, "Tom Vale", "a judge in Elmland", [1])
-    # The whole identity fails the check; its first part is used
-    assert ensure_identity(lost, notes, "Tom Vale", "a lawyer and Elmland judge", [1])
-    assert lost[0].text == "Tom Vale is a lawyer."
+    assert ensure_identity(lost, notes, "Tom Vale", "a lawyer in Elmland", [1])
+    assert lost[0].text == "Tom Vale is a lawyer in Elmland."
+
+
+def test_a_first_sentence_the_checks_dropped_comes_back_when_the_identity_says_it():
+    from src.engine.written_order import keep_identity
+
+    notes = [_note(1, "Port Elm police arrested Tom Vale.", "2005-05-06")]
+    out = [Written("Port Elm is a city in Elmland.", [1], dropped="not in its notes: Elmland"),
+           Written("Police arrested Tom Vale.", [1], "Arrests", 1)]  # fmt: skip
+    assert not keep_identity(out, notes, "Port Elm", "a harbour city")
+    assert keep_identity(out, notes, "Port Elm", "a city in Elmland")
+    assert not out[0].dropped
 
 
 def test_an_articles_date_on_a_continuing_state_is_caught():
@@ -207,3 +217,13 @@ def test_an_articles_date_on_a_continuing_state_is_caught():
     )
     assert _ABOUT_PAGE.search("Sections cover staffing and conditions.")
     assert _ABOUT_PAGE.search("His career and later firing are described.")
+    assert _ABOUT_PAGE.search("They also recount Ann Roe's move.")
+    from src.engine.written_checks import code_check
+
+    empty = Written("In March 2013, the counts differed from those in April.", [1], "S")
+    code_check(
+        [empty],
+        [_note(1, "Counts were 24 in March and 84 in April.", "2013-04-01")],
+        "Port Elm",
+    )
+    assert empty.dropped.startswith("says only that counts differ")
