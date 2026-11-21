@@ -43,9 +43,14 @@ def main() -> None:
     p.add_argument("src")
     p.add_argument("out")
     p.add_argument("--names", required=True, help="comma-separated page names")
-    p.add_argument("--models", nargs="+", required=True)
+    p.add_argument("--models", nargs="*", default=[])
     p.add_argument("--domain", default="guantanamo")
     p.add_argument("--no-check", action="store_true")
+    p.add_argument("--approach", default="plan", choices=("plan", "single"))
+    p.add_argument(
+        "--add-page",
+        help="JSON file {table, name, page}: store a page written elsewhere",
+    )
     p.add_argument("--workers", type=int, default=2, help="condensing calls at once")
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
@@ -76,6 +81,15 @@ def main() -> None:
         chosen.append((t, k))
     if a.dry_run:
         return
+    if a.add_page:
+        import json
+
+        with open(a.add_page, encoding="utf-8") as f:
+            extra = json.load(f)
+        t, k = find(entities, extra["name"])[0]
+        store_page(entities[t][k]["profile"], extra["page"])
+        write_entities_table(t, list(entities[t].values()), a.out)
+        print(f"stored {extra['page']['model']} on {t}/{extra['name']}")
 
     for model in a.models:
         ask = make_ask(model)
@@ -91,6 +105,7 @@ def main() -> None:
                 _starter_entries(config, t, kind),
                 check=not a.no_check,
                 workers=a.workers,
+                approach=a.approach,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs

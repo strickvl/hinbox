@@ -20,11 +20,13 @@ _NAMES = (("qwen", "local Qwen"), ("luna", "GPT-6 Luna"), ("haiku", "Claude Haik
 
 
 def model_label(model: str) -> str:
-    low = (model or "").lower()
-    for word, label in _NAMES:
-        if word in low:
-            return label
-    return model
+    """ "GPT-6 Luna", "local Qwen, planned", "by hand" ..."""
+    base, _, approach = (model or "").partition("#")
+    if base == "by-hand":
+        return "by hand"
+    low = base.lower()
+    label = next((lab for word, lab in _NAMES if word in low), base)
+    return f"{label}, planned" if approach == "plan" else label
 
 
 def pick(ent: Entity, view: Optional[str]) -> Optional[Dict[str, Any]]:

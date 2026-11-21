@@ -79,7 +79,7 @@ class Note:
 
 
 def _day(value: Any) -> str:
-    """"2016-08-12" from an ISO date, a datetime or epoch seconds."""
+    """ "2016-08-12" from an ISO date, a datetime or epoch seconds."""
     if value is None or value == "":
         return ""
     if hasattr(value, "isoformat"):
@@ -164,6 +164,11 @@ class WParagraph(BaseModel):
 class WSection(BaseModel):
     model_config = ConfigDict(extra="ignore")
     heading: str
+    paragraphs: List[WParagraph]
+
+
+class WBody(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     paragraphs: List[WParagraph]
 
 
@@ -456,7 +461,8 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
             w.dropped = "cites no note"
             continue
         w.notes = [n.n for n in cited]
-        gaps = missing_details(w.text, [n.text for n in cited], name)
+        # A note's article date may be named ("a 2012 report")
+        gaps = missing_details(w.text, [f"{n.text} {n.date}" for n in cited], name)
         if gaps:
             w.dropped = "not in its notes: " + ", ".join(gaps[:5])
 
@@ -542,27 +548,40 @@ def render(written: List[Written], notes: Sequence[Note]) -> str:
 def write_page(
     entity: Dict[str, Any], entity_type: str, model: str, ask: Ask,
     headings: Sequence[Tuple[str, str]] = (), check: bool = True, workers: int = 1,
+    approach: str = "plan",
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
-    ``error`` and no text."""
+    ``error`` and no text. ``approach`` "plan" plans the page and writes it a
+    section at a time (``written_plan.py``); "single" writes it in one call.
+    The record's ``model`` is the model, with "#plan" after it for the
+    planned approach, so both can be stored side by side."""
+    from src.engine.written_plan import write_planned
+
     name = str(entity.get("name") or entity.get("title") or "")
     what = _what(entity_type, entity.get("type") or entity.get("event_type"))
-    report: Dict[str, Any] = {"calls": 0}
+    key = model if approach == "single" else f"{model}#{approach}"
+    report: Dict[str, Any] = {"calls": 0, "approach": approach}
     notes = page_notes(entity)
     report["notes"] = len(notes)
     if not notes:
-        return {"model": model, "error": "no notes", "report": report}
+        return {"model": key, "error": "no notes", "report": report}
     shown = condense(notes, name, what, ask, report, workers)
     report["shown"] = len(shown)
-    try:
-        page = ask(
-            write_messages(shown, name, what, headings, target_words(len(notes))),
-            WPage,
-            8192,
-        )
-    except Exception as exc:
-        return {"model": model, "error": str(exc)[:300], "report": report}
-    report["calls"] += 1
+    words = target_words(len(notes))
+    if approach == "plan":
+        page = write_planned(
+            shown, name, what, headings, words, ask, report, notes_block,
+            WPage, WBody, WParagraph,
+        )  # fmt: skip
+        if page is None:
+            return {"model": key, "error": "; ".join(report.get("errors") or ["no plan"]),
+                    "report": report}  # fmt: skip
+    else:
+        try:
+            page = ask(write_messages(shown, name, what, headings, words), WPage, 8192)
+        except Exception as exc:
+            return {"model": key, "error": str(exc)[:300], "report": report}
+        report["calls"] += 1
     written = flatten(page)
     code_check(written, shown, name)
     if check:
@@ -579,7 +598,7 @@ def write_page(
         headings=list(dict.fromkeys(w.section for w in kept if w.section)),
     )  # fmt: skip
     return {
-        "model": model,
+        "model": key,
         "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "text": render(written, shown) if kept else "",
         "sentences": [

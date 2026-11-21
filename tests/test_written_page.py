@@ -105,8 +105,10 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
         {"sentence": 3, "starts_with": "Both were later", "problem": "no release", "verdict": "not_supported"},
     ]}  # fmt: skip
     ask, calls = _ask(PAGE, checks)
-    page = write_page(_city(), "locations", "m", ask, [("Overview", "what it is")])
-    assert calls == [WPage, SentenceChecks]
+    page = write_page(
+        _city(), "locations", "m", ask, [("Overview", "what it is")], approach="single"
+    )
+    assert calls == [WPage, SentenceChecks] and page["model"] == "m"
     assert page["text"] == (
         "Port Elm is a harbour city in the north of Elmland.^[a1]\n\n"
         "## Arrests\n\n"
@@ -128,6 +130,44 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
     store_page(profile, page)
     assert list(stored_pages(profile)) == ["m"]
     assert isinstance(profile[WRITTEN_KEY], str)
+
+
+def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
+    from src.engine.written_page import WBody, WParagraph
+    from src.engine.written_plan import Plan
+
+    plan = {
+        "identity": "a harbour city in Elmland",
+        "why_it_matters": "two arrests were made there",
+        "parts": [
+            {"heading": "Arrests", "covers": "who was arrested", "notes": [2, 3, 3, 9]},
+            {"heading": "## Empty", "covers": "nothing", "notes": [9]},
+        ],
+        "left_out": [],
+        "conflicts": [{"about": "arrest year", "notes": [2, 3]}],
+        "opening_notes": [1],
+    }
+    body = {"paragraphs": [{"sentences": [
+        {"text": "Police arrested Tom Vale there in March 2004 and Ann Roe in May 2005.", "notes": [2, 3]}]}]}  # fmt: skip
+    opening = {"sentences": [{"text": "Port Elm is a harbour city in the north of Elmland.", "notes": [1]}]}  # fmt: skip
+    seen = []
+
+    def ask(msgs, model, max_tokens):
+        seen.append((model, msgs[0]["content"], msgs[1]["content"]))
+        reply = {Plan: plan, WBody: body, WParagraph: opening}.get(model)
+        return model.model_validate(reply if reply else {"checks": []})
+
+    page = write_page(_city(), "locations", "m", ask, check=False)
+    assert page["model"] == "m#plan"
+    assert [m for m, _, _ in seen] == [Plan, WBody, WParagraph]
+    section_prompt, section_notes = seen[1][1], seen[1][2]
+    assert (
+        "Weigh them" in section_prompt and "arrest year (notes 2, 3)" in section_prompt
+    )
+    assert "N1 " not in section_notes and "N2 " in section_notes  # its notes only
+    assert page["text"].startswith("Port Elm is a harbour city")
+    assert "## Arrests" in page["text"] and "Empty" not in page["text"]
+    assert page["report"]["plan"]["parts"] == [{"heading": "Arrests", "notes": [2, 3]}]
 
 
 def test_long_notes_are_condensed_into_facts_that_keep_their_notes(monkeypatch):
