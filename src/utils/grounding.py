@@ -208,8 +208,17 @@ def _previous_results(
         return {}, {}
 
 
-# Article text sent to the grounding check (and hashed to spot changes)
-GROUNDING_MAX_ARTICLE_CHARS = 12000
+# Article text sent to the grounding check (and hashed to spot changes). The
+# profile steps read the whole article, so a cut here marks true sentences
+# from further down "not supported": at 12,000 characters, local Qwen called
+# 294 of 303 sentences copied word for word from past the cut not supported.
+# 80,000 is the whole article for every article of the Guantánamo corpus
+# (longest 76,134) and still fits a 32k-token local window; a local model
+# with a smaller window needs a smaller value, or its checks of long articles
+# fail with PromptTooLongError and are asked again every run.
+GROUNDING_MAX_ARTICLE_CHARS = int(
+    os.getenv("HINBOX_GROUNDING_MAX_ARTICLE_CHARS", "80000")
+)
 GROUNDING_MAX_CLAIM_CHARS = 600
 # Claims sent in one call. A call for one article can hold claims from many
 # profiles; more than this are split over several calls, so a reply never
