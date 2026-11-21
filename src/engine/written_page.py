@@ -57,7 +57,7 @@ CONDENSE_CHARS = 12000  # notes shown to one condensing call
 FACTS_PER_RUN = 10  # facts asked for per condensing call
 MAX_ROUNDS = 4
 CHECK_BATCH = 8  # sentences per model-check call
-CHECK_NOTE_CHARS = 600  # each note shown to the check at most this long
+CHECK_NOTE_CHARS = 1500  # each note shown to the check at most this long
 MAX_NOTES_SHOWN = 8  # notes shown per sentence to the check
 
 _HEADING = re.compile(r"^[ \t]*(#{1,6})[ \t]+(.+?)[ \t#]*$", re.MULTILINE)
@@ -183,7 +183,7 @@ class SentenceCheck(BaseModel):
     sentence: int
     starts_with: str = Field(description="The sentence's first three words, copied")
     problem: str = Field(description="What the notes lack or say otherwise, or 'none'")
-    verdict: str = Field(description="supported, partial or not_supported")
+    verdict: str = Field(description="supported, partial, wrong or not_supported")
 
 
 class SentenceChecks(BaseModel):
@@ -260,11 +260,13 @@ For each numbered sentence:
 1. Copy its first three words.
 2. Say in a few words what its notes lack or say differently, or "none".
 3. Give one verdict:
-- supported: every detail (names, dates, numbers, places, who said what) is \
-in its notes.
-- partial: the main point is in its notes, but a detail is missing, wrong or \
-added, or the notes give a claim as someone's and the sentence states it as \
-fact.
+- supported: everything the sentence says is in its notes. A sentence may \
+leave out details of its notes, or put them in other words; that is fine.
+- partial: the facts are right, but a claim the notes attribute to someone \
+is stated as fact, or a word goes further than the notes ("the first" for \
+"one of the first", "always" for once).
+- wrong: a name, date, number or place differs from the notes, or a fact \
+the notes give about one person or event is given to another.
 - not_supported: its notes do not say this.
 
 Judge only by the notes shown with each sentence, not by what you know."""
@@ -524,10 +526,8 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
     for m in _CAP.finditer(sentence):
         tok = m.group(0)
         # A sentence's first word is capitalised anyway ("Reports say ...",
-        # "Known as ..."): checked only when the next word is capitalised too
-        if not sentence[: m.start()].strip(" \"'“‘(") and not re.match(
-            r"[\w'’-]*\s+[A-Z]", sentence[m.start() :]
-        ):
+        # "Regarding Walid ..."), so it is left to the model check
+        if not sentence[: m.start()].strip(" \"'“‘("):
             continue
         if not present(_fold(tok).strip("'-")):
             missing.append(tok)
@@ -546,6 +546,27 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
         gaps = missing_details(w.text, [f"{n.text} {n.date}" for n in cited], name)
         if gaps:
             w.dropped = "not in its notes: " + ", ".join(gaps[:5])
+
+
+def _content(text: str) -> set:
+    return {
+        w for w in re.findall(r"[\w']+", _fold(text)) if len(w) > 2 and w not in _COMMON
+    }
+
+
+def drop_repeats(written: List[Written], share: float = 0.8) -> None:
+    """Drop a section sentence whose words are nearly all in one earlier
+    section sentence (a one-sentence section saying again what the first
+    section said; on 21 Nov Luna's Karachi page said one fact three times)."""
+    seen: List[set] = []
+    for w in written:
+        if w.dropped or not w.section:
+            continue
+        words = _content(w.text)
+        if words and any(len(words & old) >= share * len(words) for old in seen):
+            w.dropped = "repeats an earlier sentence"
+            continue
+        seen.append(words)
 
 
 def check_messages(
@@ -590,10 +611,10 @@ def model_check(
             if c.starts_with and _first_words(c.starts_with) != _first_words(w.text):
                 continue  # the answer is about another sentence
             verdict = str(c.verdict or "").strip().lower().replace(" ", "_")
-            if verdict not in ("supported", "partial", "not_supported"):
+            if verdict not in ("supported", "partial", "wrong", "not_supported"):
                 continue
             w.check, w.problem = verdict, str(c.problem or "")[:300]
-            if verdict == "not_supported":
+            if verdict in ("wrong", "not_supported"):
                 w.dropped = "check: " + w.problem
 
 
@@ -665,6 +686,7 @@ def write_page(
         report["calls"] += 1
     written = flatten(page, max((n.n for n in shown), default=0))
     code_check(written, shown, name)
+    drop_repeats(written)
     if check:
         model_check(written, shown, name, ask, report)
     kept = [w for w in written if not w.dropped]

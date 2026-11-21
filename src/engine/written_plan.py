@@ -10,13 +10,16 @@ for one capture (three later reports, the Red Cross among them, against
 one) and dropped two notes that were a model's filler. So the work is
 split the way a writer does it:
 
-1. ``plan()``: one call reads every note and says what the entity is (from
-   the notes), why it matters in them, the parts of the page in the order a
-   reader needs them, which notes go in each part, which notes are left out,
-   and which notes give different dates or numbers for the same thing.
-2. ``write_planned()``: one call for the opening (it sees the plan, so it
-   can sum up the whole page) and one per part (it sees only that part's
-   notes, the conflicts among them, and the plan's outline).
+1. The plan: one call reads every note and says what the entity is (from
+   the notes), the parts of the page in the order a reader needs them,
+   which notes go in each part, and which notes are left out and why.
+2. Contradictions (``find_conflicts()``): one call per part, on that
+   part's notes only, lists notes that give different dates, places or
+   numbers for the same event.
+3. Sections: one call per part, shown only its notes and the
+   contradictions among them, told to weigh them.
+4. The opening (``opening_messages()``): one call, last, shown the written
+   sections, so it sums them up instead of repeating the first one.
 
 The result is a ``WPage``, so the checks and storage in ``written_page.py``
 are the same for both ways of writing.
@@ -47,21 +50,14 @@ general word like "Background", "Role" or "Notable events", and never a \
 single date or article. For each part give its heading, a few words on \
 what it tells, and the numbers of its notes, in the order they should be \
 told (usually date order). Each note goes in one part at most.
-4. left_out: notes to leave out: notes mainly about someone or something \
-else, where {name} is only a setting or a passing mention; vague or \
-judging sentences with no fact in them ("the city represents ..."); and \
-notes that say less than another note already chosen. Keep a note about a \
-major event that happened at or to {name} (an attack, a killing, a \
-capture, a trial) even when it names other people.
-5. conflicts: only real contradictions: two accounts of the same event \
-that cannot both be true, such as two different years or places for one \
-capture. For each, what it is about, what one side says and its notes, \
-what the other side says and its notes. Not a conflict: an exact date and \
-a vaguer one that fits it ("April 2003" and "April 29, 2003"); two \
-descriptions that can both be true ("Saudi-born" and "Yemeni"); a count \
-or post that changed over time (40 captives one year, 41 another); two \
-different events. Most pages have none.
-6. opening_notes: the notes that say what {name} is."""
+4. left_out: the notes to leave out, each with why: "someone else" (mainly \
+about another person or thing, {name} only a setting or a passing \
+mention), "no fact" (a vague or judging sentence, "the city represents \
+..."), or "repeats N" (says less than note N, which is used). Use most \
+notes: a note about a major event that happened at or to {name} (an \
+attack, a killing, a capture, a trial) is never left out, even when it \
+names other people.
+5. opening_notes: the notes that say what {name} is."""
 
 SECTION = """You write one section of an encyclopedia entry about the \
 {what} "{name}" ({identity}), for a reference work built from news \
@@ -84,26 +80,43 @@ words stay exactly as quoted.
 - {conflicts}
 - Write about the events, not about the notes: never "the notes say", \
 "in the note" or "according to the notes".
-- The opening already says what {name} is: don't say it again.
+- The opening says what {name} is: don't say it again here.
 - Every sentence lists the numbers of the notes it uses in its notes \
 field; never write note numbers into the sentence itself.
 - About {words} words. Don't repeat what other sections cover."""
 
 OPENING = """You write the opening of an encyclopedia entry about the \
-{what} "{name}", for a reference work built from news reporting. The entry \
-is planned like this:
-{outline}
+{what} "{name}", for a reference work built from news reporting. The \
+entry's sections are already written; they are below, each sentence with \
+the numbers of its notes, after the notes on what {name} is.
 
 Write one to three sentences. The first says only what {name} is \
-({identity}), in one short sentence, with no one person's story in it. The \
-next sum up the main facts the sections tell ({why}), so a reader who \
-stops here knows them. State the facts themselves: never "{name} matters \
-because", "in this record" or "in these notes".
+({identity}), in one short sentence, from the notes on what it is, with no \
+one person's story in it. The next sum up the sections in more general \
+words, a phrase or a clause for each section ("Pakistani forces arrested \
+several men in the city in 2002 and 2003 and handed them to U.S. custody"), \
+so a reader who stops here knows what the page tells. Don't copy a \
+section's sentence, and don't list every name and date.
 
-Use only what the notes below say, and keep who said what. Write about \
-{name}, not about the notes ("the notes say"). Every sentence lists the \
-numbers of the notes it uses in its notes field; never write note numbers \
-into the sentence itself."""
+Use only what the notes and sections say, and keep who said what. Write \
+about {name}, never about "the notes", "this record" or why {name} \
+"matters". Every sentence lists the numbers of the notes it uses in its \
+notes field; never write note numbers into the sentence itself."""
+
+CONFLICTS = """You read the notes for one section of an encyclopedia entry \
+about the {what} "{name}". The notes are sentences taken from news \
+articles. Find the places where they contradict each other: two notes \
+that give a different date, place or number for the same event happening \
+to the same person or thing, so that both cannot be true (one says he was \
+captured on Sept. 11, 2002, another that he was arrested in April 2003).
+
+For each contradiction give who or what it is about, the event, what one \
+side says and its notes, and what the other side says and its notes. \
+Not a contradiction: an exact date and a vaguer one that fits it ("April \
+2003" and "April 29, 2003"); two descriptions that can both be true \
+("Saudi-born" and "Yemeni"); a count or a post that changed over time; \
+two different people or events. Most sections have none: then give an \
+empty list."""
 
 NO_CONFLICT = "When two notes give different dates or numbers for the same thing, give both and cite both."
 WEIGH = (
@@ -152,18 +165,43 @@ def _compatible(a: str, b: str) -> bool:
     return bool(na and nb) and (na <= nb or nb <= na)
 
 
+class LeftOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    note: int
+    why: str = Field(description='"someone else", "no fact" or "repeats N"')
+
+
 class Plan(BaseModel):
     model_config = ConfigDict(extra="ignore")
     identity: str
     why_it_matters: str
     parts: List[PlanPart]
-    left_out: List[int]
-    conflicts: List[Conflict]
+    left_out: List[LeftOut]
     opening_notes: List[int]
+    conflicts: List[Conflict] = Field(default_factory=list)  # filled per part
+
+
+class Conflicts(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    conflicts: List[Conflict]
 
 
 def _outline(plan: Plan) -> str:
     return "\n".join(f"- {p.heading}: {p.covers}" for p in plan.parts)
+
+
+def clean_conflicts(conflicts: Sequence[Conflict], allowed: Any) -> List[Conflict]:
+    """Conflicts with notes on both sides (among ``allowed``), the sides'
+    values not fitting inside each other."""
+    out = []
+    for c in conflicts:
+        one = [n for n in dict.fromkeys(c.one_notes) if n in allowed]
+        other = [
+            n for n in dict.fromkeys(c.other_notes) if n in allowed and n not in one
+        ]
+        if one and other and not _compatible(c.one_side, c.other_side):
+            out.append(c.model_copy(update={"one_notes": one, "other_notes": other}))
+    return out
 
 
 def clean_plan(plan: Plan, numbers: Sequence[int], max_parts: int = 6) -> Plan:
@@ -182,18 +220,11 @@ def clean_plan(plan: Plan, numbers: Sequence[int], max_parts: int = 6) -> Plan:
             first += ns  # an overview part: its notes go to the opening
         elif ns and heading:
             parts.append(PlanPart(heading=heading, covers=part.covers or "", notes=ns))
-    conflicts = []
-    for c in plan.conflicts or []:
-        one = [n for n in c.one_notes if n in seen]
-        other = [n for n in c.other_notes if n in seen and n not in one]
-        if one and other and not _compatible(c.one_side, c.other_side):
-            conflicts.append(
-                c.model_copy(update={"one_notes": one, "other_notes": other})
-            )
+    conflicts = clean_conflicts(plan.conflicts or [], seen)
     return Plan(
         identity=plan.identity or "", why_it_matters=plan.why_it_matters or "",
         parts=parts,
-        left_out=[n for n in plan.left_out or [] if n in known and n not in seen],
+        left_out=[o for o in plan.left_out or [] if o.note in known and o.note not in seen],
         conflicts=conflicts,
         opening_notes=list(dict.fromkeys(
             [n for n in plan.opening_notes or [] if n in known] + first)),
@@ -230,15 +261,31 @@ def section_messages(
 
 
 def opening_messages(
-    plan: Plan, notes_text: str, name: str, what: str
-) -> List[Dict[str, str]]:
-    system = OPENING.format(
-        what=what, name=name, identity=plan.identity, why=plan.why_it_matters,
-        outline=_outline(plan),
-    )  # fmt: skip
+    plan: Plan, notes_text: str, sections: Sequence[Dict[str, Any]], name: str,
+    what: str,
+) -> List[Dict[str, str]]:  # fmt: skip
+    """The opening is written last, from the written sections, so it sums
+    them up instead of saying the first section's facts twice (on 21 Nov,
+    written from the notes, Luna's Karachi opening listed the arrests its
+    first section then listed again)."""
+    lines = []
+    for sec in sections:
+        lines.append(f"## {sec['heading']}")
+        for para in sec["paragraphs"]:
+            for sent in para.get("sentences") or []:
+                ns = ", ".join(str(n) for n in sent.get("notes") or [])
+                lines.append(f"- {sent.get('text', '')} (notes {ns})")
+    system = OPENING.format(what=what, name=name, identity=plan.identity)
+    body = f"Notes on what {name} is:\n{notes_text}\n\nThe sections:\n" + "\n".join(
+        lines
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": body}]
+
+
+def conflict_messages(notes_text: str, name: str, what: str) -> List[Dict[str, str]]:
     return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": f"Notes:\n{notes_text}"},
+        {"role": "system", "content": CONFLICTS.format(what=what, name=name)},
+        {"role": "user", "content": f"Notes for this section:\n{notes_text}"},
     ]
 
 
@@ -246,11 +293,9 @@ def max_parts(n_notes: int) -> int:
     return 2 if n_notes < 8 else 4 if n_notes < 40 else 6
 
 
-def opening_notes(plan: Plan, limit: int = 12) -> List[int]:
-    """The plan's notes on what the entity is, then each part's first two."""
-    out = list(plan.opening_notes)
-    for part in plan.parts:
-        out += part.notes[:2]
+def opening_notes(plan: Plan, limit: int = 6) -> List[int]:
+    """The plan's notes on what the entity is, else the first part's first."""
+    out = list(plan.opening_notes) or [p.notes[0] for p in plan.parts[:1]]
     return list(dict.fromkeys(out))[:limit]
 
 
@@ -263,14 +308,35 @@ def failed(report: Dict[str, Any], step: str, exc: Exception) -> None:
     report.setdefault("errors", []).append(f"{step}: {str(exc)[:200]}")
 
 
+def find_conflicts(
+    plan: Plan, part: PlanPart, notes_text: str, name: str, what: str, ask: Any,
+    report: Dict[str, Any],
+) -> List[Conflict]:  # fmt: skip
+    """One call on one part's notes: which of them contradict each other.
+    Its own step because inside the plan call Luna found none on Karachi
+    (bin Attash: captured Sept. 11, 2002, or arrested April 2003) once told
+    not to over-call them, while Qwen still called a vaguer date a conflict."""
+    if len(part.notes) < 2:
+        return []
+    try:
+        reply = ask(conflict_messages(notes_text, name, what), Conflicts, 2048)
+    except Exception as exc:
+        failed(report, f"conflicts {part.heading}", exc)
+        return []
+    report["calls"] = report.get("calls", 0) + 1
+    return clean_conflicts(reply.conflicts or [], set(part.notes))
+
+
 def write_planned(
     notes: Sequence[Any], name: str, what: str, headings: Sequence[Tuple[str, str]],
     words: int, ask: Any, report: Dict[str, Any], block: Any, page_model: Any,
     section_model: Any, sentence_model: Any,
 ) -> Optional[Any]:  # fmt: skip
-    """A ``page_model`` (``WPage``) written by plan, opening and sections, or
-    None when the plan call fails. ``block`` prints notes; the models are
-    passed in from ``written_page`` so this module needs no import of it."""
+    """A ``page_model`` (``WPage``) written in stages: the plan, then for each
+    part a check for contradicting notes and the section itself, then the
+    opening from the written sections. None when the plan call fails.
+    ``block`` prints notes; the models are passed in from ``written_page`` so
+    this module needs no import of it."""
     by_n = {n.n: n for n in notes}
     k = max_parts(len(notes))
     try:
@@ -280,14 +346,18 @@ def write_planned(
         return None
     report["calls"] = report.get("calls", 0) + 1
     plan = clean_plan(raw, list(by_n), k)
+    if not plan.parts:
+        report["plan"] = {"identity": plan.identity, "parts": []}
+        return None
+    for part in plan.parts:
+        shown = block([by_n[n] for n in part.notes])
+        plan.conflicts += find_conflicts(plan, part, shown, name, what, ask, report)
     report["plan"] = {
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],
-        "left_out": plan.left_out,
+        "left_out": [o.model_dump() for o in plan.left_out],
         "conflicts": [c.model_dump() for c in plan.conflicts],
     }  # fmt: skip
-    if not plan.parts:
-        return None
     sections = []
     for part in plan.parts:
         shown = [by_n[n] for n in part.notes]
@@ -305,8 +375,9 @@ def write_planned(
     shown = [by_n[n] for n in opening_notes(plan)]
     try:
         opening = ask(
-            opening_messages(plan, block(shown), name, what), sentence_model, 2048
-        )
+            opening_messages(plan, block(shown), sections, name, what),
+            sentence_model, 2048,
+        )  # fmt: skip
         report["calls"] += 1
         first = [s.model_dump() for s in opening.sentences]
     except Exception as exc:

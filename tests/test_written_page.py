@@ -153,16 +153,20 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
 
 def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     from src.engine.written_page import WBody, WParagraph
-    from src.engine.written_plan import Plan
+    from src.engine.written_plan import Conflicts, Plan
 
     plan = {
         "identity": "a harbour city in Elmland",
         "why_it_matters": "two arrests were made there",
         "parts": [
+            {"heading": "Overview", "covers": "what it is", "notes": [1]},
             {"heading": "Arrests", "covers": "who was arrested", "notes": [2, 3, 3, 9]},
             {"heading": "## Empty", "covers": "nothing", "notes": [9]},
         ],
-        "left_out": [],
+        "left_out": [{"note": 2, "why": "someone else"}],
+        "opening_notes": [],
+    }
+    conflicts = {
         "conflicts": [
             {
                 "about": "arrest year",
@@ -179,32 +183,66 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
                 "other_side": "March 5, 2004",
                 "other_notes": [3],
             },
-        ],
-        "opening_notes": [1],
+            {
+                "about": "a note of another part",
+                "one_side": "2003",
+                "one_notes": [1],
+                "other_side": "2005",
+                "other_notes": [3],
+            },
+        ]
     }
-    body = {"paragraphs": [{"sentences": [
-        {"text": "Police arrested Tom Vale there in March 2004 and Ann Roe in May 2005.", "notes": [2, 3]}]}]}  # fmt: skip
-    opening = {"sentences": [{"text": "Port Elm is a harbour city in the north of Elmland.", "notes": [1]}]}  # fmt: skip
+    body = {
+        "paragraphs": [
+            {
+                "sentences": [
+                    {
+                        "text": "Police arrested Tom Vale there in March 2004 and Ann Roe in May 2005.",
+                        "notes": [2, 3],
+                    },
+                    {
+                        "text": "Police arrested Tom Vale and Ann Roe there.",
+                        "notes": [2, 3],
+                    },
+                ]
+            }
+        ]
+    }  # a repeat
+    opening = {
+        "sentences": [
+            {
+                "text": "Port Elm is a harbour city in the north of Elmland.",
+                "notes": [1],
+            }
+        ]
+    }
     seen = []
 
     def ask(msgs, model, max_tokens):
         seen.append((model, msgs[0]["content"], msgs[1]["content"]))
-        reply = {Plan: plan, WBody: body, WParagraph: opening}.get(model)
-        return model.model_validate(reply if reply else {"checks": []})
+        reply = {Plan: plan, Conflicts: conflicts, WBody: body, WParagraph: opening}
+        return model.model_validate(reply.get(model) or {"checks": []})
 
     page = write_page(_city(), "locations", "m", ask, check=False)
     assert page["model"] == "m#plan"
-    assert [m for m, _, _ in seen] == [Plan, WBody, WParagraph]
-    section_prompt, section_notes = seen[1][1], seen[1][2]
-    assert (
-        "Weigh them" in section_prompt
-        and "arrest year: 2004 (notes 2) against 2005 (notes 3)" in section_prompt
-    )
-    assert "March 5" not in section_prompt
+    assert [m for m, _, _ in seen] == [Plan, Conflicts, WBody, WParagraph]
+    section_prompt, section_notes = seen[2][1], seen[2][2]
+    assert "Weigh them" in section_prompt
+    assert "arrest year: 2004 (notes 2) against 2005 (notes 3)" in section_prompt
+    assert "March 5" not in section_prompt and "another part" not in section_prompt
     assert "N1 " not in section_notes and "N2 " in section_notes  # its notes only
+    # The opening is written last, from the sections and the overview's note
+    assert "Police arrested Tom Vale there in March 2004" in seen[3][2]
+    assert "N1 " in seen[3][2]
     assert page["text"].startswith("Port Elm is a harbour city")
     assert "## Arrests" in page["text"] and "Empty" not in page["text"]
-    assert page["report"]["plan"]["parts"] == [{"heading": "Arrests", "notes": [2, 3]}]
+    assert "Overview" not in page["text"]
+    plan_out = page["report"]["plan"]
+    assert plan_out["parts"] == [{"heading": "Arrests", "notes": [2, 3]}]
+    assert plan_out["left_out"] == []  # note 2 is used after all
+    assert [s["dropped"] for s in page["sentences"]][
+        -1
+    ] == "repeats an earlier sentence"
 
 
 def test_long_notes_are_condensed_into_facts_that_keep_their_notes(monkeypatch):
