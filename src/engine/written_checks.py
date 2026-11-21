@@ -197,6 +197,11 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
                 'check: it talks about the page ("not detailed here"); '
                 "say only what the notes say"
             )
+        elif _LASTING.match(w.text) and from_article_dates(w.text, cited):
+            w.dropped = (
+                "check: it puts the article's date on a lasting fact or a "
+                "description; leave it undated unless its notes date it"
+            )
         elif _OLD_REPORT.match(w.text) and from_article_dates(w.text, cited):
             w.dropped = (
                 "check: it puts the article's date on an older report; "
@@ -209,7 +214,16 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
 _OLD_REPORT = re.compile(
     r"(?:In|By|On)\s+(?:[A-Z][a-z]+\.?\s+)?(?:\d{1,2},\s+)?\d{4},\s+(?:the|a|an)\s+"
     r"(?:[\w'’-]+\s+){0,4}(?:report|study|review|investigation|memo|document|"
-    r"survey|inquiry)s?\b"
+    r"survey|inquiry|profile|assessment|file|cable|transcript)s?\b"
+)
+
+# "In May 2009, Zaki did not want his last name published", "In June 2017,
+# Bin Atef was described as a Yemeni national": an article's date on what
+# was so for years (Luna, 21 Nov)
+_LASTING = re.compile(
+    r"(?:In|By)\s+(?:[A-Z][a-z]+\.?\s+)?\d{4},\s+[^,;]{0,60}?\b(?:did not want|"
+    r"was described as|is described as|was listed as|was identified as|had been "
+    r"cleared|was cleared|was known as)\b"
 )
 
 # "a news account described", "another account says": sources narrated

@@ -137,7 +137,15 @@ def lost_or_added(old: str, new: str) -> bool:
         sources |= caps(m.group(1) or m.group(2) or "")
     days = lambda t: {m.group(0).lower() for m in _DAY.finditer(t)}  # noqa: E731
     lost = sources - caps(new)
-    return bool(lost) or bool(caps(new) - caps(old)) or bool(days(new) - days(old))
+    added = caps(new) - caps(old)
+    # A fuller form of a name the sentence has ("al Nashiri" -> "Abd al
+    # Rahim al Nashiri") adds nothing
+    from src.engine.written_plan import _PERSON
+
+    for p in _PERSON.findall(new):
+        if p.split()[-1].lower() in caps(old):
+            added -= {w.lower() for w in p.split()}
+    return bool(lost) or bool(added) or bool(days(new) - days(old))
 
 
 # A named source: "according to the International Red Cross", "the Senate

@@ -197,6 +197,13 @@ def fill_unused(
     # The opening's notes don't count: its first sentence cites the note
     # with Bin Atef's 2009 clearance, which no section then told
     used = {n for w in written if not w.dropped and w.section for n in w.notes}
+    # A note whose people no kept sentence names is not used yet: on 21 Nov
+    # the dispute sentence cited bin Attash's notes, which also gave Ammar al
+    # Baluchi's arrest, and two pages of three never named al Baluchi
+    from src.engine.written_plan import _surnames
+
+    page = set().union(*(_surnames(w.text, name) for w in written if not w.dropped))
+    used = {n for n in used if n not in by_n or _surnames(by_n[n].text, name) <= page}
     out = list(written)
     fresh: List[Written] = []
     for part in parts:

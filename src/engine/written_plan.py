@@ -581,6 +581,9 @@ def write_planned(
     if not plan.parts:
         report["plan"] = {"identity": plan.identity, "parts": []}
         return None
+    from src.engine.written_file import file_notes
+
+    file_notes(plan, notes, name, what, ask, report, block)
     before = {n for p in plan.parts for n in p.notes}
     restore_repeats(plan, by_n, name)
     restore_on_topic(plan, by_n, name, what)

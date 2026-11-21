@@ -313,3 +313,40 @@ def test_passive_captors_page_talk_and_named_sources():
     assert not lost_or_added(
         old, "Tom Vale was taken on Sept. 11, 2002, by Elm forces."
     )
+
+
+def test_notes_are_filed_into_the_plans_sections_one_batch_at_a_time():
+    from src.engine.written_file import Filing, file_notes
+    from src.engine.written_page import notes_block
+
+    plan = Plan(
+        identity="", why_it_matters="", opening_notes=[1],
+        parts=[PlanPart(heading="Arrests", covers="who was held", notes=[2]),
+               PlanPart(heading="Prisoners", covers="", notes=[3])],
+        left_out=[LeftOut(note=4, why="someone else")],
+    )  # fmt: skip
+
+    def ask(msgs, model, max_tokens):
+        assert model is Filing and "- Arrests: who was held" in msgs[0]["content"]
+        return Filing.model_validate({"notes": [
+            {"note": 2, "starts_with": "Police captured Tom", "section": "Arrests"},
+            {"note": 3, "starts_with": "Police arrested Tom", "section": "arrests"},
+            {"note": 4, "starts_with": "Ann Roe was", "section": "Prisoners"},
+            {"note": 5, "starts_with": "Wrong words here", "section": "Arrests"},
+        ]})  # fmt: skip
+
+    report = {}
+    file_notes(plan, NOTES, "Port Elm", "place", ask, report, notes_block)
+    assert [p.heading for p in plan.parts] == ["Arrests", "Prisoners"]
+    assert plan.parts[0].notes == [2, 3] and plan.parts[1].notes == [4]
+    assert plan.left_out == [] and report["filing"]["moved"] == 2
+
+
+def test_fuller_names_and_lasting_facts():
+    from src.engine.written_conflicts import lost_or_added
+
+    assert not lost_or_added("An account said Vale was held.", "Tom Vale was held.")
+    notes = [_note(1, "Tom Vale did not want his name published.", "2009-05-02")]
+    w = Written("In May 2009, Tom Vale did not want his name published.", [1], "Life")
+    code_check([w], notes, "Tom Vale")
+    assert "lasting fact" in w.dropped
