@@ -471,3 +471,79 @@ def test_run_labels_show_in_the_reader():
     from src.frontend.written_view import model_label
 
     assert model_label("openai/gpt-6-luna#plan@b") == "GPT-6 Luna, planned (b)"
+
+
+def test_planned_notes_no_sentence_uses_are_written_into_their_section():
+    from src.engine.written_page import Written
+    from src.engine.written_revise import Fill, fill_unused
+
+    notes = page_notes(_city())
+    written = [Written("Port Elm is a harbour city.", [1]),
+               Written("Police arrested Tom Vale there in March 2004.", [2], "Arrests", 1),
+               Written("Port Elm has a harbour.", [1], "Harbour", 2)]  # fmt: skip
+
+    def ask(msgs, model, max_tokens):
+        if model is Fill:
+            assert "N3 " in msgs[1]["content"] and "N2 " not in msgs[1]["content"]
+            return Fill.model_validate({"sentences": [
+                {"text": "Police arrested Ann Roe in Port Elm in May 2005 (N3).", "notes": []}]})  # fmt: skip
+        return SentenceChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": "Police arrested Ann", "problem": "none",
+             "verdict": "supported"}]})  # fmt: skip
+
+    parts = [
+        {"heading": "Arrests", "notes": [2, 3]},
+        {"heading": "Harbour", "notes": [1]},
+    ]
+    report = {}
+    out = fill_unused(written, notes, "Port Elm", "place", parts, ask, report)
+    assert [w.text for w in out][
+        2
+    ] == "Police arrested Ann Roe in Port Elm in May 2005."
+    assert out[2].section == "Arrests" and out[2].notes == [3] and not out[2].dropped
+    assert (report["filled"], report["filled_kept"]) == (1, 1)
+
+
+def test_a_conflict_across_two_parts_is_found_and_told_in_one():
+    from src.engine.written_page import notes_block
+    from src.engine.written_plan import Conflicts, Plan, PlanPart, cross_part_conflicts
+
+    notes = [n for n in page_notes(_city())]
+    notes[1].text = "Police captured Tom Vale in Port Elm in 2002."
+    notes[2].text = "Police arrested Tom Vale on April 29, 2003."
+    by_n = {n.n: n for n in notes}
+    plan = Plan(identity="", why_it_matters="", opening_notes=[], left_out=[],
+                parts=[PlanPart(heading="2002", covers="", notes=[1, 2]),
+                       PlanPart(heading="2003", covers="", notes=[3])])  # fmt: skip
+
+    def ask(msgs, model, max_tokens):
+        assert "notes 2 and 3 (Tom Vale" in msgs[1]["content"]
+        return Conflicts.model_validate({"conflicts": [
+            {"about": "Vale's capture", "one_side": "2002", "one_notes": [2],
+             "other_side": "April 29, 2003", "other_notes": [3]}]})  # fmt: skip
+
+    found = cross_part_conflicts(
+        plan, by_n, "Port Elm", "place", ask, {}, notes_block, {}
+    )
+    assert len(found) == 1
+    assert [p.notes for p in plan.parts] == [[1, 2, 3]]
+
+
+def test_small_safety_rules():
+    from src.engine.written_page import (
+        Written,
+        _numbers,
+        give_identity_a_note,
+        summary_check,
+    )
+
+    assert "sep 11" not in _numbers("He was taken on Sept. 10-11, 2002.")
+    assert "sep 11" in _numbers("He was taken on Sept. 11, 2002.")
+    notes = page_notes(_city())
+    w = [Written("Port Elm is a harbour city.", [9])]
+    give_identity_a_note(w, {"plan": {"opening_notes": [1]}}, notes)
+    assert w[0].notes == [1]
+    w += [Written("Port Elm is a harbour city, and police made arrests there.", [2], summary=True),
+          Written("Police arrested Tom Vale there in March 2004.", [2], "Arrests", 1)]  # fmt: skip
+    summary_check(w, notes, "Port Elm")
+    assert w[1].dropped == "repeats the first sentence"

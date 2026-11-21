@@ -585,6 +585,22 @@ def _content(text: str) -> set:
     }
 
 
+_DAY = re.compile(
+    r"\b(" + "|".join(_MONTHS) + r")\.?\s+(\d{1,2}(?:\s*[-–]\s*\d{1,2})?)\b", re.I
+)
+
+
+def _numbers(text: str) -> set:
+    """Numbers of a sentence, a day with its month as one ("sep 10-11", so
+    "Sept. 11" is not taken as said by "Sept. 10-11")."""
+    days = {
+        f"{m.group(1)[:3].lower()} {m.group(2).replace(' ', '')}"
+        for m in _DAY.finditer(text)
+    }
+    rest = _NUMBER.findall(_DAY.sub(" ", text))
+    return days | set(rest)
+
+
 def drop_repeats(written: List[Written], share: float = 0.8) -> None:
     """Drop a section sentence whose words are nearly all in one earlier
     section sentence (a one-sentence section saying again what the first
@@ -599,7 +615,7 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
         if w.dropped or not w.section:
             continue
         words = _content(w.text)
-        nums = set(_NUMBER.findall(w.text))
+        nums = _numbers(w.text)
         said, cited = section.setdefault(w.section, (set(), set()))
         again = words and any(len(words & old) >= share * len(words) for old in seen)
         told = (
@@ -641,6 +657,10 @@ def summary_check(written: List[Written], notes: Sequence[Note], name: str) -> N
             w.dropped = "talks about the page"
             continue
         words = _content(w.text)
+        first = next((o for o in written if not o.section and not o.summary), None)
+        if first is not None and first is not w and _content(first.text) <= words:
+            w.dropped = "repeats the first sentence"
+            continue
         if any(
             len(words & _content(o.text)) >= 0.8 * len(words)
             for o in written
@@ -784,6 +804,23 @@ def render(written: List[Written], notes: Sequence[Note]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+def give_identity_a_note(
+    written: List[Written], report: Dict[str, Any], shown: Sequence[Note]
+) -> None:
+    """The opening's first sentence ("X is a Yemeni former Guantánamo
+    detainee.") cites the plan's notes on what X is when it names none it
+    may cite: on 21 Nov one Luna page lost it as "cites no note" and never
+    said who he was."""
+    known = {n.n for n in shown}
+    first = next((w for w in written if not w.section), None)
+    if first is None or any(n in known for n in first.notes):
+        return
+    plan = report.get("plan") or {}
+    first.notes = [n for n in plan.get("opening_notes") or [] if n in known][:3] or [
+        n.n for n in shown[:1]
+    ]
+
+
 def write_page(
     entity: Dict[str, Any], entity_type: str, model: str, ask: Ask,
     headings: Sequence[Tuple[str, str]] = (), check: bool = True, workers: int = 1,
@@ -796,7 +833,7 @@ def write_page(
     The record's ``model`` is the model, with "#plan" after it for the
     planned approach, so both can be stored side by side."""
     from src.engine.written_plan import write_planned
-    from src.engine.written_revise import revise
+    from src.engine.written_revise import fill_unused, revise
 
     name = str(entity.get("name") or entity.get("title") or "")
     what = _what(entity_type, entity.get("type") or entity.get("event_type"))
@@ -827,6 +864,8 @@ def write_page(
     written = flatten(
         page, max((n.n for n in shown), default=0), summary=approach == "plan"
     )
+    if approach == "plan":
+        give_identity_a_note(written, report, shown)
     code_check([w for w in written if not w.summary], shown, name)
     drop_repeats(written)
     if check:
@@ -836,6 +875,10 @@ def write_page(
         written = revise(written, shown, name, ask, report)
         summary_check(written, shown, name)
         report["revised_kept"] = sum(1 for w in written if w.revised and not w.dropped)
+        if approach == "plan":
+            parts = (report.get("plan") or {}).get("parts") or []
+            written = fill_unused(written, shown, name, what, parts, ask, report)
+            summary_check(written, shown, name)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}
     used = {k for w in kept for n in w.notes for k in by_n[n].keys}

@@ -82,7 +82,8 @@ words stay exactly as quoted.
 - {conflicts}
 - Each note shows its article's date. You may use it for when something \
 was said or reported, as the month and year ("In May 2007, Zaki said"), \
-never as the day of the event itself.
+never as the day of the event itself. Date the event or the statement, not \
+the article: never "a May 2017 article said".
 - Name a person in full (as the notes give the name) the first time the \
 section mentions them. Don't join facts from different dates into one \
 sentence unless each keeps its own date.
@@ -335,27 +336,62 @@ _PERSON = re.compile(
 _YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 
 
+def _pairs(notes: Sequence[Any], name: str) -> List[Tuple[Any, Any, str, set, set]]:
+    info = []
+    for n in notes:
+        people = {p for p in _PERSON.findall(n.text) if p.lower() != name.lower()}
+        info.append((n, people, set(_YEAR.findall(n.text))))
+    out = []
+    for i, (a, pa, ya) in enumerate(info):
+        for b, pb, yb in info[i + 1 :]:
+            shared = pa & pb
+            if shared and ya and yb and not ya & yb:
+                out.append((a, b, sorted(shared, key=len)[-1], ya, yb))
+    return out
+
+
 def candidate_pairs(notes: Sequence[Any], name: str) -> List[str]:
     """Pairs of notes naming the same person (two or more capitalised words,
     not the page's own name) with different years in their text. On 21 Nov
     the contradiction step found bin Attash's two capture dates in one Luna
     run and not in the next, from the same notes; pointing at the pair takes
     the luck out of noticing it."""
-    found = []
-    info = []
-    for n in notes:
-        people = {p for p in _PERSON.findall(n.text) if p.lower() != name.lower()}
-        info.append((n, people, set(_YEAR.findall(n.text))))
-    for i, (a, pa, ya) in enumerate(info):
-        for b, pb, yb in info[i + 1 :]:
-            shared = pa & pb
-            if shared and ya and yb and not ya & yb:
-                who = sorted(shared, key=len)[-1]
-                found.append(
-                    f"notes {a.n} and {b.n} ({who}: {', '.join(sorted(ya))} "
-                    f"against {', '.join(sorted(yb))})"
-                )
-    return found[:6]
+    return [
+        f"notes {a.n} and {b.n} ({who}: {', '.join(sorted(ya))} "
+        f"against {', '.join(sorted(yb))})"
+        for a, b, who, ya, yb in _pairs(notes, name)
+    ][:6]
+
+
+def cross_part_conflicts(
+    plan: Plan, by_n: Dict[int, Any], name: str, what: str, ask: Any,
+    report: Dict[str, Any], block: Any, dates: Dict[int, str],
+) -> List[Conflict]:  # fmt: skip
+    """The contradiction step for same-person pairs the plan put in two
+    parts (local Qwen filed bin Attash's 2002 capture under "Arrests in
+    2002" and his April 2003 arrest under "Arrests in 2003", so neither
+    part's step saw both). Each conflict found moves all its notes into the
+    part holding its first side, so one section tells it."""
+    part_of = {n: i for i, p in enumerate(plan.parts) for n in p.notes}
+    planned = [by_n[n] for n in part_of]
+    cross = [
+        (a, b) for a, b, *_ in _pairs(planned, name) if part_of[a.n] != part_of[b.n]
+    ][:6]
+    if not cross:
+        return []
+    mine = list({n.n: n for pair in cross for n in pair}.values())
+    part = PlanPart(heading="(across parts)", covers="", notes=[n.n for n in mine])
+    found = find_conflicts(
+        plan, part, block(mine), name, what, ask, report, dates, mine
+    )
+    for c in found:
+        home = plan.parts[part_of[c.one_notes[0]]]
+        for n in c.notes:
+            if n not in home.notes:
+                plan.parts[part_of[n]].notes.remove(n)
+                home.notes.append(n)
+    plan.parts = [p for p in plan.parts if p.notes]
+    return found
 
 
 def max_parts(n_notes: int) -> int:
@@ -468,10 +504,14 @@ def write_planned(
         plan.conflicts += find_conflicts(
             plan, part, block(mine), name, what, ask, report, dates, mine
         )
+    plan.conflicts += cross_part_conflicts(
+        plan, by_n, name, what, ask, report, block, dates
+    )
     plan.conflicts = clean_conflicts(plan.conflicts, set(by_n), dates)
     report["plan"] = {
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],
+        "opening_notes": opening_notes(plan),
         "left_out": [o.model_dump() for o in plan.left_out],
         "conflicts": [c.model_dump() for c in plan.conflicts],
     }  # fmt: skip

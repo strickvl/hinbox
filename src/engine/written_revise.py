@@ -1,4 +1,6 @@
-"""Give a dropped sentence of a written page one chance to be rewritten.
+"""Second chances for a written page: a dropped sentence is rewritten once
+(``revise()``), and planned notes no kept sentence uses are written into
+their section (``fill_unused()``).
 
 Why: on 21 Nov the checks dropped whole planned sections because their one
 or two sentences each had one bad detail (an exact day the notes don't
@@ -36,7 +38,9 @@ articles, each with its article's date).
 Rewrite each sentence so it says only what its notes say: take out or \
 correct the detail the check named, keep the rest, and keep its place in \
 the entry (it must still read well after the sentence before it). Keep \
-who said what. Never add a detail the notes don't give. If nothing in the \
+who said what, and never drop what changes the meaning (a retraction, a \
+denial, an "alleged", "later withdrawn"): if the fix would need that, give \
+the sentence up. Never add a detail the notes don't give. If nothing in the \
 sentence can be kept, give an empty text. Give only the sentence itself, \
 with no note numbers in it."""
 
@@ -130,4 +134,82 @@ def revise(
         out.append(w)
         if id(w) in new:
             out.append(new[id(w)])
+    return out
+
+
+FILL = """You add to one section of an encyclopedia entry about the {what} \
+"{name}". Below is the section "{heading}" as written, then notes planned \
+for it that it does not use yet (sentences from news articles, each with \
+its article's date).
+
+Write sentences for those notes to go at the end of the section, in a \
+short paragraph or two, so the section tells what they say. Use only what \
+the notes say, keep who said what, say when (month and year), and don't \
+repeat what the section already says. Leave out a note that doesn't \
+belong in this section. Every sentence lists the numbers of the notes it \
+uses in its notes field; never write note numbers into the sentence \
+itself. If nothing should be added, give an empty list."""
+
+
+class FillSentence(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    text: str
+    notes: List[int]
+
+
+class Fill(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    sentences: List[FillSentence]
+
+
+def fill_unused(
+    written: List[Written], notes: Sequence[Note], name: str, what: str,
+    parts: Sequence[Dict[str, Any]], ask: Ask, report: Dict[str, Any],
+) -> List[Written]:  # fmt: skip
+    """``written`` with sentences added for each part's planned notes that
+    no kept sentence uses, checked like any sentence. Why: on 21 Nov the
+    plan put Daniel Pearl's killing into an arrests part in 3 runs of 4 and
+    the section writer left it out, with nothing to say so."""
+    from src.engine.written_page import drop_repeats, notes_block, strip_refs
+
+    by_n = {n.n: n for n in notes}
+    used = {n for w in written if not w.dropped for n in w.notes}
+    out = list(written)
+    fresh: List[Written] = []
+    for part in parts:
+        heading = part.get("heading") or ""
+        unused = [
+            by_n[n] for n in part.get("notes") or [] if n in by_n and n not in used
+        ]
+        if not unused:
+            continue
+        mine = [w for w in out if w.section == heading]
+        body = "\n".join(f"- {w.text}" for w in mine if not w.dropped) or "(empty)"
+        msgs = [
+            {"role": "system", "content": FILL.format(what=what, name=name, heading=heading)},
+            {"role": "user", "content": f"The section:\n{body}\n\nNotes it does not use yet:\n{notes_block(unused[:8])}"},
+        ]  # fmt: skip
+        try:
+            reply = ask(msgs, Fill, 2048)
+        except Exception as exc:
+            report.setdefault("fill_errors", []).append(str(exc)[:200])
+            continue
+        report["calls"] = report.get("calls", 0) + 1
+        para = max((w.para for w in mine), default=0) + 1000  # a new paragraph
+        added = []
+        for s in reply.sentences or []:
+            text, refs = strip_refs(" ".join(str(s.text or "").split()))
+            ns = [n for n in dict.fromkeys(list(s.notes or []) + refs) if n in by_n]
+            if text:
+                added.append(Written(text, ns, heading, para))
+        at = max(
+            (i for i, w in enumerate(out) if w.section == heading), default=len(out) - 1
+        )
+        out[at + 1 : at + 1] = added
+        fresh += added
+    code_check(fresh, notes, name)
+    model_check(fresh, notes, name, ask, report)
+    drop_repeats(out)
+    report["filled"] = len(fresh)
+    report["filled_kept"] = sum(1 for w in fresh if not w.dropped)
     return out
