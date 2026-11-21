@@ -440,7 +440,7 @@ def restore_on_topic(plan: Plan, by_n: Dict[int, Any], name: str, what: str) -> 
     called it about the entity, or, for a place, when it names the place:
     on 21 Nov Luna's plan left Daniel Pearl's killing in Karachi out of the
     Karachi page in two runs of two. It joins the part sharing most words."""
-    from src.engine.written_page import _content
+    from src.engine.written_checks import _content
 
     for o in list(plan.left_out):
         note = by_n.get(o.note)
@@ -460,7 +460,7 @@ def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
     """A note left out as "repeats N" that holds a name, number or date note
     N lacks goes back in, after N (on 21 Nov Luna left Bin Atef's 2009
     clearance out as repeating a note that never gave it)."""
-    from src.engine.written_page import _content, missing_details
+    from src.engine.written_checks import _content, missing_details
 
     for o in list(plan.left_out):
         m = re.search(r"repeats\D*(\d+)", o.why or "")

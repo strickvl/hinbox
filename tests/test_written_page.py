@@ -4,13 +4,12 @@ of it. Made-up pages only (the repository is public)."""
 import json
 import time
 
+from src.engine.written_checks import SentenceChecks, missing_details
 from src.engine.written_page import (
     WRITTEN_KEY,
     Facts,
-    SentenceChecks,
     WPage,
     condense,
-    missing_details,
     page_notes,
     store_page,
     stored_pages,
@@ -277,7 +276,8 @@ def test_a_dropped_sentence_is_rewritten_once_and_checked_again():
 
 
 def test_an_opening_summary_is_checked_against_the_sections():
-    from src.engine.written_page import Written, summary_check
+    from src.engine.written_checks import summary_check
+    from src.engine.written_page import Written
 
     notes = page_notes(_city())
     written = [
@@ -381,7 +381,8 @@ def test_counts_from_different_months_and_false_repeats_are_caught():
 
 
 def test_a_fact_told_again_in_other_words_from_the_same_notes_is_dropped():
-    from src.engine.written_page import WPage, Written, drop_repeats, flatten
+    from src.engine.written_checks import drop_repeats
+    from src.engine.written_page import WPage, Written, flatten
 
     page = WPage.model_validate({"opening": [], "sections": [{"heading": "Arrests",
         "paragraphs": [{"sentences": [
@@ -401,7 +402,8 @@ def test_a_fact_told_again_in_other_words_from_the_same_notes_is_dropped():
 
 
 def test_an_opening_summary_about_the_page_is_rewritten():
-    from src.engine.written_page import Written, summary_check
+    from src.engine.written_checks import summary_check
+    from src.engine.written_page import Written
     from src.engine.written_revise import Revisions, revise
 
     notes = page_notes(_city())
@@ -449,7 +451,8 @@ def test_a_note_about_the_place_left_out_as_someone_else_goes_back():
 
 
 def test_dates_from_article_dates_are_named_to_the_check():
-    from src.engine.written_page import Note, from_article_dates
+    from src.engine.written_checks import from_article_dates
+    from src.engine.written_page import Note
 
     shown = [Note(1, "a", "He said he would retire.", [], "2017-05-10")]
     assert from_article_dates("In May 2017, he said he would retire.", shown) == [
@@ -459,7 +462,8 @@ def test_dates_from_article_dates_are_named_to_the_check():
 
 
 def test_a_sentence_with_a_new_date_is_not_a_repeat():
-    from src.engine.written_page import Written, drop_repeats
+    from src.engine.written_checks import drop_repeats
+    from src.engine.written_page import Written
 
     w = [Written("Police arrested Tom Vale in Port Elm in April 2003.", [2], "A", 1),
          Written("Police arrested Tom Vale in Port Elm in September 2002.", [2], "A", 1)]  # fmt: skip
@@ -530,12 +534,8 @@ def test_a_conflict_across_two_parts_is_found_and_told_in_one():
 
 
 def test_small_safety_rules():
-    from src.engine.written_page import (
-        Written,
-        _numbers,
-        give_identity_a_note,
-        summary_check,
-    )
+    from src.engine.written_checks import _numbers, summary_check
+    from src.engine.written_page import Written, give_identity_a_note
 
     assert "sep 11" not in _numbers("He was taken on Sept. 10-11, 2002.")
     assert "sep 11" in _numbers("He was taken on Sept. 11, 2002.")
@@ -550,7 +550,8 @@ def test_small_safety_rules():
 
 
 def test_a_sentence_citing_the_wrong_note_gets_its_sections_right_one():
-    from src.engine.written_page import Written, code_check
+    from src.engine.written_checks import code_check
+    from src.engine.written_page import Written
     from src.engine.written_revise import recite
 
     notes = page_notes(_city())
@@ -580,3 +581,20 @@ def test_a_filled_note_about_another_event_gets_its_own_section():
     out = fill_unused(written, notes, "Port Elm", "place",
                       [{"heading": "Arrests", "notes": [2, 3]}], ask, {})  # fmt: skip
     assert out[1].section == "Ann Roe's arrest" and out[1].filled
+
+
+def test_date_tags_titles_first_names_and_comment_notes():
+    from src.engine.written_checks import _ABOUT_PAGE
+    from src.engine.written_page import strip_refs
+
+    assert strip_refs("His family lived there. [2017-05-20; 2011-05-01].")[0] == (
+        "His family lived there."
+    )
+    notes = ["Al-Mayadeen aired Trump's State of the Union."]
+    assert missing_details("President Donald Trump spoke.", notes, "X") == []
+    assert missing_details("Lawyer Clive Stafford Smith spoke.", notes, "X") == [
+        "Clive", "Stafford", "Smith"]  # fmt: skip
+    assert _ABOUT_PAGE.search("Another section recounts his capture.")
+    city = _city()
+    city["profile"]["text"] += "This highlights the city's role.^[a3]\n"
+    assert all("highlights" not in n.text for n in page_notes(city))

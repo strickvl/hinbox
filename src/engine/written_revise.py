@@ -19,16 +19,8 @@ from typing import Any, Dict, List, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.engine.written_page import (
-    CHECK_BATCH,
-    CHECK_NOTE_CHARS,
-    Ask,
-    Note,
-    Written,
-    _first_words,
-    code_check,
-    model_check,
-)
+from src.engine.written_checks import _first_words, code_check, model_check
+from src.engine.written_page import CHECK_BATCH, CHECK_NOTE_CHARS, Ask, Note, Written
 
 REVISE = """You fix sentences of an encyclopedia entry about "{name}". \
 Each sentence below was taken out because a check found a problem with it, \
@@ -175,10 +167,13 @@ def fill_unused(
     no kept sentence uses, checked like any sentence. Why: on 21 Nov the
     plan put Daniel Pearl's killing into an arrests part in 3 runs of 4 and
     the section writer left it out, with nothing to say so."""
-    from src.engine.written_page import drop_repeats, notes_block, strip_refs
+    from src.engine.written_checks import drop_repeats
+    from src.engine.written_page import notes_block, strip_refs
 
     by_n = {n.n: n for n in notes}
-    used = {n for w in written if not w.dropped for n in w.notes}
+    # The opening's notes don't count: its first sentence cites the note
+    # with Bin Atef's 2009 clearance, which no section then told
+    used = {n for w in written if not w.dropped and w.section for n in w.notes}
     out = list(written)
     fresh: List[Written] = []
     for part in parts:
@@ -228,10 +223,12 @@ def recite(
 ) -> None:  # fmt: skip
     """A sentence the code check dropped for details its notes lack gets the
     notes of its section that hold them, when some do (up to 4, those
-    sharing most words with it). On 21 Nov one Luna run's Bin Atef section
+    sharing most words with it), but only when its own notes share under
+    40% of its words, so they are plainly the wrong ones. On 21 Nov one Luna
+    run's Bin Atef section
     came back citing the wrong note numbers; every sentence then failed
     both checks, though its planned notes said exactly what they said."""
-    from src.engine.written_page import _content, missing_details
+    from src.engine.written_checks import _content, missing_details
 
     by_n = {n.n: n for n in notes}
     planned = {p.get("heading") or "": p.get("notes") or [] for p in parts}
@@ -239,6 +236,11 @@ def recite(
         if not w.dropped.startswith("not in its notes") or w.section not in planned:
             continue
         words = _content(w.text)
+        own = {x for n in w.notes if n in by_n for x in _content(by_n[n].text)}
+        if words and len(words & own) >= 0.4 * len(words):
+            # Its notes are about what it says: the gap is a detail it added
+            # ("Pakistani authorities arrested Majid Khan"), for the rewrite
+            continue
         ranked = sorted(
             (n for n in planned[w.section] if n in by_n),
             key=lambda n: -len(words & _content(by_n[n].text)),
