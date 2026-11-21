@@ -198,6 +198,49 @@ def _two_counts(text: str) -> bool:
     return bool(one and two and one != two)
 
 
+_DIFFER = re.compile(
+    r"\b(?:accounts|reports|sources) (?:differ|disagree|vary)|\bwhile another\b|"
+    r"\banother (?:account|report) (?:gives|says|puts|dates|places)\b",
+    re.I,
+)
+# The second account in a dispute sentence: "while another", "three later
+# reports", "another account gives only"
+_SECOND = re.compile(
+    r"\b(?:while|whereas|although|but|;)?\s*(?:another|other|others|later|"
+    r"two|three|four|five|several)\s+(?:later\s+)?(?:accounts?|reports?|sources?)\b",
+    re.I,
+)
+_ONE_OF = re.compile(r"\b(?:a|an|one)\s+[A-Z][\w-]+\s+(?:citizen|national|man|woman)\b")
+_DECADE = re.compile(r"\b(?:early|mid|late)?-?(\d)0s\b")
+
+
+def _agree(text: str) -> bool:
+    """A dispute sentence whose two accounts agree: one only less exact
+    ("April 3, 2017" against "only April 2017"; a date against "without
+    giving a date"; 36 against "mid-30s") or adding up to the other ("10
+    Indonesians and a Dutch citizen" against 11 dead). Round 22 told all
+    three as disagreements."""
+    from src.engine.written_checks import _numbers
+
+    m = _SECOND.search(text, 10)
+    if not m:
+        return False
+    one, two = text[: m.start()], text[m.start() :]
+    n1, n2 = _numbers(one), _numbers(two)
+    if not n2 and re.search(
+        r"without (?:giving )?(?:a )?date|gives? no date", two, re.I
+    ):
+        return bool(n1)
+    if n1 and n2 and (n1 < n2 or n2 < n1 or n1 == n2):
+        return True
+    ints = lambda ns: [int(n) for n in ns if n.isdigit() and len(n) < 4]  # noqa: E731
+    for d in _DECADE.finditer(two):
+        if any(int(n) // 10 == int(d.group(1)) for n in ints(n1)):
+            return True
+    total = sum(ints(n1)) + len(_ONE_OF.findall(one))
+    return bool(ints(n1)) and total in ints(n2) and total not in ints(n1)
+
+
 def unnarrate(
     written: List[Written], notes: Sequence[Note], name: str,
     conflicts: Sequence[Dict[str, Any]], ask: Ask, report: Dict[str, Any],
@@ -208,7 +251,18 @@ def unnarrate(
 
     marked = []
     for w in written:
-        if w.dropped or not w.section or not NARRATES.search(w.text):
+        if w.dropped or not w.section:
+            continue
+        if (NARRATES.search(w.text) or _DIFFER.search(w.text)) and _agree(w.text):
+            w.dropped = (
+                "check: the two accounts it sets against each other agree (one "
+                "only gives less detail, or its numbers add up to the other's). "
+                "State the fact once, plainly, with the fuller detail, and keep "
+                "a named source as the source"
+            )
+            marked.append(w)
+            continue
+        if not NARRATES.search(w.text):
             continue
         if any(tells(w, c) for c in conflicts) or _two_counts(w.text):
             continue

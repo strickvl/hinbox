@@ -227,3 +227,41 @@ def test_an_articles_date_on_a_continuing_state_is_caught():
         "Port Elm",
     )
     assert empty.dropped.startswith("says only that counts differ")
+
+
+def test_dispute_sentences_whose_accounts_agree_are_found():
+    from src.engine.written_conflicts import _agree
+
+    assert _agree(
+        "He was appointed on April 3, 2017, although another account gives only April 2017."
+    )
+    assert _agree(
+        "One dates it to a raid on Sept. 10-11, 2002, while another account places it in Karachi without giving a date."
+    )
+    assert _agree(
+        "The charges said it killed 10 Indonesians and a Dutch citizen, while three reports said 11 people died."
+    )
+    assert _agree(
+        "The Pentagon gave his age as 36, while another report described him as in his mid-30s."
+    )
+    assert not _agree(
+        "One account dates it to Sept. 11, 2002; three later reports give April 29, 2003."
+    )
+
+
+def test_neighbours_saying_one_thing_and_ranked_first_names():
+    from src.engine.written_checks import drop_neighbours
+
+    out = [
+        Written("In January 2018, he struck down Tom Vale's $1,000 fine.", [1], "Rulings", 1),
+        Written("In January 2018, Ann Roe struck down the $1,000 fine imposed on Gen. Tom Vale.", [2], "Rulings", 1),
+        Written("In March 2018, she left.", [3], "Rulings", 1),
+    ]  # fmt: skip
+    assert drop_neighbours(out) == 1 and out[0].dropped and out[1].notes == [2, 1]
+    notes = ["House said the strike grew.", "David Frakt spoke."]
+    assert missing_details(
+        "Rear Adm. David House said the strike grew.", notes, "Port Elm"
+    )
+    assert (
+        missing_details("President Tom Vale spoke.", ["Vale spoke."], "Port Elm") == []
+    )

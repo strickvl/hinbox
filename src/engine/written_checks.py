@@ -95,6 +95,13 @@ _TITLES = set(
     commander rear vice chief prime minister sheikh sheik dr mr mrs ms""".split()
 )
 
+# Military ranks: a first name after one must be in the notes ("President
+# Donald Trump" for "Trump" is fine)
+_RANKS = set(
+    """adm admiral gen general col colonel lt lieutenant capt captain maj major
+    sgt sergeant cmdr commander brig cpl pvt spc""".split()
+)
+
 # "U.S." in the notes covers "United States" and "American" in a sentence
 _US_WORDS = {"united", "states", "america", "american", "americans", "u", "s"}
 
@@ -142,6 +149,13 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
         # "Trump"); an invented full name ("Clive Stafford Smith") still fails
         nxt = re.match(r"\s+([A-Z][\w'’-]*)", sentence[m.end() :])
         if nxt and _fold(nxt.group(1)).strip("'-") in words and len(tok) > 2:
+            # After a rank the whole name must be in the notes: round 22
+            # wrote "Rear Adm. David House" and "Army Lt. Col. Samuel House"
+            # on one page where the notes say only "House"
+            prev = re.search(r"([A-Za-z]+)\.?\s+$", sentence[: m.start()])
+            titled = prev is not None and prev.group(1).lower() in _RANKS
+            if titled and f"{_fold(tok)} {_fold(nxt.group(1))}" not in hay:
+                missing.append(f"{tok} {nxt.group(1)}")
             continue
         # A sentence's first word is capitalised anyway ("Reports say ...",
         # "Regarding Walid ..."), so it is left to the model check
@@ -341,6 +355,35 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
         said |= words
         cited |= set(w.notes)
         nums_said |= nums
+
+
+def drop_neighbours(written: List[Written], share: float = 0.7) -> int:
+    """Drop the shorter of two neighbouring kept sentences of one section
+    when most of its words are in the longer and every number and person
+    it names too; the number dropped. Round 22's Rishikof page said five
+    things twice in a row ("In January 2018, he struck down Baker's $1,000
+    fine ... In January 2018, Rishikof struck down the $1,000 fine imposed
+    on Marine Brig. Gen. John Baker"), most with one of the pair a fill."""
+    from src.engine.written_plan import _surnames
+
+    dropped = 0
+    kept = [w for w in written if not w.dropped and w.section]
+    for a, b in zip(kept, kept[1:]):
+        if a.section != b.section or a.dropped or b.dropped:
+            continue
+        short, long_ = (
+            (a, b) if len(_content(a.text)) <= len(_content(b.text)) else (b, a)
+        )
+        words = _content(short.text)
+        if not words or len(words & _content(long_.text)) < share * len(words):
+            continue
+        if _numbers(short.text) <= _numbers(long_.text) and _surnames(
+            short.text, ""
+        ) <= _surnames(long_.text, ""):
+            short.dropped = "repeats the sentence beside it"
+            long_.notes = list(dict.fromkeys(long_.notes + short.notes))
+            dropped += 1
+    return dropped
 
 
 # An opening sentence about the page instead of its subject

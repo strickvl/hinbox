@@ -199,6 +199,12 @@ def review_page(
             continue
         if verdict == "same":
             stats["same"] += 1
+            (_, _, people_a), (_, _, people_b) = _facts(a, name), _facts(b, name)
+            if people_b - people_a:
+                # Round 22: a Karachi trim kept "handed al Baluchi and bin
+                # Attash over to the CIA" and lost al Baluchi's arrest, which
+                # the first sentence (about bin Attash) never told
+                continue
             if _adds_nothing(b, a, name):
                 b.dropped = "repeats an earlier sentence of the page"
                 stats["dropped"] += 1

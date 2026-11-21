@@ -457,7 +457,7 @@ def _brackets(text: str) -> str:
 # abbreviation ("U.S. Army", "Gen. Smith", "J. Doe")
 _END = re.compile(r"(?<=[.!?])[\"”’)]?\s+(?=[\"“]?[A-Z])")
 _ABBR = re.compile(
-    r"(?:\b[A-Z]|\b[A-Z]\.[A-Z]|\b(?:Mr|Mrs|Ms|Dr|Gen|Gens|Brig|Col|Lt|Sgt|Capt|Cmdr|Cmdt|Adm|Maj|Pvt|Cpl|Spc|Gov|Sen|Rep|Prof|Rev|Hon|Det|Insp|Supt|Ft|Mt|St|Jr|Sr|No|Vol|Co|Corp|Inc|Ltd|vs|Jan|Feb|Mar|Apr|Aug|Sept|Sep|Oct|Nov|Dec))\.$"
+    r"(?:\b[A-Z]|\b[A-Z]\.[A-Z]|\b(?:Mr|Mrs|Ms|Dr|Gen|Gens|Brig|Col|Lt|Sgt|Capt|Cmdr|Cmdt|Adm|Maj|Pvt|Cpl|Spc|Gov|Sen|Rep|Prof|Rev|Hon|Det|Insp|Supt|Ft|Mt|St|Jr|Sr|No|Vol|Co|Corp|Inc|Ltd|vs|v|Jan|Feb|Mar|Apr|Aug|Sept|Sep|Oct|Nov|Dec))\.$"
 )
 
 
@@ -585,6 +585,7 @@ def write_page(
     planned approach, so both can be stored side by side."""
     from src.engine.written_checks import (
         code_check,
+        drop_neighbours,
         drop_repeats,
         model_check,
         summary_check,
@@ -651,7 +652,8 @@ def write_page(
             # sentences for Zaki's first section and stopped, leaving the
             # artwork ban, the ISIS remark and Slahi unwritten. One more pass
             # for what is still unused, then the rest is reported.
-            written = fill_unused(written, shown, name, what, parts, ask, report)
+            if len(shown) <= 40:  # on long pages the second pass added repeats
+                written = fill_unused(written, shown, name, what, parts, ask, report)
             report["unwritten"] = unwritten(written, shown, name, parts)
             conflicts = (report.get("plan") or {}).get("conflicts") or []
             written = tell_conflicts(written, shown, name, what, conflicts, ask, report)
@@ -668,6 +670,7 @@ def write_page(
             )  # fmt: skip
             report["date_sorted"] = date_sort(written, shown)
             drop_repeats(written)
+            report["neighbours_dropped"] = drop_neighbours(written)
             summary_check(written, shown, name)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}

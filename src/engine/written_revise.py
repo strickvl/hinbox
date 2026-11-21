@@ -262,12 +262,34 @@ def fill_unused(
         fresh += added
     code_check(fresh, notes, name)
     model_check(fresh, notes, name, ask, report)
+    _drop_told(fresh, out, name)
     drop_repeats(out)
     report["filled"] = report.get("filled", 0) + len(fresh)
     report["filled_kept"] = report.get("filled_kept", 0) + sum(
         1 for w in fresh if not w.dropped
     )
     return out
+
+
+def _drop_told(fresh: List[Written], out: List[Written], name: str) -> None:
+    """Drop a filled sentence whose numbers and people a written sentence of
+    its section already gives, with half its words: round 22's kept fills
+    were mostly the second of two sentences in a row saying one thing."""
+    from src.engine.written_checks import _content, _numbers
+    from src.engine.written_plan import _surnames
+
+    for f in fresh:
+        if f.dropped:
+            continue
+        words, marks = _content(f.text), _numbers(f.text) | _surnames(f.text, name)
+        for w in out:
+            if w is f or w.dropped or w.filled or w.section != f.section:
+                continue
+            if marks <= _numbers(w.text) | _surnames(w.text, name) and len(
+                words & _content(w.text)
+            ) >= 0.5 * max(len(words), 1):
+                f.dropped = "a sentence of its section already tells it"
+                break
 
 
 def unwritten(
