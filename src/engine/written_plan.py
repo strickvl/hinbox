@@ -219,12 +219,22 @@ def _counts_over_time(c: Conflict, dates: Dict[int, str]) -> bool:
 def _surnames(text: str, name: str) -> set:
     """Last words of the people (two or more capitalised words) a text
     names, the page's own name left out."""
-    own = {w.lower() for w in name.split()}
-    return {
-        p.split()[-1].lower()
-        for p in _PERSON.findall(text)
-        if p.split()[-1].lower() not in own
-    }
+    own = {w.lower() for w in name.replace("-", " ").split()}
+    last = (p.split()[-1].lower() for p in _PERSON.findall(text.replace("-", " ")))
+    return {w for w in last if w not in own and w not in _NOT_PEOPLE}
+
+
+# Last words of institutions and places, not people: on 21 Nov the "people"
+# no page sentence named included the Periodic Review Board, the Wall Street
+# Journal, the Associated Press and the United States
+_NOT_PEOPLE = {
+    "board", "journal", "press", "states", "court", "committee", "department",
+    "agency", "cross", "council", "ministry", "office", "force", "forces",
+    "army", "navy", "times", "post", "news", "service", "union", "nations",
+    "bay", "camp", "commission", "base", "prison", "center", "centre",
+    "administration", "government", "party", "group", "network", "herald",
+    "tribune", "review", "university", "school", "airport", "street",
+}  # fmt: skip
 
 
 def _dated_people(text: str, name: str) -> set:
@@ -583,6 +593,13 @@ def restore_orphans(plan: Plan, by_n: Dict[int, Any]) -> None:
         best.notes.append(n)
 
 
+from src.engine.written_groups import (  # noqa: E402
+    GROUPS_NOTE,
+    group_notes,
+    groups_block,
+)
+
+
 def write_planned(
     notes: Sequence[Any], name: str, what: str, headings: Sequence[Tuple[str, str]],
     words: int, ask: Any, report: Dict[str, Any], block: Any, page_model: Any,
@@ -637,10 +654,13 @@ def write_planned(
     }  # fmt: skip
     sections = []
     for part in plan.parts:
-        shown = [by_n[n] for n in part.notes]
+        groups = group_notes([by_n[n] for n in part.notes], name)
+        part.notes = [n.n for g in groups for n in g]  # the fill keeps this order
         msgs = section_messages(
-            plan, part, block(shown), name, what, section_words(words, part, plan)
-        )
+            plan, part, groups_block(groups, block), name, what,
+            section_words(words, part, plan),
+        )  # fmt: skip
+        msgs[-1]["content"] = f"{GROUPS_NOTE}\n\n{msgs[-1]['content']}"
         try:
             reply = ask(msgs, section_model, 4096)
         except Exception as exc:

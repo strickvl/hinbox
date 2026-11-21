@@ -158,7 +158,9 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
         # "Pakistani forces captured Suhayl al Sharabi ...; in June, they
         # captured Mansoor Qatta" passed on Qatta's note alone
         who = _captive(sentence, m)
-        if who:
+        # On the captive's own page the note says "captured him" (round 17:
+        # "Northern Alliance forces captured him" refused on Zaki's page)
+        if who and who not in _fold(name).split():
             ok = any(re.search(near, s) and who in s for s in folded)
         else:
             ok = re.search(near, hay) is not None

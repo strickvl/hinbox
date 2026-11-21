@@ -152,8 +152,10 @@ FILL = """You add to one section of an encyclopedia entry about the {what} \
 for it that it does not use yet (sentences from news articles, each with \
 its article's date).
 
-Write sentences for those notes to go at the end of the section, in a \
-short paragraph or two, so the section tells what they say. Use only what \
+Write a sentence or two for each of those notes, so the section tells \
+what they say; each goes into the section at its place in date order, \
+after what happened before it, so it must read well there on its own \
+(name people in full rather than "he" or "his"). Use only what \
 the notes say, keep who said what, say when the event or statement was \
 (month and year; never "a 2016 report said" or "a news account \
 described"), and don't repeat what the section already says. Leave out a note that only comments or judges and \
@@ -186,6 +188,7 @@ def fill_unused(
     plan put Daniel Pearl's killing into an arrests part in 3 runs of 4 and
     the section writer left it out, with nothing to say so."""
     from src.engine.written_checks import drop_repeats
+    from src.engine.written_groups import place_after
     from src.engine.written_page import (
         close_quotes,
         notes_block,
@@ -225,7 +228,6 @@ def fill_unused(
             report.setdefault("fill_errors", []).append(str(exc)[:200])
             continue
         report["calls"] = report.get("calls", 0) + 1
-        para = max((w.para for w in mine), default=0) + 1000  # a new paragraph
         added = []
         for s in reply.sentences or []:
             text, refs = strip_refs(" ".join(str(s.text or "").split()))
@@ -235,12 +237,26 @@ def fill_unused(
             # notes as one): cut it, so the repeat check sees each
             for one in split_sentences(text) if text else []:
                 one = close_quotes(one)
-                added.append(Written(one, ns, own or heading, para, filled=True))
-        added.sort(key=lambda w: w.section != heading)  # new sections after
+                added.append(Written(one, ns, own or heading, 0, filled=True))
+        # Each into its place in the section's date order, after the sentence
+        # telling the note before it; new sections at the section's end
+        order = {n: i for i, n in enumerate(part.get("notes") or [])}
+        end = max((w.para for w in mine), default=0) + 1000
+        for w in [a for a in added if a.section == heading]:
+            at = place_after(out, heading, w.notes, order)
+            w.para = (
+                out[at].para
+                if at >= 0 and out[at].section == heading
+                else (out[at + 1].para if at + 1 < len(out) else end)
+            )
+            out.insert(at + 1, w)
+        rest = [a for a in added if a.section != heading]
+        for w in rest:
+            w.para = end
         at = max(
             (i for i, w in enumerate(out) if w.section == heading), default=len(out) - 1
         )
-        out[at + 1 : at + 1] = added
+        out[at + 1 : at + 1] = rest
         fresh += added
     code_check(fresh, notes, name)
     model_check(fresh, notes, name, ask, report)
