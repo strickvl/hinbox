@@ -43,8 +43,7 @@ needs them. The opening (written separately) says what {name} is, so no \
 part is an overview, introduction or summary. Put the parts most about \
 {name} itself first, and a part that is mainly about one other person or \
 thing last; for a person, the parts follow the order of their life \
-(capture, detention, release). A part about events somewhere else \
-belongs on another page: leave its notes out as "someone else". The usual topics for this kind of page are:
+(capture, detention, release). The usual topics for this kind of page are:
 {headings}
 Name each part after what its notes tell, in a few plain words ("Arrests \
 in 2002 and 2003", "Military commission case", "Release to Oman"), not a \
@@ -314,11 +313,49 @@ def opening_messages(
     return [{"role": "system", "content": system}, {"role": "user", "content": body}]
 
 
-def conflict_messages(notes_text: str, name: str, what: str) -> List[Dict[str, str]]:
+def conflict_messages(
+    notes_text: str, name: str, what: str, pairs: Sequence[str] = ()
+) -> List[Dict[str, str]]:
+    user = f"Notes for this section:\n{notes_text}"
+    if pairs:
+        user += (
+            "\n\nPairs worth a close look (they name the same person and give "
+            "different years; they may still be two different events):\n"
+            + "\n".join(f"- {p}" for p in pairs)
+        )
     return [
         {"role": "system", "content": CONFLICTS.format(what=what, name=name)},
-        {"role": "user", "content": f"Notes for this section:\n{notes_text}"},
+        {"role": "user", "content": user},
     ]
+
+
+_PERSON = re.compile(
+    r"\b[A-Z][a-z]+(?:\s+(?:al|bin|ibn|el|abu|de|van)?\s*[A-Z][a-z]+)+"
+)
+_YEAR = re.compile(r"\b(?:19|20)\d\d\b")
+
+
+def candidate_pairs(notes: Sequence[Any], name: str) -> List[str]:
+    """Pairs of notes naming the same person (two or more capitalised words,
+    not the page's own name) with different years in their text. On 21 Nov
+    the contradiction step found bin Attash's two capture dates in one Luna
+    run and not in the next, from the same notes; pointing at the pair takes
+    the luck out of noticing it."""
+    found = []
+    info = []
+    for n in notes:
+        people = {p for p in _PERSON.findall(n.text) if p.lower() != name.lower()}
+        info.append((n, people, set(_YEAR.findall(n.text))))
+    for i, (a, pa, ya) in enumerate(info):
+        for b, pb, yb in info[i + 1 :]:
+            shared = pa & pb
+            if shared and ya and yb and not ya & yb:
+                who = sorted(shared, key=len)[-1]
+                found.append(
+                    f"notes {a.n} and {b.n} ({who}: {', '.join(sorted(ya))} "
+                    f"against {', '.join(sorted(yb))})"
+                )
+    return found[:6]
 
 
 def max_parts(n_notes: int) -> int:
@@ -343,6 +380,7 @@ def failed(report: Dict[str, Any], step: str, exc: Exception) -> None:
 def find_conflicts(
     plan: Plan, part: PlanPart, notes_text: str, name: str, what: str, ask: Any,
     report: Dict[str, Any], dates: Optional[Dict[int, str]] = None,
+    shown: Optional[Sequence[Any]] = None,
 ) -> List[Conflict]:  # fmt: skip
     """One call on one part's notes: which of them contradict each other.
     Its own step because inside the plan call Luna found none on Karachi
@@ -350,13 +388,36 @@ def find_conflicts(
     not to over-call them, while Qwen still called a vaguer date a conflict."""
     if len(part.notes) < 2:
         return []
+    pairs = candidate_pairs(shown or [], name)
+    report.setdefault("conflict_pairs", []).extend(pairs)
     try:
-        reply = ask(conflict_messages(notes_text, name, what), Conflicts, 2048)
+        reply = ask(conflict_messages(notes_text, name, what, pairs), Conflicts, 2048)
     except Exception as exc:
         failed(report, f"conflicts {part.heading}", exc)
         return []
     report["calls"] = report.get("calls", 0) + 1
     return clean_conflicts(reply.conflicts or [], set(part.notes), dates)
+
+
+def restore_on_topic(plan: Plan, by_n: Dict[int, Any], name: str, what: str) -> None:
+    """A note left out as "someone else" goes back in when the note tagger
+    called it about the entity, or, for a place, when it names the place:
+    on 21 Nov Luna's plan left Daniel Pearl's killing in Karachi out of the
+    Karachi page in two runs of two. It joins the part sharing most words."""
+    from src.engine.written_page import _content
+
+    for o in list(plan.left_out):
+        note = by_n.get(o.note)
+        if note is None or not (o.why or "").lower().startswith("someone"):
+            continue
+        named = what.startswith("place") and name.lower() in note.text.lower()
+        if note.tag != "about" and not named:
+            continue
+        words = _content(note.text)
+        part = max(plan.parts, key=lambda p: sum(
+            len(words & _content(by_n[n].text)) for n in p.notes if n in by_n))  # fmt: skip
+        part.notes.append(o.note)
+        plan.left_out.remove(o)
 
 
 def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
@@ -400,11 +461,12 @@ def write_planned(
         report["plan"] = {"identity": plan.identity, "parts": []}
         return None
     restore_repeats(plan, by_n, name)
+    restore_on_topic(plan, by_n, name, what)
     dates = {n.n: n.date for n in notes}
     for part in plan.parts:
-        shown = block([by_n[n] for n in part.notes])
+        mine = [by_n[n] for n in part.notes]
         plan.conflicts += find_conflicts(
-            plan, part, shown, name, what, ask, report, dates
+            plan, part, block(mine), name, what, ask, report, dates, mine
         )
     plan.conflicts = clean_conflicts(plan.conflicts, set(by_n), dates)
     report["plan"] = {

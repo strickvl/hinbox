@@ -422,3 +422,52 @@ def test_an_opening_summary_about_the_page_is_rewritten():
     out = revise(written, notes, "Port Elm", ask, {})
     summary_check(out, notes, "Port Elm")
     assert out[2].summary and out[2].check == "summary" and not out[2].dropped
+
+
+def test_pairs_naming_one_person_with_two_years_are_pointed_out():
+    from src.engine.written_page import Note
+    from src.engine.written_plan import candidate_pairs
+
+    notes = [Note(1, "a", "Tom Vale was captured in Port Elm in 2002.", []),
+             Note(2, "b", "Police arrested Tom Vale on April 29, 2003.", []),
+             Note(3, "c", "Ann Roe was arrested in 2005.", [])]  # fmt: skip
+    assert candidate_pairs(notes, "Port Elm") == [
+        "notes 1 and 2 (Tom Vale: 2002 against 2003)"
+    ]
+
+
+def test_a_note_about_the_place_left_out_as_someone_else_goes_back():
+    from src.engine.written_plan import LeftOut, Plan, PlanPart, restore_on_topic
+
+    notes = {n.n: n for n in page_notes(_city())}
+    plan = Plan(identity="", why_it_matters="", opening_notes=[],
+                parts=[PlanPart(heading="Background", covers="", notes=[1]),
+                       PlanPart(heading="Arrests", covers="", notes=[2])],
+                left_out=[LeftOut(note=3, why="someone else")])  # fmt: skip
+    restore_on_topic(plan, notes, "Port Elm", "place (city)")
+    assert plan.parts[1].notes == [2, 3] and plan.left_out == []
+
+
+def test_dates_from_article_dates_are_named_to_the_check():
+    from src.engine.written_page import Note, from_article_dates
+
+    shown = [Note(1, "a", "He said he would retire.", [], "2017-05-10")]
+    assert from_article_dates("In May 2017, he said he would retire.", shown) == [
+        "May 2017"
+    ]
+    assert from_article_dates("In June 2016, he said so.", shown) == []
+
+
+def test_a_sentence_with_a_new_date_is_not_a_repeat():
+    from src.engine.written_page import Written, drop_repeats
+
+    w = [Written("Police arrested Tom Vale in Port Elm in April 2003.", [2], "A", 1),
+         Written("Police arrested Tom Vale in Port Elm in September 2002.", [2], "A", 1)]  # fmt: skip
+    drop_repeats(w)
+    assert [x.dropped for x in w] == ["", ""]
+
+
+def test_run_labels_show_in_the_reader():
+    from src.frontend.written_view import model_label
+
+    assert model_label("openai/gpt-6-luna#plan@b") == "GPT-6 Luna, planned (b)"

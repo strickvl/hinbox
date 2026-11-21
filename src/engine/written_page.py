@@ -594,21 +594,26 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
     arrest three times in three wordings)."""
     seen: List[set] = []
     section: Dict[str, Tuple[set, set]] = {}
+    nums_said: set = set()
     for w in written:
         if w.dropped or not w.section:
             continue
         words = _content(w.text)
+        nums = set(_NUMBER.findall(w.text))
         said, cited = section.setdefault(w.section, (set(), set()))
         again = words and any(len(words & old) >= share * len(words) for old in seen)
         told = (
             words and set(w.notes) <= cited and len(words & said) >= 0.75 * len(words)
         )
-        if again or told:
+        # A number or date not said yet makes it new (Qwen's Sept. 11, 2002
+        # capture of bin Attash was dropped as a repeat of his April 2003 one)
+        if (again or told) and nums <= nums_said:
             w.dropped = "repeats an earlier sentence"
             continue
         seen.append(words)
         said |= words
         cited |= set(w.notes)
+        nums_said |= nums
 
 
 # An opening sentence about the page instead of its subject
@@ -653,6 +658,31 @@ def summary_check(written: List[Written], notes: Sequence[Note], name: str) -> N
             w.check = "summary"
 
 
+_MONTH_N = {m: i for i, m in enumerate(_MONTHS[:12], 1)}
+_WHEN = re.compile(
+    r"\b(?:(" + "|".join(_MONTHS[:12]) + r")\s+)?((?:19|20)\d\d)\b", re.I
+)
+
+
+def from_article_dates(sentence: str, shown: Sequence[Note]) -> List[str]:
+    """The sentence's "May 2017" or "2017" that no note's text gives but a
+    note's article date does: the writer was told it may date a statement
+    by its article, and on 21 Nov the check dropped such sentences anyway."""
+    text = _fold(" ".join(n.text for n in shown))
+    out = []
+    for m in _WHEN.finditer(sentence):
+        month, year = (m.group(1) or "").lower(), m.group(2)
+        if year in text and (not month or month in text):
+            continue
+        for n in shown:
+            if n.date[:4] == year and (
+                not month or n.date[5:7] == f"{_MONTH_N[month]:02d}"
+            ):
+                out.append(m.group(0))
+                break
+    return out
+
+
 def check_messages(
     batch: Sequence[Written], notes: Sequence[Note], name: str
 ) -> List[Dict[str, str]]:
@@ -663,7 +693,13 @@ def check_messages(
         lines = "\n".join(
             f"  - [{n.date or 'no date'}] {n.text[:CHECK_NOTE_CHARS]}" for n in shown
         )
-        parts.append(f"Sentence {i}: {w.text}\nIts notes:\n{lines}")
+        dated = from_article_dates(w.text, shown)
+        hint = (
+            f"\nDates taken from its articles' dates (accept them): {', '.join(dated)}"
+            if dated
+            else ""
+        )
+        parts.append(f"Sentence {i}: {w.text}\nIts notes:\n{lines}{hint}")
     return [
         {"role": "system", "content": CHECK.format(name=name)},
         {"role": "user", "content": "\n\n".join(parts)},
@@ -752,6 +788,7 @@ def write_page(
     entity: Dict[str, Any], entity_type: str, model: str, ask: Ask,
     headings: Sequence[Tuple[str, str]] = (), check: bool = True, workers: int = 1,
     approach: str = "plan",
+    label: str = "",
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
     ``error`` and no text. ``approach`` "plan" plans the page and writes it a
@@ -764,6 +801,7 @@ def write_page(
     name = str(entity.get("name") or entity.get("title") or "")
     what = _what(entity_type, entity.get("type") or entity.get("event_type"))
     key = model if approach == "single" else f"{model}#{approach}"
+    key += f"@{label}" if label else ""
     report: Dict[str, Any] = {"calls": 0, "approach": approach}
     notes = page_notes(entity)
     report["notes"] = len(notes)

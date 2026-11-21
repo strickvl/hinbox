@@ -52,6 +52,9 @@ def main() -> None:
         help="JSON file {table, name, page}: store a page written elsewhere",
     )
     p.add_argument("--workers", type=int, default=2, help="condensing calls at once")
+    p.add_argument(
+        "--label", default="", help="stored as model#plan@label, beside other runs"
+    )
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
 
@@ -106,6 +109,7 @@ def main() -> None:
                 check=not a.no_check,
                 workers=a.workers,
                 approach=a.approach,
+                label=a.label,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs
