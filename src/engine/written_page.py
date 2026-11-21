@@ -538,6 +538,7 @@ def write_page(
         model_check,
         summary_check,
     )
+    from src.engine.written_conflicts import tell_conflicts, unnarrate
     from src.engine.written_plan import write_planned
     from src.engine.written_revise import fill_unused, recite, revise
 
@@ -586,6 +587,9 @@ def write_page(
         if approach == "plan":
             parts = (report.get("plan") or {}).get("parts") or []
             written = fill_unused(written, shown, name, what, parts, ask, report)
+            conflicts = (report.get("plan") or {}).get("conflicts") or []
+            written = tell_conflicts(written, shown, name, what, conflicts, ask, report)
+            written = unnarrate(written, shown, name, conflicts, ask, report)
             summary_check(written, shown, name)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}

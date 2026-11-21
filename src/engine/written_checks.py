@@ -62,7 +62,9 @@ A sentence may count or describe its own notes ("one account says ...; \
 three later reports give ..."): that is supported when its notes match. \
 Each note starts with its article's date in brackets. A sentence may use \
 that date for when something was said, reported or true ("In May 2016, he \
-said ...", "By 2016 ..."); that counts as in the notes. Judge only by the \
+said ...", "By 2016 ..."); that counts as in the notes. But that date put on \
+an older report, document or event the note only looks back on ("In April \
+2018, the Senate report said ..." from an April 2018 article) is wrong. Judge only by the \
 notes shown with each sentence, not by what you know."""
 
 
@@ -158,6 +160,29 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
         gaps = missing_details(w.text, [f"{n.text} {n.date}" for n in cited], name)
         if gaps:
             w.dropped = "not in its notes: " + ", ".join(gaps[:5])
+        elif _OLD_REPORT.match(w.text) and from_article_dates(w.text, cited):
+            w.dropped = (
+                "check: it puts the article's date on an older report; "
+                "leave the report undated unless its notes date it"
+            )
+
+
+# "In April 2018, the Senate torture report said": an article's date put on
+# a report it looks back on (GPT-6 Luna, CIA page, 21 Nov)
+_OLD_REPORT = re.compile(
+    r"(?:In|By|On)\s+(?:[A-Z][a-z]+\.?\s+)?(?:\d{1,2},\s+)?\d{4},\s+(?:the|a|an)\s+"
+    r"(?:[\w'’-]+\s+){0,4}(?:report|study|review|investigation|memo|document|"
+    r"survey|inquiry)s?\b"
+)
+
+# "a news account described", "another account says": sources narrated
+# where nothing is disputed
+NARRATES = re.compile(
+    r"\b(?:a|an|another|one|a separate|a later|other)\s+(?:\d{4}\s+)?"
+    r"(?:news\s+|later\s+|separate\s+|press\s+)?(?:account|report|article|source|"
+    r"story)s?\b(?!\s+(?:by|from|of)\s+[A-Z])",
+    re.I,
+)
 
 
 def _content(text: str) -> set:

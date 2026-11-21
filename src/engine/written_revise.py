@@ -15,7 +15,7 @@ The rewritten sentence is put right after the one it replaces, with
 the record shows both.
 """
 
-from typing import Any, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -87,11 +87,13 @@ def revise_messages(
 
 def revise(
     written: List[Written], notes: Sequence[Note], name: str, ask: Ask,
-    report: Dict[str, Any],
+    report: Dict[str, Any], pick: Optional[Callable[[Written], bool]] = None,
+    tag: str = "revised",
 ) -> List[Written]:  # fmt: skip
     """``written`` with a rewrite after each dropped sentence the model could
-    fix; the rewrites are checked like any sentence."""
-    todo = [w for w in written if revisable(w)]
+    fix (those ``pick`` accepts, when given); the rewrites are checked like
+    any sentence."""
+    todo = [w for w in written if revisable(w) and (pick is None or pick(w))]
     new: Dict[int, Written] = {}
     for start in range(0, len(todo), CHECK_BATCH):
         batch = todo[start : start + CHECK_BATCH]
@@ -119,8 +121,8 @@ def revise(
     # A rewritten opening summary is checked by ``summary_check()`` after this
     code_check([w for w in fresh if not w.summary], notes, name)
     model_check(fresh, notes, name, ask, report)
-    report["revised"] = len(fresh)
-    report["revised_kept"] = sum(1 for w in fresh if not w.dropped)
+    report[tag] = len(fresh)
+    report[f"{tag}_kept"] = sum(1 for w in fresh if not w.dropped)
     out: List[Written] = []
     for w in written:
         out.append(w)
@@ -137,8 +139,8 @@ its article's date).
 Write sentences for those notes to go at the end of the section, in a \
 short paragraph or two, so the section tells what they say. Use only what \
 the notes say, keep who said what, say when the event or statement was \
-(month and year; never "a 2016 report said"), and don't repeat what the \
-section already says. Leave out a note that only comments or judges and \
+(month and year; never "a 2016 report said" or "a news account \
+described"), and don't repeat what the section already says. Leave out a note that only comments or judges and \
 gives no fact ("this highlights ...", "the city represents ..."). A note \
 about a different major event (a killing, an attack, a trial) gets its \
 own short section: give its sentences a short plain heading in \
@@ -168,7 +170,7 @@ def fill_unused(
     plan put Daniel Pearl's killing into an arrests part in 3 runs of 4 and
     the section writer left it out, with nothing to say so."""
     from src.engine.written_checks import drop_repeats
-    from src.engine.written_page import notes_block, strip_refs
+    from src.engine.written_page import notes_block, split_sentences, strip_refs
 
     by_n = {n.n: n for n in notes}
     # The opening's notes don't count: its first sentence cites the note
@@ -201,8 +203,10 @@ def fill_unused(
             text, refs = strip_refs(" ".join(str(s.text or "").split()))
             ns = [n for n in dict.fromkeys(list(s.notes or []) + refs) if n in by_n]
             own = " ".join(str(s.heading or "").strip("# ").split())
-            if text:
-                added.append(Written(text, ns, own or heading, para, filled=True))
+            # One item can hold several sentences (local Qwen pasted three
+            # notes as one): cut it, so the repeat check sees each
+            for one in split_sentences(text) if text else []:
+                added.append(Written(one, ns, own or heading, para, filled=True))
         added.sort(key=lambda w: w.section != heading)  # new sections after
         at = max(
             (i for i, w in enumerate(out) if w.section == heading), default=len(out) - 1

@@ -81,9 +81,12 @@ appear only in quotation marks or attributed to whoever used them. Quoted \
 words stay exactly as quoted.
 - {conflicts}
 - Each note shows its article's date. You may use it for when something \
-was said or reported, as the month and year ("In May 2007, Zaki said"), \
-never as the day of the event itself. Date the event or the statement, not \
-the article: never "a May 2017 article said".
+was said, as the month and year ("In May 2007, Zaki said"), never as the \
+day of the event itself. Never put it on an older report, document or \
+event the note only looks back on (not "In April 2018, the Senate report \
+said"), nor on a lasting fact ("he did not want his name published"): \
+leave those undated unless the note dates them. Date the event or the \
+statement, not the article: never "a May 2017 article said".
 - Name a person in full (as the notes give the name) the first time the \
 section mentions them. Don't join facts from different dates into one \
 sentence unless each keeps its own date.
@@ -213,12 +216,34 @@ def _counts_over_time(c: Conflict, dates: Dict[int, str]) -> bool:
     return bool(one and other) and not one & other
 
 
+def _surnames(text: str, name: str) -> set:
+    """Last words of the people (two or more capitalised words) a text
+    names, the page's own name left out."""
+    own = {w.lower() for w in name.split()}
+    return {
+        p.split()[-1].lower()
+        for p in _PERSON.findall(text)
+        if p.split()[-1].lower() not in own
+    }
+
+
+def _different_people(c: Conflict, texts: Dict[int, str], name: str) -> bool:
+    """Each side names people and the two sides share none: two men, not one
+    event told twice. On 21 Nov local Qwen set Paracha's notes against
+    Suhayl al Sharabi's (both called "forever prisoners") and wrote "Sources
+    disagree on the identity of the detainee"."""
+    one = set().union(*(_surnames(texts.get(n, ""), name) for n in c.one_notes))
+    other = set().union(*(_surnames(texts.get(n, ""), name) for n in c.other_notes))
+    return bool(one and other) and not one & other
+
+
 def clean_conflicts(
-    conflicts: Sequence[Conflict], allowed: Any, dates: Optional[Dict[int, str]] = None
-) -> List[Conflict]:
+    conflicts: Sequence[Conflict], allowed: Any, dates: Optional[Dict[int, str]] = None,
+    texts: Optional[Dict[int, str]] = None, name: str = "",
+) -> List[Conflict]:  # fmt: skip
     """Conflicts with notes on both sides (among ``allowed``), the sides'
     values not fitting inside each other, not a count that changed over
-    time, and not the same notes twice."""
+    time, not about two different people, and not the same notes twice."""
     out, seen = [], set()
     for c in conflicts:
         one = [n for n in dict.fromkeys(c.one_notes) if n in allowed]
@@ -230,6 +255,8 @@ def clean_conflicts(
         if not one or not other or key in seen or _compatible(c.one_side, c.other_side):
             continue
         if _counts_over_time(c, dates or {}):
+            continue
+        if texts and _different_people(c, texts, name):
             continue
         seen.add(key)
         out.append(c)
@@ -432,21 +459,29 @@ def find_conflicts(
         failed(report, f"conflicts {part.heading}", exc)
         return []
     report["calls"] = report.get("calls", 0) + 1
-    return clean_conflicts(reply.conflicts or [], set(part.notes), dates)
+    texts = {n.n: n.text for n in shown or []}
+    return clean_conflicts(reply.conflicts or [], set(part.notes), dates, texts, name)
 
 
 def restore_on_topic(plan: Plan, by_n: Dict[int, Any], name: str, what: str) -> None:
     """A note left out as "someone else" goes back in when the note tagger
-    called it about the entity, or, for a place, when it names the place:
-    on 21 Nov Luna's plan left Daniel Pearl's killing in Karachi out of the
-    Karachi page in two runs of two. It joins the part sharing most words."""
+    called it about the entity, or when it names the place, or the person's
+    surname: on 21 Nov Luna's plan left Daniel Pearl's killing in Karachi
+    out of the Karachi page in two runs of two, and Bin Atef's lawyer's
+    account of him out of his page as "someone else". It joins the part
+    sharing most words."""
     from src.engine.written_checks import _content
 
     for o in list(plan.left_out):
         note = by_n.get(o.note)
         if note is None or not (o.why or "").lower().startswith("someone"):
             continue
-        named = what.startswith("place") and name.lower() in note.text.lower()
+        low = note.text.lower()
+        surname = name.split()[-1].lower() if name.split() else ""
+        named = (what.startswith("place") and name.lower() in low) or (
+            what.startswith("person") and len(surname) > 2
+            and re.search(rf"\b{re.escape(surname)}\b", low) is not None
+        )  # fmt: skip
         if note.tag != "about" and not named:
             continue
         words = _content(note.text)
@@ -507,7 +542,8 @@ def write_planned(
     plan.conflicts += cross_part_conflicts(
         plan, by_n, name, what, ask, report, block, dates
     )
-    plan.conflicts = clean_conflicts(plan.conflicts, set(by_n), dates)
+    texts = {n.n: n.text for n in notes}
+    plan.conflicts = clean_conflicts(plan.conflicts, set(by_n), dates, texts, name)
     report["plan"] = {
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],

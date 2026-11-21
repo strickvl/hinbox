@@ -199,11 +199,11 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
             {
                 "sentences": [
                     {
-                        "text": "Police arrested Tom Vale there in March 2004 and Ann Roe in May 2005.",
+                        "text": "Police arrested Tom Vale there in March 2004 and again in May 2005.",
                         "notes": [2, 3],
                     },
                     {
-                        "text": "Police arrested Tom Vale and Ann Roe there.",
+                        "text": "Police arrested Tom Vale there.",
                         "notes": [2, 3],
                     },
                 ]
@@ -225,7 +225,9 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
         reply = {Plan: plan, Conflicts: conflicts, WBody: body, WParagraph: opening}
         return model.model_validate(reply.get(model) or {"checks": []})
 
-    page = write_page(_city(), "locations", "m", ask, check=False)
+    # Both arrests are Tom Vale's here: two people's would be no conflict
+    city = _city(text=CITY.replace("Ann Roe", "Tom Vale"))
+    page = write_page(city, "locations", "m", ask, check=False)
     assert page["model"] == "m#plan"
     assert [m for m, _, _ in seen] == [Plan, Conflicts, WBody, WParagraph]
     section_prompt, section_notes = seen[2][1], seen[2][2]
