@@ -106,6 +106,25 @@ def tell_conflicts(
     return out
 
 
+_SOURCE_WORDS = {"a", "an", "another", "one", "the", "in", "on", "by", "according"}
+
+
+def lost_or_added(old: str, new: str) -> bool:
+    """The rewrite dropped a capitalised name the sentence had ("the
+    International Red Cross reported" became a bare date, 21 Nov), or put
+    in a day of the month it lacked (a 2014 description of feeding became
+    "On November 19, 2014, Army guards shackled ...")."""
+    from src.engine.written_checks import _CAP, _COMMON, _DAY
+
+    def caps(t: str) -> set:
+        return (
+            {w.lower().strip("'’") for w in _CAP.findall(t)} - _SOURCE_WORDS - _COMMON
+        )
+
+    days = lambda t: {m.group(0).lower() for m in _DAY.finditer(t)}  # noqa: E731
+    return bool(caps(old) - caps(new)) or bool(days(new) - days(old))
+
+
 def unnarrate(
     written: List[Written], notes: Sequence[Note], name: str,
     conflicts: Sequence[Dict[str, Any]], ask: Ask, report: Dict[str, Any],
@@ -122,8 +141,12 @@ def unnarrate(
             continue
         w.dropped = (
             'check: it narrates the sources ("a news account described", '
-            '"another account says") though nothing is disputed; state the '
-            "fact itself, dated when its notes date it"
+            '"another account says") though nothing is disputed. State the '
+            'fact itself. Keep a named source as the source ("according to '
+            'the International Red Cross", "a Senate report said"), keep a '
+            "description of how things were done a description, keep two "
+            "descriptions of one thing as one thing, and add no date the "
+            "sentence does not give"
         )
         marked.append(w)
     report["narrating"] = len(marked)
@@ -140,4 +163,6 @@ def unnarrate(
             nxt = out[i + 1] if i + 1 < len(out) else None
             if nxt is None or nxt.revised != w.text or nxt.dropped:
                 w.dropped = ""
+            elif lost_or_added(w.text, nxt.text):
+                nxt.dropped, w.dropped = "rewrite lost a source or added a day", ""
     return out

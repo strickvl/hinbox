@@ -227,14 +227,35 @@ def _surnames(text: str, name: str) -> set:
     }
 
 
+def _dated_people(text: str, name: str) -> set:
+    """Surnames of the people named in the 80 characters before each year
+    of ``text``, in the same sentence: whose dates the note gives."""
+    out = set()
+    for m in _YEAR.finditer(text):
+        before = re.split(r"[.;]\s", text[max(0, m.start() - 80) : m.start()])[-1]
+        out |= _surnames(before, name)
+    return out
+
+
+def _side(c_notes: Sequence[int], texts: Dict[int, str], name: str, dated: bool) -> set:
+    pick = _dated_people if dated else _surnames
+    return set().union(*(pick(texts.get(n, ""), name) for n in c_notes))
+
+
 def _different_people(c: Conflict, texts: Dict[int, str], name: str) -> bool:
-    """Each side names people and the two sides share none: two men, not one
-    event told twice. On 21 Nov local Qwen set Paracha's notes against
-    Suhayl al Sharabi's (both called "forever prisoners") and wrote "Sources
-    disagree on the identity of the detainee"."""
-    one = set().union(*(_surnames(texts.get(n, ""), name) for n in c.one_notes))
-    other = set().union(*(_surnames(texts.get(n, ""), name) for n in c.other_notes))
-    return bool(one and other) and not one & other
+    """Two men, not one event told twice: the two sides name no person in
+    common, or, where both give years, no person named just before a year
+    on one side is named so on the other. On 21 Nov local Qwen set Paracha's
+    notes against Suhayl al Sharabi's (both called "forever prisoners") and
+    wrote "Sources disagree on the identity of the detainee"; next run the
+    note giving al Sharabi's May 2002 capture also named Paracha, so sharing
+    a name was not enough."""
+    for dated in (False, True):
+        one = _side(c.one_notes, texts, name, dated)
+        other = _side(c.other_notes, texts, name, dated)
+        if one and other and not one & other:
+            return True
+    return False
 
 
 def clean_conflicts(
@@ -501,7 +522,18 @@ def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
         m = re.search(r"repeats\D*(\d+)", o.why or "")
         n = int(m.group(1)) if m else 0
         part = next((p for p in plan.parts if n in p.notes), None)
-        if part is None or o.note not in by_n or n not in by_n:
+        if o.note not in by_n or n not in by_n:
+            continue
+        if part is None and any(x.note == n for x in plan.left_out):
+            # Each left out as repeating the other (Luna, Bin Atef's notes 12
+            # and 13, 21 Nov): neither told. This one goes in where it fits.
+            words = _content(by_n[o.note].text)
+            best = max(plan.parts, key=lambda p: sum(
+                len(words & _content(by_n[k].text)) for k in p.notes if k in by_n))  # fmt: skip
+            best.notes.append(o.note)
+            plan.left_out.remove(o)
+            continue
+        if part is None:
             continue
         extra = _content(by_n[o.note].text) - _content(by_n[n].text)
         if missing_details(by_n[o.note].text, [by_n[n].text], name) or len(extra) >= 3:

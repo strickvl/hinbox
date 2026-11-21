@@ -396,7 +396,7 @@ def strip_refs(text: str, max_n: int = 999) -> Tuple[str, List[int]]:
         found.extend(nums)
         return ""
 
-    out = _REF.sub(cut, text)
+    out = _REF.sub(cut, _brackets(text))
     # A note's date prefix copied into the sentence: "[2017-05-20; 2011-05-01]"
     out = re.sub(r"\s*\[\d{4}-\d\d-\d\d(?:\s*[;,]\s*\d{4}-\d\d-\d\d)*\]", "", out)
     out = re.sub(r"\s+([.,;:])", r"\1", " ".join(out.split()))
@@ -404,11 +404,38 @@ def strip_refs(text: str, max_n: int = 999) -> Tuple[str, List[int]]:
     return out, found
 
 
+def _brackets(text: str) -> str:
+    """``text`` without a model's square-bracket asides. On 21 Nov a fill
+    reply's "[The existing section already notes ... adds no distinct
+    fact.]" was printed on a page, and a section writer marked a name it
+    put in as "[Clarke] described ...". Outside quotation marks a short
+    bracket (up to three words) keeps its words and loses the brackets, a
+    longer one goes; inside a quotation an editor's "[the men]" stays.
+    Note references ("[N3]", "[2017-05-20]") are left for the code below."""
+    out, quoted = [], False
+    for piece in re.split(r'(["“”]|\[[^\[\]]*\])', text):
+        if piece in ('"', "“", "”"):
+            quoted = piece == "“" or (piece == '"' and not quoted)
+            out.append(piece)
+        elif piece.startswith("[") and piece.endswith("]") and not quoted:
+            body = piece[1:-1].strip()
+            if not body or (
+                re.search(r"\d", body)
+                and re.fullmatch(r"(?i)(?:notes?|and|n|[\d\s,;&–-])+", body)
+            ):
+                out.append(piece)  # a note reference or date: cut below
+            elif len(body.split()) <= 3:
+                out.append(body)
+        else:
+            out.append(piece)
+    return "".join(out)
+
+
 # A sentence end: ". " before a capital, except after an initial or a short
 # abbreviation ("U.S. Army", "Gen. Smith", "J. Doe")
 _END = re.compile(r"(?<=[.!?])[\"”’)]?\s+(?=[\"“]?[A-Z])")
 _ABBR = re.compile(
-    r"(?:\b[A-Z]|\b[A-Z]\.[A-Z]|\b(?:Mr|Mrs|Ms|Dr|Gen|Col|Lt|Sgt|Capt|Adm|Maj|Gov|Sen|Rep|St|Jr|Sr|No|Vol|Co|Inc|Ltd|vs))\.$"
+    r"(?:\b[A-Z]|\b[A-Z]\.[A-Z]|\b(?:Mr|Mrs|Ms|Dr|Gen|Gens|Brig|Col|Lt|Sgt|Capt|Cmdr|Cmdt|Adm|Maj|Pvt|Cpl|Spc|Gov|Sen|Rep|Prof|Rev|Hon|Det|Insp|Supt|Ft|Mt|St|Jr|Sr|No|Vol|Co|Corp|Inc|Ltd|vs|Jan|Feb|Mar|Apr|Aug|Sept|Sep|Oct|Nov|Dec))\.$"
 )
 
 
@@ -441,7 +468,7 @@ def _pieces(w: "Written", max_n: int) -> List["Written"]:
     """``w`` cut into its sentences, each without note references; a
     sentence that named notes keeps those, else it keeps the item's."""
     raw = " ".join(str(w.text or "").split())
-    parts = [strip_refs(t, max_n) for t in split_sentences(raw)] or [("", [])]
+    parts = [strip_refs(t, max_n) for t in split_sentences(_brackets(raw))] or [("", [])]
     named = [n for _, refs in parts for n in refs]
     out = []
     for text, refs in parts:

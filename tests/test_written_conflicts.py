@@ -138,3 +138,62 @@ def test_a_note_naming_the_persons_surname_goes_back_in():
     )  # fmt: skip
     restore_on_topic(plan, by_n, "Tom Vale", "person")
     assert plan.parts[0].notes == [1, 2] and [o.note for o in plan.left_out] == [3]
+
+
+def test_a_rewrite_that_drops_a_named_source_or_adds_a_day_is_refused():
+    from src.engine.written_conflicts import lost_or_added
+
+    old = "Tom Vale was arrested in May 2005, the Elm Red Cross reported; another account agreed."
+    assert lost_or_added(old, "Tom Vale was arrested in May 2005.")
+    assert not lost_or_added(
+        old, "Tom Vale was arrested in May 2005, the Elm Red Cross reported."
+    )
+    assert lost_or_added(
+        "A 2014 account described guards feeding men.",
+        "On May 19, 2014, guards fed men.",
+    )
+
+
+def test_two_peoples_dates_in_one_note_are_still_no_disagreement():
+    texts = {
+        6: "Tom Vale was lured from Port Elm to Hilltown in July 2003.",
+        7: "Lee Moss, a Hilltown man captured in Port Elm in May 2002, like Tom Vale was named a forever prisoner.",
+    }
+    c = _conflict([6], [7], "July 2003", "May 2002")
+    assert clean_conflicts([c], {6, 7}, None, texts, "Port Elm") == []
+    # One man's two dates, another named beside him: kept
+    texts = {
+        8: "Police captured Tom Vale in Port Elm on March 5, 2004.",
+        9: "Police arrested Ann Roe and Tom Vale in Port Elm in May 2005.",
+    }
+    assert clean_conflicts([_conflict([8], [9])], {8, 9}, None, texts, "Port Elm")
+
+
+def test_brackets_and_abbreviations():
+    from src.engine.written_page import split_sentences, strip_refs
+
+    assert strip_refs("[Clarke] said it was \"hard for [the men]\" there [N3].") == (
+        'Clarke said it was "hard for [the men]" there.', [3])  # fmt: skip
+    assert (
+        strip_refs("It ended. [This note adds no distinct fact, so it is left out.]")[0]
+        == "It ended."
+    )
+    assert split_sentences("He overturned Brig. Gen. John Baker's conviction. It ended.") == [
+        "He overturned Brig. Gen. John Baker's conviction.", "It ended."]  # fmt: skip
+
+
+def test_two_notes_left_out_as_repeating_each_other_bring_one_back():
+    from src.engine.written_plan import restore_repeats
+
+    by_n = {
+        1: _note(1, "Tom Vale was born in Port Elm."),
+        2: _note(2, "Guards called Tom Vale a troublemaker at Hilltown."),
+        3: _note(3, "Tom Vale was called a troublemaker by guards at Hilltown."),
+    }
+    plan = Plan(
+        identity="", why_it_matters="", opening_notes=[1],
+        parts=[PlanPart(heading="Life", covers="", notes=[1])],
+        left_out=[LeftOut(note=2, why="repeats 3"), LeftOut(note=3, why="repeats 2")],
+    )  # fmt: skip
+    restore_repeats(plan, by_n, "Tom Vale")
+    assert plan.parts[0].notes == [1, 2] and [o.note for o in plan.left_out] == [3]

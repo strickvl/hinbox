@@ -20,7 +20,14 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.engine.written_checks import _first_words, code_check, model_check
-from src.engine.written_page import CHECK_BATCH, CHECK_NOTE_CHARS, Ask, Note, Written
+from src.engine.written_page import (
+    CHECK_BATCH,
+    CHECK_NOTE_CHARS,
+    Ask,
+    Note,
+    Written,
+    strip_refs,
+)
 
 REVISE = """You fix sentences of an encyclopedia entry about "{name}". \
 Each sentence below was taken out because a check found a problem with it, \
@@ -111,7 +118,7 @@ def revise(
                 old.text, 2
             ):
                 continue
-            text = " ".join(str(r.text or "").split())
+            text = strip_refs(" ".join(str(r.text or "").split()))[0]
             if text and text != old.text:
                 new[id(old)] = Written(
                     text, list(old.notes), old.section, old.para,
