@@ -270,6 +270,8 @@ the notes give about one person or event is given to another, or facts \
 from different dates are joined as if they happened at one time.
 - not_supported: its notes do not say this.
 
+A sentence may count or describe its own notes ("one account says ...; \
+three later reports give ..."): that is supported when its notes match. \
 Each note starts with its article's date in brackets. A sentence may use \
 that date for when something was said, reported or true ("In May 2016, he \
 said ...", "By 2016 ..."); that counts as in the notes. Judge only by the \
@@ -611,7 +613,8 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
 
 # An opening sentence about the page instead of its subject
 _ABOUT_PAGE = re.compile(
-    r"\b(?:this|the) (?:entry|page|article|record)\b|\bthese notes\b|\bthe notes\b",
+    r"\b(?:this|the) (?:entry|page|article|record|sections?)\b|\bthese notes\b"
+    r"|\bthe notes\b",
     re.IGNORECASE,
 )
 
@@ -631,6 +634,14 @@ def summary_check(written: List[Written], notes: Sequence[Note], name: str) -> N
             continue
         if _ABOUT_PAGE.search(w.text):
             w.dropped = "talks about the page"
+            continue
+        words = _content(w.text)
+        if any(
+            len(words & _content(o.text)) >= 0.8 * len(words)
+            for o in written
+            if o is not w and not o.dropped and not o.summary
+        ):
+            w.dropped = "copies a sentence of the page"
             continue
         w.notes = [n for n in w.notes if n in by_n] or [
             n for b in body for n in b.notes[:1]

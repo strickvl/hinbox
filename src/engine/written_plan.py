@@ -42,7 +42,9 @@ in Pakistan", "a Yemeni man held at Guantánamo", "a U.S. Navy judge").
 needs them. The opening (written separately) says what {name} is, so no \
 part is an overview, introduction or summary. Put the parts most about \
 {name} itself first, and a part that is mainly about one other person or \
-thing last. The usual topics for this kind of page are:
+thing last; for a person, the parts follow the order of their life \
+(capture, detention, release). A part about events somewhere else \
+belongs on another page: leave its notes out as "someone else". The usual topics for this kind of page are:
 {headings}
 Name each part after what its notes tell, in a few plain words ("Arrests \
 in 2002 and 2003", "Military commission case", "Release to Oman"), not a \
@@ -69,7 +71,7 @@ Write the section "{heading}" ({covers}) from its numbered notes below.
 
 Rules:
 - Write as a careful historian for a general reader: plain, neutral words, \
-with the dates in the sentences. Tell it in order, joining related facts: \
+with the dates in the sentences, in date order. Tell it in order, joining related facts: \
 several similar facts become one sentence or one paragraph, not one \
 sentence each. Use short paragraphs, each about one thing.
 - Use only what the notes say. Never add a name, number, date, place, \

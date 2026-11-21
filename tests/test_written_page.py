@@ -284,12 +284,14 @@ def test_an_opening_summary_is_checked_against_the_sections():
         Written("Port Elm is a harbour city.", [1]),
         Written("Police made arrests there in 2004 and 2005.", [], summary=True),
         Written("The entry covers its arrests.", [2], summary=True),
+        Written("Police arrested Tom Vale there in March 2004.", [2], summary=True),
         Written("Police arrested Tom Vale there in March 2004.", [2], "Arrests", 1),
         Written("Ann Roe was arrested in May 2005.", [3], "Arrests", 1),
     ]
     summary_check(written, notes, "Port Elm")
     assert written[1].check == "summary" and written[1].notes == [2, 3]
     assert written[2].dropped == "talks about the page"
+    assert written[3].dropped == "copies a sentence of the page"
 
 
 def test_long_notes_are_condensed_into_facts_that_keep_their_notes(monkeypatch):
@@ -415,7 +417,7 @@ def test_an_opening_summary_about_the_page_is_rewritten():
         assert model is Revisions and "talks about the entry" in msgs[1]["content"]
         return Revisions.model_validate({"revisions": [
             {"sentence": 1, "starts_with": "The entry",
-             "text": "Police arrested Tom Vale there in 2004."}]})  # fmt: skip
+             "text": "Police made arrests there in 2004."}]})  # fmt: skip
 
     out = revise(written, notes, "Port Elm", ask, {})
     summary_check(out, notes, "Port Elm")
