@@ -247,11 +247,13 @@ _OLD_REPORT = re.compile(
 
 # "In May 2009, Zaki did not want his last name published", "In June 2017,
 # Bin Atef was described as a Yemeni national": an article's date on what
-# was so for years (Luna, 21 Nov)
+# was so for years (Luna, 21 Nov); "In November 2018, Rishikof was serving
+# as Convening Authority", fired that February (round 19)
 _LASTING = re.compile(
     r"(?:In|By)\s+(?:[A-Z][a-z]+\.?\s+)?\d{4},\s+[^,;]{0,60}?\b(?:did not want|"
     r"was described as|is described as|was listed as|was identified as|had been "
-    r"cleared|was cleared|was known as)\b"
+    r"cleared|was cleared|was known as|was serving as|was still|remained|"
+    r"was assigned|had been assigned|became|was in charge|was overseeing)\b"
 )
 
 # "a news account described", "another account says": sources narrated
@@ -330,7 +332,11 @@ def drop_repeats(written: List[Written], share: float = 0.8) -> None:
 _ABOUT_PAGE = re.compile(
     r"\b(?:this|the|another|a later|the next) (?:entry|page|article|record|sections?)\b"
     r"|\bthese notes\b"
-    r"|\bthe notes\b",
+    r"|\bthe notes\b"
+    # "Sections cover staffing ...", "... and its legal fallout are
+    # described" (round 19, the camp page and Rishikof)
+    r"|^\W*sections?\b"
+    r"|\b(?:are|is) (?:described|covered|detailed|discussed|outlined)\W*$",
     re.IGNORECASE,
 )
 

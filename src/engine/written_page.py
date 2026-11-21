@@ -594,8 +594,9 @@ def write_page(
         tell_conflicts,
         unnarrate,
     )
-    from src.engine.written_order import date_sort, keep_identity
+    from src.engine.written_order import date_sort, ensure_identity, keep_identity
     from src.engine.written_plan import write_planned
+    from src.engine.written_review import review_page
     from src.engine.written_revise import fill_unused, recite, revise, unwritten
 
     name = str(entity.get("name") or entity.get("title") or "")
@@ -654,6 +655,12 @@ def write_page(
             written = tell_conflicts(written, shown, name, what, conflicts, ask, report)
             written = unnarrate(written, shown, name, conflicts, ask, report)
             drop_one_sided(written, conflicts)
+            written = review_page(written, shown, name, what, ask, report)
+            plan = report.get("plan") or {}
+            report["identity_added"] = ensure_identity(
+                written, shown, name, plan.get("identity") or "",
+                plan.get("opening_notes") or [],
+            )  # fmt: skip
             report["date_sorted"] = date_sort(written, shown)
             drop_repeats(written)
             summary_check(written, shown, name)

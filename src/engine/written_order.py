@@ -35,15 +35,13 @@ def keep_identity(written: List[Written], notes: Sequence[Note], name: str) -> b
     return False
 
 
-def _when(w: Written, by_n: dict) -> Optional[Tuple[int, int]]:
-    """(year, month) the sentence names first, else None."""
-    from src.engine.written_checks import _MONTH_N, _WHEN
+def _when(w: Written, by_n: dict) -> Optional[Tuple[int, int, int]]:
+    """(year, month, day) the sentence names first, else None. Round 19
+    read "Sept. 11, 2002" as 2002 with no month here and moved Karachi's
+    bin Attash dispute before its February 2002 arrest."""
+    from src.engine.written_groups import text_when
 
-    m = _WHEN.search(w.text)
-    if not m:
-        return None
-    month = (m.group(1) or "").lower()
-    return int(m.group(2)), _MONTH_N.get(month, 0)
+    return text_when(w.text)
 
 
 def date_sort(written: List[Written], notes: Sequence[Note]) -> int:
@@ -62,7 +60,7 @@ def date_sort(written: List[Written], notes: Sequence[Note]) -> int:
             if o.section == w.section and not o.dropped and o is not w
         ]
         later = next(
-            (o for o in mine if not o.filled and (_when(o, by_n) or (0, 0)) > when),
+            (o for o in mine if not o.filled and (_when(o, by_n) or (0, 0, 0)) > when),
             None,
         )
         if later is None:
@@ -72,3 +70,33 @@ def date_sort(written: List[Written], notes: Sequence[Note]) -> int:
         w.para = later.para
         moved += 1
     return moved
+
+
+def ensure_identity(
+    written: List[Written], notes: Sequence[Note], name: str, identity: str,
+    opening: Sequence[int],
+) -> bool:  # fmt: skip
+    """Put "{name} is {identity}." first when no kept opening sentence names
+    the subject, if the code check passes it against the plan's opening
+    notes; True when it did. Round 19's Rishikof page lost its first
+    sentence and opened "His career and appointment ... are described"."""
+    from src.engine.written_checks import code_check
+
+    surname = name.split()[-1].lower() if name.split() else ""
+    opening_kept = [w for w in written if not w.section and not w.dropped]
+    if (
+        not surname
+        or not identity.strip()
+        or any(surname in w.text.lower() for w in opening_kept)
+    ):
+        return False
+    known = {n.n for n in notes}
+    cited = [n for n in opening if n in known][:3] or [n.n for n in notes[:1]]
+    what = identity.strip().rstrip(".")
+    text = what if what.lower().startswith(name.lower()) else f"{name} is {what}"
+    first = Written(text[0].upper() + text[1:] + ".", cited)
+    code_check([first], notes, name)
+    if first.dropped:
+        return False
+    written.insert(0, first)
+    return True
