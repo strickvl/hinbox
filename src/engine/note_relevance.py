@@ -221,10 +221,16 @@ def tag_notes(
     kind: Optional[str] = None,
 ) -> Tuple[Dict[str, Dict], int]:
     """Tags for ``items`` by key, and how many calls failed (their notes stay
-    untagged, to be asked next run)."""
+    untagged, to be asked next run). Once the model server has stopped
+    answering (``unreachable()``), the remaining batches fail without a call."""
+    from src.utils.server_health import unreachable
+
     tags: Dict[str, Dict] = {}
     failed = 0
     for run in _batches(items):
+        if unreachable():
+            failed += 1
+            continue
         texts = [i["text"] for i in run]
         try:
             reply = ask(
@@ -319,9 +325,12 @@ def relevance_pass(
     entities: Dict[str, Dict[Any, Dict[str, Any]]], model_type: str, workers: int = 1
 ) -> Optional[Dict[str, int]]:
     """The run's pass, after grounding, when ``HINBOX_NOTE_RELEVANCE=on``:
-    tags new notes with the run's profile model and logs the counts."""
+    tags new notes with the run's profile model and logs the counts. Raises
+    ``ModelServerUnreachable`` when the server stopped answering, so the run
+    saves and exits 1 as it does during grounding."""
     if not enabled():
         return None
+    from src.utils.server_health import ModelServerUnreachable, unreachable
     from src.utils.step_timing import timed_step
     from src.utils.task_models import is_local_model, task_model
 
@@ -336,4 +345,7 @@ def relevance_pass(
         f"{counts['other']} other",
         level="warning" if counts["failed_calls"] else "success",
     )
+    why = unreachable()
+    if why:
+        raise ModelServerUnreachable(f"during note tagging, {why}")
     return counts

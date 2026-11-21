@@ -258,3 +258,33 @@ def test_the_eval_scores_caught_and_hidden_facts(tmp_path):
     assert summary["caught"] == {"n": 2, "hit": 1, "share": 0.5}
     assert summary["hidden_about"] == {"n": 1, "hit": 1, "share": 1.0}
     assert summary["errors"] == 0
+
+
+def test_tagging_stops_when_the_model_server_is_unreachable(monkeypatch):
+    import httpx
+    import pytest
+
+    from src.engine.note_relevance import relevance_pass
+    from src.utils import server_health
+
+    monkeypatch.setenv("HINBOX_MAX_CONNECTION_FAILURES", "2")
+    monkeypatch.setenv("HINBOX_NOTE_RELEVANCE", "on")
+    server_health.reset()
+    calls = []
+
+    def ask(msgs):
+        calls.append(1)
+        server_health.record(httpx.ConnectError("no route"))
+        raise RuntimeError("Connection error")
+
+    entities = {"locations": {("Port Elm", "city"): _page()}}
+    counts = run_note_relevance(entities, "ollama/test", local=True, ask=ask)
+    assert counts["failed_calls"] == 2  # one call per heading was made
+    assert len(calls) == 2
+    entities["locations"][("Port Elm", "city")]["profile"].pop("note_relevance_json")
+    calls.clear()
+    monkeypatch.setattr("src.engine.note_relevance.make_asker", lambda m, local: ask)
+    with pytest.raises(server_health.ModelServerUnreachable):
+        relevance_pass(entities, "local")
+    assert calls == []  # the breaker was already open: no call made
+    server_health.reset()
