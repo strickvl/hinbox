@@ -254,12 +254,26 @@ After merging, the grounding pass asks a model whether each cited article really
 |---|---|---|---|
 | `anthropic/claude-haiku-5-5` (cloud default) | 38 of 64 | 2 | ~3 min |
 | `openai/gpt-6-luna` | 31 | 4 | ~3.5 min |
+| Inkling 2 Mini local (Q4, one 24 GB card, 2 slots), `HINBOX_GROUNDING_REASONING_EFFORT=minimal` | 37 | 6 | ~2 h 16 min |
+| Gemma 4 31B local (Q4, one 24 GB card, 1 slot) | 36 | 10 | ~1 h 42 min |
 | Qwen3.6 local, `HINBOX_GROUNDING_REASONING_EFFORT=high` | ~35 | 11 | ~67 min |
 | Qwen3.6 local (default, no thinking) | 25 | 19 | ~12 min |
 
 - **Cloud runs**, which already send article text to a provider, use Claude Haiku 5.5 as the judge by default, whatever `HINBOX_CLOUD_MODEL` is. It is clearly the best option, so keep an `ANTHROPIC_API_KEY` in `.env` (and `uv sync --extra anthropic`). Set `HINBOX_GROUNDING_MODEL` to use another judge.
 - **Local runs** (`--local`) are for working with no internet connection at all, for data privacy: nothing leaves the machine, so a cloud judge is never an option there (a `--local` run with a cloud `HINBOX_GROUNDING_MODEL` stops at startup). For a better local judge, add `HINBOX_GROUNDING_REASONING_EFFORT=high`: only the grounding judge thinks (extraction, merging and profiles don't), with up to `HINBOX_GROUNDING_THINKING_MAX_TOKENS` (default 16384) tokens of reasoning per call. It makes grounding about 5.6x slower, so it suits a final pass over finished data more than everyday runs.
+- **A slower, stricter local judge on the same card.** A model that checks citations well can be too slow for the rest of the pipeline (Inkling 2 Mini passed 6 of the 42 bad claims where Qwen passed 19, but takes about 11 times as long per article). A 24 GB card holds only one of them at a time, so Hinbox can run a command of yours before the citation check and another after it:
+  ```bash
+  # .env: the pipeline's model serves at OLLAMA_API_URL until the citation check
+  HINBOX_GROUNDING_MODEL=ollama/inkling-2-mini      # the judge's name on its server
+  HINBOX_GROUNDING_REASONING_EFFORT=minimal         # Inkling's reasoning can't be switched off
+  HINBOX_BEFORE_GROUNDING_CMD="sudo systemctl stop llama-qwen && sudo systemctl start llama-inkling"
+  HINBOX_AFTER_GROUNDING_CMD="sudo systemctl stop llama-inkling && sudo systemctl start llama-qwen"
+  ```
+  On a 20-article local run, Inkling re-checking Qwen's finished tables took 30 minutes where Qwen's own check took 3 (about 90 seconds more per article), with no failed call. The two disagreed on pass or fail for 132 of 846 claims; in a blind read of 40 of those against the articles, Inkling was right on 31 and Qwen on 9. About a third of Inkling's extra doubts were too strict ("August 2015" where the article says "in August"), and "partly supported" marks went from 44 to 161, so expect more amber in the reader.
+
+  When merging is done, Hinbox saves the tables, runs the first command, waits up to `HINBOX_JUDGE_WAIT_SECONDS` (default 600) for a server to answer at `OLLAMA_API_URL` (both models must serve at that same address), runs the citation check, then runs the second command, also after Ctrl+C or a failed check. If the first command fails or no server answers in time, the run stops with the merged tables saved, and the next run (`--limit 0` reads no article) does the citation check. The commands are yours: Hinbox starts no model server itself. With two cards, the same two commands can serve the fast model across both cards for the pipeline and hand one card to the judge afterwards. Without the commands, the same thing by hand is a run with `--skip-grounding`, a change of server, then a run with `--limit 0`.
 - `HINBOX_GROUNDING_PASSAGE=on` also asks the judge to copy the passage its verdict rests on into a field of its own, after the verdict, so more sentences get a highlight. It is off by default: on the 64 hand-labelled claims it changed about a third of Haiku's verdicts (33 labels matched instead of 39) and made the local Qwen check about 70% slower without better verdicts (24 instead of 25), although it gave far more doubted sentences a highlight (`scripts/grounding_bench.py run --passage on|off`).
+- The judge reads the first `HINBOX_GROUNDING_MAX_ARTICLE_CHARS` characters of each article (default 80000, which is the whole article for everything in the Guantánamo corpus). Profiles are written from the whole article, so a lower limit marks true sentences from further down "not supported". With a local model whose context window is under about 32k tokens, set it lower (roughly 3 characters per token of window you can spare), or checks of long articles fail as too long for the model.
 - Switching the judge (or its thinking setting) makes the next run check every stored report again, because each report records which judge produced it.
 
 ### Evaluating Models
