@@ -11,6 +11,7 @@ from typing import Dict, List
 from unittest.mock import patch
 
 from src.utils.grounding import (
+    GROUNDING_MAX_ARTICLE_CHARS,
     GROUNDING_MAX_TOKENS,
     ClaimVerdict,
     ClaimVerification,
@@ -356,11 +357,25 @@ class TestQuotedClaims:
 
     def test_quote_past_the_checked_part_of_the_article_goes_to_the_model(self):
         article = (
-            "x" * 12000 + " The judge, Col. James Pohl, set the hearing for May 2013."
+            "x" * GROUNDING_MAX_ARTICLE_CHARS
+            + " The judge, Col. James Pohl, set the hearing for May 2013."
         )
         text = "The judge, Col. James Pohl, set the hearing for May 2013.^[a1]"
         _, calls = self._quoted(text, article)
         assert calls == 1
+
+    def test_sentence_far_down_a_long_article_is_checked(self):
+        # The profile steps read the whole article, so a sentence from
+        # character 30,000 must be in the text the check looks at
+        assert GROUNDING_MAX_ARTICLE_CHARS >= 80000
+        article = (
+            "Filler text. " * 2500
+            + "The judge, Col. James Pohl, set the hearing for May 2013."
+        )
+        text = "The judge, Col. James Pohl, set the hearing for May 2013.^[a1]"
+        report, calls = self._quoted(text, article)
+        assert calls == 0
+        assert report.verified == 1
 
     def test_quote_that_does_not_name_the_entity_goes_to_the_model(self):
         article = "Ahmed was arrested in Afghanistan. He was transferred to Guantanamo Bay in 2002."
