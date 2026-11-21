@@ -57,7 +57,12 @@ def tell_conflicts(
     conflicts: Sequence[Dict[str, Any]], ask: Ask, report: Dict[str, Any],
 ) -> List[Written]:  # fmt: skip
     """``written`` with a passage for each conflict no kept sentence tells."""
-    from src.engine.written_page import notes_block, split_sentences, strip_refs
+    from src.engine.written_page import (
+        close_quotes,
+        notes_block,
+        split_sentences,
+        strip_refs,
+    )
     from src.engine.written_revise import Fill
 
     by_n = {n.n: n for n in notes}
@@ -95,7 +100,9 @@ def tell_conflicts(
             text, refs = strip_refs(" ".join(str(s.text or "").split()))
             cited = [n for n in dict.fromkeys(list(s.notes or []) + refs) if n in by_n]
             for one in split_sentences(text) if text else []:
-                added.append(Written(one, cited, section, para, filled=True))
+                added.append(
+                    Written(close_quotes(one), cited, section, para, filled=True)
+                )
         out[at + 1 : at + 1] = added
         fresh += added
     code_check(fresh, notes, name)
@@ -111,20 +118,35 @@ _SOURCE_WORDS = {"a", "an", "another", "one", "the", "in", "on", "by", "accordin
 
 
 def lost_or_added(old: str, new: str) -> bool:
-    """The rewrite dropped a capitalised name the sentence had ("the
-    International Red Cross reported" became a bare date, 21 Nov), added one
-    it lacked ("CIA agents captured him", where no captor was named), or put
-    in a day of the month it lacked (a 2014 description of feeding became
-    "On November 19, 2014, Army guards shackled ...")."""
-    from src.engine.written_checks import _CAP, _COMMON, _DAY
+    """The rewrite dropped a named source the sentence had ("the
+    International Red Cross reported" became a bare date, 21 Nov), added a
+    name it lacked ("CIA agents captured him", where no captor was named),
+    or put in a day of the month it lacked (a 2014 description of feeding
+    became "On November 19, 2014, Army guards shackled ..."). Other names it
+    drops are left to the checks: on 21 Nov this guard refused a good
+    rewrite of a bin al Shibh sentence for dropping a word that named no
+    source."""
+    from src.engine.written_checks import _CAP, _COMMON, _DAY, _MONTHS
 
     def caps(t: str) -> set:
-        return (
-            {w.lower().strip("'’") for w in _CAP.findall(t)} - _SOURCE_WORDS - _COMMON
-        )
+        words = {w.lower().strip("'’.") for w in _CAP.findall(t)}
+        return words - _SOURCE_WORDS - _COMMON - set(_MONTHS)
 
+    sources = set()
+    for m in _SOURCE.finditer(old):
+        sources |= caps(m.group(1) or m.group(2) or "")
     days = lambda t: {m.group(0).lower() for m in _DAY.finditer(t)}  # noqa: E731
-    return bool(caps(old) ^ caps(new)) or bool(days(new) - days(old))
+    lost = sources - caps(new)
+    return bool(lost) or bool(caps(new) - caps(old)) or bool(days(new) - days(old))
+
+
+# A named source: "according to the International Red Cross", "the Senate
+# Intelligence Committee report said", "the Red Cross reported"
+_SOURCE = re.compile(
+    r"\b(?:according to|reported by|said by)\s+((?:the\s+)?(?:[A-Z][\w'’.-]*\s*){1,5})|"
+    r"((?:[A-Z][\w'’.-]*\s+){1,5})(?:\w+\s+)?(?:report|reports|reported|said|says|stated|"
+    r"found|concluded)\b"
+)
 
 
 def drop_one_sided(written: List[Written], conflicts: Sequence[Dict[str, Any]]) -> None:

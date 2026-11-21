@@ -186,7 +186,12 @@ def fill_unused(
     plan put Daniel Pearl's killing into an arrests part in 3 runs of 4 and
     the section writer left it out, with nothing to say so."""
     from src.engine.written_checks import drop_repeats
-    from src.engine.written_page import notes_block, split_sentences, strip_refs
+    from src.engine.written_page import (
+        close_quotes,
+        notes_block,
+        split_sentences,
+        strip_refs,
+    )
 
     by_n = {n.n: n for n in notes}
     # The opening's notes don't count: its first sentence cites the note
@@ -222,6 +227,7 @@ def fill_unused(
             # One item can hold several sentences (local Qwen pasted three
             # notes as one): cut it, so the repeat check sees each
             for one in split_sentences(text) if text else []:
+                one = close_quotes(one)
                 added.append(Written(one, ns, own or heading, para, filled=True))
         added.sort(key=lambda w: w.section != heading)  # new sections after
         at = max(

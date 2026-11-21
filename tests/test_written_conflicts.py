@@ -268,3 +268,48 @@ def test_two_accounts_with_different_counts_are_not_unnarrated_and_quotes_close(
         strip_refs("He said to “let them write it down.")[0]
         == "He said to “let them write it down.”"
     )
+
+
+def test_a_first_sentence_a_note_gives_is_kept_against_the_model_check():
+    from src.engine.written_order import keep_identity
+
+    first = Written("Port Elm is a harbour city in Elmland.", [2], "", 0)
+    first.dropped = "check: notes don't say it is a harbour city"
+    assert keep_identity([first], NOTES, "Port Elm")
+    assert not first.dropped and first.notes == [1]
+    made_up = Written("Port Elm is the capital of Elmland.", [2], "", 0)
+    made_up.dropped = "check: not in the notes"
+    assert not keep_identity([made_up], NOTES, "Port Elm") and made_up.dropped
+
+
+def test_filled_sentences_move_into_date_order():
+    from src.engine.written_order import date_sort
+
+    a = Written("In May 2007, Tom Vale said one thing.", [2], "Life", 1)
+    b = Written("In February 2018, Tom Vale said another.", [3], "Life", 1)
+    c = Written("In June 2017, Tom Vale said a third.", [3], "Life", 1000, filled=True)
+    written = [a, b, c]
+    assert date_sort(written, NOTES) == 1
+    assert written == [a, c, b] and c.para == 1
+
+
+def test_passive_captors_page_talk_and_named_sources():
+    from src.engine.written_checks import missing_details
+    from src.engine.written_conflicts import lost_or_added
+
+    note = ["Lee Moss was captured in Port Elm in May 2002."]
+    assert missing_details(
+        "In May 2002, Lee Moss was captured there by Elmlandish forces.",
+        note,
+        "Port Elm",
+    )
+    w = Written(
+        "Tom Vale was held there; his transfer is not detailed here.", [2], "Arrests"
+    )
+    code_check([w], NOTES, "Port Elm")
+    assert w.dropped.startswith("check: it talks about the page")
+    # A rewrite may drop a word that names no source
+    old = "Tom Vale was taken on Sept. 11, 2002; another report describes Elm forces taking him."
+    assert not lost_or_added(
+        old, "Tom Vale was taken on Sept. 11, 2002, by Elm forces."
+    )

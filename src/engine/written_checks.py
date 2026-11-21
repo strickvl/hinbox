@@ -149,7 +149,7 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
     # that actor beside a force word in a note, not just the country or the
     # agency somewhere in it (21 Nov: al Sharabi's note names no captor; the
     # CIA page's note on al Hawsawi says Pakistani authorities arrested him)
-    for m in _ACTOR.finditer(sentence):
+    for m in [*_ACTOR.finditer(sentence), *_ACTOR_BY.finditer(sentence)]:
         actor = _fold(m.group(1)).rstrip(".")
         actor = actor[:6] if len(actor) > 6 else actor  # "Pakistani", "Pakistan's"
         near = rf"\b{re.escape(actor)}\w*\W+(?:\w+\W+){{0,2}}(?:{_FORCES})\b"
@@ -166,6 +166,18 @@ _ACTOR = re.compile(
     rf"\b([A-Z][\w.]*(?:-[A-Z][\w.]*)?)\s+({_FORCES})\s+(?:\w+\s+){{0,2}}?"
     r"(?:captured|arrested|seized|detained|raided|apprehended|abducted|caught|took)\b"
 )
+# The passive: "was captured there by Pakistani forces" (Luna, 21 Nov)
+_ACTOR_BY = re.compile(
+    r"\b(?:captured|arrested|seized|detained|apprehended|abducted|caught|taken)\b"
+    rf"(?:\s+[\w,]+){{0,6}}?\s+by\s+(?:the\s+)?([A-Z][\w.]*(?:-[A-Z][\w.]*)?)\s+({_FORCES})\b"
+)
+# A section sentence about the page: "whose later custody and transfer are
+# not detailed here" (Luna, Karachi, 21 Nov)
+_PAGE_TALK = re.compile(
+    r"\bnot (?:detailed|described|covered|given|discussed|mentioned) here\b|"
+    r"\b(?:this|the) (?:page|entry)\b|\bthis section\b",
+    re.IGNORECASE,
+)
 
 
 def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None:
@@ -180,6 +192,11 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
         gaps = missing_details(w.text, [f"{n.text} {n.date}" for n in cited], name)
         if gaps:
             w.dropped = "not in its notes: " + ", ".join(gaps[:5])
+        elif _PAGE_TALK.search(w.text):
+            w.dropped = (
+                'check: it talks about the page ("not detailed here"); '
+                "say only what the notes say"
+            )
         elif _OLD_REPORT.match(w.text) and from_article_dates(w.text, cited):
             w.dropped = (
                 "check: it puts the article's date on an older report; "

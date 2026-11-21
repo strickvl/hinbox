@@ -594,6 +594,7 @@ def write_page(
         tell_conflicts,
         unnarrate,
     )
+    from src.engine.written_order import date_sort, keep_identity
     from src.engine.written_plan import write_planned
     from src.engine.written_revise import fill_unused, recite, revise
 
@@ -634,6 +635,7 @@ def write_page(
     drop_repeats(written)
     if check:
         model_check(written, shown, name, ask, report)
+        report["identity_kept"] = keep_identity(written, shown, name)
     summary_check(written, shown, name)
     if check:
         written = revise(written, shown, name, ask, report)
@@ -646,6 +648,7 @@ def write_page(
             written = tell_conflicts(written, shown, name, what, conflicts, ask, report)
             written = unnarrate(written, shown, name, conflicts, ask, report)
             drop_one_sided(written, conflicts)
+            report["date_sorted"] = date_sort(written, shown)
             summary_check(written, shown, name)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}

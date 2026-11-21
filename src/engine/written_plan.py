@@ -581,9 +581,11 @@ def write_planned(
     if not plan.parts:
         report["plan"] = {"identity": plan.identity, "parts": []}
         return None
+    before = {n for p in plan.parts for n in p.notes}
     restore_repeats(plan, by_n, name)
     restore_on_topic(plan, by_n, name, what)
     restore_orphans(plan, by_n)
+    restored = sorted({n for p in plan.parts for n in p.notes} - before)
     dates = {n.n: n.date for n in notes}
     for part in plan.parts:
         mine = [by_n[n] for n in part.notes]
@@ -598,7 +600,7 @@ def write_planned(
     report["plan"] = {
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],
-        "opening_notes": opening_notes(plan),
+        "opening_notes": opening_notes(plan), "restored": restored,
         "left_out": [o.model_dump() for o in plan.left_out],
         "conflicts": [c.model_dump() for c in plan.conflicts],
     }  # fmt: skip
