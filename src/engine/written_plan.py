@@ -541,6 +541,25 @@ def restore_repeats(plan: Plan, by_n: Dict[int, Any], name: str) -> None:
             plan.left_out.remove(o)
 
 
+def life_order(parts: List[PlanPart], by_n: Dict[int, Any]) -> List[PlanPart]:
+    """A person's parts sorted by the middle one of their notes' earliest
+    years (so one note looking back on a capture doesn't pull a section
+    forward); a part naming no year keeps its place after the part before. On 21 Nov two Luna
+    plans of Bin Atef's page made a last section of his 2007 prison profile
+    and his lawyer's account, after his 2016 transfer and the 2017 ruling."""
+    keys, last = [], 0
+    for p in parts:
+        years = sorted(
+            min(int(y) for y in found)
+            for n in p.notes
+            if n in by_n and (found := _YEAR.findall(by_n[n].text))
+        )
+        last = years[len(years) // 2] if years else last
+        keys.append(last)
+    order = sorted(range(len(parts)), key=lambda i: (keys[i], i))
+    return [parts[i] for i in order]
+
+
 def restore_orphans(plan: Plan, by_n: Dict[int, Any]) -> None:
     """A note the plan neither put in a part nor left out goes into the part
     sharing most words with it. On 21 Nov one Luna plan of the Karachi page
@@ -589,6 +608,8 @@ def write_planned(
     restore_on_topic(plan, by_n, name, what)
     restore_orphans(plan, by_n)
     restored = sorted({n for p in plan.parts for n in p.notes} - before)
+    if what.startswith("person"):
+        plan.parts = life_order(plan.parts, by_n)
     dates = {n.n: n.date for n in notes}
     for part in plan.parts:
         mine = [by_n[n] for n in part.notes]

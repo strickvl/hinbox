@@ -175,7 +175,8 @@ _ACTOR_BY = re.compile(
 # not detailed here" (Luna, Karachi, 21 Nov)
 _PAGE_TALK = re.compile(
     r"\bnot (?:detailed|described|covered|given|discussed|mentioned) here\b|"
-    r"\b(?:this|the) (?:page|entry)\b|\bthis section\b",
+    r"\bthis (?:page|entry|section)\b|"
+    r"\bthe (?:page|entry) (?:says|covers|describes|notes|mentions|gives)\b",
     re.IGNORECASE,
 )
 

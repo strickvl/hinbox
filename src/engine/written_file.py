@@ -17,6 +17,7 @@ section each note belongs in, or why it is left out. A note with no usable
 answer keeps the plan's choice.
 """
 
+import re
 from typing import Any, Dict, List, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,6 +56,45 @@ BATCH = 8
 
 def _key(text: str) -> str:
     return " ".join(str(text or "").lower().strip(" #\"'.").split())
+
+
+_EVENT = re.compile(
+    r"\b(?:killed|killing|murder\w*|beheaded|arrested|arrests?|captured|capture|"
+    r"raid\w*|attack\w*|bomb\w*|abducted|kidnapp\w*|confess\w*|seized)\b",
+    re.IGNORECASE,
+)
+_SAYS = (
+    r"(?:said|says|told|blamed|described|noted|called|recalled|added|does not|"
+    r"did not|wants|wanted|asked|warned|denied|admitted)"
+)
+
+
+def must_keep(note: Any, name: str, what: str) -> bool:
+    """A note the filing may not leave out: for a place, an event that names
+    the place (Daniel Pearl's killing in Karachi was left out in two Karachi
+    draws of three, 21 Nov); for a person, their own words or wishes, the
+    surname opening the note ("Zaki blamed the Pentagon's ban on detainee
+    artwork", "Zaki does not want his last name published", left out as "no
+    fact" in every draw)."""
+    text = note.text
+    if what.startswith("place"):
+        return bool(
+            re.search(rf"\b{re.escape(name)}\b", text, re.I) and _EVENT.search(text)
+        )
+    if what.startswith("person") and name.split():
+        surname = re.escape(name.split()[-1])
+        return (
+            re.match(rf"\W*(?:[\w,]+\s+){{0,3}}?{surname}\b\W*\s*{_SAYS}\b", text, re.I)
+            is not None
+        )
+    return False
+
+
+def _shared(note: Any, part: Any, by_n: Dict[int, Any]) -> int:
+    from src.engine.written_checks import _content
+
+    words = _content(note.text)
+    return sum(len(words & _content(by_n[k].text)) for k in part.notes if k in by_n)
 
 
 def file_messages(
@@ -107,10 +147,17 @@ def file_notes(
             ):
                 continue  # an answer about another note
             answers[a.note] = a
-    moved, left = 0, 0
+    moved, left, kept = 0, 0, 0
+    by_all = {n.n: n for n in notes}
     for n, a in answers.items():
         section = _key(a.section)
         old = next((p for p in plan.parts if n in p.notes), None)
+        if section.startswith("leave") and must_keep(by_all[n], name, what):
+            if old is None:  # into the section sharing most words with it
+                best = max(plan.parts, key=lambda p: _shared(by_all[n], p, by_all))
+                best.notes.append(n)
+            kept += 1
+            continue
         if section.startswith("leave"):
             why = a.why or "no fact"
             if old is not None:
@@ -132,4 +179,6 @@ def file_notes(
     for p in plan.parts:
         p.notes = list(dict.fromkeys(p.notes))
     plan.parts = [p for p in plan.parts if p.notes]
-    report["filing"] = {"answered": len(answers), "moved": moved, "left_out": left}
+    report["filing"] = {
+        "answered": len(answers), "moved": moved, "left_out": left, "kept": kept,
+    }  # fmt: skip

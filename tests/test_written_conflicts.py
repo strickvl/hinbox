@@ -350,3 +350,41 @@ def test_fuller_names_and_lasting_facts():
     w = Written("In May 2009, Tom Vale did not want his name published.", [1], "Life")
     code_check([w], notes, "Tom Vale")
     assert "lasting fact" in w.dropped
+
+
+def test_filing_keeps_events_at_a_place_and_a_persons_own_words():
+    from src.engine.written_file import must_keep
+
+    assert must_keep(
+        _note(1, "Tom Vale was killed in Port Elm in 2002."), "Port Elm", "place (city)"
+    )
+    assert not must_keep(
+        _note(1, "Port Elm has two piers."), "Port Elm", "place (city)"
+    )
+    assert must_keep(
+        _note(1, "Vale does not want his name published."), "Tom Vale", "person"
+    )
+    assert must_keep(_note(1, "In 2016, Vale blamed the ban."), "Tom Vale", "person")
+    assert not must_keep(
+        _note(1, "Ann Roe said the camp was quiet."), "Tom Vale", "person"
+    )
+
+
+def test_a_persons_sections_follow_their_life():
+    from src.engine.written_plan import life_order
+
+    by_n = {
+        1: _note(1, "Tom Vale was captured in 2001."),
+        2: _note(2, "Tom Vale, captured in 2001, was sent to Elmland in 2016."),
+        3: _note(3, "Elmland's court ruled on his transfer in 2017."),
+        4: _note(4, "A 2007 profile called Tom Vale a troublemaker."),
+        5: _note(5, "His lawyer said he was friendly."),
+    }
+    parts = [PlanPart(heading="Capture", covers="", notes=[1]),
+             PlanPart(heading="Elmland", covers="", notes=[2, 3]),
+             PlanPart(heading="Portraits", covers="", notes=[4, 5])]  # fmt: skip
+    assert [p.heading for p in life_order(parts, by_n)] == [
+        "Capture",
+        "Portraits",
+        "Elmland",
+    ]
