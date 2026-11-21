@@ -596,7 +596,7 @@ def write_page(
     )
     from src.engine.written_order import date_sort, keep_identity
     from src.engine.written_plan import write_planned
-    from src.engine.written_revise import fill_unused, recite, revise
+    from src.engine.written_revise import fill_unused, recite, revise, unwritten
 
     name = str(entity.get("name") or entity.get("title") or "")
     what = _what(entity_type, entity.get("type") or entity.get("event_type"))
@@ -644,11 +644,18 @@ def write_page(
         if approach == "plan":
             parts = (report.get("plan") or {}).get("parts") or []
             written = fill_unused(written, shown, name, what, parts, ask, report)
+            # Filed is not written: on 21 Nov the fill stage wrote three
+            # sentences for Zaki's first section and stopped, leaving the
+            # artwork ban, the ISIS remark and Slahi unwritten. One more pass
+            # for what is still unused, then the rest is reported.
+            written = fill_unused(written, shown, name, what, parts, ask, report)
+            report["unwritten"] = unwritten(written, shown, name, parts)
             conflicts = (report.get("plan") or {}).get("conflicts") or []
             written = tell_conflicts(written, shown, name, what, conflicts, ask, report)
             written = unnarrate(written, shown, name, conflicts, ask, report)
             drop_one_sided(written, conflicts)
             report["date_sorted"] = date_sort(written, shown)
+            drop_repeats(written)
             summary_check(written, shown, name)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}

@@ -149,13 +149,34 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
     # that actor beside a force word in a note, not just the country or the
     # agency somewhere in it (21 Nov: al Sharabi's note names no captor; the
     # CIA page's note on al Hawsawi says Pakistani authorities arrested him)
+    folded = [_fold(s) for s in sources]
     for m in [*_ACTOR.finditer(sentence), *_ACTOR_BY.finditer(sentence)]:
         actor = _fold(m.group(1)).rstrip(".")
         actor = actor[:6] if len(actor) > 6 else actor  # "Pakistani", "Pakistan's"
         near = rf"\b{re.escape(actor)}\w*\W+(?:\w+\W+){{0,2}}(?:{_FORCES})\b"
-        if not re.search(near, hay):
+        # The note giving the captor must be about that captive: on 21 Nov
+        # "Pakistani forces captured Suhayl al Sharabi ...; in June, they
+        # captured Mansoor Qatta" passed on Qatta's note alone
+        who = _captive(sentence, m)
+        if who:
+            ok = any(re.search(near, s) and who in s for s in folded)
+        else:
+            ok = re.search(near, hay) is not None
+        if not ok:
             missing.append(f"{m.group(1)} {m.group(2)}")
     return list(dict.fromkeys(missing))
+
+
+def _captive(sentence: str, m: "re.Match[str]") -> str:
+    """The folded surname of the person captured: the first name of two or
+    more capitalised words after an active "forces captured", else before a
+    passive "was captured ... by"; "" when none is named there."""
+    from src.engine.written_plan import _PERSON
+
+    after = sentence[m.end() : m.end() + 60] if m.re is _ACTOR else ""
+    before = sentence[max(0, m.start() - 80) : m.start()] if m.re is _ACTOR_BY else ""
+    found = _PERSON.findall(after)[:1] or _PERSON.findall(before)[-1:]
+    return _fold(found[0].split()[-1]) if found else ""
 
 
 _FORCES = (

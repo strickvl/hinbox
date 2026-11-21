@@ -277,6 +277,11 @@ def clean_conflicts(
             continue
         if _counts_over_time(c, dates or {}):
             continue
+        if bool(re.search(r"\d", c.one_side)) != bool(re.search(r"\d", c.other_side)) or (
+            re.search(r"\bwithout (?:a |specifying )?(?:date|day)|\bundated\b|no date",
+                      f"{c.one_side} {c.other_side}", re.I)
+        ):  # fmt: skip
+            continue  # a date against none (bin al Shibh, 21 Nov): nothing disputed
         if texts and _different_people(c, texts, name):
             continue
         seen.add(key)
@@ -608,6 +613,8 @@ def write_planned(
     restore_on_topic(plan, by_n, name, what)
     restore_orphans(plan, by_n)
     restored = sorted({n for p in plan.parts for n in p.notes} - before)
+    for p in plan.parts:
+        p.notes = list(dict.fromkeys(p.notes))
     if what.startswith("person"):
         plan.parts = life_order(plan.parts, by_n)
     dates = {n.n: n.date for n in notes}

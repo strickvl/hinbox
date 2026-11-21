@@ -90,6 +90,17 @@ def must_keep(note: Any, name: str, what: str) -> bool:
     return False
 
 
+def _names(text: str, name: str) -> bool:
+    """The note names the person by surname ("Bin Atef's attorney George
+    Clarke described him as 'a big, friendly, funny guy'", left out as "no
+    fact" on 21 Nov)."""
+    surname = name.split()[-1] if name.split() else ""
+    return (
+        len(surname) > 2
+        and re.search(rf"\b{re.escape(surname)}\b", text, re.I) is not None
+    )
+
+
 def _shared(note: Any, part: Any, by_n: Dict[int, Any]) -> int:
     from src.engine.written_checks import _content
 
@@ -152,7 +163,12 @@ def file_notes(
     for n, a in answers.items():
         section = _key(a.section)
         old = next((p for p in plan.parts if n in p.notes), None)
-        if section.startswith("leave") and must_keep(by_all[n], name, what):
+        named = what.startswith("person") and _names(by_all[n].text, name)
+        no_fact = (a.why or "no fact").lower().startswith("no fact")
+        if section.startswith("leave") and (
+            must_keep(by_all[n], name, what) or (named and no_fact)
+        ):
+            plan.left_out = [o for o in plan.left_out if o.note != n]
             if old is None:  # into the section sharing most words with it
                 best = max(plan.parts, key=lambda p: _shared(by_all[n], p, by_all))
                 best.notes.append(n)

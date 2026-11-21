@@ -245,9 +245,28 @@ def fill_unused(
     code_check(fresh, notes, name)
     model_check(fresh, notes, name, ask, report)
     drop_repeats(out)
-    report["filled"] = len(fresh)
-    report["filled_kept"] = sum(1 for w in fresh if not w.dropped)
+    report["filled"] = report.get("filled", 0) + len(fresh)
+    report["filled_kept"] = report.get("filled_kept", 0) + sum(
+        1 for w in fresh if not w.dropped
+    )
     return out
+
+
+def unwritten(
+    written: List[Written], notes: Sequence[Note], name: str,
+    parts: Sequence[Dict[str, Any]],
+) -> List[int]:  # fmt: skip
+    """Planned notes no kept section sentence uses (or whose people no kept
+    sentence names), by number."""
+    from src.engine.written_plan import _surnames
+
+    by_n = {n.n: n for n in notes}
+    used = {n for w in written if not w.dropped and w.section for n in w.notes}
+    page = set().union(*(_surnames(w.text, name) for w in written if not w.dropped))
+    used = {n for n in used if n not in by_n or _surnames(by_n[n].text, name) <= page}
+    return [
+        n for p in parts for n in p.get("notes") or [] if n in by_n and n not in used
+    ]
 
 
 def recite(

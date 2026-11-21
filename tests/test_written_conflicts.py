@@ -388,3 +388,35 @@ def test_a_persons_sections_follow_their_life():
         "Portraits",
         "Elmland",
     ]
+
+
+def test_a_captor_must_be_in_the_captives_own_note():
+    from src.engine.written_checks import missing_details
+
+    notes = [
+        "Lee Moss was captured in Port Elm in May 2002.",
+        "Elmlandish forces captured Ann Roe in Port Elm in June 2002.",
+    ]
+    s = "In May, Elmlandish forces captured Lee Moss there; in June, they captured Ann Roe."
+    assert missing_details(s, notes, "Port Elm") == ["Elmlandish forces"]
+    assert not missing_details(
+        "In June, Elmlandish forces captured Ann Roe there.", notes, "Port Elm"
+    )
+
+
+def test_a_date_against_no_date_is_no_disagreement():
+    c = Conflict(about="capture", one_side="Sept. 10-11, 2002", one_notes=[2],
+                 other_side="a series of raids, no date given", other_notes=[3])  # fmt: skip
+    assert clean_conflicts([c], {2, 3}) == []
+
+
+def test_unwritten_lists_planned_notes_no_sentence_tells():
+    from src.engine.written_revise import unwritten
+
+    written = [
+        Written(
+            "Police captured Tom Vale in Port Elm on March 5, 2004.", [2], "Arrests"
+        )
+    ]
+    parts = [{"heading": "Arrests", "notes": [2, 3]}]
+    assert unwritten(written, NOTES, "Port Elm", parts) == [3]
