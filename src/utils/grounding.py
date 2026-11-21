@@ -209,7 +209,9 @@ def _previous_results(
 
 
 # Article text sent to the grounding check (and hashed to spot changes)
-GROUNDING_MAX_ARTICLE_CHARS = 12000
+GROUNDING_MAX_ARTICLE_CHARS = int(
+    os.getenv("HINBOX_GROUNDING_MAX_ARTICLE_CHARS", "12000")
+)
 GROUNDING_MAX_CLAIM_CHARS = 600
 # Claims sent in one call. A call for one article can hold claims from many
 # profiles; more than this are split over several calls, so a reply never
