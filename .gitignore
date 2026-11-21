@@ -192,3 +192,9 @@ design/
 
 # Git worktrees for runs and experiments (CLAUDE.md: put them here)
 .worktrees/
+
+# Personal tool settings, prompt exports and local planning notes (plan 004 holds security detail kept out of the public issue)
+.codex/
+.agents/
+prompt-exports/
+/plans/
