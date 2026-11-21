@@ -25,6 +25,7 @@ from . import corrections_view as cv
 from . import views
 from .data_access import SPECS, TABLES, available_domains, load_store
 from .profile_render import VERDICT_LABELS
+from .written_view import written_panel
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DOMAIN = "guantanamo"
@@ -112,7 +113,8 @@ async def entity(request: Request) -> Response:
         v = None
     domain = _domain(request)
     dq = f"?domain={quote(domain)}" if domain != DEFAULT_DOMAIN else ""
-    return _render(request, "entity.html", views.entity_page(store, ent, v, dq))
+    view = request.query_params.get("view")
+    return _render(request, "entity.html", views.entity_page(store, ent, v, dq, view))
 
 
 async def panel(request: Request) -> Response:
@@ -132,6 +134,9 @@ async def panel(request: Request) -> Response:
         version = int(p.get("v", "")) if p.get("v") else None
     except ValueError:
         version = None
+    if p.get("w"):
+        ctx = written_panel(store, ent, p["w"], claim, p.get("a", ""))
+        return _render(request, "_written_panel.html", ctx)
     ctx = views.source_panel(store, ent, p.get("a", ""), claim, version)
     return _render(request, "_panel.html", ctx)
 

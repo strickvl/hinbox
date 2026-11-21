@@ -15,8 +15,17 @@
   </div>
 </header>
 
+{% if has_written and not static_site %}
+<nav class="views" aria-label="Views of this page">
+  {% for m in (written.models if written else []) %}<a href="{{ u(ent.url, view=m.id) }}"{% if written and m.id == written.model %} aria-current="page"{% endif %}>Written page ({{ m.label }})</a>{% endfor %}
+  {% if not written %}<a href="{{ u(ent.url) }}">Written page</a>{% endif %}
+  <a href="{{ u(ent.url, view='notes') }}"{% if not written %} aria-current="page"{% endif %}>Notes and evidence</a>
+</nav>
+{% endif %}
 <div class="trust" id="trust">
-  {% if version %}
+  {% if written %}
+    <span>Written by {{ written.label }} from <b class="num">{{ written.used }}</b> of the page's {{ written.notes }} notes{% if written.written_at %}, {{ written.written_at|fmt_date }}{% endif %}. Click a citation to see the notes a sentence was written from, and their sources.{% if written.dropped %} {{ written.dropped }} sentence{{ 's' if written.dropped != 1 }} the notes didn't back {{ 'were' if written.dropped != 1 else 'was' }} left out.{% endif %}</span>
+  {% elif version %}
     <span>You are reading <b>version {{ version }}</b> of {{ current_version }}{% if old_date %}, from {{ old_date }}{% endif %}. The checker's marks describe the current version only, so none are shown. <a href="{{ u(ent.url) }}">Read the current version</a></span>
   {% elif not n_claims %}
     <span>This page has no cited sentences.</span>
@@ -44,7 +53,7 @@
 {% if description and kind != 'full' %}<p class="banner"><b>Extracted description:</b> {{ description }}</p>{% endif %}
 
 {% set has_toc = sections|length > 0 %}
-<div class="desk{% if not has_toc %} no-toc{% endif %}" id="desk" data-table="{{ ent.spec.table }}" data-key="{{ ent.key }}" data-domain="{{ domain }}" data-version="{{ version or '' }}">
+<div class="desk{% if not has_toc %} no-toc{% endif %}" id="desk" data-table="{{ ent.spec.table }}" data-key="{{ ent.key }}" data-domain="{{ domain }}" data-version="{{ version or '' }}" data-written="{{ written.model if written else '' }}">
   {% if has_toc %}
   <nav class="toc" aria-label="Contents"><details id="toc-details" open><summary class="label">Contents</summary>
     <ol>

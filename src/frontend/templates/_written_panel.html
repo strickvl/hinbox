@@ -1,0 +1,20 @@
+<div class="ph">
+  <div class="lbl"><span>Notes behind this sentence</span><button type="button" class="close" data-close aria-label="Close">×</button></div>
+  <div class="t">“{{ sentence }}”</div>
+  <div class="d">Written by {{ label }}{% if check == 'partial' %} · <span class="tone-look">the check said its notes back it only in part{% if problem %}: {{ problem }}{% endif %}</span>{% endif %}</div>
+</div>
+<ol class="wnotes">
+  {% for n in notes %}
+  <li{% if n.here %} class="here"{% endif %}>{% if n.verdict and n.verdict != 'supported' %}<span class="dot v-{{ n.verdict }}" title="{{ VERDICT_LABELS.get(n.verdict, n.verdict) }}"></span> {% endif %}{{ n.text }}
+    {% if n.sources %}<span class="muted small">{% for s in n.sources %}<a href="{{ u('/sources/' ~ s.id) }}">{{ s.date|fmt_date or s.title }}</a>{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}</li>
+  {% else %}<li class="empty">No notes are stored for this sentence.</li>{% endfor %}
+</ol>
+<div class="ph">
+  <div class="lbl"><span>Source · {{ source.kind }}{% if source.outlet %} · {{ source.outlet }}{% endif %}</span></div>
+  <div class="t">{{ source.title }}</div>
+  <div class="d">{% if source.date %}{{ source.date|fmt_date }} · {% endif %}<a href="{{ u('/sources/' ~ source.id) }}">source page</a>{% if source.url %} · <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">original</a>{% endif %}</div>
+</div>
+<div class="pbody">
+  {% for p in paragraphs %}<p>{{ p }}</p>{% else %}<p class="empty">The text of this source isn't stored, so it can't be shown here.</p>{% endfor %}
+  {% if passage_marked %}<p class="note">Highlighted: the words the checker quoted when it judged the notes above against this source.</p>{% endif %}
+</div>

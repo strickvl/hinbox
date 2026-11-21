@@ -77,6 +77,13 @@ h1 { font-family: var(--serif); font-size: 38px; line-height: 1.12; margin: 4px 
 .trust .chip:hover { border-color: var(--rule-2); }
 .trust .chip[aria-pressed="true"] { border-color: var(--ink-3); background: var(--paper); }
 .trust .checker { flex: 1 1 360px; text-align: right; color: var(--ink-3); font-size: 12.5px; }
+.views { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13.5px; margin: 0 0 4px; }
+.views a { color: var(--ink-2); text-decoration: none; padding: 4px 0; border-bottom: 2px solid transparent; }
+.views a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--primary); font-weight: 600; }
+.wnotes { margin: 0; padding: 10px 16px 10px 34px; font-size: 13.5px; line-height: 1.5; color: var(--ink-2); border-bottom: 1px solid var(--rule); }
+.wnotes li { margin: 0 0 8px; }
+.wnotes li.here { color: var(--ink); }
+.wnotes .small a { white-space: nowrap; }
 
 /* ── the desk ── */
 .desk { display: grid; grid-template-columns: 200px minmax(0, 1fr) minmax(0, 430px); gap: 36px; align-items: start; }

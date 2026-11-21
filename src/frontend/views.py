@@ -14,6 +14,7 @@ from src.utils.grounding_passages import find_once, long_enough
 from src.utils.note_tags import off_topic_keys
 
 from . import corrections_view as cv
+from . import written_view as wv
 from .data_access import SPECS, TABLES, Entity, Source, Store, pretty_type, to_date
 from .profile_render import (
     SEVERITY,
@@ -177,10 +178,16 @@ def _version_text(
 
 
 def entity_page(
-    store: Store, ent: Entity, version: Optional[int], domain_query: str = ""
+    store: Store,
+    ent: Entity,
+    version: Optional[int],
+    domain_query: str = "",
+    view: Optional[str] = None,
 ) -> Dict[str, Any]:
     """``domain_query`` ("?domain=x" or "") is added to citation links, so a
-    citation followed without the script stays in the same domain."""
+    citation followed without the script stays in the same domain. ``view``
+    picks a written page by model, or "notes" for the stored profile
+    (``written_view.py``); the current version shows its written page first."""
     versions = _versions(ent)
     text, old, current = _version_text(ent, version)
     report = ent.row.get("profile_grounding") or {}
@@ -254,15 +261,20 @@ def entity_page(
         for c in rp.claims
         if c.is_dispute and not c.off
     ]
+    written = wv.pick(ent, view) if old is None else None
+    wctx = wv.written_context(ent, written, domain_query) if written else None
+    shown = wctx["rendered"] if wctx else rp
     return {
+        "written": wctx,
+        "has_written": bool(wv.stored_pages(ent.profile)) and old is None,
         "ent": ent,
         "summary": summary,
         "kind": store.kind_of(ent),
         "event_dates": _event_dates(ent),
         "description": ent.row.get("description") if ent.spec.table == "events" else "",
-        "body": Markup(rp.html),
-        "rendered": rp,
-        "sections": rp.sections,
+        "body": Markup(shown.html),
+        "rendered": shown,
+        "sections": shown.sections,
         "checked": rp.checked,
         "issues": issues,
         "n_claims": len(rp.claims),
@@ -270,13 +282,13 @@ def entity_page(
         "timeline": timeline,
         "appears": appears,
         "sources": sources,
-        "disputes": disputes,
+        "disputes": [] if wctx else disputes,
         "history": _history(store, ent) if len(versions) > 1 else [],
         "version": old.get("version_number") if old else None,
         "current_version": current,
         "old_date": fmt_date(to_date(old.get("created_at"))) if old else "",
         "first_source": store.source(arts[0]["article_id"]) if arts else None,
-        "cite_data": cite_data(rp, store),
+        "cite_data": cite_data(shown, store),
         "corrections": cv.entity_box(store, cs, ent, rp) if old is None else None,
     }
 
