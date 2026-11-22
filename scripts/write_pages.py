@@ -87,6 +87,10 @@ def main() -> None:
         help="write each planned page this many times, keep each section's best; "
         "0 = three for a cloud model on pages of 25+ notes, else one",
     )  # fmt: skip
+    p.add_argument(
+        "--no-when-who", action="store_true",
+        help="skip the last check of dates and actors (src/engine/written_when_who.py)",
+    )  # fmt: skip
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
 
@@ -145,6 +149,7 @@ def main() -> None:
                 label=a.label,
                 draws=a.draws,
                 strikes=strikes_for(t, k, ent),
+                when_who=not a.no_when_who,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs

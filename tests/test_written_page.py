@@ -102,6 +102,8 @@ def _ask(page, checks=None, facts=None):
             return SentenceChecks.model_validate(checks or {"checks": []})
         if model.__name__ == "Revisions":
             return model.model_validate({"revisions": []})
+        if model.__name__ == "WhenWhoChecks":
+            return model.model_validate({"checks": []})
         return Facts.model_validate(facts)
 
     return ask, calls
@@ -129,7 +131,8 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
         _city(), "locations", "m", ask, [("Overview", "what it is")], approach="single"
     )
     assert calls[:2] == [WPage, SentenceChecks] and page["model"] == "m"
-    assert calls[2].__name__ == "Revisions" and len(calls) == 3
+    assert calls[2].__name__ == "Revisions" and len(calls) == 4
+    assert calls[3].__name__ == "WhenWhoChecks"  # the last check, on the page shown
     assert page["text"] == (
         "Port Elm is a harbour city in the north of Elmland.^[a1]\n\n"
         "## Arrests\n\n"

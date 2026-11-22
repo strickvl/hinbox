@@ -688,6 +688,7 @@ def write_page(
     label: str = "",
     draws: int = 1,
     strikes: Optional[Dict[str, Dict[str, Any]]] = None,
+    when_who: bool = True,
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
     ``error`` and no text. ``approach`` "plan" plans the page and writes it a
@@ -743,13 +744,18 @@ def write_page(
         )  # fmt: skip
     else:
         written = finish(page, shown, name, what, approach, check, ask, report)
+    if check and when_who:  # dates and actors, on the page as shown
+        from src.engine.written_when_who import when_who as check_when_who
+
+        check_when_who(written, shown, name, ask, report)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}
     used = {k for w in kept for n in w.notes for k in by_n[n].keys}
     report.update(
         sentences=len(written), kept=len(kept),
-        dropped_code=sum(1 for w in written if w.dropped and not w.dropped.startswith("check")),
-        dropped_check=sum(1 for w in written if w.dropped.startswith("check")),
+        dropped_code=sum(1 for w in written
+                         if w.dropped and not w.dropped.startswith(("check", "when/who"))),
+        dropped_check=sum(1 for w in written if w.dropped.startswith(("check", "when/who"))),
         partial=sum(1 for w in kept if w.check == "partial"),
         notes_used=len(used), words=sum(len(w.text.split()) for w in kept),
         headings=list(dict.fromkeys(w.section for w in kept if w.section)),

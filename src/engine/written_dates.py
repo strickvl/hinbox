@@ -38,7 +38,7 @@ _YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 # "In September", "On April 13", "the Pentagon's November policy": a month
 # after a word that sets a time, with no year in the sentence
 _BARE_MONTH = re.compile(
-    rf"(\b(?i:in|on|by|since|until|through|during|late|early|mid-?|last)\s+|[’']s\s+)"
+    rf"(\b(?i:in|on|as of|by|since|until|through|during|late|early|mid-?|last)\s+|[’']s\s+)"
     rf"(?i:{_MONTH_RE})(\.?)(\s+\d{{1,2}}(?:\s*(?:and|-|–)\s*\d{{1,2}})?\b)?",
 )
 # A date that lies ahead of its article: "declarations ... by March 19" in a

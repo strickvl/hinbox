@@ -820,3 +820,75 @@ def test_the_picker_is_told_what_each_draft_lacks():
     ]
     assert _lacks(texts[0], texts, "Port Elm") == "Lacks: 20, 30, two"
     assert _lacks(texts[1], texts, "Port Elm") == "Lacks: nothing the others give"
+
+
+def test_month_only_dates_sort_after_days_and_unrelated_followers_rehome():
+    from src.engine.written_clauses import sort_paragraphs
+    from src.engine.written_dates import own_dates
+
+    page = [
+        Written("By late March 2013, 31 men struck.", [1], "S", 1),
+        Written("On March 15, 2013, 14 men were listed.", [1], "S", 1),
+        Written("In April 2013, more nurses came.", [1], "S", 1),
+        Written("On April 11, 2013, 43 men struck.", [1], "S", 1),
+        Written("In early April 2013, doctors came.", [1], "S", 1),
+    ]
+    sort_paragraphs(page)
+    assert [w.text[:12] for w in page] == [
+        "On March 15,", "By late Marc", "In early Apr", "On April 11,", "In April 201",
+    ]  # fmt: skip
+
+    page = [
+        Written("In October 2017, Attorney General Jeff Sessions spoke.", [1], "S", 1),
+        Written("In March 2018, Ann Roe and Brown warned of harm.", [1], "S", 1),
+        Written(
+            "Ann Roe had also asked a deputy of Sessions about pleas.", [1], "S", 1
+        ),
+        Written("He was firm.", [1], "S", 1),
+    ]
+    sort_paragraphs(page, "Ann Roe")
+    assert [w.text[:12] for w in page] == [
+        "In October 2", "Ann Roe had ", "In March 201", "He was firm.",
+    ]  # fmt: skip
+
+    notes = [_note(1, "As of April 24, 100 men struck.", "2013-04-26")]
+    page = [Written("As of April 24, 100 men struck.", [1], "S")]
+    own_dates(page, notes)
+    assert page[0].text == "As of April 24, 2013, 100 men struck."
+
+
+def test_when_who_mends_a_misdated_sentence_and_drops_a_wrong_actor():
+    from src.engine.written_when_who import WhenWhoChecks, usable_fix, when_who
+
+    notes = [
+        _note(1, "The 2014 Senate report found the program cruel.", "2018-04-02"),
+        _note(2, "Judge Tom Vale ruled the motion moot.", "2018-05-01"),
+    ]
+    page = [
+        Written("In April 2018, the Senate report found the program cruel.", [1], "S"),
+        Written("Lawyer Ann Roe ruled the motion moot.", [2], "S"),
+    ]
+
+    def ask(msgs, model, max_tokens):
+        assert model is WhenWhoChecks and "Its notes:" in msgs[1]["content"]
+        return WhenWhoChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": "In April 2018", "when": "wrong", "who": "right",
+             "problem": "the report is from 2014",
+             "fixed": "In 2014, the Senate report found the program cruel."},
+            {"sentence": 2, "starts_with": "Lawyer Ann Roe", "when": "no date", "who": "wrong",
+             "problem": "the judge ruled", "fixed": "Lawyer Ann Roe's judge, Sam Lee, ruled it."},
+        ]})  # fmt: skip
+
+    report: dict = {}
+    when_who(page, notes, "Port Elm", ask, report)
+    assert page[0].text == "In 2014, the Senate report found the program cruel."
+    assert page[1].dropped.startswith("when/who")  # "Sam Lee" is in no note
+    assert len(report["when_who"]) == 2 and report["calls"] == 1
+    # a fix that rewrites the sentence is refused
+    assert not usable_fix(
+        "Tom Vale ruled the motion moot.",
+        "The motion, a long one, was ruled moot by the court after a hearing.",
+        ["Tom Vale ruled the motion moot."],
+        "Port Elm",
+        [],
+    )
