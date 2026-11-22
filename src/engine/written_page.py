@@ -689,6 +689,7 @@ def write_page(
     draws: int = 1,
     strikes: Optional[Dict[str, Dict[str, Any]]] = None,
     when_who: bool = True,
+    same: bool = True,
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
     ``error`` and no text. ``approach`` "plan" plans the page and writes it a
@@ -718,6 +719,11 @@ def write_page(
     if draws <= 0:  # auto: three for a cloud model on a page of 25+ notes
         draws = 3 if not model.startswith("ollama/") and len(shown) >= 25 else 1
     report["draws_made"] = draws
+    if same:  # notes telling one fact joined, so it is written once
+        from src.engine.written_same import join_same
+
+        shown = join_same(shown, name, what, ask, report)
+        report["shown_after_joins"] = len(shown)
     if approach == "plan":
         plan = make_plan(shown, name, what, headings, ask, report, notes_block)
         page = None

@@ -104,6 +104,9 @@ def _ask(page, checks=None, facts=None):
             return model.model_validate({"revisions": []})
         if model.__name__ == "WhenWhoChecks":
             return model.model_validate({"checks": []})
+        if model.__name__ == "PairsSame":
+            calls.pop()  # joining notes is tested on its own
+            return model.model_validate({"pairs": []})
         return Facts.model_validate(facts)
 
     return ask, calls
@@ -231,7 +234,7 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
 
     # Both arrests are Tom Vale's here: two people's would be no conflict
     city = _city(text=CITY.replace("Ann Roe", "Tom Vale"))
-    page = write_page(city, "locations", "m", ask, check=False)
+    page = write_page(city, "locations", "m", ask, check=False, same=False)
     assert page["model"] == "m#plan"
     # The planned conflict is confirmed by its own call before writing
     assert [m for m, _, _ in seen] == [
@@ -260,7 +263,7 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     ] == "repeats an earlier sentence"
     # Two draws: one plan, the sections and opening written twice
     seen.clear()
-    twice = write_page(city, "locations", "m", ask, check=False, draws=2)
+    twice = write_page(city, "locations", "m", ask, check=False, draws=2, same=False)
     assert [m for m, _, _ in seen] == [
         Plan,
         Conflicts,

@@ -91,6 +91,10 @@ def main() -> None:
         "--no-when-who", action="store_true",
         help="skip the last check of dates and actors (src/engine/written_when_who.py)",
     )  # fmt: skip
+    p.add_argument(
+        "--no-same", action="store_true",
+        help="skip joining notes that tell the same fact (src/engine/written_same.py)",
+    )  # fmt: skip
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
 
@@ -150,6 +154,7 @@ def main() -> None:
                 draws=a.draws,
                 strikes=strikes_for(t, k, ent),
                 when_who=not a.no_when_who,
+                same=not a.no_same,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs
