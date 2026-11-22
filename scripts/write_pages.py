@@ -55,6 +55,10 @@ def main() -> None:
     p.add_argument(
         "--label", default="", help="stored as model#plan@label, beside other runs"
     )
+    p.add_argument(
+        "--draws", type=int, default=1,
+        help="write each planned page this many times, keep each section's best",
+    )  # fmt: skip
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()
 
@@ -110,6 +114,7 @@ def main() -> None:
                 workers=a.workers,
                 approach=a.approach,
                 label=a.label,
+                draws=a.draws,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs

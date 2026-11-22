@@ -265,3 +265,41 @@ def test_neighbours_saying_one_thing_and_ranked_first_names():
     assert (
         missing_details("President Tom Vale spoke.", ["Vale spoke."], "Port Elm") == []
     )
+
+
+def test_each_section_comes_from_the_draft_that_scores_best():
+    from src.engine.written_draws import pick_sections, section_score
+
+    notes = [
+        _note(1, "Port Elm is a harbour city.", "2003-01-02"),
+        _note(2, "Police arrested Tom Vale in March 2004.", "2004-03-05"),
+        _note(3, "Police arrested Ann Roe in May 2005.", "2005-05-06"),
+        _note(4, "The harbour opened in 1990.", "2006-01-01"),
+    ]
+    good = [
+        Written("Police arrested Tom Vale in March 2004.", [2], "Arrests", 1),
+        Written("Police arrested Ann Roe in May 2005.", [3], "Arrests", 1),
+    ]
+    bad = [
+        Written("He was arrested in May 2005.", [3], "Arrests", 1),
+        Written("One account says Tom Vale was held in 2004; another account says 2005.", [2], "Arrests", 1),
+    ]  # fmt: skip
+    assert section_score(good, [2, 3], notes, [], "Port Elm") == 0
+    assert section_score(bad, [2, 3], notes, [], "Port Elm") >= 6
+    d1 = (
+        [Written("Port Elm is a harbour city.", [1])]
+        + bad
+        + [Written("The harbour opened in 1990.", [4], "Harbour", 2)]
+    )
+    d2 = [Written("Port Elm is a city.", [1])] + good
+    parts = [
+        {"heading": "Arrests", "notes": [2, 3]},
+        {"heading": "Harbour", "notes": [4]},
+    ]
+    report = {}
+    page = pick_sections([d1, d2], parts, notes, [], "Port Elm", report)
+    texts = [w.text for w in page]
+    assert texts[1:3] == [good[0].text, good[1].text]  # arrests from draft 2
+    assert texts[-1] == "The harbour opened in 1990."  # harbour from draft 1
+    assert report["draws"]["chosen"] == {"Arrests": 1, "Harbour": 0}
+    assert len({w.para for w in page if w.section}) == 2

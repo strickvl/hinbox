@@ -611,6 +611,21 @@ def write_planned(
     opening from the written sections. None when the plan call fails.
     ``block`` prints notes; the models are passed in from ``written_page`` so
     this module needs no import of it."""
+    plan = make_plan(notes, name, what, headings, ask, report, block)
+    if plan is None:
+        return None
+    return write_from_plan(
+        plan, notes, name, what, words, ask, report, block, page_model,
+        section_model, sentence_model,
+    )  # fmt: skip
+
+
+def make_plan(
+    notes: Sequence[Any], name: str, what: str, headings: Sequence[Tuple[str, str]],
+    ask: Any, report: Dict[str, Any], block: Any,
+) -> Optional[Plan]:  # fmt: skip
+    """The plan with its notes filed, restored and ordered and its conflicts
+    found; None when the plan call fails or has no parts."""
     by_n = {n.n: n for n in notes}
     k = max_parts(len(notes))
     try:
@@ -653,6 +668,16 @@ def write_planned(
         "left_out": [o.model_dump() for o in plan.left_out],
         "conflicts": [c.model_dump() for c in plan.conflicts],
     }  # fmt: skip
+    return plan
+
+
+def write_from_plan(
+    plan: Plan, notes: Sequence[Any], name: str, what: str, words: int, ask: Any,
+    report: Dict[str, Any], block: Any, page_model: Any, section_model: Any,
+    sentence_model: Any,
+) -> Any:  # fmt: skip
+    """The sections, each from its grouped notes, then the opening."""
+    by_n = {n.n: n for n in notes}
     sections = []
     for part in plan.parts:
         groups = group_notes([by_n[n] for n in part.notes], name)

@@ -247,6 +247,15 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     assert [s["dropped"] for s in page["sentences"]][
         -1
     ] == "repeats an earlier sentence"
+    # Two draws: one plan, the sections and opening written twice
+    seen.clear()
+    twice = write_page(city, "locations", "m", ask, check=False, draws=2)
+    assert [m for m, _, _ in seen] == [Plan, Conflicts, WBody, WParagraph] + [
+        WBody,
+        WParagraph,
+    ]
+    assert twice["text"] == page["text"]
+    assert twice["report"]["draws"]["chosen"] == {"Arrests": 0}
 
 
 def test_a_dropped_sentence_is_rewritten_once_and_checked_again():

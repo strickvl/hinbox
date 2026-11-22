@@ -577,28 +577,17 @@ def write_page(
     headings: Sequence[Tuple[str, str]] = (), check: bool = True, workers: int = 1,
     approach: str = "plan",
     label: str = "",
+    draws: int = 1,
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
     ``error`` and no text. ``approach`` "plan" plans the page and writes it a
     section at a time (``written_plan.py``); "single" writes it in one call.
     The record's ``model`` is the model, with "#plan" after it for the
-    planned approach, so both can be stored side by side."""
-    from src.engine.written_checks import (
-        code_check,
-        drop_neighbours,
-        drop_repeats,
-        model_check,
-        summary_check,
-    )
-    from src.engine.written_conflicts import (
-        drop_one_sided,
-        tell_conflicts,
-        unnarrate,
-    )
-    from src.engine.written_order import date_sort, ensure_identity, keep_identity
-    from src.engine.written_plan import write_planned
-    from src.engine.written_review import review_page
-    from src.engine.written_revise import fill_unused, recite, revise, unwritten
+    planned approach, so both can be stored side by side. With ``draws`` over
+    1 the plan is made once and the page written that many times, each
+    section taken from the draw that scores best (``written_draws.py``)."""
+    from src.engine.written_draws import finish
+    from src.engine.written_plan import make_plan, write_from_plan
 
     name = str(entity.get("name") or entity.get("title") or "")
     what = _what(entity_type, entity.get("type") or entity.get("event_type"))
@@ -613,11 +602,14 @@ def write_page(
     report["shown"] = len(shown)
     words = target_words(len(notes))
     if approach == "plan":
-        page = write_planned(
-            shown, name, what, headings, words, ask, report, notes_block,
-            WPage, WBody, WParagraph,
-        )  # fmt: skip
-        if page is None:
+        plan = make_plan(shown, name, what, headings, ask, report, notes_block)
+        page = None
+        if plan is not None and draws <= 1:
+            page = write_from_plan(
+                plan, shown, name, what, words, ask, report, notes_block,
+                WPage, WBody, WParagraph,
+            )  # fmt: skip
+        if plan is None or (draws <= 1 and page is None):
             return {"model": key, "error": "; ".join(report.get("errors") or ["no plan"]),
                     "report": report}  # fmt: skip
     else:
@@ -626,52 +618,14 @@ def write_page(
         except Exception as exc:
             return {"model": key, "error": str(exc)[:300], "report": report}
         report["calls"] += 1
-    written = flatten(
-        page, max((n.n for n in shown), default=0), summary=approach == "plan"
-    )
-    if approach == "plan":
-        give_identity_a_note(written, report, shown)
-    code_check([w for w in written if not w.summary], shown, name)
-    if approach == "plan":
-        recite(written, shown, name, (report.get("plan") or {}).get("parts") or [])
-    drop_repeats(written)
-    if check:
-        model_check(written, shown, name, ask, report)
-        report["identity_kept"] = keep_identity(
-            written, shown, name, (report.get("plan") or {}).get("identity") or ""
-        )
-    summary_check(written, shown, name)
-    if check:
-        written = revise(written, shown, name, ask, report)
-        summary_check(written, shown, name)
-        report["revised_kept"] = sum(1 for w in written if w.revised and not w.dropped)
-        if approach == "plan":
-            parts = (report.get("plan") or {}).get("parts") or []
-            written = fill_unused(written, shown, name, what, parts, ask, report)
-            # Filed is not written: on 21 Nov the fill stage wrote three
-            # sentences for Zaki's first section and stopped, leaving the
-            # artwork ban, the ISIS remark and Slahi unwritten. One more pass
-            # for what is still unused, then the rest is reported.
-            if len(shown) <= 40:  # on long pages the second pass added repeats
-                written = fill_unused(written, shown, name, what, parts, ask, report)
-            report["unwritten"] = unwritten(written, shown, name, parts)
-            conflicts = (report.get("plan") or {}).get("conflicts") or []
-            written = tell_conflicts(written, shown, name, what, conflicts, ask, report)
-            written = unnarrate(written, shown, name, conflicts, ask, report)
-            drop_one_sided(written, conflicts)
-            written = review_page(written, shown, name, what, ask, report)
-            plan = report.get("plan") or {}
-            report["identity_kept"] = report.get("identity_kept") or keep_identity(
-                written, shown, name, plan.get("identity") or ""
-            )
-            report["identity_added"] = ensure_identity(
-                written, shown, name, plan.get("identity") or "",
-                plan.get("opening_notes") or [],
-            )  # fmt: skip
-            report["date_sorted"] = date_sort(written, shown)
-            drop_repeats(written)
-            report["neighbours_dropped"] = drop_neighbours(written)
-            summary_check(written, shown, name)
+    if approach == "plan" and draws > 1:
+        from src.engine.written_draws import write_drawn
+
+        written = write_drawn(
+            plan, shown, name, what, words, ask, report, check, draws
+        )  # fmt: skip
+    else:
+        written = finish(page, shown, name, what, approach, check, ask, report)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}
     used = {k for w in kept for n in w.notes for k in by_n[n].keys}
