@@ -856,8 +856,8 @@ def test_when_who_mends_a_misdated_sentence_and_drops_a_wrong_actor():
     report: dict = {}
     when_who(page, notes, "Port Elm", ask, report)
     assert page[0].text == "In 2014, the Senate report found the program cruel."
-    assert not page[1].dropped  # "Sam Lee" is in no note: flagged, not dropped
-    assert len(report["when_who"]) == 1 and len(report["when_who_flagged"]) == 1
+    assert not page[1].dropped  # no date question about it, so not asked
+    assert len(report["when_who"]) == 1 and report["when_who_asked"] == 1
     assert report["calls"] == 1
     # a year the date pass worked out, a date the note writes and "said" stay
     note = [
@@ -905,3 +905,18 @@ def test_a_month_joined_to_a_dated_month_takes_no_article_year():
     page = [Written("He was waterboarded in May and July 2003.", [1], "S")]
     own_dates(page, notes)
     assert page[0].text == "He was waterboarded in May and July 2003."
+
+
+def test_only_sentences_with_a_date_question_go_to_the_date_check():
+    from src.engine.written_when_who import suspect
+
+    by_n = {
+        1: _note(1, "He was waterboarded in May and July 2003.", "2015-06-02"),
+        2: _note(2, "In September, a man died.", "2013-04-02"),
+    }
+    assert "2015" in suspect(
+        Written("He was waterboarded in May 2015 and July 2003.", [1], "S"), by_n
+    )
+    # a year the date pass worked out where the note gives none is not asked about
+    assert suspect(Written("In September 2012, a man died.", [2], "S"), by_n) == ""
+    assert suspect(Written("That month, a man died.", [2], "S"), by_n)

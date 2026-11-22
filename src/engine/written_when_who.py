@@ -19,7 +19,8 @@ the model's own reasoning ending "so correct"), and 3 of its 5 wrong mends
 took out a year or day the date pass had rightly worked out ("on Monday" in
 a Monday article). A sentence it would have dropped, or whose fix is
 refused, goes under ``report["when_who_flagged"]``; every mend under
-``report["when_who"]``.
+``report["when_who"]``. Only sentences code finds a question about
+(``suspect()``) are asked.
 """
 
 import difflib
@@ -49,10 +50,13 @@ notes give it to, and is it about this entry's subject and not a related \
 person or case the notes describe? A judge's ruling given to a lawyer, or \
 one detainee's transfer to another, is wrong.
 
+Each sentence comes with a question that code found about its dates; answer \
+it first. A date in the sentence that the notes' own text gives as another \
+time for the same thing is wrong.
+
 For each sentence: copy its first three words; say in a few words what you \
 found, or "none"; then give "when" (right, wrong or no date) and "who" (right \
-or wrong). Answer "wrong" only when you are sure the notes contradict the \
-sentence. If something is wrong, give the sentence mended with as few words \
+or wrong). If something is wrong, give the sentence mended with as few words \
 changed as possible: the right date or actor from the notes, or the wrong \
 date taken out when the notes give none. Leave "fixed" empty otherwise. Judge \
 only by the notes shown."""
@@ -95,11 +99,38 @@ def _messages(
     for i, w in enumerate(batch, 1):
         shown = [by_n[n] for n in w.notes[:MAX_NOTES] if n in by_n]
         lines = "\n".join(f"  - [{_dated(n)}] {n.text[:NOTE_CHARS]}" for n in shown)
-        parts.append(f"Sentence {i}: {w.text}\nIts notes:\n{lines}")
+        ask = suspect(w, by_n)
+        parts.append(f"Sentence {i}: {w.text}\nQuestion: {ask}\nIts notes:\n{lines}")
     return [
         {"role": "system", "content": WHEN_WHO.format(name=name)},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
+
+
+_YEARS = re.compile(r"\b(?:19|20)\d\d\b")
+_THAT_TIME = re.compile(r"^\W*That (?:month|year|day|week)\b")
+
+
+def suspect(w: Any, by_n: Dict[int, Any]) -> str:
+    """The question code asks about ``w``'s dates, "" when it has none: a
+    year its notes' text never gives while giving others ("May 2015" against
+    a note's "May and July 2003"; "In June 2017, he was resettled" from a
+    June 2017 article that says January 2016), or a "That month" opener.
+    Only these sentences go to the model: asked of every sentence with
+    "answer wrong only when sure", the check found 0 of 10 real errors in
+    two runs over round 34's pages; asked without it, it dropped 12 true
+    sentences."""
+    noted = set(_YEARS.findall(" ".join(by_n[n].text for n in w.notes if n in by_n)))
+    odd = sorted(set(_YEARS.findall(w.text)) - noted)
+    if odd and noted:
+        return (
+            f"The sentence's {' and '.join(odd)} is in no note's text, which gives "
+            f"{', '.join(sorted(noted))}. Is {' and '.join(odd)} the right time for "
+            "what it dates, or the article's date put on something older?"
+        )
+    if _THAT_TIME.match(w.text):
+        return 'It opens with "That ...": which time do its notes give? Name it.'
+    return ""
 
 
 _DATE_WORD = re.compile(
@@ -179,7 +210,8 @@ def when_who(
     for before, after in report.get("own_dates") or []:
         added[after] = [x for x in _words(after) if x not in _words(before)]
     years = re.compile(r"\b(?:19|20)\d\d\b")
-    todo = [w for w in written if not w.dropped and not w.summary]
+    todo = [w for w in written if not w.dropped and not w.summary and suspect(w, by_n)]
+    report["when_who_asked"] = report.get("when_who_asked", 0) + len(todo)
     for start in range(0, len(todo), BATCH):
         batch = todo[start : start + BATCH]
         try:

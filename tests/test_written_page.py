@@ -131,8 +131,8 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
         _city(), "locations", "m", ask, [("Overview", "what it is")], approach="single"
     )
     assert calls[:2] == [WPage, SentenceChecks] and page["model"] == "m"
-    assert calls[2].__name__ == "Revisions" and len(calls) == 4
-    assert calls[3].__name__ == "WhenWhoChecks"  # the last check, on the page shown
+    # no sentence gives a year its notes don't, so the date check asks nothing
+    assert calls[2].__name__ == "Revisions" and len(calls) == 3
     assert page["text"] == (
         "Port Elm is a harbour city in the north of Elmland.^[a1]\n\n"
         "## Arrests\n\n"
