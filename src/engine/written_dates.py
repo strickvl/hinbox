@@ -28,7 +28,18 @@ _YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 # after a word that sets a time, with no year in the sentence
 _BARE_MONTH = re.compile(
     rf"(\b(?i:in|on|by|since|until|through|during|late|early|mid-?|last)\s+|[’']s\s+)"
-    rf"(?i:{_MONTH_RE})(\.?)(\s+\d{{1,2}}\b)?",
+    rf"(?i:{_MONTH_RE})(\.?)(\s+\d{{1,2}}(?:\s*(?:and|-|–)\s*\d{{1,2}})?\b)?",
+)
+# A date that lies ahead of its article: "declarations ... by March 19" in a
+# February 2018 article is March 2018 (round 30 wrote "by March 19, 2017")
+_AHEAD = re.compile(
+    r"\b(?:by|until|till|before|deadline|due|scheduled|set for|week of|next|"
+    r"will|would|planned|expected|is to|are to|was to|were to)\b",
+    re.I,
+)
+# "on April 24, 2013 100 captives": a comma after the year it was given
+_NO_COMMA = re.compile(
+    r"(\b[A-Z][a-z]+\.? \d{1,2}(?:\s*(?:and|-|–)\s*\d{1,2})?, (?:19|20)\d\d)(?= [\w$])"
 )
 
 
@@ -65,7 +76,7 @@ def date_sentence(w: Any, by_n: dict) -> str:
 
     text = _WEEKDAY.sub(weekday, text)
     if _YEAR.search(text):
-        return text
+        return _NO_COMMA.sub(r"\1,", text) if text != w.text else text
     d = _article_day(w, by_n)
     if d is None:
         return text
@@ -74,11 +85,23 @@ def date_sentence(w: Any, by_n: dict) -> str:
         n = _MONTH_OF.get(m.group(2)[:3].lower(), 0)
         if not n or not m.group(2)[0].isupper():
             return m.group(0)  # "may", "march": a verb
-        year = d.year - (n > d.month)
+        if n > d.month:
+            ahead = _AHEAD.search(
+                text[max(0, m.start() - 40) : m.start() + len(m.group(1))]
+            )
+            if ahead:
+                year = d.year  # a deadline or plan, later in the article's year
+            elif n - d.month <= 2:
+                return m.group(0)  # a month or two on: past or coming, unclear
+            else:
+                year = d.year - 1  # "In September" in an April article
+        else:
+            year = d.year
         day = m.group(4) or ""
         return f"{m.group(1)}{m.group(2)}{m.group(3)}{day}{',' if day else ''} {year}"
 
-    return _BARE_MONTH.sub(month, text, count=1)
+    text = _BARE_MONTH.sub(month, text, count=1)
+    return _NO_COMMA.sub(r"\1,", text) if text != w.text else text
 
 
 def own_dates(written: List[Any], notes: Sequence[Any]) -> List[List[str]]:

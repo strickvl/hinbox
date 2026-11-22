@@ -36,7 +36,9 @@ fact:
 one-time event, two different counts of the same thing at the same time, one \
 saying something happened and the other that it did not.
 - "compatible": both can be true: counts or states on different days or \
-months; a part and the whole (three Americans among 80 wounded; 10 and 1 \
+months (two counts conflict only when both are for the same day: "late \
+April" and "April 26" are not the same day); counts of different groups (all \
+hunger strikers, those tube-fed, those in hospital); a part and the whole (three Americans among 80 wounded; 10 and 1 \
 making 11); two measures of different things (when a recess began and how \
 long it lasted); the same thing described in other words; one account only \
 less exact than the other.

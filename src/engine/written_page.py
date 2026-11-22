@@ -180,27 +180,48 @@ def article_side(text: str) -> str:
     text = re.sub(r"\band (?:notes|says|states|reports|adds) that\b", "and", text)
     text = re.sub(r",\s+and that\b", ", and", text).strip(" ,;")
     text = re.sub(r',(["”])$', r".\1", text)  # 'four years in CIA prisons,"'
-    if not text or _PROFILE.search(text):
+    # "17." left from "with the profile stating 21 and the article stating 17"
+    if not text or _PROFILE.search(text) or len(re.findall(r"[A-Za-z]{3,}", text)) < 3:
         return ""
     text = text[0].upper() + text[1:]
     return text if text[-1] in '.!?"”' else text + "."
 
 
+def unsupported_keys(entity: Dict[str, Any]) -> set:
+    """Sentence keys every source of which the citation checker called "not
+    supported": a wrong note becomes a fluent wrong sentence, so these are
+    left out of the written page by default."""
+    report = entity.get("profile_grounding") or {}
+    if isinstance(report, str):
+        try:
+            report = json.loads(report)
+        except ValueError:
+            return set()
+    levels: Dict[str, set] = {}
+    for v in (report or {}).get("verifications") or []:
+        key = sentence_key(str(v.get("claim") or ""))
+        if key:
+            levels.setdefault(key, set()).add(str(v.get("support_level") or ""))
+    return {k for k, ls in levels.items() if ls == {"not_supported"}}
+
+
 def page_notes(
     entity: Dict[str, Any], keep_context: bool = True,
-    strikes: Optional[Dict[str, Dict[str, Any]]] = None,
+    strikes: Optional[Dict[str, Dict[str, Any]]] = None, unsupported: bool = False,
 ) -> List[Note]:  # fmt: skip
     """The page's notes in text order, without those tagged ``other`` (and
     ``context`` ones when ``keep_context`` is false). ``strikes`` maps a
     sentence key to the historian's strike of it: the note is dropped, or
     becomes their replacement citing their source, so a correction made in
-    the reader reaches the written page before the next pipeline run."""
+    the reader reaches the written page before the next pipeline run. Notes
+    the checker called not supported are left out unless ``unsupported``."""
     profile = entity.get("profile") or {}
     text = str(profile.get("text") or "")
     tags = stored_tags(profile)
     dates = _dates(entity)
     heads = [(m.start(), m.group(2).strip()) for m in _HEADING.finditer(text)]
     claims, _ = parse_claims(text)
+    bad = set() if unsupported else unsupported_keys(entity)
     out: List[Note] = []
     seen = set()
     for c in claims:
@@ -208,6 +229,8 @@ def page_notes(
         if not key or key in seen:
             continue
         seen.add(key)
+        if key in bad or any(key.startswith(b) for b in bad if len(b) >= 200):
+            continue  # every source of it: not supported
         tag = str((tags.get(key) or {}).get("verdict") or "")
         if tag == "other" or (tag == "context" and not keep_context):
             continue
@@ -683,6 +706,9 @@ def write_page(
     report: Dict[str, Any] = {"calls": 0, "approach": approach}
     notes = page_notes(entity, strikes=strikes)
     report["notes"] = len(notes)
+    report["unsupported_left_out"] = len(
+        page_notes(entity, strikes=strikes, unsupported=True)
+    ) - len(notes)
     if not notes:
         return {"model": key, "error": "no notes", "report": report}
     shown = condense(notes, name, what, ask, report, workers)

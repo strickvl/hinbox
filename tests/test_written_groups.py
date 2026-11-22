@@ -615,3 +615,61 @@ def test_a_section_sentence_adding_nothing_is_dropped_and_struck_notes_obey():
         "a2"
     ]
     assert len(page_notes(city, strikes={"The port is old.": {}})) == 1
+
+
+def test_dates_ahead_of_their_article_and_day_pairs():
+    from src.engine.written_dates import date_sentence
+
+    n = {1: _note(1, "x", "2018-02-20"), 2: _note(2, "x", "2017-06-01"),
+         3: _note(3, "x", "2018-01-10")}  # fmt: skip
+    ahead = Written("He ordered declarations by March 19 from both men.", [1], "S")
+    assert (
+        date_sentence(ahead, n)
+        == "He ordered declarations by March 19, 2018, from both men."
+    )
+    pair = Written("On June 20 and 21 Tom Vale held a workshop.", [2], "S")
+    assert (
+        date_sentence(pair, n) == "On June 20 and 21, 2017, Tom Vale held a workshop."
+    )
+    soon = Written("In February he backed the judge.", [3], "S")
+    assert date_sentence(soon, n) == soon.text  # past or coming: left alone
+
+
+def test_lists_stay_whole_and_number_words_count_in_the_clause_cut():
+    from src.engine.written_clauses import drop_repeat_clauses, drop_section_repeats
+
+    page = [
+        Written("Tom Vale upheld Ann Roe's conviction and struck down her fine.", [1], "S"),
+        Written("Tom Vale named Lee Moss; he also upheld Ann Roe's conviction, suspended"
+                " her term, and struck down her fine.", [2], "S"),
+        Written("Three men were in hospital for drips.", [3], "T"),
+        Written("Eleven men were tube-fed, and two were in hospital for drips.", [4], "T"),
+    ]  # fmt: skip
+    drop_repeat_clauses(page, "Port Elm")
+    assert page[1].text == "Tom Vale named Lee Moss."  # the whole list went
+    assert page[3].text.endswith("two were in hospital for drips.")
+    thin = [Written("A judge barred police from seizing Tom Vale.", [1], "S"),
+            Written("In May 2017, Judge Ann Roe barred police from seizing Tom Vale.", [2], "S")]  # fmt: skip
+    assert drop_section_repeats(thin, "Port Elm") == [thin[0].text]
+    assert thin[1].notes == [1, 2]
+
+
+def test_notes_the_checker_found_unsupported_are_left_out():
+    from src.engine.written_page import article_side, page_notes
+
+    city = {
+        "name": "Port Elm",
+        "profile": {"text": "Port Elm is old.^[a1] Port Elm has a jail.^[a2]"},
+        "profile_grounding": {"verifications": [
+            {"claim": "Port Elm is old.", "article_id": "a1", "support_level": "not_supported"},
+            {"claim": "Port Elm has a jail.", "article_id": "a2", "support_level": "partial"},
+        ]},
+    }  # fmt: skip
+    assert [n.text for n in page_notes(city)] == ["Port Elm has a jail."]
+    assert len(page_notes(city, unsupported=True)) == 2
+    assert (
+        article_side(
+            "The sources disagree on the count, with the profile stating 21 and the article stating 17"
+        )
+        == ""
+    )
