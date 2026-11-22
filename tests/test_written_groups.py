@@ -822,34 +822,8 @@ def test_the_picker_is_told_what_each_draft_lacks():
     assert _lacks(texts[1], texts, "Port Elm") == "Lacks: nothing the others give"
 
 
-def test_month_only_dates_sort_after_days_and_unrelated_followers_rehome():
-    from src.engine.written_clauses import sort_paragraphs
+def test_as_of_days_take_their_year():
     from src.engine.written_dates import own_dates
-
-    page = [
-        Written("By late March 2013, 31 men struck.", [1], "S", 1),
-        Written("On March 15, 2013, 14 men were listed.", [1], "S", 1),
-        Written("In April 2013, more nurses came.", [1], "S", 1),
-        Written("On April 11, 2013, 43 men struck.", [1], "S", 1),
-        Written("In early April 2013, doctors came.", [1], "S", 1),
-    ]
-    sort_paragraphs(page)
-    assert [w.text[:12] for w in page] == [
-        "On March 15,", "By late Marc", "In early Apr", "On April 11,", "In April 201",
-    ]  # fmt: skip
-
-    page = [
-        Written("In October 2017, Attorney General Jeff Sessions spoke.", [1], "S", 1),
-        Written("In March 2018, Ann Roe and Brown warned of harm.", [1], "S", 1),
-        Written(
-            "Ann Roe had also asked a deputy of Sessions about pleas.", [1], "S", 1
-        ),
-        Written("He was firm.", [1], "S", 1),
-    ]
-    sort_paragraphs(page, "Ann Roe")
-    assert [w.text[:12] for w in page] == [
-        "In October 2", "Ann Roe had ", "In March 201", "He was firm.",
-    ]  # fmt: skip
 
     notes = [_note(1, "As of April 24, 100 men struck.", "2013-04-26")]
     page = [Written("As of April 24, 100 men struck.", [1], "S")]

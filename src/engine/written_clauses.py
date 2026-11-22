@@ -205,65 +205,7 @@ _OPENS_DATED = re.compile(
 )
 
 
-_PART = re.compile(r"\b(late|early|mid)\b-?\s*[A-Z][a-z]+\.?\s+(?:19|20)\d\d")
-_PART_DAY = {"early": 5, "mid": 15, "late": 25}
-
-
-def _sort_when(text: str) -> Any:
-    """``_when_of`` for sorting: a month with no day goes after the month's
-    dated days, "early"/"mid"/"late" at the 5th/15th/25th. Round 33 put
-    "by late March 2013" before "On March 15, 2013" and "In late April
-    2013" before "On April 11, 2013", since a missing day sorted as the 1st."""
-    when = _when_of(text)
-    if not when or not when[1] or when[2]:
-        return when
-    m = _PART.search(text)
-    return (when[0], when[1], _PART_DAY[m.group(1).lower()] if m else 32)
-
-
-def _caps(text: str) -> set:
-    """Capitalised words after the first, four letters or more."""
-    return {w for w in re.findall(r"(?<=\s)[A-Z][\w’'-]{3,}", text)}
-
-
-def _rehome(runs: List[List[Written]], name: str) -> None:
-    """Move an undated sentence that names nothing its run names, and does
-    not lean on the sentence before ("He", "That month", "The X also"), to
-    the end of the run sharing most of its names. Round 33 carried "Rishikof
-    had also been in contact with a deputy of Sessions" behind a March 2018
-    sentence it followed in the draft, away from the October 2017 one naming
-    Sessions."""
-    from src.engine.written_draws import _PRONOUN, _THAT_TIME, _THE_ALSO
-
-    own = {w.lower() for w in re.findall(r"[\w’'-]+", name)}
-
-    def names(t: str) -> set:
-        return {w for w in _caps(t) if w.lower() not in own}
-
-    for run in runs:
-        for w in list(run[1:]):
-            if (
-                _PRONOUN.match(w.text)
-                or _THAT_TIME.match(w.text)
-                or _THE_ALSO.match(w.text)
-            ):
-                continue
-            mine = names(w.text)
-            if not mine or mine & set().union(
-                *(names(o.text) for o in run if o is not w)
-            ):
-                continue
-            best = max(
-                (r for r in runs if r is not run),
-                key=lambda r: len(mine & set().union(*(names(o.text) for o in r))),
-                default=None,
-            )
-            if best and mine & set().union(*(names(o.text) for o in best)):
-                run.remove(w)
-                best.append(w)
-
-
-def sort_paragraphs(written: List[Written], name: str = "") -> List[str]:
+def sort_paragraphs(written: List[Written]) -> List[str]:
     """Put each paragraph's runs in date order: a run starts at a sentence
     that opens on its own date and takes the undated sentences after it, so
     "He ..." and "That month ..." move with the sentence they lean on; text
@@ -284,13 +226,10 @@ def sort_paragraphs(written: List[Written], name: str = "") -> List[str]:
             else:
                 runs[-1].append(w)
         head = [] if _OPENS_DATED.match(runs[0][0].text) else [runs.pop(0)]
-        before = [list(r) for r in runs]
-        _rehome(runs, name)
-        order = sorted(runs, key=lambda r: _sort_when(r[0].text) or (9999, 0, 0))
-        if order == runs and runs == before:
+        order = sorted(runs, key=lambda r: _when_of(r[0].text) or (9999, 0, 0))
+        if order == runs:
             continue
         moved += [r[0].text for k, r in enumerate(order) if r is not runs[k]]
-        moved += [w.text for r, b in zip(runs, before) for w in r if w not in b]
         for i, w in zip(idx, [w for r in head + order for w in r]):
             written[i] = w
     return moved
@@ -322,7 +261,7 @@ def sort_section_paragraphs(written: List[Written]) -> List[str]:
                 (written[i].text for i in para if _OPENS_DATED.match(written[i].text)),
                 None,
             )
-            when = _sort_when(first) if first else None
+            when = _when_of(first) if first else None
             keys.append(when or (keys[-1] if keys else (0, 0, 0)))
         order = [p for _, p in sorted(zip(keys, paras), key=lambda kp: kp[0])]
         if order == paras:
@@ -344,7 +283,7 @@ def tidy_page(
 
     for key, found in (
         ("own_dates", own_dates(written, notes)),
-        ("paragraphs_sorted", sort_paragraphs(written, name)),
+        ("paragraphs_sorted", sort_paragraphs(written)),
         ("section_paragraphs_sorted", sort_section_paragraphs(written)),
         ("section_repeats", drop_section_repeats(written, name)),
         ("report_repeats", drop_report_repeats(written, name)),
