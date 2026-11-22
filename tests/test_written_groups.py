@@ -922,3 +922,12 @@ def test_when_who_mends_a_misdated_sentence_and_drops_a_wrong_actor():
         "Port Elm",
         [],
     )
+
+
+def test_a_month_joined_to_a_dated_month_takes_no_article_year():
+    from src.engine.written_dates import own_dates
+
+    notes = [_note(1, "He was waterboarded in May and July 2003.", "2015-06-02")]
+    page = [Written("He was waterboarded in May and July 2003.", [1], "S")]
+    own_dates(page, notes)
+    assert page[0].text == "He was waterboarded in May and July 2003."

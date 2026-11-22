@@ -32,6 +32,12 @@ _MONTH_YEAR = re.compile(
 # A year right after the matched month: "February 6–7, 2013" (round 32 made
 # it "February 6–7, 2013, 2013")
 _YEAR_NEXT = re.compile(r"^,?\s+(?:19|20)\d\d\b")
+# A month joined to a later one that has its year: "in May and July 2003"
+# (round 34 made it "May 2015 and July 2003" from a 2015 article)
+_JOINED = re.compile(
+    rf"^(?:\s+\d{{1,2}})?,?\s*(?:and|to|through|or|-|–)\s+(?i:{_MONTH_RE})\.?"
+    r"(?:\s+\d{1,2}(?:\s*(?:-|–)\s*\d{1,2})?)?,?\s+(?:19|20)\d\d\b"
+)
 # The same year twice in a row: a change that makes it is refused
 _TWICE = re.compile(r"\b((?:19|20)\d\d),?\s+\1\b")
 _YEAR = re.compile(r"\b(?:19|20)\d\d\b")
@@ -99,7 +105,7 @@ def date_sentence(w: Any, by_n: dict) -> str:
             return m.group(0)  # "may", "march": a verb
         if n in dated or (_YEAR.search(text) and not dated):
             return m.group(0)  # dated already, or a year with no month to go by
-        if _YEAR_NEXT.match(text[m.end() :]):
+        if _YEAR_NEXT.match(text[m.end() :]) or _JOINED.match(text[m.end() :]):
             return m.group(0)
         # the note that names this month, else the first dated one (round 32
         # dated "by March 19" from another note's 2017 article)

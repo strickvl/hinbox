@@ -178,6 +178,7 @@ def when_who(
     added: Dict[str, List[str]] = {}
     for before, after in report.get("own_dates") or []:
         added[after] = [x for x in _words(after) if x not in _words(before)]
+    years = re.compile(r"\b(?:19|20)\d\d\b")
     todo = [w for w in written if not w.dropped and not w.summary]
     for start in range(0, len(todo), BATCH):
         batch = todo[start : start + BATCH]
@@ -200,7 +201,13 @@ def when_who(
             problem = str(c.problem or "")[:200]
             sources = [by_n[n].text for n in w.notes if n in by_n]
             fix = str(c.fixed or "").strip()
-            if usable_fix(w.text, fix, sources, name, names, added.get(w.text, ())):
+            # a year the date pass added is kept only when the notes give no
+            # other year: round 34 kept its own wrong "May 2015" against a
+            # note's "May and July 2003"
+            noted = set(years.findall(" ".join(sources)))
+            derived = [x for x in added.get(w.text, ()) if not (
+                years.fullmatch(x) and noted and x not in noted)]  # fmt: skip
+            if usable_fix(w.text, fix, sources, name, names, derived):
                 log.append([w.text, fix, problem])
                 w.text = fix
             else:
