@@ -57,7 +57,8 @@ def main() -> None:
     )
     p.add_argument(
         "--draws", type=int, default=1,
-        help="write each planned page this many times, keep each section's best",
+        help="write each planned page this many times, keep each section's best; "
+        "0 = three for a cloud model on pages of 25+ notes, else one",
     )  # fmt: skip
     p.add_argument("--dry-run", action="store_true")
     a = p.parse_args()

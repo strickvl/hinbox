@@ -269,6 +269,18 @@ def _different_people(c: Conflict, texts: Dict[int, str], name: str) -> bool:
     return False
 
 
+def _sides_agree(c: Conflict) -> bool:
+    """The two sides agree: one only less exact, or adding up to the other
+    (Jakarta's "10 Indonesians and a Dutch citizen" killed against 11 dead,
+    listed as a conflict in four rounds running, 21-22 Nov)."""
+    from src.engine.written_conflicts import _agree
+
+    one, two = c.one_side or "", c.other_side or ""
+    return _agree(f"By one, {one}, while another account says {two}") or _agree(
+        f"By one, {two}, while another account says {one}"
+    )
+
+
 def clean_conflicts(
     conflicts: Sequence[Conflict], allowed: Any, dates: Optional[Dict[int, str]] = None,
     texts: Optional[Dict[int, str]] = None, name: str = "",
@@ -294,6 +306,8 @@ def clean_conflicts(
         ):  # fmt: skip
             continue  # a date against none (bin al Shibh, 21 Nov): nothing disputed
         if texts and _different_people(c, texts, name):
+            continue
+        if _sides_agree(c):
             continue
         seen.add(key)
         out.append(c)

@@ -328,3 +328,57 @@ def test_the_section_score_counts_repeats_lost_content_and_only_wrong_dates():
     page = [Written("Ann Roe was held 183 days in 2003.", [2], "A"),
             Written("Ann Roe was held for 183 days in 2003.", [2], "B")]  # fmt: skip
     assert drop_across(page, "Port Elm") == 1 and page[1].dropped
+
+
+def test_sentences_leaning_on_nothing_before_them_cost_the_section():
+    from src.engine.written_draws import _leans_on_nothing
+
+    def w(t: str) -> Written:
+        return Written(t, [1], "S")
+
+    dated = w("Police arrested Tom Vale in March 2004.")
+    plain = w("Police arrested Tom Vale.")
+    assert not _leans_on_nothing(dated, w("That month, Vale was charged."), "Port Elm")
+    assert _leans_on_nothing(plain, w("That month, Vale was charged."), "Port Elm")
+    memo = w("A memo set out the rules.")
+    assert not _leans_on_nothing(memo, w("The memo also barred visits."), "Port Elm")
+    assert _leans_on_nothing(plain, w("The memo also barred visits."), "Port Elm")
+    assert not _leans_on_nothing(plain, w("He was later freed."), "Port Elm")
+    assert _leans_on_nothing(memo, w("He was later freed."), "Port Elm")
+
+
+def test_ties_go_to_fewer_repeats_and_lost_marks_count_against_a_draft():
+    from src.engine.written_draws import _lost_against, pick_sections
+
+    notes = [
+        _note(1, "Port Elm is a harbour city.", "2003-01-02"),
+        _note(2, "Police arrested Tom Vale in March 2004.", "2004-03-05"),
+    ]
+    one = [Written("Port Elm is a harbour city.", [1]),
+           Written("Police arrested Tom Vale in March 2004.", [2], "Arrests", 1)]  # fmt: skip
+    two = [Written("Port Elm is a harbour city.", [1]),
+           Written("Police arrested Tom Vale in March 2004.", [2], "Arrests", 1),
+           Written("In March 2004 police arrested Tom Vale at home.", [2], "Arrests", 1)]  # fmt: skip
+    report = {}
+    parts = [{"heading": "Arrests", "notes": [2]}]
+    pick_sections([two, one], parts, notes, [], "Port Elm", report)
+    assert report["draws"]["chosen"] == {"Arrests": 1}  # the one saying it once
+    lost = [Written("Police arrested a man.", [2], "Arrests", 1)]
+    split = [{"Arrests": one[1:]}, {"Arrests": two[1:]}, {"Arrests": lost}]
+    costs = _lost_against(split, "Arrests", "Port Elm")
+    assert costs[0] == 0 and costs[2] >= 4  # 2004 and Vale lost
+
+
+def test_a_planned_conflict_whose_sides_add_up_is_dropped():
+    from src.engine.written_plan import Conflict, clean_conflicts
+
+    c = Conflict(
+        about="the dead", one_side="10 Elmish and a Dutch citizen were killed",
+        one_notes=[1], other_side="11 people were killed", other_notes=[2],
+    )  # fmt: skip
+    assert clean_conflicts([c], {1, 2}) == []
+    real = Conflict(
+        about="the arrest", one_side="arrested in March 2004", one_notes=[1],
+        other_side="arrested in May 2005", other_notes=[2],
+    )  # fmt: skip
+    assert len(clean_conflicts([real], {1, 2})) == 1

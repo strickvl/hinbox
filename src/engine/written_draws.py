@@ -104,6 +104,29 @@ _OPENS_DATED = re.compile(
 
 
 _YEAR = re.compile(r"(?:19|20)\d\d")
+# A sentence naming what came before it: "That month, Pohl ordered ...",
+# "The document also instructed ...", "At the time, the facility held ..."
+# (round 25: four wrong picks had one with nothing before it to lean on)
+_THAT_TIME = re.compile(r"^\W*(?:That (?:month|year|day|week)|At the time|Then)\b")
+_THE_ALSO = re.compile(r"^\W*The (\w+) (?:also|further|then)\b")
+_PRONOUN = re.compile(r"^\W*(?:He|She|They|His|Her|Their)\b")
+
+
+def _leans_on_nothing(before: Written, w: Written, name: str) -> bool:
+    """``w`` leans on something ``before`` does not give: a time it does not
+    name, the thing it does not mention, a person it does not name."""
+    from src.engine.written_groups import text_when
+    from src.engine.written_plan import _surnames
+
+    if _THAT_TIME.match(w.text):
+        return text_when(before.text) is None
+    m = _THE_ALSO.match(w.text)
+    if m:
+        return m.group(1).lower() not in before.text.lower()
+    if _PRONOUN.match(w.text):
+        surname = name.split()[-1].lower() if name.split() else ""
+        return not _surnames(before.text, name) and surname not in before.text.lower()
+    return False
 
 
 def section_score(
@@ -168,6 +191,7 @@ def section_score(
                 score += 2
     if _LEANS.match(kept[0].text):
         score += 2
+    score += 2 * sum(1 for a, b in zip(kept, kept[1:]) if _leans_on_nothing(a, b, name))
     dates = [d for d in (text_when(w.text) for w in kept) if d]
     score += sum(1 for a, b in zip(dates, dates[1:]) if b < a)
     used = {n for w in kept for n in w.notes}
@@ -189,6 +213,45 @@ def section_score(
             score += 2
     score += len(years_noted - years_said)
     return score
+
+
+def _marks_of(ws: Sequence[Written], name: str) -> set:
+    from src.engine.written_checks import _numbers
+    from src.engine.written_plan import _surnames
+
+    out: set = set()
+    for w in ws:
+        if not w.dropped:
+            out |= _numbers(w.text) | _surnames(w.text, name)
+    return out
+
+
+def _lost_against(
+    split: Sequence[Dict[str, List[Written]]], h: str, name: str
+) -> List[int]:
+    """2 for each date, number or name of section ``h`` that two or more
+    other drafts have and this draft lacks (round 25 picked sections that
+    had lost April 3, October 2018 or Butler, which the others kept)."""
+    marks = [_marks_of(s.get(h, []), name) for s in split]
+    out = []
+    for k, mine in enumerate(marks):
+        others = [m for j, m in enumerate(marks) if j != k]
+        common = {x for x in set().union(*others) if sum(x in m for m in others) >= 2}
+        out.append(2 * len(common - mine))
+    return out
+
+
+def _near_repeats(ws: Sequence[Written]) -> int:
+    """Pairs of kept sentences sharing 40% of the shorter one's words."""
+    from src.engine.written_checks import _content
+
+    words = [_content(w.text) for w in ws if not w.dropped]
+    return sum(
+        1
+        for i in range(len(words))
+        for j in range(i + 1, len(words))
+        if len(words[i] & words[j]) >= 0.4 * (min(len(words[i]), len(words[j])) or 1)
+    )
 
 
 def _words(ws: Sequence[Written]) -> int:
@@ -217,15 +280,24 @@ def pick_sections(
         h: [section_score(s.get(h, []), ns, notes, conflicts, name) for s in split]
         for h, ns in planned.items()
     }
+    for h in planned:  # what the other drafts have and this one lost
+        for k, extra in enumerate(_lost_against(split, h, name)):
+            scores[h][k] += extra
     totals = [sum(sc[k] for sc in scores.values()) for k in range(len(drafts))]
     main = min(range(len(drafts)), key=lambda k: totals[k])
     out: List[Written] = list(split[main].get("", []))
     chosen: Dict[str, int] = {}
     for i, h in enumerate(planned):
-        # Ties go to the fuller section (round 24's went to the first draft)
+        # Ties go to fewer near-repeats, then the shorter section: in round
+        # 25 seven of 13 wrong picks were ties won by the longer draft, which
+        # was usually the one saying something twice
         k = min(
             range(len(drafts)),
-            key=lambda k: (scores[h][k], -_words(split[k].get(h, []))),
+            key=lambda k: (
+                scores[h][k],
+                _near_repeats(split[k].get(h, [])),
+                _words(split[k].get(h, [])),
+            ),
         )
         chosen[h] = k
         for w in split[k].get(h, []):

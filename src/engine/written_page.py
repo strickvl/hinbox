@@ -601,6 +601,9 @@ def write_page(
     shown = condense(notes, name, what, ask, report, workers)
     report["shown"] = len(shown)
     words = target_words(len(notes))
+    if draws <= 0:  # auto: three for a cloud model on a page of 25+ notes
+        draws = 3 if not model.startswith("ollama/") and len(shown) >= 25 else 1
+    report["draws_made"] = draws
     if approach == "plan":
         plan = make_plan(shown, name, what, headings, ask, report, notes_block)
         page = None

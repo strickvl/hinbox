@@ -111,6 +111,15 @@ def ensure_identity(
     first_word, _, rest = what.partition(" ")
     if first_word.lower() in ("a", "an", "the"):  # "is A detention facility"
         what = f"{first_word.lower()} {rest}"
+    elif (
+        first_word
+        and not first_word.lower().endswith(("'s", "’s"))
+        and not (
+            first_word[:1].isupper() and first_word.lower() not in ("u.s.", "american")
+        )
+    ):
+        # "Central Intelligence Agency is U.S. intelligence agency." (round 25)
+        what = f"{'an' if what[:1].lower() in 'aeiou' else 'a'} {what}"
     # Taken as the plan wrote it: round 21's checks turned down "Kandahar is
     # a location in Afghanistan." and cut Clinton's down to "a politician and
     # former U.S. Secretary of."
