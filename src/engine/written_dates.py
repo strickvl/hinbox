@@ -25,7 +25,15 @@ _WEEKDAY = re.compile(
     re.I,
 )
 # A month already given with its year in the sentence: "In March 2013"
-_MONTH_YEAR = re.compile(rf"(?i:{_MONTH_RE})\.?\s+(?:\d{{1,2}},?\s+)?(?:19|20)\d\d")
+_MONTH_YEAR = re.compile(
+    rf"(?i:{_MONTH_RE})\.?\s+(?:\d{{1,2}}(?:\s*(?:and|-|–)\s*\d{{1,2}})?,?\s+)?"
+    r"(?:19|20)\d\d"
+)
+# A year right after the matched month: "February 6–7, 2013" (round 32 made
+# it "February 6–7, 2013, 2013")
+_YEAR_NEXT = re.compile(r"^,?\s+(?:19|20)\d\d\b")
+# The same year twice in a row: a change that makes it is refused
+_TWICE = re.compile(r"\b((?:19|20)\d\d),?\s+\1\b")
 _YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 # "In September", "On April 13", "the Pentagon's November policy": a month
 # after a word that sets a time, with no year in the sentence
@@ -78,8 +86,7 @@ def date_sentence(w: Any, by_n: dict) -> str:
         return f"{m.group(1)} {_named(d - timedelta(days=back), not has_year)}"
 
     text = _WEEKDAY.sub(weekday, text)
-    d = _article_day(w, by_n)
-    if d is None:
+    if _article_day(w, by_n) is None:
         return text
     # A month the sentence already dates is left alone ("In March 2013 ...
     # by late March"); another month is dated even beside a year (round 31:
@@ -92,14 +99,32 @@ def date_sentence(w: Any, by_n: dict) -> str:
             return m.group(0)  # "may", "march": a verb
         if n in dated or (_YEAR.search(text) and not dated):
             return m.group(0)  # dated already, or a year with no month to go by
+        if _YEAR_NEXT.match(text[m.end() :]):
+            return m.group(0)
+        # the note that names this month, else the first dated one (round 32
+        # dated "by March 19" from another note's 2017 article)
+        day_word = f"{m.group(2)} {m.group(4).strip()}" if m.group(4) else ""
+        named = day_word and any(
+            day_word.lower() in by_n[k].text.lower() for k in w.notes if k in by_n
+        )
+        d = _article_day(w, by_n, day_word if named else m.group(2))
+        if d is None:
+            return m.group(0)
         if n > d.month:
             ahead = _AHEAD.search(
                 text[max(0, m.start() - 40) : m.start() + len(m.group(1))]
             )
             if ahead:
                 year = d.year  # a deadline or plan, later in the article's year
-            elif n - d.month <= 2:
-                return m.group(0)  # a month or two on: past or coming, unclear
+            elif n - d.month <= 2 or (
+                dated and "'" not in m.group(1) and "’" not in m.group(1)
+            ):
+                # a month or two on: past or coming, unclear; or a time
+                # phrase in a sentence that dates another month (round 32:
+                # "In March 2013 ... in June" became June 2012). A possessive
+                # names a thing from before the article ("In February 2018,
+                # ... the Pentagon's November ban") and is dated.
+                return m.group(0)
             else:
                 year = d.year - 1  # "In September" in an April article
         else:
@@ -108,7 +133,10 @@ def date_sentence(w: Any, by_n: dict) -> str:
         return f"{m.group(1)}{m.group(2)}{m.group(3)}{day}{',' if day else ''} {year}"
 
     text = _BARE_MONTH.sub(month, text)
-    return _NO_COMMA.sub(r"\1,", text) if text != w.text else text
+    if text == w.text:
+        return text
+    text = _NO_COMMA.sub(r"\1,", text)
+    return w.text if _TWICE.search(text) and not _TWICE.search(w.text) else text
 
 
 def own_dates(written: List[Any], notes: Sequence[Any]) -> List[List[str]]:

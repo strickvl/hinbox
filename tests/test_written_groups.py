@@ -754,3 +754,69 @@ def test_a_count_told_under_another_month_is_not_cut():
         Written("In April 2013, ten men skipped meals; two men were in hospital for drips.", [2], "S"),
     ]  # fmt: skip
     assert drop_repeat_clauses(page, "Port Elm") == []
+
+
+def test_round_32_dates_counts_and_paragraph_order():
+    from src.engine.written_clauses import (
+        drop_repeat_clauses,
+        sort_paragraphs,
+        sort_section_paragraphs,
+    )
+    from src.engine.written_dates import own_dates
+
+    notes = [
+        _note(1, "Searches took place on February 6–7, 2013.", "2013-04-10"),
+        _note(2, "Officials were told to resign in 2017.", "2017-04-02"),
+        _note(3, "Declarations are due by March 19.", "2018-02-10"),
+    ]
+    page = [
+        Written("Guards searched cells on February 6–7, 2013.", [1], "S"),
+        Written("Officials had to resign by March 19, then left.", [2, 3], "S"),
+    ]
+    own_dates(page, notes)
+    assert page[0].text == "Guards searched cells on February 6–7, 2013."
+    assert page[1].text == "Officials had to resign by March 19, 2018, then left."
+
+    # a small count is never cut as a repeat; a distinctive one still is
+    page = [
+        Written("On March 9, 2013, two men were treated for dehydration in Port Elm.", [1], "S"),
+        Written("On March 29, 2013, 37 men had missed meals; two men were treated for dehydration.", [2], "S"),
+        Written("In May 2013, the camp had 140 doctors.", [3], "S"),
+        Written("In May 2013, nurses came; the camp had 140 doctors.", [4], "S"),
+    ]  # fmt: skip
+    cut = drop_repeat_clauses(page, "Port Elm")
+    assert page[1].text.endswith("two men were treated for dehydration.")
+    assert len(cut) == 1 and page[3].text == "In May 2013, nurses came."
+
+    # "On April 21, 2013," opens on a date despite its comma
+    page = [
+        Written("The count rose.", [1], "S", 1),
+        Written("On April 21, 2013, 84 men struck.", [1], "S", 1),
+        Written("On April 11, 2013, 43 men struck.", [1], "S", 1),
+        Written("In June 2011, an odor spread.", [1], "S", 2),
+        Written("It lasted.", [1], "S", 2),
+        Written("In February 2010, the strike began.", [1], "S", 3),
+    ]
+    sort_paragraphs(page)
+    assert [w.text[:12] for w in page[:3]] == [
+        "The count ro",
+        "On April 11,",
+        "On April 21,",
+    ]
+    moved = sort_section_paragraphs(page)
+    assert [w.text[:12] for w in page] == [
+        "In February ", "In June 2011", "It lasted.",
+        "The count ro", "On April 11,", "On April 21,",
+    ]  # fmt: skip
+    assert moved[0] == "In February 2010, the strike began."
+
+
+def test_the_picker_is_told_what_each_draft_lacks():
+    from src.engine.written_pick import _lacks
+
+    texts = [
+        "Feeding was limited.",
+        "Feeding was limited to two hours, 20 to 30 minutes a meal.",
+    ]
+    assert _lacks(texts[0], texts, "Port Elm") == "Lacks: 20, 30, two"
+    assert _lacks(texts[1], texts, "Port Elm") == "Lacks: nothing the others give"

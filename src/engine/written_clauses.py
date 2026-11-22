@@ -119,6 +119,17 @@ def _clauses(text: str) -> List[Tuple[str, str]]:
     return out
 
 
+def _small_count(text: str) -> bool:
+    """A count that two facts share by chance: a number word or a number
+    under 10. Three rounds running (30-32) the clause cut lost "two
+    detainees were hospitalized for intravenous drips" for another "two",
+    each time by a different route; a distinctive count ("about 140 Navy
+    doctors") is still cut when an earlier sentence has it."""
+    if _NUMBER_WORDS.search(text):
+        return True
+    return any(int(n) < 10 for n in re.findall(r"(?<![\d,.$])\d+(?![\d,.%])", text))
+
+
 def drop_repeat_clauses(written: List[Written], name: str) -> List[List[str]]:
     """Cut from a section sentence a clause that an earlier kept sentence of
     its section tells (its numbers, people and 60% of its words); each cut
@@ -133,7 +144,8 @@ def drop_repeat_clauses(written: List[Written], name: str) -> List[List[str]]:
         if len(parts) > 1 and before:
             keep = [parts[0]] + [
                 (j, p) for j, p in parts[1:]
-                if not _within(p, before, name, 0.6, _when_of(p) or _when_of(w.text))
+                if _small_count(p)
+                or not _within(p, before, name, 0.6, _when_of(p) or _when_of(w.text))
             ]  # fmt: skip
             if len(keep) < len(parts):
                 text = "".join(j + p for j, p in keep).rstrip(" ,;")
@@ -185,8 +197,11 @@ def drop_section_repeats(written: List[Written], name: str) -> List[str]:
 
 # A sentence that opens on its own date: "In June 2011, ...", "On April 13,
 # 2013, ...", "By late March 2013, ..."
+# (round 32: "On April 21, 2013," has a comma before its year, so it was not
+# seen as dated and the camp's April sentences stayed out of order)
 _OPENS_DATED = re.compile(
-    r"^\W*(?:In|On|By|As of|Since|From|During|Early|Late|Until)\b[^,]{0,30}?\b(?:19|20)\d\d\b"
+    r"^\W*(?:In|On|By|As of|Since|From|During|Early|Late|Until)\b"
+    r"[^,]{0,30}?(?:\d,\s+)?\b(?:19|20)\d\d\b"
 )
 
 
@@ -220,6 +235,45 @@ def sort_paragraphs(written: List[Written]) -> List[str]:
     return moved
 
 
+def sort_section_paragraphs(written: List[Written]) -> List[str]:
+    """Put each section's paragraphs in date order by the first sentence of
+    each that opens on its own date; a paragraph with none stays after the
+    one before it, and a first paragraph with none stays first. Round 32's
+    camp section put a 2011-2013 paragraph before "The strike had been under
+    way since early February 2013", and a Rishikof section opened in
+    February 2018 before June 2017. The first sentence of each moved
+    paragraph, as a record."""
+    moved: List[str] = []
+    sections: Dict[str, List[List[int]]] = {}
+    last: Dict[str, Any] = {}
+    for i, w in enumerate(written):
+        if w.dropped or not w.section:
+            continue
+        paras = sections.setdefault(w.section, [])
+        if not paras or last[w.section] != w.para:
+            paras.append([])
+        paras[-1].append(i)
+        last[w.section] = w.para
+    for paras in sections.values():
+        keys: List[Any] = []
+        for para in paras:
+            first = next(
+                (written[i].text for i in para if _OPENS_DATED.match(written[i].text)),
+                None,
+            )
+            when = _when_of(first) if first else None
+            keys.append(when or (keys[-1] if keys else (0, 0, 0)))
+        order = [p for _, p in sorted(zip(keys, paras), key=lambda kp: kp[0])]
+        if order == paras:
+            continue
+        moved += [written[p[0]].text for k, p in enumerate(order) if p is not paras[k]]
+        slots = sorted(i for p in paras for i in p)
+        items = [written[i] for p in order for i in p]
+        for i, w in zip(slots, items):
+            written[i] = w
+    return moved
+
+
 def tidy_page(
     written: List[Written], notes: Sequence[Any], name: str, report: Dict[str, Any]
 ) -> None:
@@ -230,6 +284,7 @@ def tidy_page(
     for key, found in (
         ("own_dates", own_dates(written, notes)),
         ("paragraphs_sorted", sort_paragraphs(written)),
+        ("section_paragraphs_sorted", sort_section_paragraphs(written)),
         ("section_repeats", drop_section_repeats(written, name)),
         ("report_repeats", drop_report_repeats(written, name)),
         ("clauses_cut", drop_repeat_clauses(written, name)),

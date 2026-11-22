@@ -105,7 +105,9 @@ article's date is not the date of an older event, and a fact told again under \
 a second, later date is a misdated repeat); "that month", "he", "the document" \
 point to what the sentence before names.
 2. Nothing told twice: a fact told twice counts against a draft, not for it.
-3. It keeps every fact of the notes: each date, name, number and detail.
+3. It keeps every fact of the notes: each date, name, number and detail. Under \
+each draft is a list, made by code, of the numbers and names other drafts give \
+and it lacks; a shorter draft is not better if it lost facts.
 4. It tells events in date order, a cause before what follows from it.
 5. It says that accounts differ only where the notes give two accounts of \
 one thing.
@@ -124,6 +126,24 @@ class Pick(BaseModel):
     best: int = Field(description="The best draft's number")
 
 
+def _lacks(text: str, texts: Sequence[str], name: str) -> str:
+    """The numbers and surnames other drafts give that ``text`` lacks. Round
+    32's picker took the shorter draft on 4 of its 6 misses, losing "two
+    hours" and "20 to 30 minutes" of a feeding rule and March 19's count."""
+    from src.engine.written_checks import _numbers
+    from src.engine.written_clauses import _NUMBER_WORDS
+    from src.engine.written_plan import _surnames
+
+    def facts(t: str) -> set:
+        words = {m.lower() for m in _NUMBER_WORDS.findall(t)}
+        return _numbers(t) | words | _surnames(t, name)
+
+    own = facts(text)
+    others = set().union(*(facts(t) for t in texts if t != text)) - own
+    shown = sorted(others)[:12]
+    return "Lacks: " + (", ".join(shown) if shown else "nothing the others give")
+
+
 def ask_pick(
     texts: Sequence[str], heading: str, notes: Sequence[Any], name: str, what: str,
     ask: Any, report: Dict[str, Any], block: Callable[[Sequence[Any]], str],
@@ -133,7 +153,8 @@ def ask_pick(
     if len(set(texts)) < 2:
         return None
     drafts = "\n\n".join(
-        f"Draft {k}:\n{t or '(empty)'}" for k, t in enumerate(texts, 1)
+        f"Draft {k}:\n{t or '(empty)'}\n{_lacks(t, texts, name)}"
+        for k, t in enumerate(texts, 1)
     )
     msgs = [
         {"role": "system", "content": PICK.format(
