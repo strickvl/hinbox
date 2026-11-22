@@ -31,7 +31,7 @@ def finish(
         model_check,
         summary_check,
     )
-    from src.engine.written_clauses import drop_repeat_clauses, drop_report_repeats
+    from src.engine.written_clauses import tidy_page
     from src.engine.written_conflicts import (
         drop_one_sided,
         tell_conflicts,
@@ -87,8 +87,7 @@ def finish(
             report["date_sorted"] = date_sort(written, shown)
             drop_repeats(written)
             report["neighbours_dropped"] = drop_neighbours(written)
-            report["report_repeats"] = drop_report_repeats(written, name)
-            report["clauses_cut"] = drop_repeat_clauses(written, name)
+            tidy_page(written, shown, name, report)
             summary_check(written, shown, name)
     return written
 
@@ -353,7 +352,7 @@ def write_drawn(
     """``draws`` drafts from one plan, finished each, then picked by section
     and checked once more for repeats across the sections it joined."""
     from src.engine.written_checks import drop_neighbours, drop_repeats, summary_check
-    from src.engine.written_clauses import drop_repeat_clauses, drop_report_repeats
+    from src.engine.written_clauses import tidy_page
     from src.engine.written_page import WBody, WPage, WParagraph, notes_block
     from src.engine.written_plan import write_from_plan
     from src.engine.written_revise import unwritten
@@ -385,8 +384,7 @@ def write_drawn(
     drop_repeats(written)
     drop_neighbours(written)
     report["draws"]["across"] = drop_across(written, name)
-    report["report_repeats"] = drop_report_repeats(written, name)
-    report["clauses_cut"] = drop_repeat_clauses(written, name)
+    tidy_page(written, shown, name, report)
     summary_check(written, shown, name)
     report["unwritten"] = unwritten(written, shown, name, parts)
     return written

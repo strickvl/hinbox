@@ -12,7 +12,7 @@ its article's date, which the one-time-event check can't see: "In May
 """
 
 import re
-from typing import List, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 from src.engine.written_page import Written
 
@@ -59,10 +59,11 @@ def unwrap_report(text: str) -> str:
     return _REPORTED.sub("was " if "was" in text else "were ", out)
 
 
-def drop_report_repeats(written: List[Written], name: str) -> int:
+def drop_report_repeats(written: List[Written], name: str) -> List[str]:
     """Drop a section sentence that only tells, as a later report, what an
-    earlier kept sentence of the page already tells."""
-    dropped, earlier = 0, []
+    earlier kept sentence of the page already tells; the dropped texts."""
+    dropped: List[str] = []
+    earlier: List[str] = []
     for w in written:
         if w.dropped:
             continue
@@ -71,17 +72,17 @@ def drop_report_repeats(written: List[Written], name: str) -> int:
         # what the report says
         if w.section and inner != w.text and _within(inner, earlier, name, 0.6):
             w.dropped = "tells again, as a later report, an earlier sentence"
-            dropped += 1
+            dropped.append(w.text)
             continue
         earlier.append(w.text)
     return dropped
 
 
-def drop_repeat_clauses(written: List[Written], name: str) -> int:
+def drop_repeat_clauses(written: List[Written], name: str) -> List[List[str]]:
     """Cut from a section sentence a clause that an earlier kept sentence of
-    its section tells (its numbers, people and 60% of its words); the
-    number cut."""
-    cut = 0
+    its section tells (its numbers, people and 60% of its words); each cut
+    as [before, after]."""
+    cut: List[List[str]] = []
     said: dict = {}
     for w in written:
         if w.dropped or not w.section:
@@ -95,7 +96,8 @@ def drop_repeat_clauses(written: List[Written], name: str) -> int:
             if len(keep) < len(pieces):
                 text = _join(w.text, keep)
                 if text and text != w.text:
-                    w.text, cut = text, cut + len(pieces) - len(keep)
+                    cut.append([w.text, text])
+                    w.text = text
         before.append(w.text)
     return cut
 
@@ -110,3 +112,47 @@ def _join(original: str, keep: List[str]) -> str:
             out += j + p
     out = out.rstrip(" ,;")
     return out if out.endswith((".", "!", "?", '"', "”")) else out + "."
+
+
+def drop_section_repeats(written: List[Written], name: str) -> List[str]:
+    """Drop a section sentence that tells again what an earlier sentence of
+    its section tells: no person or number the earlier lacks, 60% of its
+    words in it and at most two words more. Round 29 kept "In April 2013,
+    most of the men awaiting transfer were Yemenis, including Hamiri." right
+    after a sentence saying so; a later sentence that adds a fact (three
+    words or more) is left for the review's trim."""
+    dropped: List[str] = []
+    said: dict = {}
+    for w in written:
+        if w.dropped or not w.section:
+            continue
+        before = said.setdefault(w.section, [])
+        words, nums, people = _facts(w.text, name)
+        for old in before:
+            ow, on, op = _facts(old, name)
+            if (
+                len(words) >= 3 and nums <= on and people <= op
+                and len(words & ow) >= 0.6 * len(words) and len(words - ow) <= 2
+            ):  # fmt: skip
+                w.dropped = "repeats an earlier sentence of its section"
+                dropped.append(w.text)
+                break
+        else:
+            before.append(w.text)
+    return dropped
+
+
+def tidy_page(
+    written: List[Written], notes: Sequence[Any], name: str, report: Dict[str, Any]
+) -> None:
+    """The code passes run on a finished page and again on a picked one;
+    what each changed is added to the report, so nothing is lost from view."""
+    from src.engine.written_dates import own_dates
+
+    for key, found in (
+        ("own_dates", own_dates(written, notes)),
+        ("section_repeats", drop_section_repeats(written, name)),
+        ("report_repeats", drop_report_repeats(written, name)),
+        ("clauses_cut", drop_repeat_clauses(written, name)),
+    ):
+        report[key] = list(report.get(key) or []) + found

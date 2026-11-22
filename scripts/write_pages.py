@@ -33,6 +33,33 @@ def find(entities: Dict[str, Dict], name: str) -> List[Tuple[str, Any]]:
     return [(t, k) for t, k, _ in sorted(hits, key=lambda h: -h[2])]
 
 
+def page_strikes(domain: str, config: Any) -> Any:
+    """A function giving one page's active strikes by sentence key, read
+    from the corrections file (none when it is missing)."""
+    from src.utils.corrections import corrections_path, load_corrections, sentence_key
+
+    raw = config.load_config() if hasattr(config, "load_config") else config
+    path = corrections_path(domain, raw if isinstance(raw, dict) else None)
+    cs = load_corrections(path) if path and os.path.exists(path) else None
+
+    def strikes(table: str, key: str, ent: Dict[str, Any]) -> Dict[str, Dict]:
+        if cs is None:
+            return {}
+        name = ent.get("name") or ent.get("title")
+        recs = cs.for_entity(table, key) or [
+            r for r in cs.active
+            if isinstance(r.get("entity"), dict)
+            and r["entity"].get("table") == table and r["entity"].get("name") == name
+        ]  # fmt: skip
+        return {
+            sentence_key(r["sentence"]): r
+            for r in recs
+            if r.get("kind") == "strike" and r.get("sentence")
+        }
+
+    return strikes
+
+
 def main() -> None:
     from src.config_loader import load_domain_config
     from src.engine.section_reorganise import _starter_entries
@@ -73,6 +100,7 @@ def main() -> None:
                 shutil.copy2(f, os.path.join(a.out, f"{t}.parquet"))
     entities = load_existing_entities(a.out)
     config = load_domain_config(a.domain)
+    strikes_for = page_strikes(a.domain, config)
 
     chosen = []
     for name in (n.strip() for n in a.names.split(",") if n.strip()):
@@ -116,6 +144,7 @@ def main() -> None:
                 approach=a.approach,
                 label=a.label,
                 draws=a.draws,
+                strikes=strikes_for(t, k, ent),
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs

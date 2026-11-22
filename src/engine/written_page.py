@@ -146,12 +146,15 @@ _AGAINST_MAYBE = re.compile(
     r",?\s+(?:rather than|instead of|unlike|whereas)\b(.*)$", re.I
 )
 _PROFILE = re.compile(r"\bthe profile\b|\bthe (?:new|earlier) article\b", re.I)
-# "The sources disagree on X: the profile states A, while the article states B"
+# "The sources disagree on X: the profile states A, while the article states
+# B" (or "with the profile stating A and the article stating B")
 _ARTICLE_SAYS = re.compile(
     r"\b(?:while|and|but|whereas),?\s+the (?:new\s+)?article\s+"
-    r"(?:states|reports|says|gives)\s+(?:that\s+)?(.+)$",
+    r"(?:states|stating|reports|reporting|says|saying|gives|giving)\s+(?:that\s+)?(.+)$",
     re.I,
 )
+# What is left starting "He was captured ...": its subject was in the cut half
+_LEFT_PRONOUN = re.compile(r"^(?:he|she|it|they|his|her|its|their)\b", re.I)
 
 
 def article_side(text: str) -> str:
@@ -162,8 +165,13 @@ def article_side(text: str) -> str:
         return text
     if not m and (side := _ARTICLE_SAYS.search(text)):
         text = side.group(1)
+        if _LEFT_PRONOUN.match(text):
+            return ""
     else:
+        confirms = bool(m and "confirms" in m.group(0).lower())
         text = text[m.end() :] if m else text
+        if confirms:  # "The article confirms the firing date as May 5"
+            text = re.sub(r"^(the [^,]{1,40}?) as ", r"\1 was ", text, flags=re.I)
     text = _AGAINST.sub("", text)
     maybe = _AGAINST_MAYBE.search(text)
     if maybe and (_PROFILE.search(maybe.group(1)) or re.search(r"\d", maybe.group(1))):
@@ -171,15 +179,22 @@ def article_side(text: str) -> str:
     # "..., and notes that Zaki described" once its subject is gone
     text = re.sub(r"\band (?:notes|says|states|reports|adds) that\b", "and", text)
     text = re.sub(r",\s+and that\b", ", and", text).strip(" ,;")
+    text = re.sub(r',(["”])$', r".\1", text)  # 'four years in CIA prisons,"'
     if not text or _PROFILE.search(text):
         return ""
     text = text[0].upper() + text[1:]
     return text if text[-1] in '.!?"”' else text + "."
 
 
-def page_notes(entity: Dict[str, Any], keep_context: bool = True) -> List[Note]:
+def page_notes(
+    entity: Dict[str, Any], keep_context: bool = True,
+    strikes: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Note]:  # fmt: skip
     """The page's notes in text order, without those tagged ``other`` (and
-    ``context`` ones when ``keep_context`` is false)."""
+    ``context`` ones when ``keep_context`` is false). ``strikes`` maps a
+    sentence key to the historian's strike of it: the note is dropped, or
+    becomes their replacement citing their source, so a correction made in
+    the reader reaches the written page before the next pipeline run."""
     profile = entity.get("profile") or {}
     text = str(profile.get("text") or "")
     tags = stored_tags(profile)
@@ -198,16 +213,25 @@ def page_notes(entity: Dict[str, Any], keep_context: bool = True) -> List[Note]:
             continue
         if _COMMENT.match(key) or _OLD_DISPUTE.search(key):
             continue  # the old profile's own comment or "sources disagree", no fact
-        text = article_side(key)
+        articles = list(c.articles)
+        struck = (strikes or {}).get(key)
+        if struck is not None:
+            text = " ".join(str(struck.get("replacement") or "").split())
+            cites = struck.get("replacement_cites")
+            if not text:
+                continue
+            articles = [cites] if cites else articles
+        else:
+            text = article_side(key)
         if not text:
             continue
         heading = ""
         for at, title in heads:
             if at <= c.start:
                 heading = title
-        days = sorted(d for d in (dates.get(a, "") for a in c.articles) if d)
+        days = sorted(d for d in (dates.get(a, "") for a in articles) if d)
         out.append(
-            Note(len(out) + 1, key, text, list(c.articles), days[0] if days else "",
+            Note(len(out) + 1, key, text, articles, days[0] if days else "",
                  heading, tag, [key])
         )  # fmt: skip
     return out
@@ -640,6 +664,7 @@ def write_page(
     approach: str = "plan",
     label: str = "",
     draws: int = 1,
+    strikes: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
     ``error`` and no text. ``approach`` "plan" plans the page and writes it a
@@ -656,7 +681,7 @@ def write_page(
     key = model if approach == "single" else f"{model}#{approach}"
     key += f"@{label}" if label else ""
     report: Dict[str, Any] = {"calls": 0, "approach": approach}
-    notes = page_notes(entity)
+    notes = page_notes(entity, strikes=strikes)
     report["notes"] = len(notes)
     if not notes:
         return {"model": key, "error": "no notes", "report": report}

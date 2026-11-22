@@ -107,9 +107,12 @@ def candidate_pairs(kept: Sequence[Written], name: str) -> List[Tuple[int, int]]
                 or (counts and len(shared) >= 2)
                 or (dated and len(shared) >= 3)
             ):
-                scored.append((-len(shared) / small, i, j))
+                # Same-section pairs first: a long page has more than
+                # MAX_PAIRS, and a repeat inside one section reads worst
+                same = kept[i].section == kept[j].section
+                scored.append((not same, -len(shared) / small, i, j))
     scored.sort()
-    return [(i, j) for _, i, j in scored[:MAX_PAIRS]]
+    return [(i, j) for _, _, i, j in scored[:MAX_PAIRS]]
 
 
 def _adds_nothing(b: Written, a: Written, name: str) -> bool:

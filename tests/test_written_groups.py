@@ -551,7 +551,7 @@ def test_repeated_clauses_and_report_wrapped_repeats_are_cut():
         ),
         Written("Ann Roe, Lee Moss, and Sam Hart were held.", [3], "S"),
     ]  # fmt: skip
-    assert drop_repeat_clauses(page, "Port Elm") == 1
+    assert len(drop_repeat_clauses(page, "Port Elm")) == 1
     assert page[1].text == "In February 2018, Tom Vale backed the judge."
     assert page[2].text == "Ann Roe, Lee Moss, and Sam Hart were held."
     fired = [
@@ -559,5 +559,59 @@ def test_repeated_clauses_and_report_wrapped_repeats_are_cut():
         Written("In May 2018, reports confirmed that Ann Roe was dismissed alongside Tom Vale.", [2], "S"),
         Written("A May 2018 report said Lee Moss was named judge.", [3], "S"),
     ]  # fmt: skip
-    assert drop_report_repeats(fired, "Port Elm") == 1
+    assert len(drop_report_repeats(fired, "Port Elm")) == 1
     assert fired[1].dropped and not fired[2].dropped
+
+
+def test_weekdays_and_yearless_months_take_their_articles_date():
+    from src.engine.written_dates import own_dates
+
+    notes = [
+        _note(1, "As of Wednesday, 100 men were on hunger strike.", "2013-04-26"),
+        _note(2, "In September, a prisoner was found dead.", "2013-04-02"),
+        _note(3, "The Pentagon's November policy banned artwork.", "2018-02-10"),
+        _note(4, "Police arrested Tom Vale in May 2004.", "2004-05-09"),
+    ]
+    page = [
+        Written("As of Wednesday, 100 men were on hunger strike.", [1], "S"),
+        Written("In September, a prisoner was found dead.", [2], "S"),
+        Written("The Pentagon's November policy banned artwork.", [3], "S"),
+        Written("Police arrested Tom Vale in May 2004.", [4], "S"),
+        Written("Tom Vale may appeal.", [4], "S"),
+    ]
+    changed = own_dates(page, notes)
+    assert page[0].text == "As of April 24, 2013, 100 men were on hunger strike."
+    assert page[1].text == "In September 2012, a prisoner was found dead."
+    assert page[2].text == "The Pentagon's November 2017 policy banned artwork."
+    assert page[3].text == "Police arrested Tom Vale in May 2004."
+    assert page[4].text == "Tom Vale may appeal." and len(changed) == 3
+
+
+def test_a_section_sentence_adding_nothing_is_dropped_and_struck_notes_obey():
+    from src.engine.written_clauses import drop_section_repeats
+    from src.engine.written_page import page_notes
+
+    page = [
+        Written("In April 2013, most men awaiting transfer were Elmish, including Tom Vale.", [1], "S"),
+        Written("In April 2013, most of the men awaiting transfer were Elmish, including Vale.", [2], "S"),
+        Written("In April 2013, Tom Vale testified that he gathered experts and said a call came first.", [3], "S"),
+    ]  # fmt: skip
+    assert drop_section_repeats(page, "Port Elm") == [page[1].text]
+    assert not page[2].dropped
+    city = {
+        "name": "Port Elm",
+        "profile": {"text": "Ann Roe is Tom Vale's widow.^[a1] The port is old.^[a2]"},
+        "articles": [{"article_id": "a1", "published_date": "2005-01-01"},
+                     {"article_id": "a2", "published_date": "2005-01-02"}],
+    }  # fmt: skip
+    strikes = {
+        "Ann Roe is Tom Vale's widow.": {
+            "replacement": "Ann Roe is Tom Vale's mother.",
+            "replacement_cites": "a2",
+        }
+    }
+    notes = page_notes(city, strikes=strikes)
+    assert notes[0].text == "Ann Roe is Tom Vale's mother." and notes[0].articles == [
+        "a2"
+    ]
+    assert len(page_notes(city, strikes={"The port is old.": {}})) == 1

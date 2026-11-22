@@ -307,7 +307,8 @@ _SAYS = re.compile(
     r"\b(?:said|says|stated|testified|told|argued|arguing|appealed|ruled|ordered|"
     r"authorized|filed|wrote|blamed|reported|described|warned|announced|recalled|"
     r"explained|claimed|denied|asked|sued|added|noted|acknowledged|complained|"
-    r"insisted|urged|called|criticized|praised|defended|signed|issued)\b"
+    r"insisted|urged|called|criticized|praised|defended|signed|issued|confirmed|"
+    r"invoked|rejected|upheld|struck down|considering)\b"
 )
 
 # "In May 2018, Gary Brown was also fired alongside Harvey Rishikof" (he was
