@@ -920,3 +920,40 @@ def test_only_sentences_with_a_date_question_go_to_the_date_check():
     # a year the date pass worked out where the note gives none is not asked about
     assert suspect(Written("In September 2012, a man died.", [2], "S"), by_n) == ""
     assert suspect(Written("That month, a man died.", [2], "S"), by_n)
+
+
+def test_month_year_pairs_are_asked_about_and_that_month_is_named_in_code():
+    from src.engine.written_when_who import (
+        WhenWhoChecks,
+        month_years,
+        suspect,
+        when_who,
+    )
+
+    assert month_years("in May and July 2003") == {("May", "2003"), ("July", "2003")}
+    by_n = {
+        1: _note(
+            1,
+            "In June 2015, lawyers said he was hurt in May and July 2003.",
+            "2015-06-02",
+        )
+    }
+    assert "May 2015" in suspect(
+        Written("He was hurt in May 2015 and July 2003.", [1], "S"), by_n
+    )
+    assert suspect(Written("He was hurt in May and July 2003.", [1], "S"), by_n) == ""
+
+    notes = [_note(2, "Spokesman Tom Vale said the copy was kept.", "2016-12-30")]
+    page = [Written("That month, spokesman Tom Vale said the copy was kept.", [2], "S")]
+
+    def ask(msgs, model, max_tokens):
+        return WhenWhoChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": "That month, spokesman", "when": "right",
+             "who": "right", "problem": "The month is December 2016", "fixed": ""},
+        ]})  # fmt: skip
+
+    report: dict = {}
+    when_who(page, [notes[0]], "Port Elm", ask, report)
+    assert (
+        page[0].text == "In December 2016, spokesman Tom Vale said the copy was kept."
+    )

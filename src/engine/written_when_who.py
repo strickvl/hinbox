@@ -111,6 +111,41 @@ _YEARS = re.compile(r"\b(?:19|20)\d\d\b")
 _THAT_TIME = re.compile(r"^\W*That (?:month|year|day|week)\b")
 
 
+_MONTHS = (
+    "January February March April May June July August September October "
+    "November December"
+).split()
+# "May 2015", "May 12, 2015", and "May and July 2003" as May 2003 and July 2003
+_PAIRS = re.compile(
+    r"\b(" + "|".join(_MONTHS) + r")\b\.?(?:\s+\d{1,2})?"
+    r"((?:,?\s*(?:and|to|or|through|-|–)\s+(?:" + "|".join(_MONTHS) + r")\.?"
+    r"(?:\s+\d{1,2})?)*),?\s+((?:19|20)\d\d)\b"
+)
+
+
+def month_years(text: str) -> set:
+    """(month, year) pairs ``text`` names."""
+    out = set()
+    for m in _PAIRS.finditer(text):
+        months = [m.group(1)] + re.findall("|".join(_MONTHS), m.group(2) or "")
+        out |= {(mo, m.group(3)) for mo in months}
+    return out
+
+
+def _paired_wrong(w: Any, notes_text: str) -> List[str]:
+    """ "May 2015" when the notes give May only with other years: round 34's
+    "waterboarded him twice, in May 2015 and July 2003" against a note's
+    "In June 2015, ... in May and July 2003" (2015 is in the note, for the
+    disclosure, so a bare-year check passes it)."""
+    noted = month_years(notes_text)
+    out = []
+    for mo, yr in sorted(month_years(w.text)):
+        others = {y for m, y in noted if m == mo}
+        if others and yr not in others:
+            out.append(f"{mo} {yr}")
+    return out
+
+
 def suspect(w: Any, by_n: Dict[int, Any]) -> str:
     """The question code asks about ``w``'s dates, "" when it has none: a
     year its notes' text never gives while giving others ("May 2015" against
@@ -120,7 +155,14 @@ def suspect(w: Any, by_n: Dict[int, Any]) -> str:
     "answer wrong only when sure", the check found 0 of 10 real errors in
     two runs over round 34's pages; asked without it, it dropped 12 true
     sentences."""
-    noted = set(_YEARS.findall(" ".join(by_n[n].text for n in w.notes if n in by_n)))
+    text = " ".join(by_n[n].text for n in w.notes if n in by_n)
+    paired = _paired_wrong(w, text)
+    if paired:
+        return (
+            f"The sentence's {' and '.join(paired)}: its notes give that month only "
+            "with another year. Which year do the notes give it?"
+        )
+    noted = set(_YEARS.findall(text))
     odd = sorted(set(_YEARS.findall(w.text)) - noted)
     if odd and noted:
         return (
@@ -186,6 +228,37 @@ def usable_fix(
     return not missing_details(fixed, sources, name, page_names)
 
 
+def _name_that_time(w: Any, c: Any, by_n: Dict[int, Any]) -> str:
+    """``w`` with "That month," made "In December 2016," when the model's
+    answer names that month and year and one of its notes' articles is from
+    then ("That year," likewise with a year); "" otherwise. Round 35's
+    check named the month right and still answered "right", since "That
+    month" is not wrong, only unnamed; so code makes the change."""
+    m = _THAT_TIME.match(w.text)
+    if not m:
+        return ""
+    unit = m.group(0).split()[-1].lower()
+    said = month_years(f"{c.problem or ''} {c.fixed or ''}")
+    dates = {str(by_n[n].date or "")[:7] for n in w.notes if n in by_n}
+    if unit == "month":
+        hits = [
+            (mo, yr) for mo, yr in said
+            if f"{yr}-{_MONTHS.index(mo) + 1:02d}" in dates
+        ]  # fmt: skip
+        if len(set(hits)) != 1:
+            return ""
+        when = f"{hits[0][0]} {hits[0][1]}"
+    elif unit == "year":
+        years = set(_YEARS.findall(f"{c.problem or ''} {c.fixed or ''}"))
+        hits = [y for y in years if any(d.startswith(y) for d in dates)]
+        if len(hits) != 1:
+            return ""
+        when = hits[0]
+    else:
+        return ""
+    return "In " + when + w.text[m.end() :]
+
+
 def _first(text: str) -> str:
     from src.engine.written_checks import _first_words
 
@@ -228,6 +301,11 @@ def when_who(
                 continue  # the answer is about another sentence
             when = str(c.when or "").strip().lower()
             who = str(c.who or "").strip().lower()
+            named = _name_that_time(w, c, by_n)
+            if named:
+                log.append([w.text, named, str(c.problem or "")[:200]])
+                w.text = named
+                continue
             if when != "wrong" and who != "wrong":
                 continue
             problem = str(c.problem or "")[:200]
