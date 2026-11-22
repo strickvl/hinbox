@@ -103,19 +103,37 @@ _OPENS_DATED = re.compile(
 )
 
 
+_YEAR = re.compile(r"(?:19|20)\d\d")
+
+
 def section_score(
     sentences: Sequence[Written], planned: Sequence[int], notes: Sequence[Note],
     conflicts: Sequence[Dict[str, Any]], name: str,
 ) -> int:  # fmt: skip
     """Faults of one section's kept sentences, weighted: lower is better.
-    3 for each sentence setting accounts against each other that tells no
-    planned conflict; 2 for each pair sharing a year and a person or another
-    number; 2 when the section opens on a sentence that leans on one before
-    it; 2 for each sentence opening with its article's date on an event its
-    notes date otherwise; 1 for each step back in date order; 1 for each
-    planned note it does not use. A section with no kept sentence scores
-    1000."""
-    from src.engine.written_checks import NARRATES, _numbers, from_article_dates
+
+    - 3 for each sentence setting accounts against each other that tells no
+      planned conflict;
+    - 2 for each pair of sentences sharing a person and a number that is not
+      a year, or 60% of the shorter one's words (round 24's CIA section gave
+      the 183 waterboardings four times and scored 2);
+    - 2 when the section opens on a sentence that leans on one before it;
+    - 2 for each sentence opening with its article's date when its notes give
+      the event another year (round 24 counted every article date, and on
+      Zaki's page, where each sentence is a remark to a reporter, picked the
+      drafts that had dropped their dates);
+    - 1 for each step back in date order;
+    - 1 for each planned note it does not cite, 2 more when no kept sentence
+      of the section has that note's people or numbers (content lost);
+    - 1 for each year its notes give that no kept sentence gives.
+
+    A section with no kept sentence scores 1000."""
+    from src.engine.written_checks import (
+        NARRATES,
+        _content,
+        _numbers,
+        from_article_dates,
+    )
     from src.engine.written_conflicts import _DIFFER, tells
     from src.engine.written_groups import text_when
     from src.engine.written_plan import _surnames
@@ -131,28 +149,50 @@ def section_score(
         ):
             score += 3
         cited = [by_n[n] for n in w.notes if n in by_n]
-        if _OPENS_DATED.match(w.text) and from_article_dates(w.text, cited):
+        dated = from_article_dates(w.text, cited) if _OPENS_DATED.match(w.text) else []
+        if dated and any(set(_YEAR.findall(n.text)) - set(dated) for n in cited):
             score += 2
-    marks = [
+    facts = [
         (
-            {n for n in _numbers(w.text) if re.fullmatch(r"(?:19|20)\d\d", n)},
-            {n for n in _numbers(w.text) if not re.fullmatch(r"(?:19|20)\d\d", n)},
+            _content(w.text),
+            {n for n in _numbers(w.text) if not _YEAR.fullmatch(n)},
             _surnames(w.text, name),
         )
         for w in kept
     ]
     for i in range(len(kept)):
         for j in range(i + 1, len(kept)):
-            (ya, na, pa), (yb, nb, pb) = marks[i], marks[j]
-            if ya & yb and ((pa & pb) or (na & nb)):
+            (wa, na, pa), (wb, nb, pb) = facts[i], facts[j]
+            small = min(len(wa), len(wb)) or 1
+            if ((pa & pb) and (na & nb)) or len(wa & wb) >= 0.6 * small:
                 score += 2
     if _LEANS.match(kept[0].text):
         score += 2
     dates = [d for d in (text_when(w.text) for w in kept) if d]
     score += sum(1 for a, b in zip(dates, dates[1:]) if b < a)
     used = {n for w in kept for n in w.notes}
-    score += sum(1 for n in planned if n not in used)
+    said = set().union(*(f[1] | f[2] for f in facts))
+    years_said = set().union(*(set(_YEAR.findall(w.text)) for w in kept))
+    years_noted: set = set()
+    for n in planned:
+        if n not in by_n:
+            continue
+        years_noted |= set(_YEAR.findall(by_n[n].text))
+        if n in used:
+            continue
+        score += 1
+        text = by_n[n].text
+        marks = {x for x in _numbers(text) if not _YEAR.fullmatch(x)} | _surnames(
+            text, name
+        )
+        if marks and not marks & said:
+            score += 2
+    score += len(years_noted - years_said)
     return score
+
+
+def _words(ws: Sequence[Written]) -> int:
+    return sum(len(w.text.split()) for w in ws if not w.dropped)
 
 
 def _sections(written: Sequence[Written]) -> Dict[str, List[Written]]:
@@ -182,7 +222,11 @@ def pick_sections(
     out: List[Written] = list(split[main].get("", []))
     chosen: Dict[str, int] = {}
     for i, h in enumerate(planned):
-        k = min(range(len(drafts)), key=lambda k: scores[h][k])
+        # Ties go to the fuller section (round 24's went to the first draft)
+        k = min(
+            range(len(drafts)),
+            key=lambda k: (scores[h][k], -_words(split[k].get(h, []))),
+        )
         chosen[h] = k
         for w in split[k].get(h, []):
             w.para += (i + 1) * 1_000_000  # paragraphs of two drafts never merge
@@ -201,16 +245,23 @@ def pick_sections(
                     w.para += (len(planned) + extra) * 1_000_000
                 out.extend(ws)
                 cited |= ns
+    # Every draft's kept sentences, so a pick can be checked by hand
+    drafts_text = {
+        h or "(opening)": [
+            [w.text for w in s.get(h, []) if not w.dropped] for s in split
+        ]
+        for h in [""] + list(planned)
+    }
     report["draws"] = {
         "scores": scores, "totals": totals, "opening_from": main,
-        "chosen": chosen,
+        "chosen": chosen, "drafts": drafts_text,
     }  # fmt: skip
     return out
 
 
 def write_drawn(
     plan: Any, shown: Sequence[Note], name: str, what: str, words: int, ask: Any,
-    report: Dict[str, Any], check: bool, draws: int,
+    report: Dict[str, Any], check: bool, draws: int, local: bool = False,
 ) -> List[Written]:  # fmt: skip
     """``draws`` drafts from one plan, finished each, then picked by section
     and checked once more for repeats across the sections it joined."""
@@ -218,13 +269,22 @@ def write_drawn(
     from src.engine.written_page import WBody, WPage, WParagraph, notes_block
     from src.engine.written_plan import write_from_plan
     from src.engine.written_revise import unwritten
+    from src.utils.llm import set_model_params
 
     drafts: List[List[Written]] = []
-    for _ in range(draws):
-        page = write_from_plan(
-            plan, shown, name, what, words, ask, report, notes_block,
-            WPage, WBody, WParagraph,
-        )  # fmt: skip
+    for k in range(draws):
+        # Local Qwen at temperature 0 wrote the same three drafts (round 24),
+        # so its later drafts' sections are sampled; cloud drafts differ anyway
+        if local and k:
+            set_model_params({"temperature": 0.7, "seed": k})
+        try:
+            page = write_from_plan(
+                plan, shown, name, what, words, ask, report, notes_block,
+                WPage, WBody, WParagraph,
+            )  # fmt: skip
+        finally:
+            if local and k:
+                set_model_params(None)
         if page is not None:
             drafts.append(finish(page, shown, name, what, "plan", check, ask, report))
     if not drafts:
@@ -236,6 +296,34 @@ def write_drawn(
     )
     drop_repeats(written)
     drop_neighbours(written)
+    report["draws"]["across"] = drop_across(written, name)
     summary_check(written, shown, name)
     report["unwritten"] = unwritten(written, shown, name, parts)
     return written
+
+
+def drop_across(written: List[Written], name: str) -> int:
+    """Drop a kept sentence when an earlier kept sentence of another section
+    (or the opening) has every number and person it names and 60% of its
+    words; the number dropped. Joining sections from different drafts let
+    one fact be told in two (round 24: Rishikof's firing dispute, Karachi's
+    Pearl confession in the opening and the body)."""
+    from src.engine.written_checks import _content, _numbers
+    from src.engine.written_plan import _surnames
+
+    kept = [w for w in written if not w.dropped and not w.summary]
+    dropped = 0
+    for j, b in enumerate(kept):
+        if not b.section:
+            continue
+        wb, mb = _content(b.text), _numbers(b.text) | _surnames(b.text, name)
+        for a in kept[:j]:
+            if a.dropped or a.section == b.section:
+                continue
+            if mb <= _numbers(a.text) | _surnames(a.text, name) and len(
+                wb & _content(a.text)
+            ) >= 0.6 * max(len(wb), 1):
+                b.dropped = "told in another section"
+                dropped += 1
+                break
+    return dropped

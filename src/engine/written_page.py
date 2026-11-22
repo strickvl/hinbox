@@ -622,7 +622,8 @@ def write_page(
         from src.engine.written_draws import write_drawn
 
         written = write_drawn(
-            plan, shown, name, what, words, ask, report, check, draws
+            plan, shown, name, what, words, ask, report, check, draws,
+            local=model.startswith("ollama/"),
         )  # fmt: skip
     else:
         written = finish(page, shown, name, what, approach, check, ask, report)

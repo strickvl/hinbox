@@ -303,3 +303,28 @@ def test_each_section_comes_from_the_draft_that_scores_best():
     assert texts[-1] == "The harbour opened in 1990."  # harbour from draft 1
     assert report["draws"]["chosen"] == {"Arrests": 1, "Harbour": 0}
     assert len({w.para for w in page if w.section}) == 2
+
+
+def test_the_section_score_counts_repeats_lost_content_and_only_wrong_dates():
+    from src.engine.written_draws import drop_across, section_score
+
+    notes = [
+        _note(1, "Tom Vale said in a talk that the city was calm.", "2016-10-02"),
+        _note(2, "Ann Roe was held 183 days in 2003.", "2016-10-02"),
+        _note(3, "Lee Moss was resettled in January 2016.", "2017-06-01"),
+    ]
+    # A remark dated by its article: right, no penalty
+    said = [Written("In October 2016, Tom Vale said the city was calm.", [1], "S")]
+    assert section_score(said, [1], notes, [], "Port Elm") == 0
+    # An event its note dates otherwise, given the article's date
+    moved = [Written("In June 2017, Lee Moss was resettled.", [3], "S")]
+    assert section_score(moved, [3], notes, [], "Port Elm") >= 3
+    # 183 twice with no shared year; note 2's 2003 never said
+    twice = [Written("Ann Roe was held for 183 days.", [2], "S"),
+             Written("Guards kept Ann Roe 183 days.", [2], "S")]  # fmt: skip
+    assert section_score(twice, [2], notes, [], "Port Elm") == 3
+    # Note 3 planned, uncited, its person nowhere: 1 + 2 (its 2016 is said)
+    assert section_score(said, [1, 3], notes, [], "Port Elm") == 3
+    page = [Written("Ann Roe was held 183 days in 2003.", [2], "A"),
+            Written("Ann Roe was held for 183 days in 2003.", [2], "B")]  # fmt: skip
+    assert drop_across(page, "Port Elm") == 1 and page[1].dropped
