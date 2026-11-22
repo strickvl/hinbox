@@ -450,3 +450,43 @@ def test_the_identity_sentence_takes_a_or_an_by_sound_and_the_for_agencies():
     out = [Written("It ran prisons.", [1], "Prisons", 1)]
     assert ensure_identity(out, notes, "Tom Vale", "officer in the navy", [1])
     assert out[0].text == "Tom Vale is an officer in the navy."
+
+
+def test_a_comparison_note_is_cut_to_the_articles_side():
+    from src.engine.written_page import article_side
+
+    assert (
+        article_side(
+            "However, the new article reports that Tom Vale couriered $500 to Elmtown,"
+            " differing from the profile's description of him collecting funds."
+        )
+        == "Tom Vale couriered $500 to Elmtown."
+    )
+    assert (
+        article_side(
+            "However, the article reports that the recess lasted 35 minutes, rather"
+            " than the recess occurring after 30 minutes."
+        )
+        == "The recess lasted 35 minutes."
+    )
+    assert article_side("The profile was wrong about it.") == ""
+    plain = "Tom Vale chose to plead rather than go to trial."
+    assert article_side(plain) == plain  # no comparison: kept whole
+
+
+def test_an_articles_date_on_a_one_time_event_dated_otherwise_is_caught():
+    from src.engine.written_checks import _LASTING, code_check
+
+    assert _LASTING.match(
+        "In June 2017, Ann Roe, an Elmish national, and Lee Moss became the first men resettled there."
+    )
+    notes = [
+        _note(1, "Ann Roe was also fired alongside Tom Vale.", "2018-05-02"),
+        _note(2, "Ann Roe was fired in February 2018.", "2018-02-06"),
+    ]
+    w = Written("In May 2018, Ann Roe was also fired alongside Tom Vale.", [1], "S")
+    code_check([w], notes, "Port Elm")
+    assert w.dropped.startswith("check: it puts the article's date on a one-time")
+    alone = Written("In May 2018, Ann Roe was also fired alongside Tom Vale.", [1], "S")
+    code_check([alone], notes[:1], "Port Elm")
+    assert not alone.dropped  # no other note dates it: the article's date stands

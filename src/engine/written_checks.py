@@ -246,6 +246,16 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
                 "check: it puts the article's date on a lasting fact or a "
                 "description; leave it undated unless its notes date it"
             )
+        elif (
+            (m := _ONCE.match(w.text))
+            and from_article_dates(w.text, cited)
+            and _dated_otherwise(w.text, m.group(1), notes, cited, name)
+        ):
+            w.dropped = (
+                "check: it puts the article's date on a one-time event that "
+                "another note dates otherwise; leave it undated unless its "
+                "notes date it"
+            )
         elif _OLD_REPORT.match(w.text) and from_article_dates(w.text, cited):
             w.dropped = (
                 "check: it puts the article's date on an older report; "
@@ -277,13 +287,42 @@ _OLD_REPORT = re.compile(
 # was so for years (Luna, 21 Nov); "In November 2018, Rishikof was serving
 # as Convening Authority", fired that February (round 19)
 _LASTING = re.compile(
-    r"(?:In|By)\s+(?:[A-Z][a-z]+\.?\s+)?\d{4},\s+[^,;]{0,60}?\b(?:did not want|"
+    r"(?:In|By)\s+(?:[A-Z][a-z]+\.?\s+)?\d{4},\s+[^;.]{0,120}?\b(?:did not want|"
     r"was described as|is described as|was listed as|was identified as|had been "
     r"cleared|was cleared|was known as|was serving as|was still|remained|"
     r"was assigned|had been assigned|became|was in charge|was overseeing|"
     r"was directly involved|was involved|had been|had \w+ed|was among those|"
     r"served as|authorized|justified)\b"
 )
+
+# "In May 2018, Gary Brown was also fired alongside Harvey Rishikof" (he was
+# fired in February; May is the article's date), "In October 2017, Gina
+# Haspel was confirmed as Director" (round 27)
+_ONCE = re.compile(
+    r"(?:In|By|On)\s+(?:[A-Z][a-z]+\.?\s+)?(?:\d{1,2},\s+)?\d{4},\s+[^;.]{0,90}?"
+    r"\b(?:was |were )?(?:also )?(fired|confirmed|appointed|resettled|transferred|"
+    r"released|named|arrested|captured|replaced|suspended|dismissed)\b"
+)
+
+
+def _dated_otherwise(
+    sentence: str, verb: str, notes: Sequence[Note], cited: Sequence[Note], name: str
+) -> bool:
+    """Another note names the same action and a person of ``sentence``, with
+    a date of its own that is not the sentence's."""
+    from src.engine.written_groups import text_when
+    from src.engine.written_plan import _surnames
+
+    stem, own, people = verb[:5].lower(), text_when(sentence), _surnames(sentence, name)
+    mine = {n.n for n in cited}
+    for n in notes:
+        when = text_when(n.text)
+        if n.n in mine or not when or stem not in n.text.lower():
+            continue
+        if people & _surnames(n.text, name) and own and when[:2] != own[:2]:
+            return True
+    return False
+
 
 # "a news account described", "another account says": sources narrated
 # where nothing is disputed

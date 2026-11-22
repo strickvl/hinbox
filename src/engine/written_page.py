@@ -118,6 +118,39 @@ _OLD_DISPUTE = re.compile(
 )
 
 
+# The old updater comparing an article with its profile: "However, the new
+# article reports that Khan allegedly couriered $50,000 to Bangkok ...,
+# differing from the profile's description of him picking up funds in
+# Pakistan" (round 27: Jakarta and Libretto wrote false disputes from such
+# notes, with no disagreement planned)
+_COMPARES = re.compile(
+    r"^(?:however|but|instead)?,?\s*(?:the|this|a|one)\s+(?:new\s+|later\s+|"
+    r"latest\s+|newer\s+|\d{4}\s+)?(?:article|report|account|source)\s+"
+    r"(?:reports|says|states|notes|gives|puts|describes|indicates|adds)\s+(?:that\s+)?",
+    re.I,
+)
+_AGAINST = re.compile(
+    r",?\s+(?:differing from|rather than|instead of|contradicting|in contrast to|"
+    r"unlike|as opposed to|whereas|while the profile)\b.*$",
+    re.I,
+)
+_PROFILE = re.compile(r"\bthe profile\b|\bthe (?:new|earlier) article\b", re.I)
+
+
+def article_side(text: str) -> str:
+    """A note as its article tells it: a comparison note cut to the article's
+    side, "" when what is left still talks about the profile."""
+    m = _COMPARES.match(text)
+    if m or _PROFILE.search(text):
+        text = _AGAINST.sub("", text[m.end() :] if m else text).strip(" ,;")
+        if not text or _PROFILE.search(text):
+            return ""
+        text = text[0].upper() + text[1:]
+        if text[-1] not in '.!?"”':
+            text += "."
+    return text
+
+
 def page_notes(entity: Dict[str, Any], keep_context: bool = True) -> List[Note]:
     """The page's notes in text order, without those tagged ``other`` (and
     ``context`` ones when ``keep_context`` is false)."""
@@ -139,13 +172,16 @@ def page_notes(entity: Dict[str, Any], keep_context: bool = True) -> List[Note]:
             continue
         if _COMMENT.match(key) or _OLD_DISPUTE.search(key):
             continue  # the old profile's own comment or "sources disagree", no fact
+        text = article_side(key)
+        if not text:
+            continue
         heading = ""
         for at, title in heads:
             if at <= c.start:
                 heading = title
         days = sorted(d for d in (dates.get(a, "") for a in c.articles) if d)
         out.append(
-            Note(len(out) + 1, key, key, list(c.articles), days[0] if days else "",
+            Note(len(out) + 1, key, text, list(c.articles), days[0] if days else "",
                  heading, tag, [key])
         )  # fmt: skip
     return out

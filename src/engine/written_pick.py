@@ -15,6 +15,10 @@ two rounds of new terms took agreement with a careful reader from 31 of 44
 picks to 22 of 37. What decides a pick (a date lost, "that month" pointing at
 the wrong month, the sentence before the plea told after it) needs the drafts
 read side by side, so one call per section reads them and names the best.
+Round 27 agreed with a careful reader on 24 of 33; its misses counted a fact
+told twice or under a wrong date as a fact kept, and its reasons, written
+after the choice, were often untrue, so "nothing misdated, nothing twice" now
+come first and it must quote each rejected draft's worst sentence first.
 The code score stays as the fallback when the call fails.
 """
 
@@ -94,23 +98,27 @@ encyclopedia entry about the {what} "{name}". The notes the section is written \
 from come first; the date in brackets is the note's article's date, which is \
 not always when the event happened. Judge the drafts in this order:
 
-1. It keeps every fact of the notes: each date, name, number and detail. A \
-draft that loses a fact the others keep is worse.
-2. Every date is right: each event dated as its notes date it (not by an \
-article's date when the note says it happened earlier), and "that month", \
-"he", "the document" point to what the sentence before names.
-3. It tells events in date order, a cause before what follows from it.
-4. It says nothing twice.
+1. Nothing false or misdated: each event dated as its notes date it (an \
+article's date is not the date of an older event, and a fact told again under \
+a second, later date is a misdated repeat); "that month", "he", "the document" \
+point to what the sentence before names.
+2. Nothing told twice: a fact told twice counts against a draft, not for it.
+3. It keeps every fact of the notes: each date, name, number and detail.
+4. It tells events in date order, a cause before what follows from it.
 5. It says that accounts differ only where the notes give two accounts of \
 one thing.
 6. It reads like an encyclopedia: plain, clear sentences.
 
-Say in a sentence why, then give the number of the best draft."""
+First, for each draft you do not choose, quote its worst sentence and say what \
+is wrong with it. Then give the number of the best draft."""
 
 
 class Pick(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    why: str = Field(default="", description="One sentence: why this draft")
+    why: str = Field(
+        default="",
+        description="For each draft not chosen: its worst sentence, quoted, and what is wrong",
+    )
     best: int = Field(description="The best draft's number")
 
 
@@ -131,7 +139,7 @@ def ask_pick(
         {"role": "user", "content": f"Notes:\n{block(notes)}\n\n{drafts}"},
     ]  # fmt: skip
     try:
-        reply = ask(msgs, Pick, 512)
+        reply = ask(msgs, Pick, 1024)
     except Exception as exc:
         report.setdefault("errors", []).append(f"pick {heading}: {str(exc)[:200]}")
         return None
