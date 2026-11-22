@@ -882,8 +882,38 @@ def test_when_who_mends_a_misdated_sentence_and_drops_a_wrong_actor():
     report: dict = {}
     when_who(page, notes, "Port Elm", ask, report)
     assert page[0].text == "In 2014, the Senate report found the program cruel."
-    assert page[1].dropped.startswith("when/who")  # "Sam Lee" is in no note
-    assert len(report["when_who"]) == 2 and report["calls"] == 1
+    assert not page[1].dropped  # "Sam Lee" is in no note: flagged, not dropped
+    assert len(report["when_who"]) == 1 and len(report["when_who_flagged"]) == 1
+    assert report["calls"] == 1
+    # a year the date pass worked out, a date the note writes and "said" stay
+    note = [
+        "On Monday, the court met. In September, a man died. It quoted a November 2003 cable."
+    ]
+    assert not usable_fix(
+        "The court met on September 24, 2018.",
+        "The court met on Monday.",
+        note,
+        "Port Elm",
+        [],
+        ["September", "24", "2018"],
+    )
+    assert not usable_fix(
+        "A November 2003 cable was quoted.", "A cable was quoted.", note, "Port Elm", []
+    )
+    assert not usable_fix(
+        "In 2012, officials said the jail closed in 2003.",
+        "In 2012, the jail closed in 2003.",
+        ["The jail closed in 2003."],
+        "Port Elm",
+        [],
+    )
+    assert usable_fix(
+        "In June 2017, Tom Vale was resettled.",
+        "Tom Vale was resettled.",
+        ["Tom Vale was resettled in January 2016."],
+        "Port Elm",
+        [],
+    )
     # a fix that rewrites the sentence is refused
     assert not usable_fix(
         "Tom Vale ruled the motion moot.",
