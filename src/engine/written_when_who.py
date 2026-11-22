@@ -146,6 +146,15 @@ def _paired_wrong(w: Any, notes_text: str) -> List[str]:
     return out
 
 
+def _noted_years(text: str) -> set:
+    """Years ``text`` gives, ranges written out ("1997-99" gives 1997, 1998
+    and 1999: round 35 asked about "from 1997 to 1999" for a note's
+    "1997-99")."""
+    from src.engine.written_checks import _long_forms
+
+    return set(_YEARS.findall(_long_forms(text)))
+
+
 def suspect(w: Any, by_n: Dict[int, Any]) -> str:
     """The question code asks about ``w``'s dates, "" when it has none: a
     year its notes' text never gives while giving others ("May 2015" against
@@ -162,7 +171,7 @@ def suspect(w: Any, by_n: Dict[int, Any]) -> str:
             f"The sentence's {' and '.join(paired)}: its notes give that month only "
             "with another year. Which year do the notes give it?"
         )
-    noted = set(_YEARS.findall(text))
+    noted = _noted_years(text)
     odd = sorted(set(_YEARS.findall(w.text)) - noted)
     if odd and noted:
         return (
@@ -189,6 +198,13 @@ _SAYING = re.compile(
 )
 
 
+_SAYS_IN = re.compile(
+    r"\b(?:said|says|reported|described|describing|told|wrote|testified|"
+    r"announced|stated|according)\b",
+    re.I,
+)
+
+
 def _words(text: str) -> List[str]:
     return re.findall(r"[\w’'$%-]+", text)
 
@@ -196,11 +212,15 @@ def _words(text: str) -> List[str]:
 def usable_fix(
     old: str, fixed: str, sources: Sequence[str], name: str,
     page_names: Sequence[str], derived: Sequence[str] = (),
+    wrong: Sequence[str] = (), article_years: Sequence[str] = (),
 ) -> bool:  # fmt: skip
     """``fixed`` changes at most ``MAX_CHANGED`` words of ``old``, keeps at
     least half of them, adds no name, number or month its notes lack, and
-    takes out no saying word and no date word its notes write or the date
-    pass added (``derived``)."""
+    takes out no saying word and no date word its notes write, the date
+    pass added (``derived``) or that is its notes' article year when their
+    text gives no other (``article_years``: round 35 took "January 2015" off
+    a report made then). A year in ``wrong`` (paired with a month the notes
+    give only with another year) may go."""
     from src.engine.written_checks import missing_details
 
     fixed = fixed.strip()
@@ -213,7 +233,8 @@ def usable_fix(
     if changed > MAX_CHANGED or kept < len(a) / 2:
         return False
     hay = " ".join(sources).lower()
-    keep = {d.lower() for d in derived}
+    keep = {d.lower() for d in derived} | set(article_years)
+    free = set(wrong)
     for op, i1, i2, j1, j2 in ops:
         if op == "equal":
             continue
@@ -221,6 +242,8 @@ def usable_fix(
             if _SAYING.match(x):
                 return False
             low = x.lower()
+            if low in free:
+                continue
             if _DATE_WORD.match(x) and (
                 low in keep or re.search(rf"\b{re.escape(low)}\b", hay)
             ):
@@ -240,10 +263,19 @@ def _name_that_time(w: Any, c: Any, by_n: Dict[int, Any]) -> str:
     unit = m.group(0).split()[-1].lower()
     said = month_years(f"{c.problem or ''} {c.fixed or ''}")
     dates = {str(by_n[n].date or "")[:7] for n in w.notes if n in by_n}
+    text = " ".join(by_n[n].text for n in w.notes if n in by_n)
     if unit == "month":
+        # a note whose text dates the act itself ("signed a Nov. 17
+        # directive" in a January article) is not dated by its article:
+        # round 35 made Trivett's November directive "In January 2018"
+        own = {
+            mo for mo in _MONTHS
+            if re.search(rf"\b(?:{mo}|{mo[:3]}\.|Sept\.)" if mo == "September"
+                         else rf"\b(?:{mo}|{mo[:3]}\.)(?!\w)", text)
+        }  # fmt: skip
         hits = [
             (mo, yr) for mo, yr in said
-            if f"{yr}-{_MONTHS.index(mo) + 1:02d}" in dates
+            if f"{yr}-{_MONTHS.index(mo) + 1:02d}" in dates and (not own or mo in own)
         ]  # fmt: skip
         if len(set(hits)) != 1:
             return ""
@@ -314,10 +346,18 @@ def when_who(
             # a year the date pass added is kept only when the notes give no
             # other year: round 34 kept its own wrong "May 2015" against a
             # note's "May and July 2003"
-            noted = set(years.findall(" ".join(sources)))
+            text = " ".join(sources)
+            noted = _noted_years(text)
+            wrong = {p.split()[-1] for p in _paired_wrong(w, text)}
             derived = [x for x in added.get(w.text, ()) if not (
                 years.fullmatch(x) and noted and x not in noted)]  # fmt: skip
-            if usable_fix(w.text, fix, sources, name, names, derived):
+            arts = {str(by_n[n].date or "")[:4] for n in w.notes if n in by_n}
+            # the article's year is right for what was said or reported then
+            says = bool(_SAYS_IN.search(w.text))
+            article_years = [y for y in arts if y and (says or noted <= {y})]
+            if usable_fix(
+                w.text, fix, sources, name, names, derived, wrong, article_years
+            ):
                 log.append([w.text, fix, problem])
                 w.text = fix
             else:

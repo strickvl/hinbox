@@ -957,3 +957,50 @@ def test_month_year_pairs_are_asked_about_and_that_month_is_named_in_code():
     assert (
         page[0].text == "In December 2016, spokesman Tom Vale said the copy was kept."
     )
+
+
+def test_date_check_guards_follow_month_year_pairs_and_article_years():
+    from src.engine.written_when_who import WhenWhoChecks, when_who
+
+    def run(text, note, problem, fixed, date="2015-06-02", own_dates=()):
+        notes = [_note(1, note, date)]
+        page = [Written(text, [1], "S")]
+
+        def ask(msgs, model, max_tokens):
+            return WhenWhoChecks.model_validate({"checks": [{
+                "sentence": 1, "starts_with": " ".join(text.split()[:3]), "when": "wrong",
+                "who": "right", "problem": problem, "fixed": fixed}]})  # fmt: skip
+
+        report = {"own_dates": [list(p) for p in own_dates]}
+        when_who(page, notes, "Port Elm", ask, report)
+        return page[0].text
+
+    # Khan: the date pass's "May 2015" goes, though 2015 is in the note
+    khan = "Lawyers said he was hurt in May 2015 and July 2003."
+    assert run(
+        khan,
+        "In June 2015, lawyers said he was hurt in May and July 2003.",
+        "May 2015 should be May 2003",
+        "Lawyers said he was hurt in May and July 2003.",
+        own_dates=[("Lawyers said he was hurt in May and July 2003.", khan)],
+    ) == ("Lawyers said he was hurt in May and July 2003.")
+    # Trivett: "That month" is not named from a January article when the note dates the act
+    assert run(
+        "That month, Tom Vale also signed a directive.",
+        "Tom Vale signed a Nov. 17 directive.",
+        "The directive was signed November 17, 2017; the article is January 2018",
+        "In January 2018, Tom Vale also signed a directive.",
+        date="2018-01-19",
+    ).startswith("That month")
+    # Cowan: the year of an article is kept on what was reported then
+    cowan = "Ann Roe reported in January 2015 that he was a client."
+    assert (
+        run(
+            cowan,
+            "Ann Roe, who met him in 2009, said he was a client.",
+            "the report is from 2015?",
+            "Ann Roe reported that he was a client.",
+            date="2015-01-10",
+        )
+        == cowan
+    )
