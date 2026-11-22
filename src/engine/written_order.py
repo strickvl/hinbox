@@ -87,6 +87,21 @@ def date_sort(written: List[Written], notes: Sequence[Note]) -> int:
     return moved
 
 
+_TAKES_THE = {
+    "agency", "department", "bureau", "commission", "committee", "council",
+    "court", "office", "service", "administration", "senate", "pentagon",
+    "taliban", "navy", "army", "corps", "command", "ministry", "tribunal",
+}  # fmt: skip
+
+
+def _a_or_an(what: str) -> str:
+    """By sound: "a U.S. agency" (round 26 wrote "an U.S."), "an army"."""
+    low = what.lower()
+    if low.startswith(("u.s", "u.n", "uni", "use", "usu", "eu", "one", "once")):
+        return "a"
+    return "an" if low[:1] in "aeiou" else "a"
+
+
 def ensure_identity(
     written: List[Written], notes: Sequence[Note], name: str, identity: str,
     opening: Sequence[int],
@@ -119,9 +134,12 @@ def ensure_identity(
         )
     ):
         # "Central Intelligence Agency is U.S. intelligence agency." (round 25)
-        what = f"{'an' if what[:1].lower() in 'aeiou' else 'a'} {what}"
+        what = f"{_a_or_an(what)} {what}"
+    subject = name
+    if name.split() and name.split()[-1].lower() in _TAKES_THE:
+        subject = f"The {name}"  # "The Central Intelligence Agency is ..."
     # Taken as the plan wrote it: round 21's checks turned down "Kandahar is
     # a location in Afghanistan." and cut Clinton's down to "a politician and
     # former U.S. Secretary of."
-    written.insert(0, Written(f"{name} is {what}.", list(cited), check="identity"))
+    written.insert(0, Written(f"{subject} is {what}.", list(cited), check="identity"))
     return True

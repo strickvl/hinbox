@@ -155,6 +155,7 @@ def test_a_written_page_cites_its_notes_articles_and_drops_unbacked_sentences():
 
 def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     from src.engine.written_page import WBody, WParagraph
+    from src.engine.written_pick import ConflictVerdicts
     from src.engine.written_plan import Conflicts, Plan
 
     plan = {
@@ -229,15 +230,22 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     city = _city(text=CITY.replace("Ann Roe", "Tom Vale"))
     page = write_page(city, "locations", "m", ask, check=False)
     assert page["model"] == "m#plan"
-    assert [m for m, _, _ in seen] == [Plan, Conflicts, WBody, WParagraph]
-    section_prompt, section_notes = seen[2][1], seen[2][2]
+    # The planned conflict is confirmed by its own call before writing
+    assert [m for m, _, _ in seen] == [
+        Plan,
+        Conflicts,
+        ConflictVerdicts,
+        WBody,
+        WParagraph,
+    ]
+    section_prompt, section_notes = seen[3][1], seen[3][2]
     assert "one event with two accounts" in section_prompt
     assert "arrest year: 2004 (notes 2) against 2005 (notes 3)" in section_prompt
     assert "March 5" not in section_prompt and "another part" not in section_prompt
     assert "N1 " not in section_notes and "N2 " in section_notes  # its notes only
     # The opening is written last, from the sections and the overview's note
-    assert "Police arrested Tom Vale there in March 2004" in seen[3][2]
-    assert "N1 " in seen[3][2]
+    assert "Police arrested Tom Vale there in March 2004" in seen[4][2]
+    assert "N1 " in seen[4][2]
     assert page["text"].startswith("Port Elm is a harbour city")
     assert "## Arrests" in page["text"] and "Empty" not in page["text"]
     assert "Overview" not in page["text"]
@@ -250,7 +258,13 @@ def test_a_planned_page_is_written_part_by_part_with_conflicts_weighed():
     # Two draws: one plan, the sections and opening written twice
     seen.clear()
     twice = write_page(city, "locations", "m", ask, check=False, draws=2)
-    assert [m for m, _, _ in seen] == [Plan, Conflicts, WBody, WParagraph] + [
+    assert [m for m, _, _ in seen] == [
+        Plan,
+        Conflicts,
+        ConflictVerdicts,
+        WBody,
+        WParagraph,
+    ] + [
         WBody,
         WParagraph,
     ]

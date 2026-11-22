@@ -268,12 +268,16 @@ def _sections(written: Sequence[Written]) -> Dict[str, List[Written]]:
 def pick_sections(
     drafts: Sequence[List[Written]], parts: Sequence[Dict[str, Any]],
     notes: Sequence[Note], conflicts: Sequence[Dict[str, Any]], name: str,
-    report: Dict[str, Any],
+    report: Dict[str, Any], ask: Any = None, what: str = "",
 ) -> List[Written]:  # fmt: skip
     """One page from ``drafts``: the opening of the draft whose sections
     score best in all, then each planned section from its best draft (ties
     go to the earlier draft), then any section the fill made in one draft
     whose notes no chosen section cites."""
+    from src.engine.written_page import notes_block
+    from src.engine.written_pick import ask_pick
+
+    by_n = {n.n: n for n in notes}
     split = [_sections(d) for d in drafts]
     planned = {p.get("heading") or "": p.get("notes") or [] for p in parts}
     scores: Dict[str, List[int]] = {
@@ -288,17 +292,25 @@ def pick_sections(
     out: List[Written] = list(split[main].get("", []))
     chosen: Dict[str, int] = {}
     for i, h in enumerate(planned):
-        # Ties go to fewer near-repeats, then the shorter section: in round
-        # 25 seven of 13 wrong picks were ties won by the longer draft, which
-        # was usually the one saying something twice
-        k = min(
-            range(len(drafts)),
-            key=lambda k: (
-                scores[h][k],
-                _near_repeats(split[k].get(h, [])),
-                _words(split[k].get(h, [])),
-            ),
-        )
+        # A model reading the drafts side by side picks (``written_pick``);
+        # the score decides when it can't. Ties go to the draft keeping more
+        # dates, names and numbers, then fewer near-repeats: round 26's
+        # "shorter first" picked the draft that had lost something
+        texts = [" ".join(w.text for w in s.get(h, []) if not w.dropped) for s in split]
+        k = (
+            ask_pick(texts, h, [by_n[n] for n in planned[h] if n in by_n], name,
+                     what, ask, report, notes_block)
+            if ask is not None else None
+        )  # fmt: skip
+        if k is None:
+            k = min(
+                range(len(drafts)),
+                key=lambda k: (
+                    scores[h][k],
+                    -len(_marks_of(split[k].get(h, []), name)),
+                    _near_repeats(split[k].get(h, [])),
+                ),
+            )
         chosen[h] = k
         for w in split[k].get(h, []):
             w.para += (i + 1) * 1_000_000  # paragraphs of two drafts never merge
@@ -364,7 +376,7 @@ def write_drawn(
     meta = report.get("plan") or {}
     parts = meta.get("parts") or []
     written = pick_sections(
-        drafts, parts, shown, meta.get("conflicts") or [], name, report
+        drafts, parts, shown, meta.get("conflicts") or [], name, report, ask, what
     )
     drop_repeats(written)
     drop_neighbours(written)

@@ -382,3 +382,71 @@ def test_a_planned_conflict_whose_sides_add_up_is_dropped():
         other_side="arrested in May 2005", other_notes=[2],
     )  # fmt: skip
     assert len(clean_conflicts([real], {1, 2})) == 1
+
+
+def test_planned_conflicts_are_confirmed_and_sections_picked_by_a_call():
+    from src.engine.written_pick import (
+        ConflictVerdicts,
+        Pick,
+        ask_pick,
+        confirm_conflicts,
+    )
+    from src.engine.written_plan import Conflict
+
+    notes = {
+        1: _note(1, "On April 1, 11 captives were tube-fed.", "2013-04-02"),
+        2: _note(2, "On April 21, 16 captives were tube-fed.", "2013-04-22"),
+        3: _note(3, "Tom Vale was arrested in March 2004.", "2004-03-05"),
+        4: _note(4, "Tom Vale was arrested in May 2005.", "2005-05-06"),
+    }
+    counts = Conflict(about="tube-fed", one_side="11", one_notes=[1],
+                      other_side="16", other_notes=[2])  # fmt: skip
+    arrest = Conflict(about="arrest", one_side="March 2004", one_notes=[3],
+                      other_side="May 2005", other_notes=[4])  # fmt: skip
+    seen = []
+
+    def ask(msgs, model, max_tokens):
+        seen.append(msgs[1]["content"])
+        if model is ConflictVerdicts:
+            return model.model_validate({"items": [
+                {"item": 1, "fact": "count", "verdict": "compatible"},
+                {"item": 2, "fact": "arrest date", "verdict": "contradict"}]})  # fmt: skip
+        return Pick.model_validate({"why": "keeps the date", "best": 2})
+
+    report = {}
+    block = lambda ns: "\n".join(f"N{n.n}: {n.text}" for n in ns)  # noqa: E731
+    kept = confirm_conflicts(
+        [counts, arrest], notes, "Port Elm", "place", ask, report, block
+    )
+    assert kept == [arrest] and len(report["conflicts_dropped"]) == 1
+    assert "N1: On April 1" in seen[0]  # each side shown with its notes
+
+    def broken(msgs, model, max_tokens):
+        raise RuntimeError("down")
+
+    assert confirm_conflicts(
+        [counts], notes, "Port Elm", "place", broken, {}, block
+    ) == [counts]
+    texts = ["Vale was arrested.", "Vale was arrested in March 2004."]
+    assert (
+        ask_pick(texts, "Arrests", [notes[3]], "Port Elm", "place", ask, report, block)
+        == 1
+    )
+    assert report["picks"]["Arrests"]["best"] == 1
+    assert (
+        ask_pick(["Same.", "Same."], "A", [], "Port Elm", "place", ask, {}, block)
+        is None
+    )
+    assert ask_pick(texts, "A", [], "Port Elm", "place", broken, {}, block) is None
+
+
+def test_the_identity_sentence_takes_a_or_an_by_sound_and_the_for_agencies():
+    from src.engine.written_order import ensure_identity
+
+    notes = [_note(1, "The Elm Agency is an Elmish spy service.", "2005-05-06")]
+    out = [Written("It ran prisons.", [1], "Prisons", 1)]
+    assert ensure_identity(out, notes, "Elm Agency", "U.S. intelligence agency", [1])
+    assert out[0].text == "The Elm Agency is a U.S. intelligence agency."
+    out = [Written("It ran prisons.", [1], "Prisons", 1)]
+    assert ensure_identity(out, notes, "Tom Vale", "officer in the navy", [1])
+    assert out[0].text == "Tom Vale is an officer in the navy."

@@ -675,6 +675,11 @@ def make_plan(
     )
     texts = {n.n: n.text for n in notes}
     plan.conflicts = clean_conflicts(plan.conflicts, set(by_n), dates, texts, name)
+    from src.engine.written_pick import confirm_conflicts
+
+    plan.conflicts = confirm_conflicts(
+        plan.conflicts, by_n, name, what, ask, report, block
+    )
     report["plan"] = {
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],
