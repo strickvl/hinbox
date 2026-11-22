@@ -261,6 +261,33 @@ def test_two_notes_that_each_add_a_detail_are_written_as_one_only_if_nothing_is_
         return JoinedNotes.model_validate({"joined": [{"pair": 1, "text": good}]})
 
     report: dict = {}
-    out = join_same(notes, "Port Elm", "place", ask, report)
+    out = join_same(notes, "Port Elm", "place", ask, report, write=True)
     assert [n.text for n in out] == [good] and set(out[0].articles) == {"a1", "a2"}
     assert out[0].date == "2017-11-04" and len(report["same_written"]) == 1
+
+
+def test_the_review_judges_every_pair_in_batches():
+    from src.engine import written_review as wr
+    from src.engine.written_review import PairVerdict, Verdicts, review_page
+
+    notes = [_note(k, f"Tom Vale was held {k + 10} days in Port Elm jail.") for k in range(1, 16)]  # fmt: skip
+    out = [Written(f"Tom Vale was held {k + 10} days in the Port Elm jail.", [k], f"S{k % 5}", 1) for k in range(1, 15)]  # fmt: skip
+    twice = "Tom Vale was held 11 days in the Port Elm jail."
+    out.append(Written(twice, [15], "Later", 2))
+    calls = []
+
+    def ask(msgs, model, max_tokens):
+        assert model is Verdicts
+        parts = msgs[1]["content"].split("Pair ")[1:]
+        calls.append(len(parts))
+        return Verdicts(pairs=[
+            PairVerdict(pair=k, starts_with="Tom Vale was",
+                        verdict="same" if part.count(twice) == 2 else "different")
+            for k, part in enumerate(parts, 1)
+        ])  # fmt: skip
+
+    report = {"calls": 0}
+    res = review_page(out, notes, "Port Elm", "place", ask, report, "review_final")
+    assert len(calls) > 1 and max(calls) <= wr.BATCH  # more pairs than one call takes
+    assert report["review_final"]["dropped"] == 1
+    assert [w.text for w in res if not w.dropped].count(twice) == 1

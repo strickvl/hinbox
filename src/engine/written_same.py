@@ -110,11 +110,16 @@ def _messages(
 
 def join_same(
     notes: List[Any], name: str, what: str, ask: Callable[..., Any],
-    report: Dict[str, Any],
+    report: Dict[str, Any], write: bool = False,
 ) -> List[Any]:  # fmt: skip
     """``notes`` with each pair the model calls the same, and that
     ``holds()`` allows, joined into the fuller note; renumbered. Each join
-    is listed under ``report["same_joined"]`` as [kept, dropped]."""
+    is listed under ``report["same_joined"]`` as [kept, dropped]. With
+    ``write``, a same pair where each note adds something is written as one
+    note (``_write_joined()``); off, since in round 38 3 of Luna's 18 such
+    joins on the CIA page made a false sentence (a speaker or a group
+    moved: Hambali made a 9/11 defendant, the 83 rounds put in the CIA
+    director's 2008 statement) and 2 joined different facts."""
     from src.engine.written_page import Note, _numbered
 
     pairs = note_pairs(notes, name)
@@ -164,7 +169,8 @@ def join_same(
         )  # fmt: skip
         into[small] = big
         log.append([k.text, d.text])
-    _write_joined(both, out, into, home, name, what, ask, report)
+    if write:
+        _write_joined(both, out, into, home, name, what, ask, report)
     return _numbered([n for i, n in enumerate(out) if i not in into])
 
 

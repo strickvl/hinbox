@@ -384,6 +384,10 @@ def write_drawn(
     drop_repeats(written)
     drop_neighbours(written)
     report["draws"]["across"] = drop_across(written, name)
+    if check:  # each draft was reviewed alone; the picked page is joined from them
+        from src.engine.written_review import review_page
+
+        written = review_page(written, shown, name, what, ask, report, "review_final")
     tidy_page(written, shown, name, report)
     summary_check(written, shown, name)
     report["unwritten"] = unwritten(written, shown, name, parts)

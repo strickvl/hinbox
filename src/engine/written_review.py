@@ -27,6 +27,15 @@ So it is now split into small steps:
    dates ..."); the first stays as it is. Every rewrite goes through the
    usual checks, and when one fails the old sentence stays: a repeat is
    better than a lost fact.
+
+Round 39 (23 Nov): the held-out readers counted 27 to 35 repeats at every
+round, and round 38 showed that joining notes earlier does not move that
+count. Two reasons in this stage: it judged at most 24 pairs in one call,
+and a long page has far more (Qwen's big held-out pages had 56 repeats);
+and with three drafts each draft was reviewed alone, so the page picked
+section by section from them had only the code check across sections. It
+now judges up to ``MAX_PAIRS`` pairs, ``BATCH`` per call, and runs once
+more on the picked page (``written_draws.write_drawn``).
 """
 
 import re
@@ -36,7 +45,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.engine.written_page import Ask, Note, Written
 
-MAX_PAIRS = 24
+MAX_PAIRS = 72
+BATCH = 12
 
 JUDGE = """You check pairs of sentences from one encyclopedia entry about \
 the {what} "{name}". For each pair say how sentence B stands to sentence A:
@@ -82,16 +92,19 @@ def _facts(w: Written, name: str) -> Tuple[set, set, set]:
     return _content(w.text), _numbers(w.text), _surnames(w.text, name)
 
 
-def candidate_pairs(kept: Sequence[Written], name: str) -> List[Tuple[int, int]]:
+def candidate_pairs(
+    kept: Sequence[Written], name: str, across: bool = False
+) -> List[Tuple[int, int]]:
     """Index pairs (earlier, later) of section sentences worth judging, most
-    alike first, at most ``MAX_PAIRS``."""
+    alike first, at most ``MAX_PAIRS``; with ``across`` only pairs from two
+    sections (a picked page's sections were each reviewed in their draft)."""
     facts = [_facts(w, name) for w in kept]
     scored = []
     for j, b in enumerate(kept):
         if not b.section:
             continue
         for i in range(j):
-            if not kept[i].section:
+            if not kept[i].section or (across and kept[i].section == b.section):
                 continue
             (wa, na, pa), (wb, nb, pb) = facts[i], facts[j]
             shared = wa & wb
@@ -168,56 +181,66 @@ def _other_account(a: Written) -> str:
     )
 
 
+def _mark(
+    kept: Sequence[Written], pair: Tuple[int, int], v: PairVerdict, name: str,
+    stats: Dict[str, Any], marked: Dict[int, Tuple[str, Written]],
+) -> None:  # fmt: skip
+    """Act on one verdict: drop a "same" B that adds nothing, mark one that
+    adds something for a trim, and a "conflict" B for another account."""
+    from src.engine.written_checks import _first_words
+
+    a, b = kept[pair[0]], kept[pair[1]]
+    if v.starts_with and _first_words(v.starts_with, 2) != _first_words(b.text, 2):
+        return
+    verdict = (v.verdict or "").strip().lower()
+    if a.dropped or b.dropped or id(b) in marked:
+        return
+    if verdict == "same":
+        stats["same"] += 1
+        (_, _, people_a), (_, _, people_b) = _facts(a, name), _facts(b, name)
+        if people_b - people_a:
+            # Round 22: a Karachi trim kept "handed al Baluchi and bin
+            # Attash over to the CIA" and lost al Baluchi's arrest, which
+            # the first sentence (about bin Attash) never told
+            return
+        if _adds_nothing(b, a, name):
+            b.dropped = "repeats an earlier sentence of the page"
+            stats["dropped"] += 1
+        else:
+            b.dropped, marked[id(b)] = _trim(a), ("same", a)
+    elif verdict == "conflict":
+        stats["conflict"] += 1
+        if any(_TOLD.search(w.text) for w in (a, b)):
+            return  # one of them already says so
+        b.dropped, marked[id(b)] = _other_account(a), ("conflict", a)
+
+
 def review_page(
     written: List[Written], notes: Sequence[Note], name: str, what: str,
-    ask: Ask, report: Dict[str, Any],
+    ask: Ask, report: Dict[str, Any], key: str = "review",
 ) -> List[Written]:  # fmt: skip
     """``written`` with repeats across the page trimmed or dropped and
-    unflagged disagreements told as another account."""
-    from src.engine.written_checks import _first_words
+    unflagged disagreements told as another account; counts under
+    ``report[key]``."""
     from src.engine.written_conflicts import lost_or_added
     from src.engine.written_revise import revise
 
     kept = [w for w in written if not w.dropped]
-    pairs = candidate_pairs(kept, name)
+    pairs = candidate_pairs(kept, name, across=key == "review_final")
     stats = {"pairs": len(pairs), "same": 0, "conflict": 0, "dropped": 0}
-    report["review"] = stats
-    if not pairs:
-        return written
-    try:
-        reply = ask(judge_messages(kept, pairs, name, what), Verdicts, 2048)
-    except Exception as exc:
-        report.setdefault("review_errors", []).append(str(exc)[:200])
-        return written
-    report["calls"] = report.get("calls", 0) + 1
+    report[key] = stats
     marked: Dict[int, Tuple[str, Written]] = {}  # id -> (verdict, first sentence)
-    for v in reply.pairs or []:
-        if not 1 <= v.pair <= len(pairs):
+    for start in range(0, len(pairs), BATCH):
+        batch = pairs[start : start + BATCH]
+        try:
+            reply = ask(judge_messages(kept, batch, name, what), Verdicts, 2048)
+        except Exception as exc:
+            report.setdefault("review_errors", []).append(str(exc)[:200])
             continue
-        a, b = (kept[k] for k in pairs[v.pair - 1])
-        if v.starts_with and _first_words(v.starts_with, 2) != _first_words(b.text, 2):
-            continue
-        verdict = (v.verdict or "").strip().lower()
-        if a.dropped or b.dropped or id(b) in marked:
-            continue
-        if verdict == "same":
-            stats["same"] += 1
-            (_, _, people_a), (_, _, people_b) = _facts(a, name), _facts(b, name)
-            if people_b - people_a:
-                # Round 22: a Karachi trim kept "handed al Baluchi and bin
-                # Attash over to the CIA" and lost al Baluchi's arrest, which
-                # the first sentence (about bin Attash) never told
-                continue
-            if _adds_nothing(b, a, name):
-                b.dropped = "repeats an earlier sentence of the page"
-                stats["dropped"] += 1
-            else:
-                b.dropped, marked[id(b)] = _trim(a), ("same", a)
-        elif verdict == "conflict":
-            stats["conflict"] += 1
-            if any(_TOLD.search(w.text) for w in (a, b)):
-                continue  # one of them already says so
-            b.dropped, marked[id(b)] = _other_account(a), ("conflict", a)
+        report["calls"] = report.get("calls", 0) + 1
+        for v in reply.pairs or []:
+            if 1 <= v.pair <= len(batch):
+                _mark(kept, batch[v.pair - 1], v, name, stats, marked)
     if not marked:
         return written
     out = revise(
