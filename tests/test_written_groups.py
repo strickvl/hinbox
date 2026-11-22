@@ -490,3 +490,74 @@ def test_an_articles_date_on_a_one_time_event_dated_otherwise_is_caught():
     alone = Written("In May 2018, Ann Roe was also fired alongside Tom Vale.", [1], "S")
     code_check([alone], notes[:1], "Port Elm")
     assert not alone.dropped  # no other note dates it: the article's date stands
+
+
+def test_the_comparison_cut_keeps_the_articles_own_rather_than():
+    from src.engine.written_page import article_side
+
+    assert article_side(
+        "However, the article reports that Tom Vale was fired on May 5, 2018, citing"
+        " his manner rather than the plea talks"
+    ) == (
+        "Tom Vale was fired on May 5, 2018, citing his manner rather than the plea talks."
+    )
+    assert (
+        article_side(
+            "However, the article reports that Tom Vale carried $500 that killed 11 people,"
+            " indicating a discrepancy in the figures compared to the charges which alleged 12"
+        )
+        == "Tom Vale carried $500 that killed 11 people."
+    )
+    assert (
+        article_side(
+            "The sources disagree on the venue: the profile states Elmtown, while the"
+            " article states Ann Roe was tried in Port Elm"
+        )
+        == "Ann Roe was tried in Port Elm."
+    )
+    assert (
+        article_side(
+            "However, the article reports the jail holds 41 men, and notes that Lee Moss spoke"
+        )
+        == "The jail holds 41 men, and Lee Moss spoke."
+    )
+
+
+def test_statements_on_the_day_keep_their_article_date():
+    from src.engine.written_checks import code_check
+
+    notes = [_note(1, "Tom Vale said the men had expected the order.", "2018-02-02")]
+    said = Written(
+        "In February 2018, Tom Vale said the men had expected the order.", [1], "S"
+    )
+    code_check([said], notes, "Port Elm")
+    assert not said.dropped
+    state = [_note(2, "Tom Vale was directly involved in the talks.", "2018-11-02")]
+    was = Written(
+        "In November 2018, Tom Vale was directly involved in the talks.", [2], "S"
+    )
+    code_check([was], state, "Port Elm")
+    assert was.dropped.startswith("check: it puts the article's date on a lasting")
+
+
+def test_repeated_clauses_and_report_wrapped_repeats_are_cut():
+    from src.engine.written_clauses import drop_repeat_clauses, drop_report_repeats
+
+    page = [
+        Written("On November 3, Tom Vale suspended Ann Roe's 21-day sentence.", [1], "S"),
+        Written(
+            "In February 2018, Tom Vale backed the judge, and suspended Ann Roe's sentence.",
+            [2], "S",
+        ),
+        Written("Ann Roe, Lee Moss, and Sam Hart were held.", [3], "S"),
+    ]  # fmt: skip
+    assert drop_repeat_clauses(page, "Port Elm") == 1
+    assert page[1].text == "In February 2018, Tom Vale backed the judge."
+    assert page[2].text == "Ann Roe, Lee Moss, and Sam Hart were held."
+    fired = [
+        Written("In February 2018, Tom Vale and Ann Roe were dismissed.", [1], "S"),
+        Written("In May 2018, reports confirmed that Ann Roe was dismissed alongside Tom Vale.", [2], "S"),
+        Written("A May 2018 report said Lee Moss was named judge.", [3], "S"),
+    ]  # fmt: skip
+    assert drop_report_repeats(fired, "Port Elm") == 1
+    assert fired[1].dropped and not fired[2].dropped

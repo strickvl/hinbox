@@ -124,31 +124,57 @@ _OLD_DISPUTE = re.compile(
 # Pakistan" (round 27: Jakarta and Libretto wrote false disputes from such
 # notes, with no disagreement planned)
 _COMPARES = re.compile(
+    r"^(?:as of the article's (?:reporting|publication),?\s*)|"
     r"^(?:however|but|instead)?,?\s*(?:the|this|a|one)\s+(?:new\s+|later\s+|"
     r"latest\s+|newer\s+|\d{4}\s+)?(?:article|report|account|source)\s+"
-    r"(?:reports|says|states|notes|gives|puts|describes|indicates|adds)\s+(?:that\s+)?",
+    r"(?:reports|says|states|notes|gives|puts|describes|indicates|adds|confirms)"
+    r"\s+(?:that\s+)?",
     re.I,
 )
+# Cut from here to the end: always the profile talking
 _AGAINST = re.compile(
-    r",?\s+(?:differing from|rather than|instead of|contradicting|in contrast to|"
-    r"unlike|as opposed to|whereas|while the profile)\b.*$",
+    r",?\s+(?:differing from|contradicting|in contrast to|as opposed to|"
+    r"while the profile|(?:which|a figure that|that) differs? from|which supports|"
+    r"indicating a discrepancy|a point of disagreement with|compared to the "
+    r"(?:charges|profile))\b.*$",
     re.I,
+)
+# Cut only when what follows names the profile or a number the article's
+# side restates ("rather than the recess occurring after 30 minutes"); "fired
+# ..., rather than [for] the plea deal negotiations" is the article's point
+_AGAINST_MAYBE = re.compile(
+    r",?\s+(?:rather than|instead of|unlike|whereas)\b(.*)$", re.I
 )
 _PROFILE = re.compile(r"\bthe profile\b|\bthe (?:new|earlier) article\b", re.I)
+# "The sources disagree on X: the profile states A, while the article states B"
+_ARTICLE_SAYS = re.compile(
+    r"\b(?:while|and|but|whereas),?\s+the (?:new\s+)?article\s+"
+    r"(?:states|reports|says|gives)\s+(?:that\s+)?(.+)$",
+    re.I,
+)
 
 
 def article_side(text: str) -> str:
     """A note as its article tells it: a comparison note cut to the article's
     side, "" when what is left still talks about the profile."""
     m = _COMPARES.match(text)
-    if m or _PROFILE.search(text):
-        text = _AGAINST.sub("", text[m.end() :] if m else text).strip(" ,;")
-        if not text or _PROFILE.search(text):
-            return ""
-        text = text[0].upper() + text[1:]
-        if text[-1] not in '.!?"”':
-            text += "."
-    return text
+    if not m and not _PROFILE.search(text):
+        return text
+    if not m and (side := _ARTICLE_SAYS.search(text)):
+        text = side.group(1)
+    else:
+        text = text[m.end() :] if m else text
+    text = _AGAINST.sub("", text)
+    maybe = _AGAINST_MAYBE.search(text)
+    if maybe and (_PROFILE.search(maybe.group(1)) or re.search(r"\d", maybe.group(1))):
+        text = text[: maybe.start()]
+    # "..., and notes that Zaki described" once its subject is gone
+    text = re.sub(r"\band (?:notes|says|states|reports|adds) that\b", "and", text)
+    text = re.sub(r",\s+and that\b", ", and", text).strip(" ,;")
+    if not text or _PROFILE.search(text):
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text[-1] in '.!?"”' else text + "."
 
 
 def page_notes(entity: Dict[str, Any], keep_context: bool = True) -> List[Note]:

@@ -241,7 +241,11 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
             )
         elif _EMPTY_DIFFER.search(w.text) and not _numbers(_YEAR_RE.sub(" ", w.text)):
             w.dropped = "says only that counts differ, giving none"
-        elif _LASTING.match(w.text) and from_article_dates(w.text, cited):
+        elif (
+            _LASTING.match(w.text)
+            and not _SAYS.search(w.text)
+            and from_article_dates(w.text, cited)
+        ):
             w.dropped = (
                 "check: it puts the article's date on a lasting fact or a "
                 "description; leave it undated unless its notes date it"
@@ -292,7 +296,18 @@ _LASTING = re.compile(
     r"cleared|was cleared|was known as|was serving as|was still|remained|"
     r"was assigned|had been assigned|became|was in charge|was overseeing|"
     r"was directly involved|was involved|had been|had \w+ed|was among those|"
-    r"served as|authorized|justified)\b"
+    r"served as|justified)\b"
+)
+
+# A statement or act made on the day: its date is right whatever "had" or
+# "was" follows ("In February 2018, Zaki said captives had anticipated ...",
+# "In November 2013, Khadr appealed ..., arguing that he had been abused";
+# round 28's wider lasting rule undated about 20 such sentences)
+_SAYS = re.compile(
+    r"\b(?:said|says|stated|testified|told|argued|arguing|appealed|ruled|ordered|"
+    r"authorized|filed|wrote|blamed|reported|described|warned|announced|recalled|"
+    r"explained|claimed|denied|asked|sued|added|noted|acknowledged|complained|"
+    r"insisted|urged|called|criticized|praised|defended|signed|issued)\b"
 )
 
 # "In May 2018, Gary Brown was also fired alongside Harvey Rishikof" (he was
