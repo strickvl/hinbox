@@ -21,8 +21,11 @@ _MONTHS = [
 ]  # fmt: skip
 _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 _WEEKDAY = re.compile(
-    r"\b(on|as of|by|since|until|through|last)\s+(" + "|".join(_DAYS) + r")\b", re.I
+    r"\b(on|as of|by|since|until|through|last)\s+(?:a\s+)?(" + "|".join(_DAYS) + r")\b",
+    re.I,
 )
+# A month already given with its year in the sentence: "In March 2013"
+_MONTH_YEAR = re.compile(rf"(?i:{_MONTH_RE})\.?\s+(?:\d{{1,2}},?\s+)?(?:19|20)\d\d")
 _YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 # "In September", "On April 13", "the Pentagon's November policy": a month
 # after a word that sets a time, with no year in the sentence
@@ -75,16 +78,20 @@ def date_sentence(w: Any, by_n: dict) -> str:
         return f"{m.group(1)} {_named(d - timedelta(days=back), not has_year)}"
 
     text = _WEEKDAY.sub(weekday, text)
-    if _YEAR.search(text):
-        return _NO_COMMA.sub(r"\1,", text) if text != w.text else text
     d = _article_day(w, by_n)
     if d is None:
         return text
+    # A month the sentence already dates is left alone ("In March 2013 ...
+    # by late March"); another month is dated even beside a year (round 31:
+    # "In February 2018, Zaki blamed ... the Pentagon's November policy")
+    dated = {_MONTH_OF.get(m.group(1)[:3].lower()) for m in _MONTH_YEAR.finditer(text)}
 
     def month(m: "re.Match[str]") -> str:
         n = _MONTH_OF.get(m.group(2)[:3].lower(), 0)
         if not n or not m.group(2)[0].isupper():
             return m.group(0)  # "may", "march": a verb
+        if n in dated or (_YEAR.search(text) and not dated):
+            return m.group(0)  # dated already, or a year with no month to go by
         if n > d.month:
             ahead = _AHEAD.search(
                 text[max(0, m.start() - 40) : m.start() + len(m.group(1))]
@@ -100,7 +107,7 @@ def date_sentence(w: Any, by_n: dict) -> str:
         day = m.group(4) or ""
         return f"{m.group(1)}{m.group(2)}{m.group(3)}{day}{',' if day else ''} {year}"
 
-    text = _BARE_MONTH.sub(month, text, count=1)
+    text = _BARE_MONTH.sub(month, text)
     return _NO_COMMA.sub(r"\1,", text) if text != w.text else text
 
 

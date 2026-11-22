@@ -59,6 +59,7 @@ def written_context(
         ],
         "notes": report.get("notes", 0),
         "used": report.get("notes_used", 0),
+        "left_out": report.get("unsupported_left_out", 0),
         "dropped": (report.get("dropped_code") or 0)
         + (report.get("dropped_check") or 0),
         "written_at": str(page.get("written_at") or "")[:10],

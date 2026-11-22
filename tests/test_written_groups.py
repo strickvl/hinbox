@@ -673,3 +673,84 @@ def test_notes_the_checker_found_unsupported_are_left_out():
         )
         == ""
     )
+
+
+def test_long_forms_year_ranges_and_page_names_pass_the_code_check():
+    from src.engine.written_checks import missing_details
+
+    assert (
+        missing_details(
+            "He clerked from 1997 to 1999.", ["He clerked from 1997-99."], "Port Elm"
+        )
+        == []
+    )
+    assert (
+        missing_details(
+            "Lt. Commander William Vale spoke.",
+            ["Lt. Cmdr. William Vale spoke."],
+            "Port Elm",
+        )
+        == []
+    )
+    assert (
+        missing_details(
+            "The International Committee of the Red Cross visited.",
+            ["The ICRC visited."],
+            "Port Elm",
+        )
+        == []
+    )
+    assert missing_details(
+        "Then Omar signed the deal.", ["The deal was signed."], "Port Elm"
+    ) == ["Omar"]
+    assert (
+        missing_details(
+            "Then Omar signed the deal.",
+            ["The deal was signed."],
+            "Port Elm",
+            {"omar"},
+        )
+        == []
+    )
+
+
+def test_dates_beside_a_year_and_paragraph_runs_in_date_order():
+    from src.engine.written_clauses import sort_paragraphs
+    from src.engine.written_dates import date_sentence
+
+    n = {
+        1: _note(1, "x", "2018-02-20"),
+        2: _note(2, "On Friday, 37 struck.", "2013-04-01"),
+    }
+    w = Written(
+        "In February 2018, Tom Vale blamed the Pentagon's November policy.", [1], "S"
+    )
+    assert (
+        date_sentence(w, n)
+        == "In February 2018, Tom Vale blamed the Pentagon's November 2017 policy."
+    )
+    same = Written("In March 2013, 31 struck by late March.", [1], "S")
+    assert date_sentence(same, n) == same.text
+    fri = Written("Officials counted 37 strikers on a Friday.", [2], "S")
+    assert date_sentence(fri, n) == "Officials counted 37 strikers on March 29, 2013."
+    page = [
+        Written("Port Elm holds men.", [1], "S", 1),
+        Written("In April 2013, 100 men struck.", [1], "S", 1),
+        Written("He said so.", [1], "S", 1),
+        Written("In June 2011, a smell spread.", [1], "S", 1),
+    ]
+    moved = sort_paragraphs(page)
+    assert [w.text for w in page] == [
+        "Port Elm holds men.", "In June 2011, a smell spread.",
+        "In April 2013, 100 men struck.", "He said so.",
+    ] and moved  # fmt: skip
+
+
+def test_a_count_told_under_another_month_is_not_cut():
+    from src.engine.written_clauses import drop_repeat_clauses
+
+    page = [
+        Written("On March 19, 2013, two men were in hospital for drips.", [1], "S"),
+        Written("In April 2013, ten men skipped meals; two men were in hospital for drips.", [2], "S"),
+    ]  # fmt: skip
+    assert drop_repeat_clauses(page, "Port Elm") == []

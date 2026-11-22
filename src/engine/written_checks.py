@@ -112,12 +112,54 @@ def _fold(text: str) -> str:
     return text.replace("’", "'").lower()
 
 
-def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[str]:
+# Short and long forms counted as one (round 31 dropped true sentences for
+# "Commander William" against "Lt. Cmdr. William Kuebler", "New Mexico"
+# against "N.M.", "International Committee of the Red Cross" against "ICRC")
+_RANK_FULL = {
+    "cmdr": "commander", "lt": "lieutenant", "col": "colonel", "gen": "general",
+    "sgt": "sergeant", "adm": "admiral", "capt": "captain", "maj": "major",
+    "brig": "brigadier", "cpl": "corporal", "pvt": "private",
+}  # fmt: skip
+_ALIASES = {
+    "icrc": "international committee red cross",
+    "n.m": "new mexico", "n.y": "new york", "d.c": "washington",
+    "u.n": "united nations", "fbi": "federal bureau investigation",
+    "cia": "central intelligence agency", "pentagon": "defense department",
+    "aclu": "american civil liberties union", "isi": "inter-services intelligence",
+}  # fmt: skip
+# "from 1997-99": every year of the range
+_RANGE = re.compile(r"\b((?:19|20)\d\d)\s*[-–]\s*((?:19|20)?\d\d)\b")
+
+
+def _long_forms(hay: str) -> str:
+    """``hay`` with its rank abbreviations, aliases and year ranges written
+    out as well."""
+    extra = [re.sub(r"\b(" + "|".join(_RANK_FULL) + r")\b\.?",
+                    lambda m: _RANK_FULL[m.group(1)], hay)]  # fmt: skip
+    for short, full in _ALIASES.items():
+        if re.search(rf"\b{re.escape(short)}\b", hay):
+            extra.append(full)
+        if all(w in hay for w in full.split()):
+            extra.append(short)
+    for m in _RANGE.finditer(hay):
+        start, end = int(m.group(1)), m.group(2)
+        stop = int(end) if len(end) == 4 else start // 100 * 100 + int(end)
+        if start < stop <= start + 20:
+            extra.append(" ".join(str(y) for y in range(start, stop + 1)))
+    return hay + " " + " ".join(extra)
+
+
+def missing_details(
+    sentence: str, sources: Iterable[str], name: str, page_names: Iterable[str] = ()
+) -> List[str]:
     """Numbers, months and capitalised words of ``sentence`` that are in
     neither its notes nor the entity's name. A word counts as present when
     one of the notes' words shares its first five letters ("Pakistani" for
-    "Pakistan")."""
-    hay = _fold(" ".join(sources) + " " + name)
+    "Pakistan"). A capitalised word is also present when another note of the
+    page names it (``page_names``): round 31 dropped "Omar Khadr's agreement"
+    on Speer's page as "not in its notes: Omar", and three sentences more."""
+    hay = _long_forms(_fold(" ".join(sources) + " " + name))
+    known = set(page_names)
     # Whole numbers only, and an article's date only as its year: on 21 Nov
     # a Jakarta fill's "14 deaths" (10 dead plus three wounded, added up)
     # passed because "14" was inside another number of its notes
@@ -148,20 +190,27 @@ def missing_details(sentence: str, sources: Iterable[str], name: str) -> List[st
         # A first name before a surname the notes give ("Donald Trump" for
         # "Trump"); an invented full name ("Clive Stafford Smith") still fails
         nxt = re.match(r"\s+([A-Z][\w'’-]*)", sentence[m.end() :])
-        if nxt and _fold(nxt.group(1)).strip("'-") in words and len(tok) > 2:
+        after = _fold(nxt.group(1)).strip("'-").removesuffix("'s") if nxt else ""
+        if nxt and after in words and len(tok) > 2:
             # After a rank the whole name must be in the notes: round 22
             # wrote "Rear Adm. David House" and "Army Lt. Col. Samuel House"
             # on one page where the notes say only "House"
             prev = re.search(r"([A-Za-z]+)\.?\s+$", sentence[: m.start()])
             titled = prev is not None and prev.group(1).lower() in _RANKS
-            if titled and f"{_fold(tok)} {_fold(nxt.group(1))}" not in hay:
+            pair = _long_forms(f"{_fold(tok)} {after}").split(" ")[:2]
+            if (
+                titled
+                and " ".join(pair) not in hay
+                and f"{_fold(tok)} {after}" not in hay
+            ):
                 missing.append(f"{tok} {nxt.group(1)}")
             continue
         # A sentence's first word is capitalised anyway ("Reports say ...",
         # "Regarding Walid ..."), so it is left to the model check
         if not sentence[: m.start()].strip(" \"'“‘("):
             continue
-        if not present(_fold(tok).strip("'-")):
+        low = _fold(tok).strip("'-")
+        if not present(low) and low.removesuffix("'s") not in known:
             missing.append(tok)
     # Who did it: "Pakistani forces captured", "CIA agents captured" need
     # that actor beside a force word in a note, not just the country or the
@@ -222,8 +271,18 @@ _PAGE_TALK = re.compile(
 )
 
 
+def page_names_of(notes: Sequence[Note]) -> set:
+    """Every capitalised word the page's notes use, folded."""
+    return {
+        _fold(t).strip("'-").removesuffix("'s")
+        for n in notes
+        for t in re.findall(r"\b[A-Z][\w'’-]+", n.text)
+    }
+
+
 def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None:
     by_n = {n.n: n for n in notes}
+    page_names = page_names_of(notes)
     for w in written:
         cited = [by_n[i] for i in w.notes if i in by_n]
         if not cited:
@@ -231,7 +290,9 @@ def code_check(written: List[Written], notes: Sequence[Note], name: str) -> None
             continue
         w.notes = [n.n for n in cited]
         # A note's article date may be named ("a 2012 report")
-        gaps = missing_details(w.text, [f"{n.text} {n.date}" for n in cited], name)
+        gaps = missing_details(
+            w.text, [f"{n.text} {n.date}" for n in cited], name, page_names
+        )
         if gaps:
             w.dropped = "not in its notes: " + ", ".join(gaps[:5])
         elif _PAGE_TALK.search(w.text):

@@ -45,14 +45,27 @@ def _facts(text: str, name: str) -> Tuple[set, set, set]:
     return _content(text), nums, _surnames(text, name)
 
 
-def _within(part: str, earlier: List[str], name: str, share: float) -> bool:
+def _when_of(text: str) -> Any:
+    from src.engine.written_groups import text_when
+
+    return text_when(text)
+
+
+def _within(
+    part: str, earlier: List[str], name: str, share: float, when: Any = None
+) -> bool:
     """Every number and person of ``part``, and ``share`` of its words, in
-    one earlier sentence."""
+    one earlier sentence. A part with a number told under another month
+    (``when``) is not the same count: round 31 cut "two captives were
+    hospitalized for intravenous drips" in April for a "two" of March 19."""
     words, nums, people = _facts(part, name)
     if len(words) < 3:
         return False
     for old in earlier:
         w, n, p = _facts(old, name)
+        other = _when_of(old)
+        if nums and when and other and when[:2] != other[:2]:
+            continue
         if nums <= n and people <= p and len(words & w) >= share * len(words):
             return True
     return False
@@ -119,8 +132,9 @@ def drop_repeat_clauses(written: List[Written], name: str) -> List[List[str]]:
         parts = _clauses(w.text)
         if len(parts) > 1 and before:
             keep = [parts[0]] + [
-                (j, p) for j, p in parts[1:] if not _within(p, before, name, 0.6)
-            ]
+                (j, p) for j, p in parts[1:]
+                if not _within(p, before, name, 0.6, _when_of(p) or _when_of(w.text))
+            ]  # fmt: skip
             if len(keep) < len(parts):
                 text = "".join(j + p for j, p in keep).rstrip(" ,;")
                 if not text.endswith((".", "!", "?", '"', "”")):
@@ -169,6 +183,43 @@ def drop_section_repeats(written: List[Written], name: str) -> List[str]:
     return dropped
 
 
+# A sentence that opens on its own date: "In June 2011, ...", "On April 13,
+# 2013, ...", "By late March 2013, ..."
+_OPENS_DATED = re.compile(
+    r"^\W*(?:In|On|By|As of|Since|From|During|Early|Late|Until)\b[^,]{0,30}?\b(?:19|20)\d\d\b"
+)
+
+
+def sort_paragraphs(written: List[Written]) -> List[str]:
+    """Put each paragraph's runs in date order: a run starts at a sentence
+    that opens on its own date and takes the undated sentences after it, so
+    "He ..." and "That month ..." move with the sentence they lean on; text
+    before the first such sentence stays first. Round 31's camp section
+    opened April 2013, June 2013, June 2011, September 2012, then February
+    2013. The first sentence of each moved run, as a record."""
+    moved: List[str] = []
+    groups: Dict[Tuple[str, int], List[int]] = {}
+    for i, w in enumerate(written):
+        if not w.dropped and w.section:
+            groups.setdefault((w.section, w.para), []).append(i)
+    for idx in groups.values():
+        runs: List[List[Written]] = []
+        for i in idx:
+            w = written[i]
+            if _OPENS_DATED.match(w.text) or not runs:
+                runs.append([w])
+            else:
+                runs[-1].append(w)
+        head = [] if _OPENS_DATED.match(runs[0][0].text) else [runs.pop(0)]
+        order = sorted(runs, key=lambda r: _when_of(r[0].text) or (9999, 0, 0))
+        if order == runs:
+            continue
+        moved += [r[0].text for k, r in enumerate(order) if r is not runs[k]]
+        for i, w in zip(idx, [w for r in head + order for w in r]):
+            written[i] = w
+    return moved
+
+
 def tidy_page(
     written: List[Written], notes: Sequence[Any], name: str, report: Dict[str, Any]
 ) -> None:
@@ -178,6 +229,7 @@ def tidy_page(
 
     for key, found in (
         ("own_dates", own_dates(written, notes)),
+        ("paragraphs_sorted", sort_paragraphs(written)),
         ("section_repeats", drop_section_repeats(written, name)),
         ("report_repeats", drop_report_repeats(written, name)),
         ("clauses_cut", drop_repeat_clauses(written, name)),
