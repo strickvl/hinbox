@@ -235,3 +235,32 @@ def test_notes_telling_one_fact_are_joined_only_when_nothing_is_lost():
     assert not holds(
         notes[0].text, notes[2].text, "Port Elm"
     )  # "Ann Roe" would be lost
+
+
+def test_two_notes_that_each_add_a_detail_are_written_as_one_only_if_nothing_is_lost():
+    from src.engine.written_same import JoinedNotes, PairsSame, join_same, joined_ok
+
+    a = "Tom Vale suspended Ann Roe's 21-day sentence pending a review."
+    b = "On November 3, 2017, Tom Vale suspended the sentence, telling Roe by letter."
+    good = "On November 3, 2017, Tom Vale suspended Ann Roe's 21-day sentence pending a review, telling Roe by letter."
+    assert joined_ok(good, a, b, "Port Elm")
+    assert not joined_ok(
+        "Tom Vale suspended Ann Roe's sentence.", a, b, "Port Elm"
+    )  # lost 21, November
+    assert not joined_ok(
+        good.replace("Tom Vale", "Judge Sam Lee"), a, b, "Port Elm"
+    )  # a new name
+    notes = [_note(1, a, "2017-11-05"), _note(2, b, "2017-11-04")]
+    for i, n in enumerate(notes):
+        n.articles, n.keys = [f"a{i + 1}"], [f"k{i + 1}"]
+
+    def ask(msgs, model, max_tokens):
+        if model is PairsSame:
+            return PairsSame.model_validate({"pairs": [{"pair": 1, "verdict": "same"}]})
+        assert model is JoinedNotes and "A: Tom Vale" in msgs[1]["content"]
+        return JoinedNotes.model_validate({"joined": [{"pair": 1, "text": good}]})
+
+    report: dict = {}
+    out = join_same(notes, "Port Elm", "place", ask, report)
+    assert [n.text for n in out] == [good] and set(out[0].articles) == {"a1", "a2"}
+    assert out[0].date == "2017-11-04" and len(report["same_written"]) == 1

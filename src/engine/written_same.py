@@ -79,6 +79,9 @@ def note_pairs(notes: Sequence[Any], name: str) -> List[Tuple[int, int]]:
                 (len(shared) >= 4 and len(shared) >= 0.5 * small)
                 or (counts and len(shared) >= 2)
                 or ((pa & pb) and (na & nb) and len(shared) >= 3)
+                # one person doing one thing, told by two notes that each
+                # add a detail (round 37: Baker's suspended sentence)
+                or ((pa & pb) and len(shared) >= 4)
             ):
                 scored.append((-len(shared) / small, i, j))
     scored.sort()
@@ -140,6 +143,7 @@ def join_same(
 
     out = list(notes)
     log: List[List[str]] = report.setdefault("same_joined", [])
+    both: List[Tuple[int, int]] = []
     for i, j in same:
         a, b = home(i), home(j)
         if a == b:
@@ -148,6 +152,7 @@ def join_same(
         if not holds(out[big].text, out[small].text, name):
             big, small = small, big
             if not holds(out[big].text, out[small].text, name):
+                both.append((a, b))  # each adds something: written as one below
                 continue
         k, d = out[big], out[small]
         # the kept text's own date: its "on Monday" and "this week" are its
@@ -159,4 +164,104 @@ def join_same(
         )  # fmt: skip
         into[small] = big
         log.append([k.text, d.text])
+    _write_joined(both, out, into, home, name, what, ask, report)
     return _numbered([n for i, n in enumerate(out) if i not in into])
+
+
+MERGE = """You join pairs of notes about the {what} "{name}". Each pair tells \
+one and the same fact, and each note adds something. For each numbered pair, \
+write one sentence that tells the fact with every name, number, date and \
+detail of both notes, and nothing else. Keep dates as the notes write them; \
+do not turn "on Monday" or "last week" into a date. Add nothing the notes \
+do not say."""
+
+MERGE_BATCH = 8
+# Words that name a time only from the article's date: a joined note keeps
+# one date, so a text with them is not joined
+_RELATIVE = re.compile(
+    r"\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|yesterday|"
+    r"today|this week|last week|next week|this month|last month)\b",
+    re.I,
+)
+
+
+class Joined(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    pair: int = Field(description="The pair's number")
+    text: str = Field(description="One sentence with every detail of both notes")
+
+
+class JoinedNotes(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    joined: List[Joined]
+
+
+def joined_ok(text: str, a: str, b: str, name: str) -> bool:
+    """``text`` keeps every number, month and person of ``a`` and of ``b``
+    and most of their words, brings in no name or number neither has, has no
+    weekday or "last week", and is no longer than both together."""
+    from src.engine.written_checks import missing_details
+
+    text = " ".join(text.split())
+    if not text or len(text) > len(a) + len(b) or _RELATIVE.search(text):
+        return False
+    (wt, nt, pt) = _facts(text, name)
+    for src in (a, b):
+        ws, ns, ps = _facts(src, name)
+        if not (ns <= nt and ps <= pt and len(ws & wt) >= 0.6 * max(len(ws), 1)):
+            return False
+    return not missing_details(text, [a, b], name)
+
+
+def _write_joined(
+    both: List[Tuple[int, int]], out: List[Any], into: Dict[int, int],
+    home: Callable[[int], int], name: str, what: str, ask: Callable[..., Any],
+    report: Dict[str, Any],
+) -> None:  # fmt: skip
+    """Pairs that tell one fact with each note adding something, written as
+    one note by one call per batch; a joined text ``joined_ok()`` refuses
+    leaves both notes. Round 37 joined only a note held whole by another,
+    so the Rishikof page still told one suspension from two notes that each
+    added a detail. Each join under ``report["same_written"]``."""
+    from src.engine.written_page import Note
+
+    log: List[List[str]] = report.setdefault("same_written", [])
+    for start in range(0, len(both), MERGE_BATCH):
+        batch = [(home(a), home(b)) for a, b in both[start : start + MERGE_BATCH]]
+        batch = [(a, b) for a, b in batch if a != b]
+        if not batch:
+            continue
+        body = "\n\n".join(
+            f"Pair {k}:\n  A: {out[a].text}\n  B: {out[b].text}"
+            for k, (a, b) in enumerate(batch, 1)
+        )
+        msgs = [
+            {"role": "system", "content": MERGE.format(what=what, name=name)},
+            {"role": "user", "content": body},
+        ]
+        try:
+            reply = ask(msgs, JoinedNotes, 4096)
+        except Exception as exc:
+            report.setdefault("errors", []).append(f"same write: {str(exc)[:200]}")
+            continue
+        report["calls"] = report.get("calls", 0) + 1
+        for j in reply.joined or []:
+            if not 1 <= j.pair <= len(batch):
+                continue
+            a, b = (home(x) for x in batch[j.pair - 1])
+            if a == b:
+                continue
+            ka, kb = out[a], out[b]
+            text = " ".join(str(j.text or "").split())
+            if _RELATIVE.search(ka.text + " " + kb.text) or not joined_ok(
+                text, ka.text, kb.text, name
+            ):
+                continue
+            days = sorted(x for x in (ka.date, kb.date) if x)
+            out[a] = Note(
+                ka.n, ka.key, text, list(dict.fromkeys(ka.articles + kb.articles)),
+                days[0] if days else "", ka.heading, ka.tag,
+                list(dict.fromkeys((ka.keys or [ka.key]) + (kb.keys or [kb.key]))),
+            )  # fmt: skip
+            into[b] = a
+            log.append([text, ka.text, kb.text])
