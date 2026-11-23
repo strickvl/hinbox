@@ -629,10 +629,14 @@ def file_opening_details(plan: Plan, by_n: Dict[int, Any], name: str) -> List[in
         extra = (caps | _numbers(note.text)) - own
         if len(extra) < 2:
             continue
+        # Shared words per note, not in all: summed, the biggest part won
+        # (four Speer draws: his hometown filed under the Khadr proceedings,
+        # not his service); first in its part, as background
         words = _content(note.text)
         best = max(plan.parts, key=lambda p: sum(
-            len(words & _content(by_n[k].text)) for k in p.notes if k in by_n))  # fmt: skip
-        best.notes.append(n)
+            len(words & _content(by_n[k].text)) for k in p.notes if k in by_n
+        ) / max(len(p.notes), 1))  # fmt: skip
+        best.notes.insert(0, n)
         filed.append(n)
     return filed
 

@@ -407,7 +407,12 @@ def test_an_opening_note_with_more_than_identity_is_also_filed_in_the_body():
         _note(3, "Tom Vale was a Port Elm soldier.", "2010-01-03"),
     ]  # fmt: skip
     by_n = {n.n: n for n in notes}
+    notes += [_note(k, f"Tom Vale's trial in Port Elm heard witness {k}.", "2011-01-01") for k in range(4, 9)]  # fmt: skip
+    by_n = {n.n: n for n in notes}
     plan = Plan(identity="a Port Elm soldier", why_it_matters="", parts=[
-        PlanPart(heading="Death", covers="", notes=[2])], left_out=[], opening_notes=[1, 3])  # fmt: skip
+        PlanPart(heading="Death", covers="", notes=[2]),
+        PlanPart(heading="Trial", covers="", notes=[4, 5, 6, 7, 8]),
+    ], left_out=[], opening_notes=[1, 3])  # fmt: skip
     assert file_opening_details(plan, by_n, "Tom Vale") == [1]  # 3 says only who he was
-    assert plan.parts[0].notes == [2, 1]
+    # the part closest per note, not the biggest; first in it
+    assert plan.parts[0].notes == [1, 2]
