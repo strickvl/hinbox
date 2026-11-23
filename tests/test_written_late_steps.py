@@ -592,3 +592,20 @@ def test_a_mend_keeps_a_year_beside_a_month_of_its_own_article():
     report: dict = {}
     when_who([w], notes, "Port Elm", ask, report)
     assert w.text.startswith("Charges were sworn out on June 20, 2017,")
+
+
+def test_a_bare_month_takes_the_year_of_its_own_months_article():
+    from src.engine.written_dates import own_dates
+
+    notes = [
+        _note(1, "Ann Roe taught art classes at Port Elm.", "2018-02-10"),
+        _note(2, "Ann Roe said guards wore orange at Port Elm.", "2018-06-20"),
+        _note(3, "Ann Roe spoke at Port Elm.", "2016-04-02"),
+    ]
+    page = [
+        Written("In June, Ann Roe said guards wore orange.", [1, 2], "S"),
+        Written("In September, Ann Roe spoke again.", [1, 3], "S"),
+    ]
+    own_dates(page, notes)
+    assert page[0].text == "In June 2018, Ann Roe said guards wore orange."
+    assert page[1].text == "In September, Ann Roe spoke again."  # two years: left

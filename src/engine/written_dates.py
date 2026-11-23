@@ -74,6 +74,16 @@ def _article_day(w: Any, by_n: dict, word: str = "") -> Optional[date]:
     return None
 
 
+def _article_days(w: Any, by_n: dict) -> List[date]:
+    out = []
+    for k in w.notes:
+        try:
+            out.append(date.fromisoformat(str(by_n[k].date)[:10]))
+        except (KeyError, ValueError):
+            continue
+    return out
+
+
 def _named(d: date, year: bool) -> str:
     return f"{_MONTHS[d.month - 1]} {d.day}" + (f", {d.year}" if year else "")
 
@@ -116,6 +126,19 @@ def date_sentence(w: Any, by_n: dict) -> str:
         d = _article_day(w, by_n, day_word if named else m.group(2))
         if d is None:
             return m.group(0)
+        if not any(
+            m.group(2).lower() in by_n[k].text.lower() for k in w.notes if k in by_n
+        ):
+            # no note names the month: an article from that month dates it,
+            # and notes from different years leave it (round 47: "In June"
+            # citing a February 2018 note and a June 2018 one became June
+            # 2017, from the first note)
+            days = _article_days(w, by_n)
+            same = [x for x in days if x.month == n]
+            if same:
+                d = same[0]
+            elif len({x.year for x in days}) > 1:
+                return m.group(0)
         if n > d.month:
             ahead = _AHEAD.search(
                 text[max(0, m.start() - 40) : m.start() + len(m.group(1))]
