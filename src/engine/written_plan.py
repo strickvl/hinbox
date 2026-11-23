@@ -692,13 +692,17 @@ def make_plan(
     restore_repeats(plan, by_n, name)
     restore_on_topic(plan, by_n, name, what)
     restore_orphans(plan, by_n)
-    opening_filed = file_opening_details(plan, by_n, name)
+    # Off unless asked: in 8 Speer draws the plan filed the note itself 5
+    # times, and this filed it 3 times, 2 into the wrong part (23 Nov)
+    opening_filed = (
+        file_opening_details(plan, by_n, name) if report.get("opening_details") else []
+    )
     restored = sorted({n for p in plan.parts for n in p.notes} - before)
     for p in plan.parts:
         p.notes = list(dict.fromkeys(p.notes))
     if what.startswith("person"):
         plan.parts = life_order(plan.parts, by_n)
-    if report.get("events", True):  # one event's notes in one part
+    if report.get("events", False):  # one event's notes in one part
         from src.engine.written_events import gather_events
 
         gather_events(plan, by_n, name, what, ask, report)
