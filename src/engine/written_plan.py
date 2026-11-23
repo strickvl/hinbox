@@ -664,6 +664,10 @@ def make_plan(
         p.notes = list(dict.fromkeys(p.notes))
     if what.startswith("person"):
         plan.parts = life_order(plan.parts, by_n)
+    if report.get("events", True):  # one event's notes in one part
+        from src.engine.written_events import gather_events
+
+        gather_events(plan, by_n, name, what, ask, report)
     dates = {n.n: n.date for n in notes}
     for part in plan.parts:
         mine = [by_n[n] for n in part.notes]

@@ -60,9 +60,12 @@ def _facts(text: str, name: str) -> Tuple[set, set, set]:
     return _content(text), _numbers(text) | months, _surnames(text, name)
 
 
-def note_pairs(notes: Sequence[Any], name: str) -> List[Tuple[int, int]]:
+def note_pairs(
+    notes: Sequence[Any], name: str, limit: int = MAX_PAIRS
+) -> List[Tuple[int, int]]:
     """Index pairs of notes worth asking about: a shared count, a shared
-    person and year, or most words shared; most alike first."""
+    person and year, or most words shared; most alike first, at most
+    ``limit`` (0: all)."""
     facts = [_facts(n.text, name) for n in notes]
     scored = []
     for j in range(len(notes)):
@@ -85,7 +88,7 @@ def note_pairs(notes: Sequence[Any], name: str) -> List[Tuple[int, int]]:
             ):
                 scored.append((-len(shared) / small, i, j))
     scored.sort()
-    return [(i, j) for _, i, j in scored[:MAX_PAIRS]]
+    return [(i, j) for _, i, j in (scored[:limit] if limit else scored)]
 
 
 def holds(big: str, small: str, name: str) -> bool:

@@ -82,15 +82,24 @@ def _marks(text: str) -> set:
     return _numbers(text) | {w.lower() for w in re.findall(r"\b[A-Z][\w'’-]+", text)}
 
 
-def keeps_both(text: str, a: str, b: str) -> bool:
-    """``text`` has every number and capitalised word of ``a`` and ``b``
-    past their first word (a sentence's first word is capitalised anyway),
-    is at most ``MAX_WORDS`` words and no longer than both together."""
+def refusal(text: str, a: str, b: str) -> str:
+    """Why ``text`` can't stand for both ``a`` and ``b``, or "" when it can:
+    it must have every number and capitalised word of both past their first
+    word (a sentence's first word is capitalised anyway), at most
+    ``MAX_WORDS`` words, and be no longer than both together."""
     from src.engine.written_review import _marks as marks_past_first
 
-    if not text or len(text) > len(a) + len(b) or len(text.split()) > MAX_WORDS:
-        return False
-    return not (marks_past_first(a) | marks_past_first(b)) - _marks(text)
+    if not text:
+        return "given_up"
+    if len(text) > len(a) + len(b) or len(text.split()) > MAX_WORDS:
+        return "too_long"
+    if (marks_past_first(a) | marks_past_first(b)) - _marks(text):
+        return "lost_mark"
+    return ""
+
+
+def keeps_both(text: str, a: str, b: str) -> bool:
+    return not refusal(text, a, b)
 
 
 def _messages(
@@ -134,6 +143,7 @@ def fold_pairs(
             used |= {id(a), id(b)}
     report["fold_asked"] = report.get("fold_asked", 0) + len(todo)
     new: Dict[int, Tuple[Written, Written]] = {}  # id(a) -> (fold, b)
+    refused: Dict[str, int] = report.setdefault("fold_refused", {})
     for start in range(0, len(todo), BATCH):
         batch = todo[start : start + BATCH]
         try:
@@ -147,7 +157,9 @@ def fold_pairs(
                 continue
             a, b = batch[f.pair - 1]
             text = strip_refs(" ".join(str(f.text or "").split()))[0]
-            if id(a) in new or not keeps_both(text, a.text, b.text):
+            why = "twice" if id(a) in new else refusal(text, a.text, b.text)
+            if why:
+                refused[why] = refused.get(why, 0) + 1
                 continue
             new[id(a)] = (
                 Written(
@@ -163,7 +175,10 @@ def fold_pairs(
     for w in written:
         out.append(w)
         fold, b = new.get(id(w), (None, None))
-        if fold is None or fold.dropped:
+        if fold is None:
+            continue
+        if fold.dropped:
+            refused["check"] = refused.get("check", 0) + 1
             continue
         w.dropped, b.dropped = "folded with a later sentence", FOLDED
         out.append(fold)

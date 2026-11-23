@@ -97,6 +97,11 @@ def main() -> None:
         help="skip telling once a fact two sentences tell (src/engine/written_fold.py)",
     )
     p.add_argument(
+        "--no-events",
+        action="store_true",
+        help="skip planning one event's notes into one section (src/engine/written_events.py)",
+    )
+    p.add_argument(
         "--no-same", action="store_true",
         help="skip joining notes that tell the same fact (src/engine/written_same.py)",
     )  # fmt: skip
@@ -161,6 +166,7 @@ def main() -> None:
                 when_who=not a.no_when_who,
                 same=not a.no_same,
                 fold=not a.no_fold,
+                events=not a.no_events,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs

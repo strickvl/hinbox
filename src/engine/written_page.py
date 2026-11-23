@@ -691,6 +691,7 @@ def write_page(
     when_who: bool = True,
     same: bool = True,
     fold: bool = True,
+    events: bool = True,
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
     ``error`` and no text. ``approach`` "plan" plans the page and writes it a
@@ -707,7 +708,10 @@ def write_page(
     key = model if approach == "single" else f"{model}#{approach}"
     key += f"@{label}" if label else ""
     # ``fold``: the page review tells a fact told twice once (written_fold.py)
-    report: Dict[str, Any] = {"calls": 0, "approach": approach, "fold": fold}
+    # ``events``: one event's notes planned into one part (written_events.py)
+    report: Dict[str, Any] = {
+        "calls": 0, "approach": approach, "fold": fold, "events": events,
+    }  # fmt: skip
     notes = page_notes(entity, strikes=strikes)
     report["notes"] = len(notes)
     report["unsupported_left_out"] = len(
