@@ -16,11 +16,21 @@ within the part; so this step makes sure it sees them together.
 
 By the stages rule: code pairs notes filed under different parts that share
 a person and several words, or most of their words (``note_pairs()``); one
-call per batch says whether a pair is about one and the same event; a note
-called "one" with an earlier-dated note moves, right after it, into that
-note's part. Nothing is rewritten or dropped.
+call per batch says whether a pair is about one and the same event and
+which of the two sections is about that event; the other note moves, right
+after its pair, into that section. Nothing is rewritten or dropped.
+
+Round 41's first version moved the later-dated note next to the earlier
+one; on 14 tuning pages 4 of 7 judged moves were right (Rishikof) and 3 put
+a note in the wrong section: Speer's who-he-was note and his death went
+into "Plea and sentencing" because the plea note was dated earlier and
+named the firefight, and Bin Atef's summary note (cleared in 2009, then
+resettled) went into the release part and took the clearance with it. So
+the model now names the section, and a note that says who or what an
+entity is never moves, nor is it a home: it tells more than one event.
 """
 
+import re
 from typing import Any, Dict, List, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,7 +48,9 @@ later or adds its reasons, its outcome or reactions to it.
 - two: different events, or the same kind of thing at different times (two \
 hearings, two rulings, two counts on different days), or one note only \
 mentions the other's event in passing as background to something else.
-When unsure, say "two"."""
+When unsure, say "two". For "one", also say which note's section is about that event itself ("A" or "B"); the other note will join it. A section that only mentions the event as background to something later (a plea that names the attack, a trial that names the capture) is not about it. If neither section is about it, give "".
+
+Name the pair, then events, verdict and home."""
 
 BATCH = 10
 MAX_PAIRS = 60
@@ -49,6 +61,9 @@ class PairEvent(BaseModel):
     pair: int = Field(description="The pair's number")
     events: str = Field(default="", description="What event each note is about")
     verdict: str = Field(description="one or two")
+    home: str = Field(
+        default="", description='"A", "B" or "": the section about that event'
+    )
 
 
 class PairEvents(BaseModel):
@@ -71,11 +86,12 @@ def cross_pairs(
 
 
 def _messages(
-    pairs: Sequence[Tuple[Any, Any]], name: str, what: str
+    pairs: Sequence[Tuple[Any, str, Any, str]], name: str, what: str
 ) -> List[Dict[str, str]]:
     body = "\n\n".join(
-        f"Pair {k}:\n  A [{a.date or 'no date'}] {a.text}\n  B [{b.date or 'no date'}] {b.text}"
-        for k, (a, b) in enumerate(pairs, 1)
+        f'Pair {k}:\n  A (section "{ha}") [{a.date or "no date"}] {a.text}\n'
+        f'  B (section "{hb}") [{b.date or "no date"}] {b.text}'
+        for k, (a, ha, b, hb) in enumerate(pairs, 1)
     )
     return [
         {"role": "system", "content": EVENT.format(what=what, name=name)},
@@ -83,44 +99,63 @@ def _messages(
     ]
 
 
+# "X is a Yemeni national ...", "He was a U.S. Army soldier ...": a note on
+# who or what the entity is
+_IDENTITY = re.compile(
+    r"^\W*(?:[A-Z][\w.'’-]*\s+){0,6}(?:is|was|are|were)\s+(?:a|an|the|one)\b"
+)
+
+
+def is_identity(note: Any, plan: Any) -> bool:
+    """A note the plan gives the opening, or one that opens by saying who or
+    what someone is."""
+    return note.n in (plan.opening_notes or []) or bool(_IDENTITY.match(note.text))
+
+
 def gather_events(
     plan: Any, by_n: Dict[int, Any], name: str, what: str, ask: Any,
     report: Dict[str, Any],
 ) -> None:  # fmt: skip
     """Move each note the model calls about the same event as a note of
-    another part next to the earlier-dated of the two, in that one's part.
-    Each move under ``report["events_moved"]`` as [moved, next to, part]."""
-    pairs = cross_pairs(plan.parts, by_n, name)
+    another part into the part the model says is about that event, right
+    after its pair. Each move under ``report["events_moved"]`` as [moved
+    note's text, its pair's text, the part it joined]."""
+    part_of = {n: p for p in plan.parts for n in p.notes}
+    pairs = [
+        (a, b) for a, b in cross_pairs(plan.parts, by_n, name)
+        if not is_identity(by_n[a], plan) and not is_identity(by_n[b], plan)
+    ]  # fmt: skip
     report["event_pairs"] = len(pairs)
-    one: List[Tuple[int, int]] = []
+    one: List[Tuple[int, int]] = []  # (home note, note that moves)
     for start in range(0, len(pairs), BATCH):
         batch = pairs[start : start + BATCH]
+        shown = [
+            (by_n[a], part_of[a].heading, by_n[b], part_of[b].heading) for a, b in batch
+        ]
         try:
-            reply = ask(
-                _messages([(by_n[a], by_n[b]) for a, b in batch], name, what),
-                PairEvents,
-                4096,
-            )
+            reply = ask(_messages(shown, name, what), PairEvents, 4096)
         except Exception as exc:
             report.setdefault("errors", []).append(f"events: {str(exc)[:200]}")
             continue
         report["calls"] = report.get("calls", 0) + 1
         for p in reply.pairs or []:
-            if 1 <= p.pair <= len(batch) and str(p.verdict).strip().lower() == "one":
-                one.append(batch[p.pair - 1])
+            if not 1 <= p.pair <= len(batch) or str(p.verdict).strip().lower() != "one":
+                continue
+            a, b = batch[p.pair - 1]
+            home = str(p.home or "").strip().strip("\"'").upper()
+            if home in ("A", "B"):
+                one.append((a, b) if home == "A" else (b, a))
     log: List[List[Any]] = report.setdefault("events_moved", [])
     moved: set = set()
-    for a, b in one:
-        # the earlier telling stays; an undated note counts as latest
-        first, later = sorted((a, b), key=lambda n: (by_n[n].date or "9999", n))
-        if later in moved or first in moved:
+    for stay, go in one:
+        if go in moved or stay in moved:
             continue  # each note moves once, and never onto a moved note
-        home = next((p for p in plan.parts if first in p.notes), None)
-        away = next((p for p in plan.parts if later in p.notes), None)
+        home = next((p for p in plan.parts if stay in p.notes), None)
+        away = next((p for p in plan.parts if go in p.notes), None)
         if home is None or away is None or home is away:
             continue
-        away.notes.remove(later)
-        home.notes.insert(home.notes.index(first) + 1, later)
-        moved.add(later)
-        log.append([later, first, home.heading])
+        away.notes.remove(go)
+        home.notes.insert(home.notes.index(stay) + 1, go)
+        moved.add(go)
+        log.append([by_n[go].text, by_n[stay].text, home.heading])
     plan.parts = [p for p in plan.parts if p.notes]

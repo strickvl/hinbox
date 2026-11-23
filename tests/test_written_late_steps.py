@@ -346,33 +346,38 @@ def test_notes_about_one_event_are_planned_into_one_part():
     from src.engine.written_plan import Plan, PlanPart
 
     notes = [
-        _note(1, "On Feb. 5, 2018, Tom Vale was fired as head of the Port Elm court.", "2018-02-06"),
-        _note(2, "Tom Vale was fired from the Port Elm court after a dispute, a report said.", "2018-03-10"),
+        _note(1, "Tom Vale was fired from the Port Elm court after a dispute, a report said.", "2018-03-10"),
+        _note(2, "On Feb. 5, 2018, Tom Vale was fired as head of the Port Elm court.", "2018-02-06"),
         _note(3, "Tom Vale ruled on the Port Elm court budget in 2017.", "2017-05-01"),
         _note(4, "The court building in Port Elm was painted.", "2016-01-01"),
+        _note(5, "Tom Vale is a judge who was fired from the Port Elm court in 2018.", "2018-04-01"),
     ]  # fmt: skip
     by_n = {n.n: n for n in notes}
     plan = Plan(identity="a court", why_it_matters="", parts=[
-        PlanPart(heading="Firing", covers="", notes=[1, 3]),
-        PlanPart(heading="Dispute", covers="", notes=[2]),
+        PlanPart(heading="Budget", covers="", notes=[3, 1]),
+        PlanPart(heading="Firing", covers="", notes=[2]),
         PlanPart(heading="Building", covers="", notes=[4]),
+        PlanPart(heading="Who", covers="", notes=[5]),
     ], left_out=[], opening_notes=[])  # fmt: skip
     pairs = cross_pairs(plan.parts, by_n, "Port Elm")
     assert (1, 2) in pairs and all({a, b} != {1, 3} for a, b in pairs)  # same part
+    asked = []
 
     def ask(msgs, model, max_tokens):
         assert model is PairEvents
         parts = msgs[1]["content"].split("Pair ")[1:]
+        asked.extend(parts)
         return PairEvents.model_validate({"pairs": [
-            {"pair": k, "verdict": "one" if "fired" in p and "dispute" in p else "two"}
+            {"pair": k, "verdict": "one" if p.count("fired") >= 2 else "two",
+             "home": "A" if 'A (section "Firing")' in p else "B"}
             for k, p in enumerate(parts, 1)
         ]})  # fmt: skip
 
     report = {"calls": 0}
     gather_events(plan, by_n, "Port Elm", "court", ask, report)
-    # the later telling joins the earlier one's part, right after it; an
-    # emptied part goes
+    assert not any("is a judge" in p for p in asked)  # who someone is never moves
+    # the note joins the section the model names, though it is the later one
     assert [(p.heading, p.notes) for p in plan.parts] == [
-        ("Firing", [1, 2, 3]), ("Building", [4])
+        ("Budget", [3]), ("Firing", [2, 1]), ("Building", [4]), ("Who", [5])
     ]  # fmt: skip
-    assert report["events_moved"] == [[2, 1, "Firing"]]
+    assert report["events_moved"] == [[notes[0].text, notes[1].text, "Firing"]]
