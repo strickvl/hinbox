@@ -396,3 +396,18 @@ def test_notes_about_one_event_are_planned_into_one_part():
 
     gather_events(plan, by_n, "Port Elm", "court", passing, {"calls": 0})
     assert [p.notes for p in plan.parts] == [[3, 1], [2]]
+
+
+def test_an_opening_note_with_more_than_identity_is_also_filed_in_the_body():
+    from src.engine.written_plan import Plan, PlanPart, file_opening_details
+
+    notes = [
+        _note(1, "Tom Vale was a Port Elm soldier from Cedar Falls and a father of two, including a son named Abe.", "2010-01-01"),
+        _note(2, "Tom Vale died in a firefight near Cedar Falls in July 2002.", "2010-01-02"),
+        _note(3, "Tom Vale was a Port Elm soldier.", "2010-01-03"),
+    ]  # fmt: skip
+    by_n = {n.n: n for n in notes}
+    plan = Plan(identity="a Port Elm soldier", why_it_matters="", parts=[
+        PlanPart(heading="Death", covers="", notes=[2])], left_out=[], opening_notes=[1, 3])  # fmt: skip
+    assert file_opening_details(plan, by_n, "Tom Vale") == [1]  # 3 says only who he was
+    assert plan.parts[0].notes == [2, 1]

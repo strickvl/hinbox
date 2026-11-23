@@ -608,6 +608,35 @@ def restore_orphans(plan: Plan, by_n: Dict[int, Any]) -> None:
         best.notes.append(n)
 
 
+def file_opening_details(plan: Plan, by_n: Dict[int, Any], name: str) -> List[int]:
+    """An opening note that holds two or more names, places or numbers the
+    plan's identity and the entity's own name lack also goes into the body
+    part sharing most words with it; the numbers filed. The opening says
+    only what the entity is, so the rest of such a note was written nowhere:
+    on 23 Nov (round 41c) Speer's note "a U.S. Army soldier ... from
+    Albuquerque, N.M., and a father of two, including a son named Tanner"
+    gave the lead one sentence, and the hometown and family left the page."""
+    from src.engine.written_checks import _content, _numbers
+
+    placed = {n for p in plan.parts for n in p.notes}
+    own = {w.lower() for w in re.findall(r"[\w'’-]+", f"{name} {plan.identity}")}
+    filed = []
+    for n in opening_notes(plan):
+        note = by_n.get(n)
+        if note is None or n in placed or not plan.parts:
+            continue
+        caps = {w.lower() for w in re.findall(r"\b[A-Z][\w'’-]+", note.text)[1:]}
+        extra = (caps | _numbers(note.text)) - own
+        if len(extra) < 2:
+            continue
+        words = _content(note.text)
+        best = max(plan.parts, key=lambda p: sum(
+            len(words & _content(by_n[k].text)) for k in p.notes if k in by_n))  # fmt: skip
+        best.notes.append(n)
+        filed.append(n)
+    return filed
+
+
 from src.engine.written_groups import (  # noqa: E402
     GROUPS_NOTE,
     group_notes,
@@ -659,6 +688,7 @@ def make_plan(
     restore_repeats(plan, by_n, name)
     restore_on_topic(plan, by_n, name, what)
     restore_orphans(plan, by_n)
+    opening_filed = file_opening_details(plan, by_n, name)
     restored = sorted({n for p in plan.parts for n in p.notes} - before)
     for p in plan.parts:
         p.notes = list(dict.fromkeys(p.notes))
@@ -688,6 +718,7 @@ def make_plan(
         "identity": plan.identity, "why": plan.why_it_matters,
         "parts": [{"heading": p.heading, "notes": p.notes} for p in plan.parts],
         "opening_notes": opening_notes(plan), "restored": restored,
+        "opening_filed": opening_filed,
         "left_out": [o.model_dump() for o in plan.left_out],
         "conflicts": [c.model_dump() for c in plan.conflicts],
     }  # fmt: skip
