@@ -369,7 +369,8 @@ def test_notes_about_one_event_are_planned_into_one_part():
         asked.extend(parts)
         return PairEvents.model_validate({"pairs": [
             {"pair": k, "verdict": "one" if p.count("fired") >= 2 else "two",
-             "home": "A" if 'A (section "Firing")' in p else "B"}
+             "home": "A" if 'A (section "Firing")' in p else "B",
+             "a_mainly": "yes", "b_mainly": "yes"}
             for k, p in enumerate(parts, 1)
         ]})  # fmt: skip
 
@@ -381,3 +382,17 @@ def test_notes_about_one_event_are_planned_into_one_part():
         ("Budget", [3]), ("Firing", [2, 1]), ("Building", [4]), ("Who", [5])
     ]  # fmt: skip
     assert report["events_moved"] == [[notes[0].text, notes[1].text, "Firing"]]
+
+    # a note mainly about something else stays where it is
+    plan.parts = [PlanPart(heading="Budget", covers="", notes=[3, 1]),
+                  PlanPart(heading="Firing", covers="", notes=[2])]  # fmt: skip
+
+    def passing(msgs, model, max_tokens):
+        parts = msgs[1]["content"].split("Pair ")[1:]
+        return PairEvents.model_validate({"pairs": [
+            {"pair": k, "verdict": "one", "home": "B", "a_mainly": "no", "b_mainly": "yes"}
+            for k, _ in enumerate(parts, 1)
+        ]})  # fmt: skip
+
+    gather_events(plan, by_n, "Port Elm", "court", passing, {"calls": 0})
+    assert [p.notes for p in plan.parts] == [[3, 1], [2]]

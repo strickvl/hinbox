@@ -48,9 +48,16 @@ later or adds its reasons, its outcome or reactions to it.
 - two: different events, or the same kind of thing at different times (two \
 hearings, two rulings, two counts on different days), or one note only \
 mentions the other's event in passing as background to something else.
-When unsure, say "two". For "one", also say which note's section is about that event itself ("A" or "B"); the other note will join it. A section that only mentions the event as background to something later (a plea that names the attack, a trial that names the capture) is not about it. If neither section is about it, give "".
+When unsure, say "two". For "one", also say which note's section is \
+about that event itself ("A" or "B"); the other note will join it. A \
+section that only mentions the event as background to something later \
+(a plea that names the attack, a trial that names the capture) is not \
+about it. If neither section is about it, give "". And say for each note \
+whether it is mainly about that event ("yes"), or mainly about something \
+else and only names the event ("no": a note on a whole program, on a \
+plea, on other lawyers' resignations that mentions the firing).
 
-Name the pair, then events, verdict and home."""
+Name the pair, then events, a_mainly, b_mainly, verdict and home."""
 
 BATCH = 10
 MAX_PAIRS = 60
@@ -60,6 +67,12 @@ class PairEvent(BaseModel):
     model_config = ConfigDict(extra="ignore")
     pair: int = Field(description="The pair's number")
     events: str = Field(default="", description="What event each note is about")
+    a_mainly: str = Field(
+        default="", description="yes: note A is mainly about that event"
+    )
+    b_mainly: str = Field(
+        default="", description="yes: note B is mainly about that event"
+    )
     verdict: str = Field(description="one or two")
     home: str = Field(
         default="", description='"A", "B" or "": the section about that event'
@@ -143,13 +156,21 @@ def gather_events(
                 continue
             a, b = batch[p.pair - 1]
             home = str(p.home or "").strip().strip("\"'").upper()
-            if home in ("A", "B"):
+            # the note that moves must be mainly about the event (round 41b:
+            # the CIA program note, a note on the Cole lawyers and Khadr's
+            # plea each moved for naming it)
+            mainly = {"A": str(p.b_mainly), "B": str(p.a_mainly)}.get(home, "")
+            if mainly.strip().lower().startswith("y"):
                 one.append((a, b) if home == "A" else (b, a))
     log: List[List[Any]] = report.setdefault("events_moved", [])
     moved: set = set()
+    anchors: set = set()
     for stay, go in one:
-        if go in moved or stay in moved:
-            continue  # each note moves once, and never onto a moved note
+        if go in moved or stay in moved or go in anchors:
+            # each note moves once, never onto a moved note, and a note
+            # another has joined stays (round 41b: Mattis's affidavit moved
+            # away from the incidents note that had joined it)
+            continue
         home = next((p for p in plan.parts if stay in p.notes), None)
         away = next((p for p in plan.parts if go in p.notes), None)
         if home is None or away is None or home is away:
@@ -157,5 +178,6 @@ def gather_events(
         away.notes.remove(go)
         home.notes.insert(home.notes.index(stay) + 1, go)
         moved.add(go)
+        anchors.add(stay)
         log.append([by_n[go].text, by_n[stay].text, home.heading])
     plan.parts = [p for p in plan.parts if p.notes]
