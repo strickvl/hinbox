@@ -45,8 +45,8 @@ _YEAR = re.compile(r"\b(?:19|20)\d\d\b")
 # after a word that sets a time, with no year in the sentence
 _BARE_MONTH = re.compile(
     rf"(\b(?i:in|on|as of|by|since|until|through|during|late|early|mid-?|last)\s+|[’']s\s+)"
-    rf"(?i:{_MONTH_RE})(\.?)(\s+\d{{1,2}}(?:\s*(?:and|-|–)\s*\d{{1,2}})?\b)?",
-)
+    rf"(?i:{_MONTH_RE})(?!\w)(\.?)(\s+\d{{1,2}}(?:\s*(?:and|-|–)\s*\d{{1,2}})?\b)?",
+)  # (?!\w): round 47 dated the "May" at the start of a person's name
 # A date that lies ahead of its article: "declarations ... by March 19" in a
 # February 2018 article is March 2018 (round 30 wrote "by March 19, 2017")
 _AHEAD = re.compile(

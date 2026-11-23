@@ -712,6 +712,7 @@ def write_page(
     fold: bool = True,
     events: bool = False,
     opening_details: bool = False,
+    bound: bool = True,
 ) -> Dict[str, Any]:  # fmt: skip
     """The written page for one entity, with its record, or a record with an
     ``error`` and no text. ``approach`` "plan" plans the page and writes it a
@@ -733,7 +734,7 @@ def write_page(
     # 3.22 against 3.47 without it (23 Nov)
     report: Dict[str, Any] = {
         "calls": 0, "approach": approach, "fold": fold, "events": events,
-        "opening_details": opening_details,
+        "opening_details": opening_details, "bound": bound,
     }  # fmt: skip
     notes = page_notes(entity, strikes=strikes)
     report["notes"] = len(notes)

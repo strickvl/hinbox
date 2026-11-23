@@ -97,6 +97,12 @@ def main() -> None:
         help="skip telling once a fact two sentences tell (src/engine/written_fold.py)",
     )
     p.add_argument(
+        "--no-bound",
+        action="store_true",
+        help='keep "In <article month>," on acts the note gives no date for '
+        "(src/engine/written_bound.py)",
+    )
+    p.add_argument(
         "--opening-details",
         action="store_true",
         help="also file an opening note's other facts in the body, off by default "
@@ -174,6 +180,7 @@ def main() -> None:
                 fold=not a.no_fold,
                 events=a.events,
                 opening_details=a.opening_details,
+                bound=not a.no_bound,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs

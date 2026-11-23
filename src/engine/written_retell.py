@@ -137,17 +137,19 @@ def candidates(
         if not own or any(month_years(n.text) for n in own):
             continue
         mine = {n.key for n in cited}
-        scored: List[Tuple[Tuple[int, int], Any]] = []
+        scored: List[Tuple[Tuple[int, int, int], Any]] = []
         for e in pool:
             if e.key in mine or not e.date or str(e.date)[:7] >= month:
                 continue
             if shown_of.get(e.key, e.n if not orig else None) is None:
                 continue
             score = max(_alike(n.text, e.text, name) for n in own)
-            if score and len(told & _plain_words(e.text, name)) >= 2:
-                scored.append(
-                    ((score, -int(str(e.date)[:10].replace("-", "") or 0)), e)
-                )
+            shared = len(told & _plain_words(e.text, name))
+            if score and shared >= 2:
+                # what the sentence tells first (round 47 offered a note on
+                # a suspended sentence, not the one on striking the fine)
+                day = -int(str(e.date)[:10].replace("-", "") or 0)
+                scored.append(((shared, score, day), e))
         if scored:
             scored.sort(key=lambda x: x[0], reverse=True)
             out.append((w, m, own, [e for _, e in scored[:MAX_EARLIER]]))

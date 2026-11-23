@@ -485,6 +485,10 @@ def when_who(
         from src.engine.written_retell import redate_retold
 
         redate_retold(written, by_n, name, ask, report, orig)
+    if report.get("bound", True):  # an undated act: "By <article month>,"
+        from src.engine.written_bound import bound_openers
+
+        bound_openers(written, by_n, name, ask, report, orig)
     questions = {
         id(w): q for w in written
         if not w.dropped and not w.summary and (q := suspect(w, by_n, orig))

@@ -609,3 +609,45 @@ def test_a_bare_month_takes_the_year_of_its_own_months_article():
     own_dates(page, notes)
     assert page[0].text == "In June 2018, Ann Roe said guards wore orange."
     assert page[1].text == "In September, Ann Roe spoke again."  # two years: left
+
+
+def test_a_name_starting_with_a_month_is_not_dated():
+    from src.engine.written_dates import own_dates
+
+    notes = [
+        _note(1, "Ann Roe spoke on Mayra Bell's behalf at Port Elm.", "2016-05-02")
+    ]
+    page = [Written("Ann Roe spoke on Mayra Bell's behalf.", [1], "S")]
+    own_dates(page, notes)
+    assert page[0].text == "Ann Roe spoke on Mayra Bell's behalf."
+
+
+def test_an_undated_act_on_its_article_month_says_by_then():
+    from src.engine.written_bound import Bounds, bound_openers, candidates
+
+    notes = [
+        _note(1, "Tom Vale struck down Ann Roe's $1,000 fine at Port Elm.", "2018-01-15"),
+        _note(2, "Tom Vale said on Tuesday the court would sit.", "2018-01-17"),
+        _note(3, "Ann Roe was moved to Camp Six at Port Elm.", "2018-01-20"),
+    ]  # fmt: skip
+    by_n = {n.n: n for n in notes}
+    fine = Written("In January 2018, Tom Vale struck down Ann Roe's $1,000 fine.", [1], "S")  # fmt: skip
+    said = Written("In January 2018, Tom Vale said the court would sit.", [2], "S")
+    moved = Written("In January 2018, Ann Roe was moved to Camp Six.", [3], "S")
+    assert [c[0] for c in candidates([fine, said, moved], by_n)] == [fine, moved]
+
+    def ask(msgs, model, max_tokens):
+        assert model is Bounds
+        return Bounds.model_validate({"checks": [
+            {"sentence": 1, "told": "older",
+             "text": "By January 2018, Tom Vale had struck down Ann Roe's $1,000 fine."},
+            {"sentence": 2, "told": "older", "text": "By January 2018, Ann Roe was moved to Camp 6."},
+        ]})  # fmt: skip
+
+    report: dict = {}
+    bound_openers([fine, said, moved], by_n, "Port Elm", ask, report)
+    assert (
+        fine.text == "By January 2018, Tom Vale had struck down Ann Roe's $1,000 fine."
+    )
+    assert moved.text.startswith("In January 2018")  # "Six" lost: refused
+    assert [a["done"] for a in report["bound_answers"]] == ["bounded", "refused"]
