@@ -17,6 +17,15 @@ per batch says whether the earlier note reports the very same act and when
 it was; code re-dates the opener only to a month the earlier note's text
 gives ("In November 2017,") or, when it gives none, to the earlier report's
 month as a bound ("By November 2017,"), and cites the earlier note too.
+
+Round 46: on 14 tuning pages (cp) the step was asked 8 times and re-dated
+nothing. On Rishikof's "In January 2018, Rishikof struck down Baker's fine
+...; in February, his office rejected a charge sheet", it took the one most
+alike earlier note (Baker's suspended sentence, a different act) and missed
+the 22 November decision; and it searched only from the first cited note of
+the opener's month, so the charge sheet's note was never looked from. So it
+now looks from every cited note of that month, shows up to ``MAX_EARLIER``
+earlier notes, and the model names the one that reports the same act.
 """
 
 import re
@@ -29,15 +38,19 @@ numbered sentence below opens on the date of the news article its note \
 comes from, though the note does not say when the act happened. An earlier \
 note on the page may have reported the same act.
 
-For each, say in a few words what act the sentence tells and what act the \
-earlier note tells; then answer:
-- same: "yes" only if the earlier note reports the very same act (the same \
-ruling, filing, firing, statement, transfer), not a later step in the same \
-story, a similar act, or a repeat of it; else "no".
-- when: for "yes", the month and year the act happened by the two notes \
+For each, say in a few words what act the sentence opens on and what act \
+each earlier note tells; then answer:
+- same: "yes" only if an earlier note reports the very same act the \
+sentence opens on (the same ruling, filing, firing, statement, transfer), \
+not a later step in the same story, a similar act, or a repeat of it; else \
+"no".
+- earlier: for "yes", the number of that earlier note (E1, E2, ...: give 1, \
+2, ...).
+- when: for "yes", the month and year the act happened by the notes \
 ("November 2017"), or "unknown"."""
 
 BATCH = 8
+MAX_EARLIER = 3
 
 
 class Retold(BaseModel):
@@ -45,6 +58,7 @@ class Retold(BaseModel):
     sentence: int = Field(description="The sentence's number")
     acts: str = Field(default="", description="What act each tells, in a few words")
     same: str = Field(description='"yes" or "no"')
+    earlier: int = Field(default=0, description="For yes: the earlier note's number")
     when: str = Field(default="", description='"Month YYYY" or "unknown"')
 
 
@@ -72,11 +86,11 @@ def _alike(a: str, b: str, name: str) -> int:
 def candidates(
     written: Sequence[Any], by_n: Dict[int, Any], name: str,
     orig: Optional[Dict[str, Any]] = None,
-) -> List[Tuple[Any, Any, Any, Any]]:  # fmt: skip
-    """(sentence, opener match, cited note, earlier note) for each kept
-    sentence that opens on a cited note's article month, whose notes' text
-    gives no month and year, and that an earlier-dated uncited note is
-    alike with."""
+) -> List[Tuple[Any, Any, List[Any], List[Any]]]:  # fmt: skip
+    """(sentence, opener match, its cited notes of the opener's month, up to
+    ``MAX_EARLIER`` earlier notes, most alike first) for each kept sentence
+    that opens on a cited note's article month, whose notes' text gives no
+    month and year, and that an earlier-dated uncited note is alike with."""
     from src.engine.written_when_who import _MONTHS, _OPENER, month_years, sources_of
 
     orig = orig or {}
@@ -96,29 +110,31 @@ def candidates(
         if not own or any(month_years(n.text) for n in own):
             continue
         mine = {n.key for n in cited}
-        best: Optional[Tuple[int, int, Any]] = None
+        scored: List[Tuple[Tuple[int, int], Any]] = []
         for e in pool:
             if e.key in mine or not e.date or str(e.date)[:7] >= month:
                 continue
             if shown_of.get(e.key, e.n if not orig else None) is None:
                 continue
-            score = _alike(own[0].text, e.text, name)
-            key = (score, -int(str(e.date)[:10].replace("-", "") or 0))
-            if score and (best is None or key > best[:2]):
-                best = (key[0], key[1], e)
-        if best is not None:
-            out.append((w, m, own[0], best[2]))
+            score = max(_alike(n.text, e.text, name) for n in own)
+            if score:
+                scored.append(
+                    ((score, -int(str(e.date)[:10].replace("-", "") or 0)), e)
+                )
+        if scored:
+            scored.sort(key=lambda x: x[0], reverse=True)
+            out.append((w, m, own, [e for _, e in scored[:MAX_EARLIER]]))
     return out
 
 
 def _messages(
-    todo: Sequence[Tuple[Any, Any, Any, Any]], name: str
+    todo: Sequence[Tuple[Any, Any, List[Any], List[Any]]], name: str
 ) -> List[Dict[str, str]]:
-    parts = [
-        f"Sentence {i}: {w.text}\n  Its note [{own.date}]: {own.text}\n"
-        f"  Earlier note [{e.date}]: {e.text}"
-        for i, (w, _, own, e) in enumerate(todo, 1)
-    ]
+    parts = []
+    for i, (w, _, own, earlier) in enumerate(todo, 1):
+        lines = [f"  Its note [{n.date}]: {n.text}" for n in own]
+        lines += [f"  E{k} [{e.date}]: {e.text}" for k, e in enumerate(earlier, 1)]
+        parts.append(f"Sentence {i}: {w.text}\n" + "\n".join(lines))
     return [
         {"role": "system", "content": RETELL.format(name=name)},
         {"role": "user", "content": "\n\n".join(parts)},
@@ -148,9 +164,13 @@ def redate_retold(
         for c in reply.checks or []:
             if not 1 <= c.sentence <= len(batch):
                 continue
-            w, m, own, e = batch[c.sentence - 1]
+            w, m, _, earlier = batch[c.sentence - 1]
             if not str(c.same).strip().lower().startswith("y") or w.dropped:
                 continue
+            k = c.earlier or (1 if len(earlier) == 1 else 0)
+            if not 1 <= k <= len(earlier):
+                continue  # which earlier note is unsaid
+            e = earlier[k - 1]
             said = re.search(
                 r"\b(" + "|".join(_MONTHS) + r")\s+((?:19|20)\d\d)\b", str(c.when or "")
             )

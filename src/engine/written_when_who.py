@@ -93,13 +93,14 @@ def _dated(note: Any) -> str:
 
 
 def _messages(
-    batch: Sequence[Any], by_n: Dict[int, Any], name: str
-) -> List[Dict[str, str]]:
+    batch: Sequence[Any], by_n: Dict[int, Any], name: str,
+    questions: Optional[Dict[int, str]] = None,
+) -> List[Dict[str, str]]:  # fmt: skip
     parts = []
     for i, w in enumerate(batch, 1):
         shown = [by_n[n] for n in w.notes[:MAX_NOTES] if n in by_n]
         lines = "\n".join(f"  - [{_dated(n)}] {n.text[:NOTE_CHARS]}" for n in shown)
-        ask = suspect(w, by_n)
+        ask = (questions or {}).get(id(w)) or suspect(w, by_n)
         parts.append(f"Sentence {i}: {w.text}\nQuestion: {ask}\nIts notes:\n{lines}")
     return [
         {"role": "system", "content": WHEN_WHO.format(name=name)},
@@ -249,7 +250,7 @@ def _dates_this(rest: str, notes_text: str, mo: str, yr: str, name: str) -> bool
     return False
 
 
-def suspect(w: Any, by_n: Dict[int, Any]) -> str:
+def suspect(w: Any, by_n: Dict[int, Any], orig: Optional[Dict[str, Any]] = None) -> str:
     """The question code asks about ``w``'s dates, "" when it has none: a
     year its notes' text never gives while giving others ("May 2015" against
     a note's "May and July 2003"; "In June 2017, he was resettled" from a
@@ -283,6 +284,64 @@ def suspect(w: Any, by_n: Dict[int, Any]) -> str:
         )
     if _THAT_TIME.match(w.text):
         return 'It opens with "That ...": which time do its notes give? Name it.'
+    cited = sources_of(w, by_n, orig or {})
+    loose = _loose_months(w, cited)
+    if loose:
+        return (
+            f"The sentence's {' and '.join(loose)} is in no note's text and is no "
+            "note's article month. Which time do its notes give for what it dates?"
+        )
+    inner = _inner_year(w, cited)
+    if inner:
+        return (
+            f"The sentence opens on {inner} for when something was said, but its "
+            f"note puts {inner} on what was said or done, in an article from "
+            "later. Does it date the saying? If not, take it off the opening and "
+            "keep it with what it dates."
+        )
+    return ""
+
+
+def _loose_months(w: Any, cited: Sequence[Any]) -> List[str]:
+    """ "February 2014" when no cited note's text names February at all and
+    no cited article is from then: round 45's CIA page opened "In February
+    2014, Rick Kammen accused the CIA" on notes from April 2014 and April
+    2015 that give no year, so no other rule asked (February 2014 was
+    another of his statements). A month the note names without a year ("In
+    September," in an April article) is the date pass's, and is left."""
+    text = " ".join(n.text for n in cited)
+    arts = {str(n.date or "")[:7] for n in cited}
+    return [
+        f"{mo} {yr}" for mo, yr in sorted(month_years(w.text))
+        if f"{yr}-{_MONTHS.index(mo) + 1:02d}" not in arts
+        and not re.search(rf"\b(?:{mo}|{mo[:3]}\.|{mo[:4]}\.)(?!\w)", text)
+    ]  # fmt: skip
+
+
+_YEAR_OPENER = re.compile(
+    r"^\W*(?:In|On)\s+(?:(?:" + "|".join(_MONTHS) + r")\b\.?(?:\s+\d{1,2})?,?\s+)?"
+    r"((?:19|20)\d\d),"
+)
+
+
+def _inner_year(w: Any, cited: Sequence[Any]) -> str:
+    """The opener's year when the sentence tells something said, no cited
+    article is from that year, and a cited note puts the year on what was
+    said, after its saying word in the same sentence: round 44's "In 2003,
+    agent Jocelyn Dillard testified that she questioned Khadr" from a May
+    2010 note that "she ... interrogated Khadr ... in 2003" (the year is in
+    the note, so the other rules pass it)."""
+    m = _YEAR_OPENER.match(w.text)
+    if not m or not _SAYS_IN.search(w.text[m.end() :]):
+        return ""
+    yr = m.group(1)
+    if any(str(n.date or "")[:4] == yr for n in cited):
+        return ""  # said that year: fine
+    for n in cited:
+        for sent in re.split(r"(?<=[.!?])\s+", n.text):
+            at = re.search(rf"\b{yr}\b", sent)
+            if at and _SAYS_IN.search(sent[: at.start()]):
+                return yr
     return ""
 
 
@@ -341,6 +400,8 @@ def usable_fix(
         if op == "equal":
             continue
         for x in (x for x in a[i1:i2] if x not in b[j1:j2]):
+            if b.count(x) >= a.count(x):
+                continue  # moved, not taken out ("In 2003, she testified")
             if _SAYING.match(x):
                 return False
             low = x.lower()
@@ -424,12 +485,19 @@ def when_who(
         from src.engine.written_retell import redate_retold
 
         redate_retold(written, by_n, name, ask, report, orig)
-    todo = [w for w in written if not w.dropped and not w.summary and suspect(w, by_n)]
+    questions = {
+        id(w): q for w in written
+        if not w.dropped and not w.summary and (q := suspect(w, by_n, orig))
+    }  # fmt: skip
+    todo = [w for w in written if id(w) in questions]
     report["when_who_asked"] = report.get("when_who_asked", 0) + len(todo)
+    # every question with the model's answer and what code did (round 46:
+    # "asked and left" looked the same as "never asked")
+    answers: List[Dict[str, str]] = report.setdefault("when_who_answers", [])
     for start in range(0, len(todo), BATCH):
         batch = todo[start : start + BATCH]
         try:
-            reply = ask(_messages(batch, by_n, name), WhenWhoChecks, 4096)
+            reply = ask(_messages(batch, by_n, name, questions), WhenWhoChecks, 4096)
         except Exception as exc:
             report.setdefault("errors", []).append(f"when_who: {str(exc)[:200]}")
             continue
@@ -438,14 +506,21 @@ def when_who(
             if not 1 <= c.sentence <= len(batch):
                 continue
             w = batch[c.sentence - 1]
-            if _first(c.starts_with) != _first(w.text):
-                continue  # the answer is about another sentence
             when = str(c.when or "").strip().lower()
             who = str(c.who or "").strip().lower()
+            entry = {
+                "sentence": w.text, "question": questions[id(w)], "when": when,
+                "who": who, "problem": str(c.problem or "")[:300],
+                "fixed": str(c.fixed or "").strip(), "done": "left",
+            }  # fmt: skip
+            answers.append(entry)
+            if _first(c.starts_with) != _first(w.text):
+                entry["done"] = "other sentence"
+                continue  # the answer is about another sentence
             named = _name_that_time(w, c, by_n)
             if named:
                 log.append([w.text, named, str(c.problem or "")[:200]])
-                w.text = named
+                w.text, entry["done"] = named, "named"
                 continue
             if when != "wrong" and who != "wrong":
                 continue
@@ -468,6 +543,7 @@ def when_who(
                 w.text, fix, sources, name, names, derived, wrong, article_years
             ):
                 log.append([w.text, fix, problem])
-                w.text = fix
+                w.text, entry["done"] = fix, "mended"
             else:
                 flagged.append([w.text, fix, problem])
+                entry["done"] = "fix refused"

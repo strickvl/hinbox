@@ -455,14 +455,21 @@ def test_a_sentence_dated_by_a_later_retelling_takes_the_earlier_report():
     )
     dated = Written("In November 2017, Ann Roe was held in contempt.", [3], "S")
     found = candidates([w, dated], by_n, "Port Elm")
-    assert [(x[0].text, x[3].n) for x in found] == [(w.text, 2)]
+    assert [(x[0].text, [e.n for e in x[3]]) for x in found] == [(w.text, [2, 3])]
 
     def ask(msgs, model, max_tokens):
-        assert (
-            model is RetoldChecks and "Earlier note [2017-11-22]" in msgs[1]["content"]
-        )
+        assert model is RetoldChecks and "E1 [2017-11-22]" in msgs[1]["content"]
         return RetoldChecks.model_validate(
-            {"checks": [{"sentence": 1, "same": "yes", "when": "November 2017"}]}
+            {
+                "checks": [
+                    {
+                        "sentence": 1,
+                        "same": "yes",
+                        "earlier": 1,
+                        "when": "November 2017",
+                    }
+                ]
+            }
         )
 
     report = {}
@@ -503,3 +510,67 @@ def test_writers_see_which_notes_give_no_date_of_their_own():
     )
     assert block.splitlines()[1].startswith("N2 (2018-01-15): ")
     assert UNDATED in _note_line(undated) and UNDATED not in _note_line(dated)
+
+
+def test_round_46_date_questions_answers_and_retell_choices():
+    from src.engine.written_retell import RetoldChecks, candidates, redate_retold
+    from src.engine.written_when_who import (
+        WhenWhoChecks,
+        suspect,
+        usable_fix,
+        when_who,
+    )
+
+    by_n = {
+        1: _note(1, "Lawyer Tom Vale accused the Port Elm agency of lying to courts.", "2014-04-02"),
+        2: _note(2, "Ann Roe testified that she questioned Sam Lee at the Port Elm camp in 2003.", "2010-05-04"),
+        3: _note(3, "In September, Tom Vale filed a motion.", "2014-04-02"),
+    }  # fmt: skip
+    # a month no note names and no note's article is from
+    loose = Written("In February 2014, Tom Vale accused the agency of lying.", [1], "S")
+    assert "February 2014" in suspect(loose, by_n)
+    assert suspect(Written("In April 2014, Tom Vale accused it.", [1], "S"), by_n) == ""
+    # a month the note names without a year is the date pass's
+    assert suspect(Written("In September 2013, Tom Vale filed a motion.", [3], "S"), by_n) == ""  # fmt: skip
+    # a year the note puts on what was said, not on the saying
+    inner = Written("In 2003, Ann Roe testified that she questioned Sam Lee.", [2], "S")
+    assert "2003" in suspect(inner, by_n)
+    moved = "Ann Roe testified that she questioned Sam Lee in 2003."
+    assert usable_fix(inner.text, moved, [by_n[2].text], "Port Elm", [])
+
+    def ask(msgs, model, max_tokens):
+        return WhenWhoChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": "In February 2014", "when": "right", "who": "right"},
+            {"sentence": 2, "starts_with": "In 2003, Ann", "when": "wrong", "who": "right",
+             "problem": "the year is the questioning's", "fixed": moved},
+        ]})  # fmt: skip
+
+    report: dict = {}
+    when_who([loose, inner], list(by_n.values()), "Port Elm", ask, report)
+    assert inner.text == moved
+    assert [a["done"] for a in report["when_who_answers"]] == ["left", "mended"]
+
+    # the retell step looks from each note of the opener's month and the
+    # model names which earlier note reports the act
+    notes = [
+        _note(4, "Tom Vale struck down Ann Roe's $1,000 fine for contempt at the Port Elm court.", "2018-01-15"),
+        _note(5, "Tom Vale suspended Ann Roe's 21-day contempt sentence at the Port Elm court.", "2017-11-03"),
+        _note(6, "Tom Vale on Wednesday struck down the $1,000 contempt fine of Ann Roe.", "2017-11-22"),
+    ]  # fmt: skip
+    rb = {n.n: n for n in notes}
+    w = Written(
+        "In January 2018, Tom Vale struck down Ann Roe's $1,000 fine.", [4], "S"
+    )
+    ((_, _, own, earlier),) = candidates([w], rb, "Port Elm")
+    assert [n.n for n in own] == [4] and {e.n for e in earlier} == {5, 6}
+    pick = 1 + [e.n for e in earlier].index(6)
+
+    def retell(msgs, model, max_tokens):
+        assert model is RetoldChecks and "E2 [" in msgs[1]["content"]
+        return RetoldChecks.model_validate({"checks": [
+            {"sentence": 1, "same": "yes", "earlier": pick, "when": "November 2017"}]})  # fmt: skip
+
+    report = {}
+    redate_retold([w], rb, "Port Elm", retell, report)
+    assert w.text == "By November 2017, Tom Vale struck down Ann Roe's $1,000 fine."
+    assert w.notes == [4, 6]
