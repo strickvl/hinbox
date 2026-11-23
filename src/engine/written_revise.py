@@ -80,17 +80,22 @@ def _swollen(old: str, new: str) -> bool:
     return len(new.split()) > len(old.split()) or any(q in new for q in '"“”')
 
 
+def _note_line(note: Note) -> str:
+    """A note as the rewrite sees it, marked when it gives no date of its
+    own (``section_block()``)."""
+    from src.engine.written_page import _A_YEAR, UNDATED
+
+    mark = "" if _A_YEAR.search(note.text) or not note.date else f"; {UNDATED}"
+    return f"  - [{note.date or 'no date'}{mark}] {note.text[:CHECK_NOTE_CHARS]}"
+
+
 def revise_messages(
     batch: Sequence[Written], notes: Sequence[Note], name: str
 ) -> List[Dict[str, str]]:
     by_n = {n.n: n for n in notes}
     parts = []
     for i, w in enumerate(batch, 1):
-        lines = "\n".join(
-            f"  - [{by_n[n].date or 'no date'}] {by_n[n].text[:CHECK_NOTE_CHARS]}"
-            for n in w.notes
-            if n in by_n
-        )
+        lines = "\n".join(_note_line(by_n[n]) for n in w.notes if n in by_n)
         problem = _PROBLEMS.get(w.dropped, w.dropped.removeprefix("check: "))
         parts.append(f"Sentence {i}: {w.text}\nProblem: {problem}\nIts notes:\n{lines}")
     return [
@@ -192,7 +197,7 @@ def fill_unused(
     from src.engine.written_groups import place_after, sentence_when
     from src.engine.written_page import (
         close_quotes,
-        notes_block,
+        section_block,
         split_sentences,
         strip_refs,
     )
@@ -221,7 +226,7 @@ def fill_unused(
         body = "\n".join(f"- {w.text}" for w in mine if not w.dropped) or "(empty)"
         msgs = [
             {"role": "system", "content": FILL.format(what=what, name=name, heading=heading)},
-            {"role": "user", "content": f"The section:\n{body}\n\nNotes it does not use yet:\n{notes_block(unused[:8])}"},
+            {"role": "user", "content": f"The section:\n{body}\n\nNotes it does not use yet:\n{section_block(unused[:8])}"},
         ]  # fmt: skip
         try:
             reply = ask(msgs, Fill, 2048)

@@ -488,3 +488,18 @@ def test_a_condensed_note_is_read_through_its_own_notes():
     assert (
         w.text == "In July 2017, prosecutors told the judge a secret court was needed."
     )
+
+
+def test_writers_see_which_notes_give_no_date_of_their_own():
+    from src.engine.written_page import UNDATED, section_block
+    from src.engine.written_revise import _note_line
+
+    undated = _note(1, "Tom Vale struck down the fine.", "2018-01-15")
+    dated = _note(2, "In November 2017, Tom Vale struck down the fine.", "2018-01-15")
+    block = section_block([undated, dated])
+    assert (
+        block.splitlines()[0]
+        == f"N1 (2018-01-15; {UNDATED}): Tom Vale struck down the fine."
+    )
+    assert block.splitlines()[1].startswith("N2 (2018-01-15): ")
+    assert UNDATED in _note_line(undated) and UNDATED not in _note_line(dated)

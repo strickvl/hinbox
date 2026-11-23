@@ -353,7 +353,7 @@ def write_drawn(
     and checked once more for repeats across the sections it joined."""
     from src.engine.written_checks import drop_neighbours, drop_repeats, summary_check
     from src.engine.written_clauses import tidy_page
-    from src.engine.written_page import WBody, WPage, WParagraph, notes_block
+    from src.engine.written_page import WBody, WPage, WParagraph, section_block
     from src.engine.written_plan import write_from_plan
     from src.engine.written_revise import unwritten
     from src.utils.llm import set_model_params
@@ -366,7 +366,7 @@ def write_drawn(
             set_model_params({"temperature": 0.7, "seed": k})
         try:
             page = write_from_plan(
-                plan, shown, name, what, words, ask, report, notes_block,
+                plan, shown, name, what, words, ask, report, section_block,
                 WPage, WBody, WParagraph,
             )  # fmt: skip
         finally:

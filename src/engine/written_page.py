@@ -267,6 +267,25 @@ def notes_block(notes: Sequence[Note]) -> str:
     )
 
 
+_A_YEAR = re.compile(r"\b(?:19|20)\d\d\b")
+UNDATED = "it gives no date of its own: date only what was said or reported then"
+
+
+def section_block(notes: Sequence[Note]) -> str:
+    """``notes_block()`` for the writers, with each note whose text names no
+    year marked as giving no date of its own. On 23 Nov a checker found 27
+    of 38 false statements on 30 written pages were dates, most the
+    article's month put on an act its note retells ("In January 2018,
+    Rishikof struck down the fine", decided in November 2017): the writer's
+    rules already said not to, so each such note now says it at its place."""
+    return "\n".join(
+        f"N{n.n} ({n.date or 'no date'}"
+        f"{'' if _A_YEAR.search(n.text) or not n.date else '; ' + UNDATED}"
+        f"{', ' + n.heading if n.heading else ''}): {n.text}"
+        for n in notes
+    )
+
+
 # --- replies --------------------------------------------------------------
 
 
@@ -739,7 +758,7 @@ def write_page(
         page = None
         if plan is not None and draws <= 1:
             page = write_from_plan(
-                plan, shown, name, what, words, ask, report, notes_block,
+                plan, shown, name, what, words, ask, report, section_block,
                 WPage, WBody, WParagraph,
             )  # fmt: skip
         if plan is None or (draws <= 1 and page is None):
