@@ -763,7 +763,7 @@ def write_page(
     if check and when_who:  # dates and actors, on the page as shown
         from src.engine.written_when_who import when_who as check_when_who
 
-        check_when_who(written, shown, name, ask, report)
+        check_when_who(written, shown, name, ask, report, notes)
     kept = [w for w in written if not w.dropped]
     by_n = {n.n: n for n in shown}
     used = {k for w in kept for n in w.notes for k in by_n[n].keys}

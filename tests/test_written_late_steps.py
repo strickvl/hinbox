@@ -439,3 +439,52 @@ def test_an_opener_on_the_article_month_takes_the_month_its_note_gives():
     # a month the notes give only another of that year is asked about
     other = Written("In July 2018, Tom Vale lost the tapes.", [1], "S")
     assert "July 2018" in suspect(other, by_n)
+
+
+def test_a_sentence_dated_by_a_later_retelling_takes_the_earlier_report():
+    from src.engine.written_retell import RetoldChecks, candidates, redate_retold
+
+    notes = [
+        _note(1, "Tom Vale struck down Ann Roe's $1,000 fine for contempt at the Port Elm court.", "2018-01-15"),
+        _note(2, "Tom Vale on Wednesday struck down the $1,000 contempt fine of Ann Roe.", "2017-11-22"),
+        _note(3, "Ann Roe was held in contempt at the Port Elm court.", "2017-11-01"),
+    ]  # fmt: skip
+    by_n = {n.n: n for n in notes}
+    w = Written(
+        "In January 2018, Tom Vale struck down Ann Roe's $1,000 fine.", [1], "S"
+    )
+    dated = Written("In November 2017, Ann Roe was held in contempt.", [3], "S")
+    found = candidates([w, dated], by_n, "Port Elm")
+    assert [(x[0].text, x[3].n) for x in found] == [(w.text, 2)]
+
+    def ask(msgs, model, max_tokens):
+        assert (
+            model is RetoldChecks and "Earlier note [2017-11-22]" in msgs[1]["content"]
+        )
+        return RetoldChecks.model_validate(
+            {"checks": [{"sentence": 1, "same": "yes", "when": "November 2017"}]}
+        )
+
+    report = {}
+    redate_retold([w, dated], by_n, "Port Elm", ask, report)
+    # the earlier note's text gives no month, so its report's month bounds it
+    assert w.text == "By November 2017, Tom Vale struck down Ann Roe's $1,000 fine."
+    assert w.notes == [1, 2] and len(report["retold"]) == 1
+
+
+def test_a_condensed_note_is_read_through_its_own_notes():
+    from src.engine.written_page import Note
+    from src.engine.written_when_who import retime_openers
+
+    a = _note(11, "In July 2017, prosecutors told the Port Elm judge a secret court was needed.", "2017-08-02")  # fmt: skip
+    b = _note(12, "In March 2016 the Port Elm site was closed, and in May 2018 it was razed.", "2018-06-01")  # fmt: skip
+    joined = Note(n=1, key="j", text=a.text + " " + b.text, articles=["a11", "a12"],
+                  date="2017-08-02", keys=["k11", "k12"])  # fmt: skip
+    w = Written("In August 2017, prosecutors told the judge a secret court was needed.", [1], "S")  # fmt: skip
+    report = {}
+    retime_openers([w], {1: joined}, report, "Port Elm")  # three months: no change
+    assert w.text.startswith("In August 2017")
+    retime_openers([w], {1: joined}, report, "Port Elm", {"k11": a, "k12": b})
+    assert (
+        w.text == "In July 2017, prosecutors told the judge a secret court was needed."
+    )

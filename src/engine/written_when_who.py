@@ -26,7 +26,7 @@ refused, goes under ``report["when_who_flagged"]``; every mend under
 import difflib
 import re
 from datetime import date
-from typing import Any, Callable, Dict, List, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -177,11 +177,28 @@ _OPENER = re.compile(
 )
 
 
+def sources_of(w: Any, by_n: Dict[int, Any], orig: Dict[str, Any]) -> List[Any]:
+    """The page's own notes behind ``w``'s cited notes: a condensed note
+    joins several articles' notes, so its text holds several dates and its
+    date is one article's (round 43: on the CIA page, condensed to 63 notes,
+    "In August 2017, prosecutors argued" was not re-dated though its note
+    says July 2017). Without ``orig``, the cited notes themselves."""
+    out: List[Any] = []
+    for n in w.notes:
+        note = by_n.get(n)
+        if note is None:
+            continue
+        keys = [k for k in (note.keys or [note.key]) if k in orig]
+        out += [orig[k] for k in keys] if keys else [note]
+    return out
+
+
 def retime_openers(
-    written: List[Any], by_n: Dict[int, Any], report: Dict[str, Any], name: str = ""
-) -> None:
-    """A sentence that opens on the month of a cited note's article, which
-    no cited note's text gives, while the cited notes' text gives exactly one
+    written: List[Any], by_n: Dict[int, Any], report: Dict[str, Any], name: str = "",
+    orig: Optional[Dict[str, Any]] = None,
+) -> None:  # fmt: skip
+    """A sentence that opens on the month of a source note's article, which
+    no source note's text gives, while that article's note gives exactly one
     month and year, opens on that one instead. Code, no call: the writer put
     the article's date on what the note itself dates."""
     log: List[List[str]] = report.setdefault("openers_retimed", [])
@@ -191,13 +208,15 @@ def retime_openers(
         m = _OPENER.match(w.text)
         if not m:
             continue
-        cited = [by_n[n] for n in w.notes if n in by_n]
-        text = " ".join(n.text for n in cited)
-        noted = month_years(text)
+        cited = sources_of(w, by_n, orig or {})
         mo, yr = m.group(2), m.group(4)
-        articles = {str(n.date or "")[:7] for n in cited}
         month_no = f"{_MONTHS.index(mo) + 1:02d}"
-        if (mo, yr) in noted or f"{yr}-{month_no}" not in articles or len(noted) != 1:
+        if (mo, yr) in month_years(" ".join(n.text for n in cited)):
+            continue
+        own = [n for n in cited if str(n.date or "")[:7] == f"{yr}-{month_no}"]
+        text = " ".join(n.text for n in own)
+        noted = month_years(text)
+        if not own or len(noted) != 1:
             continue
         ((nmo, nyr),) = noted
         if not _dates_this(w.text[m.end() :], text, nmo, nyr, name):
@@ -382,7 +401,7 @@ def _first(text: str) -> str:
 
 def when_who(
     written: List[Any], notes: Sequence[Any], name: str,
-    ask: Callable[..., Any], report: Dict[str, Any],
+    ask: Callable[..., Any], report: Dict[str, Any], originals: Sequence[Any] = (),
 ) -> None:  # fmt: skip
     """Mend kept sentences the model finds misdated or given to the wrong
     actor, when the mend passes ``usable_fix()``; nothing is dropped, and a
@@ -398,7 +417,13 @@ def when_who(
     for before, after in report.get("own_dates") or []:
         added[after] = [x for x in _words(after) if x not in _words(before)]
     years = re.compile(r"\b(?:19|20)\d\d\b")
-    retime_openers(written, by_n, report, name)
+    # ``originals``: the page's notes before condensing, by key
+    orig = {n.key: n for n in originals}
+    retime_openers(written, by_n, report, name, orig)
+    if report.get("retell", True):  # dated by a later article's retelling
+        from src.engine.written_retell import redate_retold
+
+        redate_retold(written, by_n, name, ask, report, orig)
     todo = [w for w in written if not w.dropped and not w.summary and suspect(w, by_n)]
     report["when_who_asked"] = report.get("when_who_asked", 0) + len(todo)
     for start in range(0, len(todo), BATCH):
