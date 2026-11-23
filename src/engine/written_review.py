@@ -184,6 +184,7 @@ def _other_account(a: Written) -> str:
 def _mark(
     kept: Sequence[Written], pair: Tuple[int, int], v: PairVerdict, name: str,
     stats: Dict[str, Any], marked: Dict[int, Tuple[str, Written]],
+    folds: List[Tuple[Written, Written]],
 ) -> None:  # fmt: skip
     """Act on one verdict: drop a "same" B that adds nothing, mark one that
     adds something for a trim, and a "conflict" B for another account."""
@@ -201,7 +202,9 @@ def _mark(
         if people_b - people_a:
             # Round 22: a Karachi trim kept "handed al Baluchi and bin
             # Attash over to the CIA" and lost al Baluchi's arrest, which
-            # the first sentence (about bin Attash) never told
+            # the first sentence (about bin Attash) never told; a fold must
+            # keep every person of both (``written_fold.py``)
+            folds.append((a, b))
             return
         if _adds_nothing(b, a, name):
             b.dropped = "repeats an earlier sentence of the page"
@@ -230,6 +233,7 @@ def review_page(
     stats = {"pairs": len(pairs), "same": 0, "conflict": 0, "dropped": 0}
     report[key] = stats
     marked: Dict[int, Tuple[str, Written]] = {}  # id -> (verdict, first sentence)
+    folds: List[Tuple[Written, Written]] = []  # (earlier, later) to tell once
     for start in range(0, len(pairs), BATCH):
         batch = pairs[start : start + BATCH]
         try:
@@ -240,9 +244,9 @@ def review_page(
         report["calls"] = report.get("calls", 0) + 1
         for v in reply.pairs or []:
             if 1 <= v.pair <= len(batch):
-                _mark(kept, batch[v.pair - 1], v, name, stats, marked)
+                _mark(kept, batch[v.pair - 1], v, name, stats, marked, folds)
     if not marked:
-        return written
+        return _fold(written, folds, notes, name, ask, report, stats)
     out = revise(
         written, notes, name, ask, report,
         pick=lambda w: id(w) in marked, tag="reviewed",
@@ -262,5 +266,22 @@ def review_page(
         if not ok:
             w.dropped = ""
             restored += 1
+            if kind == "same":  # the trim lost something: tell both at once
+                folds.append((first, w))
     stats["restored"] = restored
+    return _fold(out, folds, notes, name, ask, report, stats)
+
+
+def _fold(
+    written: List[Written], folds: List[Tuple[Written, Written]],
+    notes: Sequence[Note], name: str, ask: Ask, report: Dict[str, Any],
+    stats: Dict[str, Any],
+) -> List[Written]:  # fmt: skip
+    from src.engine.written_fold import fold_pairs
+
+    if not folds or not report.get("fold", True):
+        return written
+    before = len(report.get("folded") or [])
+    out = fold_pairs(written, folds, notes, name, ask, report)
+    stats["folded"] = len(report.get("folded") or []) - before
     return out

@@ -112,6 +112,7 @@ def test_the_captor_rule_accepts_him_on_the_captives_own_page():
 
 def test_the_page_review_judges_pairs_code_picks_and_rewrites_small():
     from src.engine.written_checks import SentenceChecks
+    from src.engine.written_fold import Fold, Folds
     from src.engine.written_review import Verdicts, candidate_pairs, review_page
     from src.engine.written_revise import Revisions
 
@@ -162,6 +163,8 @@ def test_the_page_review_judges_pairs_code_picks_and_rewrites_small():
                         {"sentence": k, "starts_with": "Police held Tom", "text": ""}
                     )
             return Revisions.model_validate({"revisions": revs})
+        if model is Folds:  # telling both at once is given up too
+            return Folds(folds=[Fold(pair=1, text="")])
         return SentenceChecks.model_validate({"checks": [
             {"sentence": 1, "starts_with": other, "problem": "none", "verdict": "supported"}]})  # fmt: skip
 

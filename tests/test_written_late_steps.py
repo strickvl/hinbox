@@ -291,3 +291,51 @@ def test_the_review_judges_every_pair_in_batches():
     assert len(calls) > 1 and max(calls) <= wr.BATCH  # more pairs than one call takes
     assert report["review_final"]["dropped"] == 1
     assert [w.text for w in res if not w.dropped].count(twice) == 1
+
+
+def test_a_fact_told_twice_with_a_detail_each_is_told_once():
+    from src.engine.written_checks import SentenceChecks
+    from src.engine.written_fold import Fold, Folds, fold_pairs, foldable, keeps_both
+
+    notes = [
+        _note(1, "On Feb. 5, 2018, Tom Vale was fired as head of the Port Elm court.", "2018-02-06"),
+        _note(2, "Ann Roe signed the order removing Tom Vale on Feb. 3, 2018.", "2018-02-07"),
+    ]  # fmt: skip
+    a = Written("On February 5, 2018, Tom Vale was fired as head of the court.", [1], "Court", 1)  # fmt: skip
+    b = Written("Ann Roe signed the order removing Vale as head of the court.", [2], "Later", 2)  # fmt: skip
+    good = "On February 5, 2018, Tom Vale was fired as head of the court, by an order Ann Roe signed."
+    assert keeps_both(good, a.text, b.text)
+    assert not keeps_both(
+        "Tom Vale was fired as head of the court.", a.text, b.text
+    )  # lost the date and Roe
+    # a speaker or a group's members are never folded (round 38)
+    assert not foldable(a, Written("A spokesman said Vale was fired.", [2], "S"))
+    assert not foldable(a, Written("Judges, including Vale, were fired.", [2], "S"))
+
+    def ask(msgs, model, max_tokens):
+        if model is Folds:
+            assert (
+                "A: On February 5" in msgs[1]["content"]
+                and "Feb. 3, 2018" in msgs[1]["content"]
+            )
+            return Folds(folds=[Fold(pair=1, text=good)])
+        return SentenceChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": good, "problem": "none", "verdict": "supported"}]})  # fmt: skip
+
+    report = {"calls": 0}
+    out = fold_pairs([a, b], [(a, b)], notes, "Port Elm", ask, report)
+    kept = [w for w in out if not w.dropped]
+    assert [w.text for w in kept] == [good] and kept[0].notes == [1, 2]
+    assert kept[0].section == "Court" and report["folded"] == [[good, a.text, b.text]]
+
+    # a fold the check refuses leaves both sentences as they were
+    a2, b2 = (Written(w.text, w.notes, w.section, w.para) for w in (a, b))
+
+    def refuse(msgs, model, max_tokens):
+        if model is Folds:
+            return Folds(folds=[Fold(pair=1, text=good)])
+        return SentenceChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": good, "problem": "Roe did not sign it", "verdict": "wrong"}]})  # fmt: skip
+
+    out = fold_pairs([a2, b2], [(a2, b2)], notes, "Port Elm", refuse, {"calls": 0})
+    assert [w.text for w in out if not w.dropped] == [a.text, b.text]

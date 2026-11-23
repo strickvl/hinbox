@@ -92,6 +92,11 @@ def main() -> None:
         help="skip the last check of dates and actors (src/engine/written_when_who.py)",
     )  # fmt: skip
     p.add_argument(
+        "--no-fold",
+        action="store_true",
+        help="skip telling once a fact two sentences tell (src/engine/written_fold.py)",
+    )
+    p.add_argument(
         "--no-same", action="store_true",
         help="skip joining notes that tell the same fact (src/engine/written_same.py)",
     )  # fmt: skip
@@ -155,6 +160,7 @@ def main() -> None:
                 strikes=strikes_for(t, k, ent),
                 when_who=not a.no_when_who,
                 same=not a.no_same,
+                fold=not a.no_fold,
             )
             secs = round(time.monotonic() - start)
             page["report"]["seconds"] = secs
