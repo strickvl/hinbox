@@ -155,6 +155,81 @@ def _noted_years(text: str) -> set:
     return set(_YEARS.findall(_long_forms(text)))
 
 
+def _month_not_noted(w: Any, notes_text: str) -> List[str]:
+    """ "July 2018" when the notes' text gives other months of 2018 but not
+    July: on 23 Nov 27 of 38 false statements found on 30 written pages were
+    dates, most an article's month put on something its note dates earlier
+    ("In July 2018, Connell told a judge" from a July article whose note
+    says May 2018); the year check passes it, since 2018 is in the note."""
+    noted = month_years(notes_text)
+    out = []
+    for mo, yr in sorted(month_years(w.text)):
+        if (mo, yr) not in noted and any(y == yr for _, y in noted):
+            out.append(f"{mo} {yr}")
+    return out
+
+
+# "In July 2018, ..." or "On July 3, 2018, ...": a sentence opening on its date
+_OPENER = re.compile(
+    r"^(\W*(?:In|On)\s+)("
+    + "|".join(_MONTHS)
+    + r")\b\.?(\s+\d{1,2})?,?\s+((?:19|20)\d\d),"
+)
+
+
+def retime_openers(
+    written: List[Any], by_n: Dict[int, Any], report: Dict[str, Any], name: str = ""
+) -> None:
+    """A sentence that opens on the month of a cited note's article, which
+    no cited note's text gives, while the cited notes' text gives exactly one
+    month and year, opens on that one instead. Code, no call: the writer put
+    the article's date on what the note itself dates."""
+    log: List[List[str]] = report.setdefault("openers_retimed", [])
+    for w in written:
+        if w.dropped or w.summary:
+            continue
+        m = _OPENER.match(w.text)
+        if not m:
+            continue
+        cited = [by_n[n] for n in w.notes if n in by_n]
+        text = " ".join(n.text for n in cited)
+        noted = month_years(text)
+        mo, yr = m.group(2), m.group(4)
+        articles = {str(n.date or "")[:7] for n in cited}
+        month_no = f"{_MONTHS.index(mo) + 1:02d}"
+        if (mo, yr) in noted or f"{yr}-{month_no}" not in articles or len(noted) != 1:
+            continue
+        ((nmo, nyr),) = noted
+        if not _dates_this(w.text[m.end() :], text, nmo, nyr, name):
+            continue  # the note's month dates something else in it
+        lead = re.match(r"^\W*", w.text).group(0)
+        new = f"{lead}In {nmo} {nyr}," + w.text[m.end() :]
+        log.append([w.text, new])
+        w.text = new
+
+
+def _dates_this(rest: str, notes_text: str, mo: str, yr: str, name: str) -> bool:
+    """The words next to the note's "May 2018" (8 either side) share two
+    content words, the entity's own aside, with the sentence's first eight
+    after its date: the note's month dates what the sentence tells, not
+    another thing the note names ("testified about the July 2002
+    firefight")."""
+    from src.engine.written_checks import _content
+
+    own = _content(name)
+    head = _content(" ".join(rest.split()[:8])) - own
+    for m in _PAIRS.finditer(notes_text):
+        if m.group(3) != yr or mo not in m.group(0):
+            continue
+        before = notes_text[: m.start()].split()[-8:]
+        if not before or before[-1].lower() not in ("in", "on"):
+            continue  # "the March 2002 raid" names a thing, it dates no act
+        after = notes_text[m.end() :].split()[:8]
+        if len(head & (_content(" ".join(before + after)) - own)) >= 2:
+            return True
+    return False
+
+
 def suspect(w: Any, by_n: Dict[int, Any]) -> str:
     """The question code asks about ``w``'s dates, "" when it has none: a
     year its notes' text never gives while giving others ("May 2015" against
@@ -170,6 +245,14 @@ def suspect(w: Any, by_n: Dict[int, Any]) -> str:
         return (
             f"The sentence's {' and '.join(paired)}: its notes give that month only "
             "with another year. Which year do the notes give it?"
+        )
+    months = _month_not_noted(w, text)
+    if months:
+        given = ", ".join(sorted(f"{m} {y}" for m, y in month_years(text)))
+        return (
+            f"The sentence's {' and '.join(months)} is in no note's text, which "
+            f"gives {given}. Is it the right time for what it dates, or the "
+            "article's date put on something older?"
         )
     noted = _noted_years(text)
     odd = sorted(set(_YEARS.findall(w.text)) - noted)
@@ -315,6 +398,7 @@ def when_who(
     for before, after in report.get("own_dates") or []:
         added[after] = [x for x in _words(after) if x not in _words(before)]
     years = re.compile(r"\b(?:19|20)\d\d\b")
+    retime_openers(written, by_n, report, name)
     todo = [w for w in written if not w.dropped and not w.summary and suspect(w, by_n)]
     report["when_who_asked"] = report.get("when_who_asked", 0) + len(todo)
     for start in range(0, len(todo), BATCH):

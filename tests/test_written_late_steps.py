@@ -416,3 +416,26 @@ def test_an_opening_note_with_more_than_identity_is_also_filed_in_the_body():
     assert file_opening_details(plan, by_n, "Tom Vale") == [1]  # 3 says only who he was
     # the part closest per note, not the biggest; first in it
     assert plan.parts[0].notes == [1, 2]
+
+
+def test_an_opener_on_the_article_month_takes_the_month_its_note_gives():
+    from src.engine.written_when_who import retime_openers, suspect
+
+    notes = [
+        _note(1, "In May 2018, lawyer Tom Vale told the Port Elm judge the tapes were lost.", "2018-07-20"),
+        _note(2, "Ann Roe testified about the March 2002 raid in Port Elm.", "2010-10-05"),
+    ]  # fmt: skip
+    by_n = {n.n: n for n in notes}
+    told = Written("In July 2018, lawyer Tom Vale told the judge the tapes were lost.", [1], "S")  # fmt: skip
+    said = Written("In October 2010, Ann Roe testified in Port Elm.", [2], "S")
+    report = {}
+    retime_openers([told, said], by_n, report, "Port Elm")
+    assert (
+        told.text == "In May 2018, lawyer Tom Vale told the judge the tapes were lost."
+    )
+    # the note's March 2002 is the raid's, not the testimony's
+    assert said.text == "In October 2010, Ann Roe testified in Port Elm."
+    assert len(report["openers_retimed"]) == 1
+    # a month the notes give only another of that year is asked about
+    other = Written("In July 2018, Tom Vale lost the tapes.", [1], "S")
+    assert "July 2018" in suspect(other, by_n)
