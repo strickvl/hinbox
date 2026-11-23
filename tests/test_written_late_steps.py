@@ -455,7 +455,7 @@ def test_a_sentence_dated_by_a_later_retelling_takes_the_earlier_report():
     )
     dated = Written("In November 2017, Ann Roe was held in contempt.", [3], "S")
     found = candidates([w, dated], by_n, "Port Elm")
-    assert [(x[0].text, [e.n for e in x[3]]) for x in found] == [(w.text, [2, 3])]
+    assert [(x[0].text, [e.n for e in x[3]]) for x in found] == [(w.text, [2])]
 
     def ask(msgs, model, max_tokens):
         assert model is RetoldChecks and "E1 [2017-11-22]" in msgs[1]["content"]
@@ -562,15 +562,33 @@ def test_round_46_date_questions_answers_and_retell_choices():
         "In January 2018, Tom Vale struck down Ann Roe's $1,000 fine.", [4], "S"
     )
     ((_, _, own, earlier),) = candidates([w], rb, "Port Elm")
-    assert [n.n for n in own] == [4] and {e.n for e in earlier} == {5, 6}
-    pick = 1 + [e.n for e in earlier].index(6)
+    # the suspended sentence shares only names with what the sentence tells
+    assert [n.n for n in own] == [4] and [e.n for e in earlier] == [6]
+    said = Written("In January 2018, Tom Vale said he struck down the $1,000 fine.", [4], "S")  # fmt: skip
+    assert candidates([said], rb, "Port Elm") == []  # a statement keeps its date
 
     def retell(msgs, model, max_tokens):
-        assert model is RetoldChecks and "E2 [" in msgs[1]["content"]
+        assert model is RetoldChecks and "E1 [2017-11-22]" in msgs[1]["content"]
         return RetoldChecks.model_validate({"checks": [
-            {"sentence": 1, "same": "yes", "earlier": pick, "when": "November 2017"}]})  # fmt: skip
+            {"sentence": 1, "same": "yes", "earlier": 1, "when": "November 2017"}]})  # fmt: skip
 
     report = {}
     redate_retold([w], rb, "Port Elm", retell, report)
     assert w.text == "By November 2017, Tom Vale struck down Ann Roe's $1,000 fine."
-    assert w.notes == [4, 6]
+    assert w.notes == [4, 6] and report["retell_answers"][0]["picked"] == 1
+
+
+def test_a_mend_keeps_a_year_beside_a_month_of_its_own_article():
+    from src.engine.written_when_who import WhenWhoChecks, when_who
+
+    notes = [_note(1, "The 2003 Port Elm bombing killed 12. Charges were sworn out on June 20.", "2017-06-29")]  # fmt: skip
+    w = Written("Charges were sworn out on June 20, 2017, over the Port Elm bombing.", [1], "S")  # fmt: skip
+
+    def ask(msgs, model, max_tokens):
+        return WhenWhoChecks.model_validate({"checks": [
+            {"sentence": 1, "starts_with": "Charges were sworn", "when": "wrong", "who": "right",
+             "fixed": "Charges were sworn out on June 20, over the Port Elm bombing."}]})  # fmt: skip
+
+    report: dict = {}
+    when_who([w], notes, "Port Elm", ask, report)
+    assert w.text.startswith("Charges were sworn out on June 20, 2017,")

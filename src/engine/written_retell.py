@@ -26,6 +26,16 @@ the 22 November decision; and it searched only from the first cited note of
 the opener's month, so the charge sheet's note was never looked from. So it
 now looks from every cited note of that month, shows up to ``MAX_EARLIER``
 earlier notes, and the model names the one that reports the same act.
+
+Round 47: with three earlier notes offered, the model named one as the same
+act on 2 of 2 re-dates in cq and both were false ("By October 2016, Zaki
+said ..." from a note on the debates; "By June 2017, a federal judge
+imposed a restraining order" from a note on hearing schedules that only
+shared Rishikof and Mattis), where with one note both of co's were right.
+So one earlier note again (most alike over every cited note of the month),
+which must share two words other than names with what the sentence tells,
+and a sentence telling what someone said is never re-dated: a statement is
+dated by when it was made. Every answer goes under ``retell_answers``.
 """
 
 import re
@@ -50,7 +60,7 @@ not a later step in the same story, a similar act, or a repeat of it; else \
 ("November 2017"), or "unknown"."""
 
 BATCH = 8
-MAX_EARLIER = 3
+MAX_EARLIER = 1
 
 
 class Retold(BaseModel):
@@ -83,6 +93,22 @@ def _alike(a: str, b: str, name: str) -> int:
     return 0
 
 
+def _plain_words(text: str, name: str) -> set:
+    """Content words that are not names (capitalised) or the entity's own."""
+    from src.engine.written_checks import _content
+
+    caps = {w.lower() for w in re.findall(r"\b[A-Z][\w'’-]*", text)}
+    return _content(text) - caps - _content(name)
+
+
+def _tells_saying(rest: str) -> bool:
+    """The sentence after its opener tells what someone said (a saying word
+    in its first eight words)."""
+    from src.engine.written_when_who import _SAYS_IN
+
+    return bool(_SAYS_IN.search(" ".join(rest.split()[:8])))
+
+
 def candidates(
     written: Sequence[Any], by_n: Dict[int, Any], name: str,
     orig: Optional[Dict[str, Any]] = None,
@@ -102,9 +128,10 @@ def candidates(
         if w.dropped or w.summary:
             continue
         m = _OPENER.match(w.text)
-        if not m:
+        if not m or _tells_saying(w.text[m.end() :]):
             continue
         month = f"{m.group(4)}-{_MONTHS.index(m.group(2)) + 1:02d}"
+        told = _plain_words(w.text[m.end() :], name)
         cited = sources_of(w, by_n, orig)
         own = [n for n in cited if str(n.date or "")[:7] == month]
         if not own or any(month_years(n.text) for n in own):
@@ -117,7 +144,7 @@ def candidates(
             if shown_of.get(e.key, e.n if not orig else None) is None:
                 continue
             score = max(_alike(n.text, e.text, name) for n in own)
-            if score:
+            if score and len(told & _plain_words(e.text, name)) >= 2:
                 scored.append(
                     ((score, -int(str(e.date)[:10].replace("-", "") or 0)), e)
                 )
@@ -153,6 +180,7 @@ def redate_retold(
     shown_of = {k: n.n for n in by_n.values() for k in (n.keys or [n.key])}
     report["retell_asked"] = report.get("retell_asked", 0) + len(todo)
     log: List[List[str]] = report.setdefault("retold", [])
+    answers: List[Dict[str, Any]] = report.setdefault("retell_answers", [])
     for start in range(0, len(todo), BATCH):
         batch = todo[start : start + BATCH]
         try:
@@ -165,6 +193,11 @@ def redate_retold(
             if not 1 <= c.sentence <= len(batch):
                 continue
             w, m, _, earlier = batch[c.sentence - 1]
+            answers.append({
+                "sentence": w.text, "earlier": [e.text for e in earlier],
+                "acts": str(c.acts or "")[:300], "same": str(c.same),
+                "picked": c.earlier, "when": str(c.when or ""),
+            })  # fmt: skip
             if not str(c.same).strip().lower().startswith("y") or w.dropped:
                 continue
             k = c.earlier or (1 if len(earlier) == 1 else 0)

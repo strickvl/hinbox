@@ -539,6 +539,16 @@ def when_who(
             # the article's year is right for what was said or reported then
             says = bool(_SAYS_IN.search(w.text))
             article_years = [y for y in arts if y and (says or noted <= {y})]
+            # a year beside a month of its own article that the note names
+            # without a year is the date pass's
+            # (round 46 took 2017 off "sworn out on June 20, 2017" from a
+            # 29 June 2017 note saying "June 20")
+            months = {str(by_n[n].date or "")[:7] for n in w.notes if n in by_n}
+            article_years += [
+                y for mo, y in month_years(w.text)
+                if f"{y}-{_MONTHS.index(mo) + 1:02d}" in months
+                and re.search(rf"\b(?:{mo}|{mo[:3]}\.|{mo[:4]}\.)(?!\w)", text)
+            ]  # fmt: skip
             if usable_fix(
                 w.text, fix, sources, name, names, derived, wrong, article_years
             ):
