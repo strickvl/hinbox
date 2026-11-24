@@ -100,19 +100,26 @@ def test_local_thinking_overrides_the_run_wide_effort_inside_the_block():
 
 def test_a_replays_model_params_go_on_every_call_under_the_models_own_names():
     try:
-        llm.set_model_params({"temperature": 0.7, "max_tokens": 50})
-        assert _kwargs("openai/gpt-4o") == {"max_tokens": 50, "temperature": 0.7}
+        llm.set_model_params(
+            {"temperature": 0.7, "max_tokens": 50, "frequency_penalty": 0.5}
+        )
+        assert _kwargs("openai/gpt-4o") == {
+            "max_tokens": 50,
+            "temperature": 0.7,
+            "frequency_penalty": 0.5,
+        }
         assert _kwargs("openai/gpt-6-luna") == {
             "max_completion_tokens": 50,
             "reasoning_effort": "none",
             "temperature": 0.7,
+            "frequency_penalty": 0.5,
         }
     finally:
         llm.set_model_params(None)
     assert _kwargs("openai/gpt-4o") == {"max_tokens": 100, "temperature": 0.2}
     try:
-        llm.set_model_params({"frequency_penalty": 1})
+        llm.set_model_params({"presence_penalty": 1})
     except ValueError as e:
-        assert "frequency_penalty" in str(e)
+        assert "presence_penalty" in str(e)
     else:
         raise AssertionError("an unknown parameter must be refused")

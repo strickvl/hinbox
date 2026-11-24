@@ -11,6 +11,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from scripts import kitaru_step as ks
 from src.evals.kitaru_checks import (
     case_result,
+    extraction_results,
+    grounding_results,
     match_results,
     step_checks,
     step_results,
@@ -85,10 +87,10 @@ def test_model_params_go_on_every_call_and_unknown_ones_fail(monkeypatch):
     from src.utils import llm
 
     monkeypatch.setattr(llm, "_PARAM_OVERRIDE", {})
-    override = _override(model_params={"temperature": 0.5})
+    override = _override(model_params={"temperature": 0.5, "frequency_penalty": 0.5})
     assert ks.apply_override(_inputs(), override) == _inputs()
     ks.apply_model_params(override)
-    assert llm._PARAM_OVERRIDE == {"temperature": 0.5}
+    assert llm._PARAM_OVERRIDE == {"temperature": 0.5, "frequency_penalty": 0.5}
     with pytest.raises(ValueError, match="stop"):
         ks.apply_model_params(_override(model_params={"stop": ["\\n"]}))
 
@@ -390,4 +392,186 @@ def test_match_results_say_which_way_the_answer_was_wrong():
     assert unlabelled == {"is_match", "confidence"}
     evaluation = pytest.importorskip("kitaru.api_models.v1.evaluation")
     for r in match_results(out, {"eval_label": True}):
+        evaluation.EvaluationResult(**r)
+
+
+# --- extract.<type> steps ------------------------------------------------------
+
+
+def _extract_inputs(**extra):
+    return {
+        "entity_type": "locations",
+        "article_content": "Hearings took place at Guantánamo Bay in Cuba.",
+        "article_id": "a1",
+        "domain": "guantanamo",
+        "model_type": "gemini",
+        "model": "openai/gpt-6-luna",
+        **extra,
+    }
+
+
+def test_an_extraction_step_replays_with_overridden_model_and_scores(monkeypatch):
+    seen = {}
+
+    def fake_local(**kwargs):
+        seen.update(kwargs)
+        return [
+            {"name": "Guantánamo Bay", "type": "military_base"},
+            {"name": "Cuba", "type": "country"},
+        ]
+
+    monkeypatch.setattr("src.engine.extractors.extract_entities_local", fake_local)
+    inputs = ks.apply_override(
+        _extract_inputs(), _override(model="ollama:local-qwen36-32k")
+    )
+    assert ks.step_name(inputs) == "extract.locations"
+    session, error = ks.run_step(inputs, replay=True)
+    assert error is None
+    assert seen["model"] == "ollama/local-qwen36-32k"
+    assert session["status"] == "completed"
+    assert session["name"] == "extract.locations: a1"
+    assert session["metadata"]["step"] == "extract.locations"
+    rows = {
+        r["name"]: r for r in extraction_results(session["inputs"], session["outputs"])
+    }
+    assert rows["extract_ok"]["passed"] is True
+    assert rows["entity_count"]["score"] == 2.0
+    assert rows["mention_rate"]["score"] == 1.0
+    assert rows["qc_flags"]["passed"] is True
+    json.dumps(list(rows.values()))
+
+
+def test_a_failed_extraction_replay_fails_and_scores_false(monkeypatch):
+    monkeypatch.setattr(
+        "src.engine.extractors.extract_entities_cloud",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("output cut off")),
+    )
+    session, error = ks.run_step(_extract_inputs(), replay=True)
+    assert isinstance(error, RuntimeError)
+    assert session["status"] == "failed" and "output cut off" in session["error"]
+    (row,) = extraction_results(session["inputs"], session["outputs"])
+    assert row["name"] == "extract_ok" and row["passed"] is False
+
+
+def test_extraction_results_flag_unmentioned_entities_and_valid_kitaru_schema():
+    outputs = {
+        "entities": [
+            {"name": "Cuba", "type": "country"},
+            {"name": "Atlantis", "type": "city"},
+        ],
+        "counts": {"raw_count": 3, "deduped": 1, "dropped_missing_required": 0},
+        "qc_flags": ["many_duplicates"],
+        "retry_attempted": True,
+    }
+    rows = {r["name"]: r for r in extraction_results(_extract_inputs(), outputs)}
+    assert rows["mention_rate"]["score"] == 0.5
+    assert rows["mention_rate"]["passed"] is False
+    assert rows["qc_flags"]["passed"] is False
+    assert rows["deduped"]["score"] == 1.0
+    evaluation = pytest.importorskip("kitaru.api_models.v1.evaluation")
+    for r in rows.values():
+        evaluation.EvaluationResult(**r)
+
+
+# --- grounding steps -----------------------------------------------------------
+
+
+def _grounding_inputs(**extra):
+    return {
+        "article_id": "a1",
+        "article_text": "Judge Vance Spath retired in 2018 after presiding over the Cole case.",
+        "claims": [
+            ["Vance Spath", "Vance Spath retired in 2018."],
+            ["Vance Spath", "He presided over the 9/11 case."],
+        ],
+        "model_type": "gemini",
+        "model": "anthropic/claude-haiku-5-5",
+        "ask_passage": False,
+        **extra,
+    }
+
+
+def test_a_grounding_step_replays_with_overridden_model_and_scores(monkeypatch):
+    from src.utils.grounding import ClaimVerdict, SupportLevel
+
+    seen = {}
+
+    def fake_local(**kwargs):
+        seen.update(kwargs)
+        return [
+            ClaimVerdict(
+                claim_number=1,
+                reasoning='Article says "Judge Vance Spath retired in 2018".',
+                support_level=SupportLevel.SUPPORTED,
+            ),
+            ClaimVerdict(
+                claim_number=2,
+                reasoning='Article says "presiding over the Cole case", not 9/11.',
+                support_level=SupportLevel.NOT_SUPPORTED,
+            ),
+        ]
+
+    monkeypatch.setattr("src.utils.llm.local_generation", fake_local)
+    labels = {"expected_levels": ["supported", "not_supported"]}
+    inputs = ks.apply_override(
+        _grounding_inputs(labels=labels), _override(model="ollama:local-qwen36-32k")
+    )
+    assert ks.step_name(inputs) == "grounding"
+    session, error = ks.run_step(inputs, replay=True)
+    assert error is None
+    assert seen["model"] == "ollama/local-qwen36-32k"
+    assert session["status"] == "completed"
+    assert session["name"] == "grounding: a1"
+    rows = {
+        r["name"]: r
+        for r in grounding_results(
+            session["inputs"], session["outputs"], session["inputs"]["labels"]
+        )
+    }
+    assert rows["grounding_ok"]["passed"] is True
+    assert rows["supported_share"]["score"] == 0.5
+    assert rows["accepted_share"]["score"] == 0.5
+    assert rows["not_supported"]["score"] == 1.0
+    assert rows["passage_rate"]["score"] == 1.0
+    assert rows["label_agreement"]["score"] == 1.0
+    assert rows["label_agreement"]["passed"] is True
+    json.dumps(list(rows.values()))
+
+
+def test_grounding_results_catch_missing_verdicts_and_errors(monkeypatch):
+    partial_out = {
+        "verdicts": [
+            {
+                "claim_number": 1,
+                "entity_name": "Vance Spath",
+                "claim": "Vance Spath retired in 2018.",
+                "support_level": "supported",
+                "reasoning": "Matches.",
+            },
+            {
+                "claim_number": 2,
+                "entity_name": "Vance Spath",
+                "claim": "He presided over the 9/11 case.",
+                "support_level": None,
+                "reasoning": None,
+            },
+        ],
+        "missing": 1,
+    }
+    rows = {r["name"]: r for r in grounding_results(_grounding_inputs(), partial_out)}
+    assert rows["grounding_ok"]["passed"] is False
+    assert rows["missing_verdicts"]["score"] == 1.0
+    assert rows["missing_verdicts"]["passed"] is False
+
+    monkeypatch.setattr(
+        "src.utils.llm.cloud_generation",
+        lambda **kw: (_ for _ in ()).throw(ConnectionError("judge offline")),
+    )
+    session, error = ks.run_step(_grounding_inputs(), replay=True)
+    assert isinstance(error, ConnectionError)
+    assert session["status"] == "failed"
+    (row,) = grounding_results(session["inputs"], session["outputs"])
+    assert row["name"] == "grounding_ok" and row["passed"] is False
+    evaluation = pytest.importorskip("kitaru.api_models.v1.evaluation")
+    for r in rows.values():
         evaluation.EvaluationResult(**r)

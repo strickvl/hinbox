@@ -30,6 +30,8 @@ from src.utils.task_models import is_local_model, task_model
 from src.utils.tracing import (
     annotate,
     annotate_span,
+    record_step_input,
+    record_step_output,
     run_in_span,
     start_child_span,
 )
@@ -79,11 +81,18 @@ class ArticleProcessor:
     observability metadata (success/failure, QC flags, error details).
     """
 
-    def __init__(self, domain: str, model_type: str = "gemini"):
+    def __init__(
+        self,
+        domain: str,
+        model_type: str = "gemini",
+        extraction_model: Optional[str] = None,
+    ):
         self.domain = domain
         self.model_type = model_type or "gemini"
         self.relevance_model = task_model("relevance", self.model_type)
-        self.extraction_model = task_model("extraction", self.model_type)
+        self.extraction_model = extraction_model or task_model(
+            "extraction", self.model_type
+        )
         self.logger = logger
         self._relevance_fingerprint: Optional[str] = None
         # Content by article ID, so a stub profile can be written in full
@@ -368,6 +377,14 @@ class ArticleProcessor:
     ) -> PhaseOutcome:
         with timed_step(f"extract.{entity_type}"):
             annotate(entity_type=entity_type, article_id=article_id)
+            record_step_input(
+                entity_type=entity_type,
+                article_content=article_content,
+                article_id=article_id,
+                domain=self.domain,
+                model_type=self.model_type,
+                model=self.extraction_model,
+            )
             outcome = self.extract_single_entity_type(
                 entity_type, article_content, article_id
             )
@@ -378,6 +395,19 @@ class ArticleProcessor:
                 retry_used=outcome.meta.get("retry_used"),
                 outcome=outcome.to_metadata_dict(),
             )
+            result: Dict[str, Any] = {
+                "entities": outcome.value or [],
+                "counts": dict(outcome.counts),
+                "qc_flags": list(outcome.flags),
+                "retry_attempted": bool(outcome.meta.get("retry_attempted")),
+                "retry_used": bool(outcome.meta.get("retry_used")),
+            }
+            if not outcome.success:
+                err = outcome.error
+                result["error"] = (
+                    f"{err.type}: {err.message}" if err else "extraction failed"
+                )
+            record_step_output(**result)
             return outcome
 
     def extract_all_entities(

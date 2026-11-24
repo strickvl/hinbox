@@ -348,3 +348,92 @@ def test_a_merge_pairs_step_carries_its_label_and_a_failed_call_fails():
     step["attributes"]["output.value"] = json.dumps(failed)
     (f,) = step_sessions([item, step], "match_check")
     assert (f["status"], f["error"]) == ("failed", f"{FAILED_CHECK}: timeout")
+
+
+def test_extract_and_grounding_step_sessions():
+    ext_people = _row(
+        "t1",
+        "e1",
+        "t1-root",
+        "extract.people",
+        {
+            "hinbox.entity_type": "people",
+            "hinbox.article_id": "a1",
+            "input.value": json.dumps(
+                {"entity_type": "people", "article_content": "Text", "article_id": "a1"}
+            ),
+            "output.value": json.dumps(
+                {"entities": [{"name": "Vance Spath"}], "counts": {"final_count": 1}}
+            ),
+        },
+    )
+    ext_locs = _row(
+        "t1",
+        "e2",
+        "t1-root",
+        "extract.locations",
+        {
+            "hinbox.entity_type": "locations",
+            "hinbox.article_id": "a1",
+            "input.value": json.dumps(
+                {
+                    "entity_type": "locations",
+                    "article_content": "Text",
+                    "article_id": "a1",
+                }
+            ),
+            "output.value": json.dumps({"entities": [], "error": "cut off at limit"}),
+        },
+    )
+    rows = [_article(), ext_people, ext_locs]
+    all_ext = step_sessions(rows, "extract")
+    assert [s["metadata"]["step"] for s in all_ext] == [
+        "extract.people",
+        "extract.locations",
+    ]
+    assert [s["name"] for s in all_ext] == [
+        "extract.people: Hearing",
+        "extract.locations: Hearing",
+    ]
+    assert [s["status"] for s in all_ext] == ["completed", "failed"]
+    assert all_ext[1]["error"] == "cut off at limit"
+    (only_locs,) = step_sessions(rows, "extract.locations")
+    assert only_locs["external_id"] == "hinbox:t1:e2"
+
+    ground = _row(
+        "t2",
+        "g1",
+        None,
+        "grounding",
+        {
+            "hinbox.article_id": "a9",
+            "hinbox.claim_count": 1,
+            "input.value": json.dumps(
+                {
+                    "article_id": "a9",
+                    "article_text": "Article text.",
+                    "claims": [["Spath", "He was a judge."]],
+                    "model": "anthropic/claude-haiku-5-5",
+                }
+            ),
+            "output.value": json.dumps(
+                {
+                    "verdicts": [
+                        {
+                            "claim_number": 1,
+                            "entity_name": "Spath",
+                            "claim": "He was a judge.",
+                            "support_level": "supported",
+                        }
+                    ],
+                    "missing": 0,
+                }
+            ),
+        },
+    )
+    (gs,) = step_sessions([ground], "grounding")
+    assert (gs["name"], gs["status"], gs["metadata"]["article_id"]) == (
+        "grounding: a9",
+        "completed",
+        "a9",
+    )

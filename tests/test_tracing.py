@@ -418,3 +418,93 @@ def test_match_check_records_both_profiles_and_its_verdict(spans, monkeypatch):
     )
     result = json.loads(span.attributes["output.value"])["result"]
     assert (result["is_match"], result["confidence"]) == (True, 0.9)
+
+
+def test_extract_step_records_arguments_and_result(spans, monkeypatch):
+    from src.engine.article_processor import ArticleProcessor
+
+    monkeypatch.setattr(
+        "src.engine.extractors.extract_entities_cloud",
+        lambda **kw: [{"name": "Guantánamo Bay", "type": "military_base"}],
+    )
+    proc = ArticleProcessor(
+        domain="guantanamo", model_type="gemini", extraction_model="openai/gpt-6-luna"
+    )
+    outcome = proc._timed_extract(
+        "locations", "Hearings were held at Guantánamo Bay.", "a1"
+    )
+    assert outcome.success
+    (span,) = _by_name(spans, "extract.locations")
+    args = json.loads(span.attributes["input.value"])
+    assert (args["entity_type"], args["article_id"], args["model"]) == (
+        "locations",
+        "a1",
+        "openai/gpt-6-luna",
+    )
+    assert args["article_content"] == "Hearings were held at Guantánamo Bay."
+    result = json.loads(span.attributes["output.value"])
+    assert [e["name"] for e in result["entities"]] == ["Guantánamo Bay"]
+    assert result["counts"]["final_count"] == 1
+    assert "error" not in result
+
+    spans.clear()
+    monkeypatch.setattr(
+        "src.engine.extractors.extract_entities_cloud",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("cut off")),
+    )
+    failed = proc._timed_extract("locations", "Text.", "a2")
+    assert not failed.success
+    (fspan,) = _by_name(spans, "extract.locations")
+    assert "cut off" in json.loads(fspan.attributes["output.value"])["error"]
+
+
+def test_grounding_records_arguments_and_verdicts(spans, monkeypatch):
+    from src.utils.grounding import ClaimVerdict, SupportLevel, judge_claims
+
+    monkeypatch.setattr(
+        "src.utils.llm.cloud_generation",
+        lambda **kw: [
+            ClaimVerdict(
+                claim_number=1,
+                reasoning='Article says "transferred in 2016".',
+                support_level=SupportLevel.SUPPORTED,
+            )
+        ],
+    )
+    out = judge_claims(
+        article_id="a1",
+        article_text="He was transferred in 2016 to Oman.",
+        claims=[("Detainee", "He was transferred in 2016.")],
+        model_type="gemini",
+        model="anthropic/claude-haiku-5-5",
+    )
+    assert out[0][0] == SupportLevel.SUPPORTED
+    (span,) = _by_name(spans, "grounding")
+    args = json.loads(span.attributes["input.value"])
+    assert (args["article_id"], args["model"]) == ("a1", "anthropic/claude-haiku-5-5")
+    assert args["claims"] == [["Detainee", "He was transferred in 2016."]]
+    result = json.loads(span.attributes["output.value"])
+    assert result["counts"] == {
+        "supported": 1,
+        "partial": 0,
+        "not_supported": 0,
+        "unclear": 0,
+    }
+    assert result["missing"] == 0
+    assert result["verdicts"][0]["support_level"] == "supported"
+
+    spans.clear()
+    monkeypatch.setattr(
+        "src.utils.llm.cloud_generation",
+        lambda **kw: (_ for _ in ()).throw(ConnectionError("judge down")),
+    )
+    with pytest.raises(ConnectionError, match="judge down"):
+        judge_claims(
+            article_id="a1",
+            article_text="Text.",
+            claims=[("Detainee", "Claim.")],
+            model_type="gemini",
+            model="anthropic/claude-haiku-5-5",
+        )
+    (fspan,) = _by_name(spans, "grounding")
+    assert "judge down" in json.loads(fspan.attributes["output.value"])["error"]

@@ -29,6 +29,7 @@ from src.utils.quality_controls import CITATION_RE, citation_ids
 from src.utils.server_health import ModelServerUnreachable, unreachable
 from src.utils.step_timing import timed
 from src.utils.task_models import is_local_model, task_model
+from src.utils.tracing import annotate, record_step_input, record_step_output
 
 logger = get_logger("grounding")
 
@@ -588,19 +589,30 @@ def judge_claims(
     article_text: str,
     claims: List[Tuple[str, str]],
     model_type: str,
+    model: Optional[str] = None,
     ask_passage: Optional[bool] = None,
 ) -> List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]]:
     """One model call: judge ``claims`` (entity name, claim text) against one
     article. Returns (verdict, reasoning, copied passage) per claim, or None
     where the reply had none; the passage is None unless ``ask_passage``
     (default ``HINBOX_GROUNDING_PASSAGE``) and is not yet checked against the
-    article. Raises when the call itself fails. The judge is
-    ``HINBOX_GROUNDING_MODEL`` if set, else the run's default model; its
+    article. Raises when the call itself fails. The judge is ``model`` if
+    given, else ``HINBOX_GROUNDING_MODEL`` or the run's default model; its
     prefix picks local or cloud."""
     if ask_passage is None:
         ask_passage = GROUNDING_PASSAGE
     from src.utils.llm import cloud_generation, local_generation
 
+    resolved_model = model or grounding_model(model_type)
+    annotate(article_id=article_id, claim_count=len(claims), model=resolved_model)
+    record_step_input(
+        article_id=article_id,
+        article_text=article_text,
+        claims=[list(c) for c in claims],
+        model_type=model_type,
+        model=resolved_model,
+        ask_passage=ask_passage,
+    )
     claims_text = "\n".join(
         _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
     )
@@ -616,24 +628,27 @@ def judge_claims(
             ),
         },
     ]
-    model = grounding_model(model_type)
-    local = is_local_model(model)
+    local = is_local_model(resolved_model)
     generate = local_generation if local else cloud_generation
     thinking = (
         local_thinking(GROUNDING_REASONING_EFFORT, GROUNDING_THINKING_MAX_TOKENS)
         if local and GROUNDING_REASONING_EFFORT
         else nullcontext()
     )
-    with thinking:
-        reply = generate(
-            messages=messages,
-            response_model=List[
-                ClaimVerdictWithPassage if ask_passage else ClaimVerdict
-            ],
-            model=model,
-            temperature=0,
-            max_tokens=GROUNDING_MAX_TOKENS,
-        )
+    try:
+        with thinking:
+            reply = generate(
+                messages=messages,
+                response_model=List[
+                    ClaimVerdictWithPassage if ask_passage else ClaimVerdict
+                ],
+                model=resolved_model,
+                temperature=0,
+                max_tokens=GROUNDING_MAX_TOKENS,
+            )
+    except Exception as e:
+        record_step_output(error=f"{type(e).__name__}: {e}")
+        raise
     out: List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]] = [
         None
     ] * len(claims)
@@ -645,6 +660,25 @@ def judge_claims(
         i = v.claim_number - 1 if by_number else pos
         if i < len(claims):
             out[i] = (v.support_level, v.reasoning, getattr(v, "passage", None))
+    verdicts = [
+        {
+            "claim_number": i + 1,
+            "entity_name": name,
+            "claim": text,
+            "support_level": v[0].value if v is not None else None,
+            "reasoning": v[1] if v is not None else None,
+            "passage": v[2] if v is not None else None,
+        }
+        for i, ((name, text), v) in enumerate(zip(claims, out))
+    ]
+    missing = sum(1 for v in out if v is None)
+    counts = Counter(v[0].value for v in out if v is not None)
+    level_counts = {
+        k: counts.get(k, 0)
+        for k in ("supported", "partial", "not_supported", "unclear")
+    }
+    annotate(**level_counts, missing=missing)
+    record_step_output(verdicts=verdicts, counts=level_counts, missing=missing)
     return out
 
 

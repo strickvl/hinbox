@@ -247,3 +247,218 @@ def match_results(
         {"name": "false_merge", "score": said and not label},
         {"name": "missed_merge", "score": label and not said},
     ]
+
+
+_SEVERE_EXTRACTION_FLAGS = {
+    "zero_entities",
+    "high_drop_rate",
+    "many_duplicates",
+    "many_low_quality_names",
+    "extraction_exception",
+}
+
+
+def extraction_results(
+    inputs: Dict[str, Any],
+    outputs: Optional[Dict[str, Any]],
+    labels: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """An ``extract.<type>`` step's health checks as Kitaru evaluation rows.
+
+    Tracks completion (no error / cutoff), final and raw entity counts, QC
+    dedups/drops/flags, retries, and for people/organizations/locations the
+    share of extracted entities actually mentioned in the article.
+    """
+    if not isinstance(outputs, dict) or outputs.get("error"):
+        failed = (outputs or {}).get("error") or "the step recorded no result"
+        return [
+            {
+                "name": "extract_ok",
+                "score": False,
+                "passed": False,
+                "explanation": str(failed)[:500],
+            }
+        ]
+    entities = outputs.get("entities") or []
+    counts = outputs.get("counts") or {}
+    flags = list(outputs.get("qc_flags") or [])
+    severe = sorted(set(flags) & _SEVERE_EXTRACTION_FLAGS)
+    raw_count = int(counts.get("raw_count", len(entities)))
+    deduped = int(counts.get("deduped", 0))
+    dropped = int(counts.get("dropped_missing_required", 0))
+    entity_type = str(inputs.get("entity_type") or "entities")
+    ok = "extraction_exception" not in flags
+    rows: List[Dict[str, Any]] = [
+        {
+            "name": "extract_ok",
+            "score": ok,
+            "passed": ok,
+            "explanation": (
+                f"{len(entities)} {entity_type} ({raw_count} raw, "
+                f"{deduped} deduped, {dropped} dropped)"
+                if ok
+                else "extraction failed with exception"
+            ),
+        },
+        {"name": "entity_count", "score": float(len(entities))},
+        {"name": "raw_count", "score": float(raw_count)},
+        {
+            "name": "deduped",
+            "score": float(deduped),
+            "explanation": "duplicate entities collapsed by QC",
+        },
+        {
+            "name": "dropped_missing_required",
+            "score": float(dropped),
+            "explanation": "entities dropped for missing required fields",
+        },
+        {"name": "retry_attempted", "score": bool(outputs.get("retry_attempted"))},
+        {
+            "name": "qc_flags",
+            "score": float(len(flags)),
+            "passed": not severe,
+            "explanation": ", ".join(flags) or "none",
+        },
+    ]
+    article_content = str(inputs.get("article_content") or "")
+    if (
+        entity_type in ("people", "organizations", "locations")
+        and entities
+        and article_content
+    ):
+        from src.utils.quality_controls import filter_entities_by_article_relevance
+
+        _, rel = filter_entities_by_article_relevance(
+            entity_type=entity_type,
+            entities=entities,
+            article_text=article_content,
+            domain=str(inputs.get("domain") or "guantanamo"),
+            require_mention=True,
+        )
+        rate = rel.output_count / rel.input_count if rel.input_count else 1.0
+        rows.append(
+            {
+                "name": "mention_rate",
+                "score": round(rate, 4),
+                "passed": rel.dropped == 0,
+                "min_score": 0.0,
+                "max_score": 1.0,
+                "explanation": f"{rel.output_count}/{rel.input_count} mentioned in article",
+            }
+        )
+    return rows
+
+
+def grounding_results(
+    inputs: Dict[str, Any],
+    outputs: Optional[Dict[str, Any]],
+    labels: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """A ``grounding`` step's verdicts as Kitaru evaluation rows.
+
+    Checks that every claim received a verdict, reports verdict counts and
+    shares (``supported_share``, ``accepted_share`` for supported+partial),
+    checks how often quoted passages match the article text, and compares
+    against ``labels["expected_levels"]`` when hand labels are attached.
+    """
+    if not isinstance(outputs, dict) or outputs.get("error"):
+        failed = (outputs or {}).get("error") or "the step recorded no verdicts"
+        return [
+            {
+                "name": "grounding_ok",
+                "score": False,
+                "passed": False,
+                "explanation": str(failed)[:500],
+            }
+        ]
+    claims = inputs.get("claims") or []
+    verdicts = outputs.get("verdicts") or []
+    total = max(len(claims), len(verdicts))
+    counts = {k: 0 for k in ("supported", "partial", "not_supported", "unclear")}
+    missing = max(0, len(claims) - len(verdicts))
+    for v in verdicts:
+        level = v.get("support_level") if isinstance(v, dict) else None
+        if level in counts:
+            counts[level] += 1
+        else:
+            missing += 1
+    ok = missing == 0 and len(verdicts) == len(claims)
+    supported_share = counts["supported"] / total if total else 1.0
+    accepted_share = (counts["supported"] + counts["partial"]) / total if total else 1.0
+    rows: List[Dict[str, Any]] = [
+        {
+            "name": "grounding_ok",
+            "score": ok,
+            "passed": ok,
+            "explanation": (
+                f"judged all {len(claims)} claim(s)"
+                if ok
+                else f"missing {missing} verdict(s) of {len(claims)} claim(s)"
+            ),
+        },
+        {
+            "name": "missing_verdicts",
+            "score": float(missing),
+            "passed": missing == 0,
+        },
+        {
+            "name": "supported_share",
+            "score": round(supported_share, 4),
+            "min_score": 0.0,
+            "max_score": 1.0,
+            "explanation": f"{counts['supported']}/{total} supported",
+        },
+        {
+            "name": "accepted_share",
+            "score": round(accepted_share, 4),
+            "min_score": 0.0,
+            "max_score": 1.0,
+            "explanation": (
+                f"{counts['supported'] + counts['partial']}/{total} "
+                "supported or partial"
+            ),
+        },
+        {"name": "supported", "score": float(counts["supported"])},
+        {"name": "partial", "score": float(counts["partial"])},
+        {"name": "not_supported", "score": float(counts["not_supported"])},
+        {"name": "unclear", "score": float(counts["unclear"])},
+    ]
+    article_text = str(inputs.get("article_text") or "")
+    if article_text and verdicts:
+        from src.utils.grounding_passages import passages_for
+
+        with_passage = sum(
+            1
+            for v in verdicts
+            if isinstance(v, dict)
+            and passages_for(article_text, v.get("reasoning"), v.get("passage"))
+        )
+        rows.append(
+            {
+                "name": "passage_rate",
+                "score": round(with_passage / len(verdicts), 4),
+                "min_score": 0.0,
+                "max_score": 1.0,
+                "explanation": (
+                    f"{with_passage}/{len(verdicts)} verdicts quote a passage in the article"
+                ),
+            }
+        )
+    expected = (labels or {}).get("expected_levels")
+    if isinstance(expected, list) and expected and len(expected) == len(verdicts):
+        agree = sum(
+            1
+            for exp, v in zip(expected, verdicts)
+            if isinstance(v, dict) and v.get("support_level") == exp
+        )
+        rows.append(
+            {
+                "name": "label_agreement",
+                "score": round(agree / len(expected), 4),
+                "passed": agree == len(expected),
+                "min_score": 0.0,
+                "max_score": 1.0,
+                "explanation": f"matched {agree}/{len(expected)} expected verdict(s)",
+            }
+        )
+    return rows
