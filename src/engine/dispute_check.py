@@ -203,14 +203,14 @@ def replacement(
     """What goes in place of the dispute sentence: itself for a conflict,
     nothing for ``same``, else the model's sentence with the article's
     citations. None means drop."""
-    from src.engine.edit_guards import _NARRATOR
+    from src.engine.edit_guards import _compares
 
     if verdict.verdict == "conflict":
         return sentence
     body = _CITATION.sub("", verdict.sentence).strip().rstrip(".")
     # "The April 17, 2018 article says Ring became commander" -> the fact
     body = _ABOUT_SOURCE.sub("", body)
-    if verdict.verdict == "same" or len(body.split()) < 4 or _NARRATOR.search(body):
+    if verdict.verdict == "same" or len(body.split()) < 4 or _compares(body):
         return None
     if re.search(r"\b(?:instead|rather than|disagree\w*)\b", body, re.I):
         return None
