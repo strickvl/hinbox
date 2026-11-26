@@ -231,3 +231,22 @@ def test_a_rerun_reports_only_its_own_training_log(zen, tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "train_loop", train_loop)
     out = zen.tinker_train(str(d), {"name": "citecheck", "model": "m", "steps": 1})
     assert out["log"] == [{"step": 0, "tune_nll": 0.9}]
+
+
+def test_the_report_card_renders_when_a_rate_has_no_labelled_claims(zen):
+    """Only good claims labelled: wrong_passed has no denominator."""
+    from experiments.tinker_zenml.report_card import render
+
+    empty = {"count": 0, "of": 0, "share": None, "low": 0.0, "high": 1.0}
+    good = {"count": 1, "of": 4, "share": 0.25, "low": 0.05, "high": 0.7}
+    report = {
+        "labelled": 4,
+        "unsure": 0,
+        "errors": 0,
+        "wrong_passed": empty,
+        "good_doubted": good,
+        "by_stratum": {},
+    }
+    for baselines in (None, {"Other": {"good_doubted": 2}}):
+        page = render(report, [], {"name": "c"}, baselines)
+        assert "n/a" in page and "25.0%" in page

@@ -121,7 +121,8 @@ def _tile(
 def _ranges(rows: Sequence[Tuple[str, Dict[str, Any], bool]]) -> str:
     """One row per checker: a dot at its share and a line over its 95% range,
     on one 0 to max scale so the rows compare."""
-    top = max(r["high"] for _, r, _ in rows if r.get("share") is not None)
+    # a rate with no labelled claims (share None) is drawn as a name only
+    top = max((r["high"] for _, r, _ in rows if r.get("share") is not None), default=0)
     top = min(1.0, max(0.1, round(top + 0.05, 1)))
     left, right, row_h, width = 190, 120, 26, 720
     plot = width - left - right
@@ -256,7 +257,7 @@ def render(
         best = min(scored, key=lambda b: b["rate"]["share"]) if scored else None
         tiles.append(_tile(report[key], label, what, best))
     compare = []
-    for key, label, _ in METRICS:
+    for key, label, _ in METRICS if others else ():
         rows = [(f"{name} (tuned)", report[key], True)]
         rows += [(b["name"], b[key], False) for b in others if key in b]
         compare.append(
