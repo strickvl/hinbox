@@ -318,7 +318,8 @@ def record_step_input(**args: Any) -> None:
     """Set the current step span's ``input.value`` to ``args`` as one JSON object.
 
     Steps that could be re-run on their own (``profile.update``,
-    ``match_check``) record the arguments they were called with, in full, so
+    ``match_check``, ``extract.<type>``, ``grounding``) record the arguments
+    they were called with, in full, so
     a replay can call the step again with exactly them. The ``hinbox.*``
     labels stay as they are: they summarise, this is the whole input.
     """

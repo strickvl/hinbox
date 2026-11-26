@@ -614,12 +614,12 @@ def judge_claims(
 ) -> List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]]:
     """One model call: judge ``claims`` (entity name, claim text) against one
     article. ``model`` overrides the judge (the citation-checker eval and its
-    teacher labels name theirs). Returns (verdict, reasoning, copied passage) per claim, or None
-    where the reply had none; the passage is None unless ``ask_passage``
-    (default ``HINBOX_GROUNDING_PASSAGE``) and is not yet checked against the
-    article. Raises when the call itself fails. The judge is
-    ``HINBOX_GROUNDING_MODEL`` if set, else the run's default model; its
-    prefix picks local or cloud."""
+    teacher labels name theirs). Returns (verdict, reasoning, copied passage)
+    per claim, or None where the reply had none; the passage is None unless
+    ``ask_passage`` (default ``HINBOX_GROUNDING_PASSAGE``) and is not yet
+    checked against the article. Raises when the call itself fails. The judge
+    is ``model`` if given, else ``HINBOX_GROUNDING_MODEL`` or the run's
+    default model; its prefix picks local or cloud."""
     if ask_passage is None:
         ask_passage = GROUNDING_PASSAGE
     from src.utils.llm import cloud_generation, local_generation
@@ -636,7 +636,7 @@ def judge_claims(
         ask_passage=ask_passage,
         model=model,
     )
-    annotate(article_id=article_id, claim_count=len(claims))
+    annotate(article_id=article_id, claim_count=len(claims), model=model)
     local = is_local_model(model)
     generate = local_generation if local else cloud_generation
     thinking = (
@@ -644,23 +644,27 @@ def judge_claims(
         if local and GROUNDING_REASONING_EFFORT
         else nullcontext()
     )
-    if model.startswith("tinker"):  # a model trained or sampled on Tinker
-        from src.citecheck.tinker_judge import tinker_verdicts
+    try:
+        if model.startswith("tinker"):  # a model trained or sampled on Tinker
+            from src.citecheck.tinker_judge import tinker_verdicts
 
-        reply = tinker_verdicts(
-            messages, model, GROUNDING_MAX_TOKENS, with_passage=ask_passage
-        )
-    else:
-        with thinking:
-            reply = generate(
-                messages=messages,
-                response_model=List[
-                    ClaimVerdictWithPassage if ask_passage else ClaimVerdict
-                ],
-                model=model,
-                temperature=0,
-                max_tokens=GROUNDING_MAX_TOKENS,
+            reply = tinker_verdicts(
+                messages, model, GROUNDING_MAX_TOKENS, with_passage=ask_passage
             )
+        else:
+            with thinking:
+                reply = generate(
+                    messages=messages,
+                    response_model=List[
+                        ClaimVerdictWithPassage if ask_passage else ClaimVerdict
+                    ],
+                    model=model,
+                    temperature=0,
+                    max_tokens=GROUNDING_MAX_TOKENS,
+                )
+    except Exception as e:
+        record_step_output(error=f"{type(e).__name__}: {e}")
+        raise
     out: List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]] = [
         None
     ] * len(claims)
@@ -672,6 +676,13 @@ def judge_claims(
         i = v.claim_number - 1 if by_number else pos
         if i < len(claims):
             out[i] = (v.support_level, v.reasoning, getattr(v, "passage", None))
+    missing = sum(1 for v in out if v is None)
+    counts = Counter(getattr(v[0], "value", v[0]) for v in out if v is not None)
+    level_counts = {
+        k: counts.get(k, 0)
+        for k in ("supported", "partial", "not_supported", "unclear")
+    }
+    annotate(**level_counts, missing=missing)
     record_step_output(
         verdicts=[
             None
@@ -683,7 +694,9 @@ def judge_claims(
                 "passage": v[2],
             }
             for n, v in enumerate(out)
-        ]
+        ],
+        counts=level_counts,
+        missing=missing,
     )
     return out
 

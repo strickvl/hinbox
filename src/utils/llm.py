@@ -255,7 +255,9 @@ _OUTPUT_TOKEN_CAPS: Tuple[Tuple[re.Pattern, int], ...] = (
 
 # Parameters a Kitaru replay's ``model_params`` override sets on every call
 # (``scripts/kitaru_step.py``); empty in the pipeline
-MODEL_PARAM_KEYS = ("temperature", "max_tokens", "top_p", "seed", "reasoning_effort")
+MODEL_PARAM_KEYS = (
+    "temperature", "max_tokens", "top_p", "seed", "reasoning_effort", "frequency_penalty",
+)  # fmt: skip
 _PARAM_OVERRIDE: Dict[str, Any] = {}
 
 

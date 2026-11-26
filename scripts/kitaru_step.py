@@ -1,20 +1,24 @@
-"""Run one recorded ``profile.update``, ``match_check`` or ``grounding`` (citation
-check) step again and record it in Kitaru.
+"""Run one recorded ``profile.update``, ``match_check``, ``extract.<type>`` or
+``grounding`` (citation check) step again and record it in Kitaru.
 
 Kitaru's worker starts this script for a replay of a step session (one that
-``scripts/kitaru_traces.py --step profile.update``, ``--step match_check`` or
-``--step grounding`` wrote, or ``just citecheck kitaru-sessions``). The session's inputs are the step's own arguments; this script:
+``scripts/kitaru_traces.py --step <step>`` wrote, or ``just citecheck
+kitaru-sessions``). The session's inputs are the step's own arguments; this
+script:
 
 1. reads them from the task (``KITARU_TASK_INPUTS``, or the task's spec when
    they were too long for the environment);
 2. applies the replay's model override, if any (``KITARU_REPLAY_ID``);
 3. calls the function the step ran, with those arguments: ``update_profile()``
    for a pipeline step, ``edit_step()`` (``edit_profile()``) for an eval step,
-   as the recorded ``call`` says, and ``_check_match()`` for a match check
+   as the recorded ``call`` says, ``_check_match()`` for a match check
    (its ``backend`` set from the model, so a local model is asked locally; a
    failed call fails the run, since its ``is_match=False`` is no verdict),
-   and ``judge_claims()`` for a citation check (a ``tinker://`` checkpoint
-   or ``tinker/<base model>`` is sampled on Tinker, ``src/citecheck/tinker_judge.py``);
+   ``ArticleProcessor._timed_extract()`` for an extraction step (raising when
+   extraction failed so an empty fallback is never counted as a verdict), and
+   ``judge_claims()`` for a citation check (a ``tinker://`` checkpoint or
+   ``tinker/<base model>`` is sampled on Tinker,
+   ``src/citecheck/tinker_judge.py``);
 4. turns the spans that call left (the step and its model calls) into a
    session with the same code that converts traces for import
    (``step_sessions()``), so a replay and its baseline have the same shape;
@@ -23,7 +27,7 @@ Kitaru's worker starts this script for a replay of a step session (one that
 
 Register it as each step agent's run command,
 ``kitaru agent register hinbox-profile-update --spec spec.yaml`` (and
-``hinbox-match-check``), with::
+``hinbox-match-check``, ``hinbox-extract``, ``hinbox-citation-check``), with::
 
     version:
       run_spec:
@@ -34,7 +38,8 @@ Register it as each step agent's run command,
 (Hinbox has no tools; Instructor's tool call is structured output.) Run the
 worker with ``just kitaru-worker``, which gives it ``.env``'s API keys. Of the
 replay overrides ``model`` and ``model_params`` are applied: the parameters
-(``temperature``, ``max_tokens``, ``top_p``, ``seed``, ``reasoning_effort``) go
+(``temperature``, ``max_tokens``, ``top_p``, ``seed``, ``reasoning_effort``,
+``frequency_penalty``) go
 on every model call the step makes, over Hinbox's own choice
 (``set_model_params()``), and any other key fails the run. ``system_prompt``
 and ``prompt`` fail it too, since a step's prompts are built in code (a
@@ -77,9 +82,12 @@ def hinbox_model(name: str) -> str:
 
 def step_name(inputs: Dict[str, Any]) -> str:
     """Which step recorded these arguments: only ``_check_match()`` takes an
-    existing profile's text, only ``judge_claims()`` a list of claims."""
+    existing profile's text, only extraction takes ``article_content``, and
+    only ``judge_claims()`` takes a list of claims."""
     if "existing_profile_text" in inputs:
         return MATCH_STEP
+    if "article_content" in inputs and "entity_type" in inputs:
+        return f"extract.{inputs['entity_type']}"
     if "claims" in inputs and "article_text" in inputs:
         return GROUNDING_STEP
     return PROFILE_STEP
@@ -128,6 +136,40 @@ def _match_check(**args: Any) -> Any:
     return result
 
 
+def _extract_step(
+    *,
+    entity_type: str,
+    article_content: str,
+    article_id: str = "",
+    domain: str = "guantanamo",
+    model: str = "",
+    model_type: Optional[str] = None,
+) -> Any:
+    """Run one ``extract.<entity_type>`` step (extraction, QC and retry).
+
+    Raises when extraction failed so Kitaru marks the replay failed instead of
+    treating an empty fallback list as a clean zero-entity result.
+    """
+    from src.engine.article_processor import ArticleProcessor
+    from src.utils.task_models import is_local_model
+
+    resolved_type = (
+        ("ollama" if is_local_model(model) else "gemini")
+        if model
+        else (model_type or "gemini")
+    )
+    processor = ArticleProcessor(
+        domain=domain,
+        model_type=resolved_type,
+        extraction_model=model or None,
+    )
+    outcome = processor._timed_extract(entity_type, article_content, article_id)
+    if not outcome.success:
+        err = outcome.error
+        raise RuntimeError(f"{err.type}: {err.message}" if err else "extraction failed")
+    return outcome
+
+
 def apply_model_params(override: Any) -> None:
     """Put the override's ``model_params`` on every model call this process
     makes; an unsupported key raises."""
@@ -152,7 +194,8 @@ def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any
             "can't restore yet; replaying it would let them be rewritten"
         )
     args = {k: v for k, v in inputs.items() if k not in NOT_ARGUMENTS}
-    if step_name(inputs) == GROUNDING_STEP:
+    name = step_name(inputs)
+    if name == GROUNDING_STEP:
         from src.utils.grounding import judge_claims
 
         model = str(args.get("model") or "")
@@ -161,11 +204,13 @@ def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any
             "claims": [tuple(c) for c in args["claims"]],
             "model_type": "local" if model.startswith("ollama/") else "cloud",
         }
-    if step_name(inputs) == MATCH_STEP:
+    if name == MATCH_STEP:
         return _match_check, {
             **args,
             "backend": "local" if args["model"].startswith("ollama/") else "cloud",
         }
+    if name.startswith("extract."):
+        return _extract_step, args
     if inputs.get("call") == "edit_profile":
         from src.evals.profile_update import edit_step
 

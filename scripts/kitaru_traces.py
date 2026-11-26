@@ -8,7 +8,8 @@ shows a model call as a conversation when its messages are ``{"role",
 "content"}`` and the node says where the system prompt, the prompt and the
 reply are (``*_selector``); the Phoenix importer sets neither
 (https://github.com/zenml-io/kitaru/issues/1517). A step that records its
-arguments and result (``profile.update``, ``match_check``: a JSON object in
+arguments and result (``profile.update``, ``match_check``, ``extract.<type>``,
+``grounding``: a JSON object in
 ``input.value``/``output.value``) shows them as its inputs and outputs, with
 our ``hinbox.*`` labels beside them under ``labels``; any other step shows its
 labels alone. Merge decisions join the outputs of their ``merge.<type>`` step.
@@ -21,12 +22,13 @@ then, for each part:
     kitaru session import <part> --importer kitaru/kitaru-jsonl@latest \\
         --agent hinbox@latest --media-type application/x-ndjson --wait
 
-With ``--step profile.update`` (or ``--step match_check``, or ``--step
-grounding`` for the citation check's calls, one per article and batch of
-claims) each span of that step becomes its own session instead
-(``step_sessions()``), whose inputs are the step's recorded arguments: the
-unit a Kitaru replay re-runs. Import those under the step's own agent
-(``hinbox-profile-update``, ``hinbox-match-check``, ``hinbox-citation-check``),
+With ``--step profile.update`` (or ``match_check``, ``extract``,
+``extract.<type>``, or ``grounding`` for the citation check's calls, one per
+article and batch of claims) each span of that step becomes its own session
+instead (``step_sessions()``), whose inputs are the step's recorded arguments:
+the unit a Kitaru replay re-runs. Import those under the step's own agent
+(``hinbox-profile-update``, ``hinbox-match-check``, ``hinbox-extract``,
+``hinbox-citation-check``),
 not beside the article sessions.
 
 The parts hold article text: keep them off GitHub (the repo is public).
@@ -57,6 +59,7 @@ INPUT_LABELS = {
     "prompt_files",
     "extraction_attempt",
     "attempt_count",
+    "claim_count",
     "article.id",
     "article.title",
     "article.url",
@@ -338,6 +341,12 @@ def _step_error(outputs: Any) -> Optional[str]:
     return reason if reason.startswith(FAILED_MATCH_CHECK) else None
 
 
+def _step_matches(span_name: str, step: str) -> bool:
+    """True when ``span_name`` matches ``step`` (``extract`` matches every
+    ``extract.<type>``)."""
+    return span_name == step or (step == "extract" and span_name.startswith("extract."))
+
+
 def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]:
     """One session per ``step`` span in a trace that recorded its arguments.
 
@@ -357,8 +366,9 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
     for span in rows:
         attrs = span.get("attributes") or {}
         inputs = _decode(attrs.get("input.value"))
-        if span["name"] != step or not isinstance(inputs, dict):
+        if not _step_matches(span["name"], step) or not isinstance(inputs, dict):
             continue
+        actual_step = span["name"]
         subtree, stack = [], [span]
         while stack:
             current = stack.pop()
@@ -369,16 +379,21 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
         outputs = _decode(attrs.get("output.value"))
         error = step_node["error"] or _step_error(outputs)
         labels = _labels(attrs)
-        about = labels.get("entity_name") or " vs ".join(
-            str(labels[k]) for k in ("new_name", "existing_name") if labels.get(k)
+        about = (
+            labels.get("entity_name")
+            or " vs ".join(
+                str(labels[k]) for k in ("new_name", "existing_name") if labels.get(k)
+            )
+            or article.get("article.title")
+            or labels.get("article_id")
+            or inputs.get("article_id")
         )
-        about = about or str(labels.get("article_id") or "")  # a citation check
         trace_id = span["context"]["trace_id"]
         case = {k: _decode(article[k]) for k in EVAL_KEYS if k in article}
         sessions.append(
             {
                 "status": "failed" if error else "completed",
-                "name": f"{step}: {about}" if about else step,
+                "name": f"{actual_step}: {about}" if about else actual_step,
                 # An eval case's labels go in the inputs too, under `labels`:
                 # a replay gets only the inputs, and the evaluator scores the
                 # re-run by its case's kind (scripts/kitaru_step.py drops them
@@ -391,9 +406,11 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
                 "external_id": f"hinbox:{trace_id}:{span['context']['span_id']}",
                 "metadata": {
                     **_run_metadata(rows),
-                    "step": step,
+                    "step": actual_step,
                     "article_session": f"hinbox:{trace_id}",
-                    "article_id": labels.get("article_id") or article.get("article.id"),
+                    "article_id": labels.get("article_id")
+                    or inputs.get("article_id")
+                    or article.get("article.id"),
                     "article_title": article.get("article.title"),
                     # An eval item's case, so eval sessions can be grouped by kind
                     **case,
@@ -474,7 +491,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--step",
-        help="one session per span of this step (e.g. profile.update) that "
+        help="one session per span of this step (e.g. profile.update, "
+        "match_check, extract, extract.locations, grounding) that "
         "recorded its arguments, instead of one per trace",
     )
     args = parser.parse_args()
