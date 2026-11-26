@@ -221,7 +221,7 @@ def planted_claims(
     """Copied and changed claims for (entity name, article id) pairs whose
     article is in ``splits``: for each pair, up to ``per_pair`` copied
     sentences naming the entity, each kept as "supported" and changed once
-    by a kind it allows (the rarer kinds tried first)."""
+    by a kind it allows (the kinds tried in a random order per sentence)."""
     rng = random.Random(seed)
     out: List[Dict[str, Any]] = []
     done = set()
@@ -258,7 +258,11 @@ def planted_claims(
                     "source": "planted",
                 }
             )
-            for kind in ("hedge", "name", "negation", "number", "year"):
+            # Each sentence tries the kinds in its own random order: in a
+            # fixed order "negation" (any sentence with "was" or "is") and
+            # "name" took nearly every sentence first, and of 84,655 planted
+            # claims on the full run only 1 changed a year
+            for kind in rng.sample(KINDS, len(KINDS)):
                 made = _change(kind, sentence, article, rng, entity)
                 if not made:
                     continue
