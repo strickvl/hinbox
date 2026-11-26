@@ -16,8 +16,6 @@ from typing import (
     Optional,
     Tuple,
     Type,
-    get_args,
-    get_origin,
 )
 
 import instructor
@@ -48,6 +46,12 @@ from src.utils.ollama_context import check_prompt_fits, thinking_settings
 from src.utils.provider_routing import ProviderTarget, resolve_chat_target
 from src.utils.server_health import watch_connections
 from src.utils.step_timing import record_llm_call, timed, timed_step
+from src.utils.tool_call_recovery import (  # noqa: F401  (tests import them from here)
+    _count_tool_calls,
+    _list_item_model,
+    _recover_list_from_text,
+    _recover_multiple_tool_calls,
+)
 from src.utils.tracing import instrument_client, request_span
 
 # Get logger for this module
@@ -148,6 +152,8 @@ def _resolve_instructor_mode(
     if target.sdk == "anthropic":
         if json_fallback:
             return instructor.Mode.ANTHROPIC_JSON
+        if _ANTHROPIC_NO_FORCED_TOOL.match(target.api_model):
+            return instructor.Mode.ANTHROPIC_REASONING_TOOLS
         return instructor.Mode.ANTHROPIC_TOOLS
     # OpenAI-compatible providers
     if json_fallback:
@@ -244,6 +250,15 @@ _OPENAI_REASONING_MODEL = re.compile(r"^(gpt-5|gpt-6|o\d)")
 _OPENAI_NO_REASONING_OK = re.compile(r"^(gpt-5\.\d|gpt-6)")
 # Claude 5-family models reject ``temperature``
 _ANTHROPIC_NO_TEMPERATURE = re.compile(r"^claude-[a-z]+-5")
+# Claude models that refuse a forced tool call (``tool_choice`` "tool" or
+# "any" returns a 400) and think before every answer: Instructor's default
+# Anthropic mode forces its tool, so these get its "auto" tool-choice mode
+# (a reply without the tool call goes to the JSON-mode fallback), and room for
+# the thinking before the answer, which counts against ``max_tokens``.
+_ANTHROPIC_NO_FORCED_TOOL = re.compile(
+    r"^claude-(opus-5-5|sonnet-5-5|fable-5-[12]|mythos-5-[12])"
+)
+ANTHROPIC_THINKING_MAX_TOKENS = 16000
 
 
 # Output-token ceilings for models that reject a larger request. Profile calls
@@ -304,6 +319,8 @@ def _model_sampling_kwargs(
         if _OPENAI_NO_REASONING_OK.match(model):
             kwargs["reasoning_effort"] = "none"
         return kwargs
+    if target.sdk == "anthropic" and _ANTHROPIC_NO_FORCED_TOOL.match(model):
+        return {"max_tokens": max(max_tokens, ANTHROPIC_THINKING_MAX_TOKENS)}
     if target.sdk == "anthropic" and _ANTHROPIC_NO_TEMPERATURE.match(model):
         return {"max_tokens": max_tokens}
     kwargs = {"max_tokens": max_tokens, "temperature": temperature}
@@ -340,112 +357,6 @@ def _prepare_messages_for_target(
 # ---------------------------------------------------------------------------
 # Structured-output helpers
 # ---------------------------------------------------------------------------
-
-
-def _list_item_model(response_model: Any) -> Optional[type[BaseModel]]:
-    """Return the item model for a ``List[Model]`` response type."""
-    origin = get_origin(response_model)
-    if origin is list:
-        args = get_args(response_model)
-        if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
-            return args[0]
-    return None
-
-
-def _count_tool_calls(error: Exception) -> str:
-    """Tool calls in the completion behind an Instructor error, if known."""
-    try:
-        message = error.last_completion.choices[0].message  # type: ignore[attr-defined]
-    except (AttributeError, IndexError, TypeError):
-        return "an unknown number of"
-    return str(len(getattr(message, "tool_calls", None) or []))
-
-
-_CODE_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
-
-
-def _recover_list_from_text(
-    content: Optional[str], item_model: type[BaseModel]
-) -> Optional[List[BaseModel]]:
-    """Parse a list answer the model wrote as text (often a fenced JSON array).
-
-    Instructor's JSON mode can't read a bare array: it keeps only the text
-    from the first ``{`` to the last ``}``, which drops the brackets.
-    """
-    if not content:
-        return None
-    try:
-        payload = json.loads(_CODE_FENCE.sub("", content.strip()))
-    except json.JSONDecodeError:
-        return None
-    if isinstance(payload, dict) and len(payload) == 1:
-        payload = next(iter(payload.values()))
-    if not isinstance(payload, list):
-        return None
-    recovered = [item_model.model_validate(item, strict=False) for item in payload]
-    logger.warning(
-        "Recovered %d items from a text answer without tool calls", len(recovered)
-    )
-    return recovered
-
-
-def _recover_multiple_tool_calls(
-    *,
-    error: Exception,
-    response_model: Any,
-) -> Optional[Any]:
-    """Recover from Instructor's "multiple tool calls" assertion when possible.
-
-    Instructor fails fast when a provider emits more than one tool call. For
-    ``List[Model]`` response shapes, each tool call is often one item. We can
-    parse those arguments directly from ``last_completion`` and validate them.
-    """
-    completion = getattr(error, "last_completion", None)
-    if completion is None:
-        return None
-
-    choices = getattr(completion, "choices", None)
-    if not choices:
-        return None
-
-    message = getattr(choices[0], "message", None)
-    if message is None:
-        return None
-
-    tool_calls = getattr(message, "tool_calls", None) or []
-    item_model = _list_item_model(response_model)
-    if item_model is None:
-        return None
-    if not tool_calls:
-        return _recover_list_from_text(getattr(message, "content", None), item_model)
-    if len(tool_calls) == 1:
-        return None
-
-    recovered: List[BaseModel] = []
-    for call in tool_calls:
-        fn = getattr(call, "function", None)
-        args_payload = getattr(fn, "arguments", None)
-        if args_payload is None:
-            return None
-
-        if isinstance(args_payload, str):
-            payload = json.loads(args_payload)
-        elif isinstance(args_payload, dict):
-            payload = args_payload
-        else:
-            return None
-
-        items = payload.get("items") if isinstance(payload, dict) else None
-        if isinstance(items, list) and "items" not in item_model.model_fields:
-            # one call per chunk of the list, each a {"items": [...]} object
-            recovered.extend(item_model.model_validate(i, strict=False) for i in items)
-        else:
-            recovered.append(item_model.model_validate(payload, strict=False))
-
-    logger.warning(
-        "Recovered %d items from multiple tool calls without retry", len(recovered)
-    )
-    return recovered
 
 
 @lru_cache(maxsize=None)

@@ -123,3 +123,28 @@ def test_a_replays_model_params_go_on_every_call_under_the_models_own_names():
         assert "presence_penalty" in str(e)
     else:
         raise AssertionError("an unknown parameter must be refused")
+
+
+def test_always_thinking_claude_models_get_room_to_think():
+    assert _kwargs("anthropic/claude-opus-5-5") == {"max_tokens": 16000}
+    assert _kwargs("anthropic/claude-sonnet-5-5", max_tokens=20000) == {
+        "max_tokens": 20000
+    }
+    assert _kwargs("anthropic/claude-haiku-5-5") == {"max_tokens": 100}
+
+
+def test_claude_models_that_refuse_a_forced_tool_get_auto_tool_choice():
+    import instructor
+
+    mode = llm._resolve_instructor_mode
+    for model in ("anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5",
+                  "anthropic/claude-fable-5-2"):  # fmt: skip
+        assert (
+            mode(resolve_chat_target(model))
+            == instructor.Mode.ANTHROPIC_REASONING_TOOLS
+        )
+        assert mode(resolve_chat_target(model), json_fallback=True) == (
+            instructor.Mode.ANTHROPIC_JSON
+        )
+    for model in ("anthropic/claude-haiku-5-5", "anthropic/claude-opus-5"):
+        assert mode(resolve_chat_target(model)) == instructor.Mode.ANTHROPIC_TOOLS

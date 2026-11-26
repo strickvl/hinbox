@@ -34,6 +34,7 @@ button.on,.btn.main{background:var(--accent);color:#fff;border-color:var(--accen
 kbd{font:12px ui-monospace,monospace;border:1px solid var(--line);border-radius:3px;padding:0 4px;margin-left:4px;opacity:.75}
 input[type=text]{width:100%;padding:8px;margin-top:8px;font:15px system-ui,sans-serif;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px}
 mark{background:var(--mark);color:inherit}
+.earlier{border:1px solid var(--line);border-radius:8px;padding:4px 12px;margin:12px 0;font:14px/1.45 system-ui,sans-serif}.earlier p{margin:8px 0}.earlier b.no{color:var(--bad)}.earlier b.yes{color:var(--ok)}
 .article{white-space:pre-wrap;position:relative}
 @media (max-width:999px){.article{max-height:60vh;overflow:auto}}
 a{color:var(--accent)}
@@ -114,6 +115,8 @@ a{color:var(--accent)}
 <span class="muted">From the page of <b>{{ item.entity_name }}</b>{% if same_article %} · same article as the last one{% endif %}</span></div>
 <p class="claim">{% for piece, flagged in claim_pieces %}{% if flagged %}<span class="flag" title="Not found anywhere in the article">{{ piece }}</span>{% else %}{{ piece }}{% endif %}{% endfor %}</p>
 {% if flags %}<div class="muted">Dotted underline: not found anywhere in the article (word match only)</div>{% endif %}
+{% if item.earlier %}<div class="earlier">{% for e in item.earlier %}<p><b>{{ e.who }}</b> said <b class="{{ e.label }}">{{ {"yes": "yes", "no": "no", "unsure": "can't tell"}[e.label] }}</b>{% if e.note %}: {{ e.note }}{% endif %}</p>{% endfor %}
+<p class="muted">Marked in the article: the passages {{ item.earlier[-1].who }} quoted. A new answer replaces your earlier one.</p></div>{% endif %}
 {% if item.level %}<p class="muted">Checkers' verdict: <b>{{ item.level }}</b>{% if item.reasoning %}: {{ item.reasoning }}{% endif %}</p>{% endif %}
 <form method="post" action="/label" id="f">
 <input type="hidden" name="item_id" value="{{ item.item_id }}">

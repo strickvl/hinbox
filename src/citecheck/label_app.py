@@ -31,6 +31,10 @@ encouragement (``cat_for()``). ``HINBOX_LABEL_CATS`` names them, e.g.
 ``Tom:ginger,Kit:tortie`` (kinds: ``ginger``, ``tortie``); unset, they are
 just "the ginger cat" and "the tortoiseshell cat".
 
+Review mode (``just citecheck review``): items that carry ``earlier``
+answers (yours and another labeller's, with notes) show them above the
+buttons, and the passages the other labeller quoted are the ones marked.
+
 Audit mode: items that carry a ``level`` (teacher labels) show that verdict
 and ask whether it is right, so the same page measures how often the
 teachers are wrong. The page binds to 127.0.0.1 and accepts posts only from
@@ -109,6 +113,18 @@ def marked_pieces(article: str, claim: str, top: int = 2) -> List[Tuple[str, boo
         at = end
     pieces.append((article[at:], False))
     return [(text, mark) for text, mark in pieces if text]
+
+
+def _article_pieces(article: str, item: Dict[str, Any]) -> List[Tuple[str, bool]]:
+    """The passages another labeller quoted, in review mode (when any is
+    found); else the sentences most like the claim."""
+    from src.citecheck.review import quote_pieces
+
+    if item.get("evidence"):
+        pieces = quote_pieces(article, item["evidence"])
+        if any(marked for _, marked in pieces):
+            return pieces
+    return marked_pieces(article, item["claim"])
 
 
 def _norm(token: str) -> str:
@@ -349,7 +365,7 @@ def make_app(
             question=AUDIT_QUESTION if item.get("level") else QUESTION,
             claim_pieces=pieces,
             flags=any(flag for _, flag in pieces),
-            pieces=marked_pieces(article, item["claim"]),
+            pieces=_article_pieces(article, item),
             **base,
         )
         return HTMLResponse(html)

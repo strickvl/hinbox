@@ -12,7 +12,16 @@ import pyarrow.parquet as pq
 import pytest
 from starlette.testclient import TestClient
 
-from src.citecheck import export, items, label_app, merge_data, planted, score, teach
+from src.citecheck import (
+    export,
+    items,
+    label_app,
+    merge_data,
+    planted,
+    review,
+    score,
+    teach,
+)
 from src.citecheck.__main__ import main
 from src.citecheck.label_app import make_app, marked_pieces
 from src.engine.match_checker import parse_sectioned_reply
@@ -532,3 +541,74 @@ def test_the_article_date_reads_unix_seconds_as_the_articles_file_stores_them():
     assert label_app._date(1371742594000) == "20 June 2013"
     assert label_app._date("2016-03-12T00:00:00") == "12 March 2016"
     assert label_app._date(None) == "" and label_app._date("soon") == "soon"
+
+
+def _write(path, rows):
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(row) + "\n")
+
+
+def test_review_shows_disagreements_with_both_answers_and_marks_the_quotes(tmp_path):
+    its = [
+        {"item_id": k, "entity_name": "Yusuf Qadir", "article_id": "x", "claim": c}
+        for k, c in [("a", "Qadir was flown to the base in 2006."),
+                     ("b", "Voss approved the transfer."),
+                     ("c", "Qadir studied engineering.")]
+    ]  # fmt: skip
+    mine, sol = tmp_path / "mine.jsonl", tmp_path / "sol.jsonl"
+    _write(mine, [{"item_id": "a", "label": "yes"}, {"item_id": "b", "label": "yes"}])
+    _write(sol, [
+        {"item_id": "a", "label": "yes"},
+        {"item_id": "b", "label": "no", "labeller": "sol", "note": "hedge dropped",
+         "evidence": "“the transfer was allegedly approved by Mara Voss” … no more"},
+        {"item_id": "c", "label": "no"},
+    ])  # fmt: skip
+    picked = review.review_items(its, str(mine), str(sol))
+    assert [i["item_id"] for i in picked] == [
+        "b"
+    ]  # same label, or one side unlabelled: left out
+    assert picked[0]["earlier"][1] == {
+        "who": "sol",
+        "label": "no",
+        "note": "hedge dropped",
+    }
+    assert picked[0]["evidence"] == ["the transfer was allegedly approved by Mara Voss"]
+    out = str(tmp_path / "review.jsonl")
+    page = TestClient(make_app(picked, out, {"x": ARTICLE})).get("/?i=0").text
+    assert "<b>sol</b> said" in page and "hedge dropped" in page
+    assert (
+        '<mark class="m">the transfer was allegedly approved by Mara Voss</mark>'
+        in page
+    )
+    pieces = review.quote_pieces(ARTICLE, ["THE TRANSFER was 'allegedly'"])
+    assert "".join(t for t, _ in pieces) == ARTICLE and not any(m for _, m in pieces)
+    joined = "Col. Lee said so. Neighbours said Qadir had studied engineering at a local college."
+    marked = [t for t, m in review.quote_pieces(ARTICLE, [joined]) if m]
+    assert marked == [
+        "Neighbours said Qadir had studied engineering at a local college."
+    ]
+
+
+def test_combine_lets_the_later_file_win(tmp_path):
+    a, b, c = (tmp_path / n for n in ("sol.jsonl", "mine.jsonl", "review.jsonl"))
+    _write(a, [{"item_id": "1", "label": "no"}, {"item_id": "2", "label": "no"}])
+    _write(b, [{"item_id": "1", "label": "yes"}, {"item_id": "2", "label": "yes"}])
+    _write(c, [{"item_id": "2", "label": "no"}])
+    out = str(tmp_path / "all.jsonl")
+    counts = review.combine_labels(
+        [str(a), str(b), str(c), str(tmp_path / "none")], out
+    )
+    assert counts == {"yes": 1, "no": 1}
+    assert items.latest_labels(out)["2"]["label"] == "no"
+
+
+def test_combine_from_the_command_line_writes_a_file_not_a_folder(tmp_path):
+    a, b = tmp_path / "sol.jsonl", tmp_path / "mine.jsonl"
+    _write(a, [{"item_id": "1", "label": "no"}])
+    _write(b, [{"item_id": "1", "label": "yes"}])
+    out = tmp_path / "new" / "all.jsonl"
+    main(["combine", "--labels", str(a), str(b), "--out", str(out)])
+    assert out.is_file() and items.latest_labels(str(out))["1"]["label"] == "yes"
+    main(["combine", "--labels", str(b), str(a), "--out", str(out)])  # file exists
+    assert items.latest_labels(str(out))["1"]["label"] == "no"
