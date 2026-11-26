@@ -22,7 +22,7 @@ made again.
 import random
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from src.citecheck.items import append_jsonl, read_jsonl
 from src.logging_config import get_logger
@@ -38,7 +38,12 @@ logger = get_logger("citecheck.teach")
 
 TEACHERS = ("anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5")
 PER_ARTICLE = 12
-QUOTED = ("supported", "partial")
+# Verdicts kept only with a passage found in the article. A "partial" verdict
+# often names what the article lacks (a dropped "allegedly", an added cause),
+# which has no passage to quote, so it is kept without one: on the 26 Nov strict
+# run a quote rule on partial kept 267 of 766 agreed partials against 1,072 of
+# 1,773 supported, and threw away most of the errors the strict rules teach.
+QUOTED = ("supported",)
 
 
 def teacher_sample(
@@ -183,9 +188,9 @@ def run_teachers(
 def agreed_labels(
     teacher_rows: List[Dict[str, Any]], teachers: Tuple[str, ...] = TEACHERS
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    """Claims every teacher judged the same way, each with the first
-    teacher's reasoning; a supported or partial label also needs a quote
-    found in the article. Returns the labels and counts of what was left
+    """Claims every teacher judged the same way, each with the reasoning of
+    the first teacher that quoted the article (else the first teacher's); a
+    supported label also needs such a quote. Returns the labels and counts of what was left
     out (``disagree``, ``missing``, ``no_quote``)."""
     by_item: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
     for r in teacher_rows:
@@ -199,9 +204,11 @@ def agreed_labels(
         if len(levels) != 1:
             dropped["disagree"] += 1
             continue
-        first: Optional[Dict[str, Any]] = got[teachers[0]]
         level = levels.pop()
-        if level in QUOTED and not first.get("passages"):
+        # the first teacher whose reasoning holds a quote found in the article
+        quoted = [got[t] for t in teachers if got[t].get("passages")]
+        first: Dict[str, Any] = quoted[0] if quoted else got[teachers[0]]
+        if level in QUOTED and not quoted:
             dropped["no_quote"] += 1
             continue
         out.append({**first, "source": "teachers", "teachers": list(teachers)})

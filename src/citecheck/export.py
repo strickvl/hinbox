@@ -90,6 +90,24 @@ def build_examples(
     return examples, {"examples": len(examples), "claims": dict(counts)}
 
 
+def cap_planted(
+    labels: List[Dict[str, Any]], ratio: float, seed: int = 3
+) -> List[Dict[str, Any]]:
+    """Keep every label that isn't planted, and at most ``ratio`` planted
+    labels per other label, picked at random.
+
+    The 26 Nov strict export held 84,720 planted claims beside 1,413 teacher
+    claims, so the teachers' errors (dropped attributions and hedges, added
+    causes, sentences about "the profile"), which no planted kind makes, were
+    under 2% of what the model would learn from."""
+    planted = [r for r in labels if r.get("source") == "planted"]
+    other = [r for r in labels if r.get("source") != "planted"]
+    keep = int(ratio * len(other))
+    if len(planted) <= keep:
+        return labels
+    return other + random.Random(seed).sample(planted, keep)
+
+
 def split_labels(
     labels: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
