@@ -131,6 +131,19 @@ def _ask(
     return rows
 
 
+def same_rules(rows: List[Dict[str, Any]], path: str, fix: str) -> None:
+    """Stop when teacher ``rows`` were asked under other judge rules than
+    ``HINBOX_GROUNDING_RULES`` now names (a row without ``rules`` predates
+    them: standard), so verdicts never meet a prompt they weren't asked with."""
+    other = {r.get("rules", "standard") for r in rows if "teacher" in r}
+    other.discard(grounding.GROUNDING_RULES)
+    if other:
+        raise SystemExit(
+            f"{path} holds verdicts under rules={sorted(other)}, not "
+            f"{grounding.GROUNDING_RULES}: {fix}"
+        )
+
+
 def run_teachers(
     claims: List[Dict[str, Any]],
     texts: Dict[str, str],
@@ -142,13 +155,7 @@ def run_teachers(
     ``out_path``; calls already there are skipped. Returns counts. A file
     holding verdicts asked under other judge rules (``HINBOX_GROUNDING_RULES``)
     is refused, so one file never mixes two standards."""
-    other = {r.get("rules", "standard") for r in read_jsonl(out_path)}
-    other.discard(grounding.GROUNDING_RULES)
-    if other:
-        raise SystemExit(
-            f"{out_path} holds verdicts under rules={sorted(other)}, not "
-            f"{grounding.GROUNDING_RULES}: use another --out"
-        )
+    same_rules(read_jsonl(out_path), out_path, "use another --out")
     done = _done(out_path)
     jobs = [
         (t, aid, [c for c in group if (t, c["item_id"]) not in done])

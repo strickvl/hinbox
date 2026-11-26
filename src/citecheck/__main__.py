@@ -194,6 +194,10 @@ def cmd_export(a: argparse.Namespace) -> None:
 
     labels: List[Dict[str, Any]] = []
     if not a.no_teachers:
+        from src.citecheck.teach import same_rules
+
+        path = os.path.join(a.out, "teacher_verdicts.jsonl")
+        same_rules(read_jsonl(path), path, "set HINBOX_GROUNDING_RULES to match")
         labels += _agreed(a.out, _teachers(a.teachers))
     if not a.no_planted:
         labels += read_jsonl(os.path.join(a.out, "planted.jsonl"))

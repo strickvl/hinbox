@@ -638,3 +638,16 @@ def test_teach_refuses_a_file_asked_under_other_rules(tmp_path, monkeypatch):
     monkeypatch.setattr(grounding, "GROUNDING_RULES", "strict")
     with pytest.raises(SystemExit, match="another --out"):
         teach.run_teachers([], {}, str(out), teachers=("t",))
+
+
+def test_export_refuses_teacher_verdicts_asked_under_other_rules(tmp_path, monkeypatch):
+    from src.utils import grounding
+
+    row = {"item_id": "a", "teacher": "t", "level": "supported", "rules": "strict"}
+    _write(tmp_path / "teacher_verdicts.jsonl", [row])
+    args = ["export", "--articles", "unused.parquet", "--out", str(tmp_path)]
+    with pytest.raises(SystemExit, match="HINBOX_GROUNDING_RULES"):
+        main(args)
+    monkeypatch.setattr(grounding, "GROUNDING_RULES", "strict")
+    teach.same_rules([row], "x", "fix")  # matching rules pass
+    teach.same_rules([{"item_id": "p", "level": "partial"}], "x", "fix")  # planted
