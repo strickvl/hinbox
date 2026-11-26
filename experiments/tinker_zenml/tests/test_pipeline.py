@@ -5,6 +5,7 @@ reach ZenML. Run with ``just tinker-pipeline-test``. Names are made up."""
 
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,8 +96,9 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
         _write(out, rows)
         return rows
 
-    def compare(name, model, prices):
+    def compare(name, model, prices, item_ids):
         seen["kitaru"] = (name, model, prices)
+        seen["item_ids"] = item_ids
         return {
             "experiment_id": "e1",
             "run_id": "r1",
@@ -129,6 +131,7 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
 
     assert seen["cfg"]["steps"] == 2 and seen["cfg"]["effort"] == 0.0
     assert seen["kitaru"][1] == "tinker://run-1/sampler_weights/citecheck"
+    assert seen["item_ids"] == ["i0", "i1", "i2", "i3"]
     from zenml.client import Client
 
     run = Client().get_pipeline("citecheck_finetune").last_run
@@ -175,3 +178,34 @@ def test_sampling_starts_when_no_replies_file_exists(zen, tmp_path, monkeypatch)
     monkeypatch.setattr(tc, "_sample_rows", sample_rows)
     rows = zen.tinker_sample("tinker://x", str(prompts), str(out), {"model": "m"})
     assert [r["item_ids"] for r in rows] == [["i0"]]
+
+
+def test_a_rerun_reports_only_its_own_training_log(zen, tmp_path, monkeypatch):
+    """A second training run in the same folder must not count the first
+    run's steps or claim its lower tune loss."""
+    from scripts import tinker_citecheck as tc
+
+    d = tmp_path / "data"
+    (d / "tinker").mkdir(parents=True)
+    _write(d / "train.jsonl", [{"messages": []}])
+    _write(d / "tinker" / "train_log.jsonl", [{"step": 0, "tune_nll": 0.01}])
+
+    class Saved:
+        path = "tinker://run-2/sampler_weights/citecheck"
+
+    class Client:
+        def save_weights_for_sampler(self, name):
+            return SimpleNamespace(result=lambda: Saved())
+
+        def save_state(self, name):
+            return SimpleNamespace(result=lambda: Saved())
+
+    def train_loop(args, train, tune, steps):
+        tc._append(
+            os.path.join(args.out, "train_log.jsonl"), {"step": 0, "tune_nll": 0.9}
+        )
+        return Client()
+
+    monkeypatch.setattr(tc, "train_loop", train_loop)
+    out = zen.tinker_train(str(d), {"name": "citecheck", "model": "m", "steps": 1})
+    assert out["log"] == [{"step": 0, "tune_nll": 0.9}]

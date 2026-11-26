@@ -79,6 +79,8 @@ def tinker_train(data_dir: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     out = _path(data_dir, "tinker")
     os.makedirs(out, exist_ok=True)
     args = SimpleNamespace(out=out, **cfg)
+    log_path = os.path.join(out, "train_log.jsonl")
+    earlier = _count(log_path)  # rows from earlier runs in this folder
     client = tc.train_loop(
         args,
         _rows(_path(data_dir, "train.jsonl")),
@@ -94,7 +96,7 @@ def tinker_train(data_dir: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
         "model": cfg["model"],
     }
     tc._append(os.path.join(out, "checkpoints.jsonl"), row)
-    return {"checkpoint": row, "log": _rows(os.path.join(out, "train_log.jsonl"))}
+    return {"checkpoint": row, "log": _rows(log_path)[earlier:]}
 
 
 def tinker_sample(
@@ -119,13 +121,15 @@ def tinker_sample(
 
 
 def kitaru_compare(
-    name: str, model: str, prices: Dict[str, List[float]]
+    name: str, model: str, prices: Dict[str, List[float]], item_ids: List[str]
 ) -> Dict[str, Any]:
+    """Kitaru experiment over the labelled sessions of ``item_ids`` only (the
+    test set this run scored), with ``model`` as the override."""
     import asyncio
 
     from src.citecheck.kitaru_loop import experiment
 
-    return asyncio.run(experiment(name, model, prices))
+    return asyncio.run(experiment(name, model, prices, item_ids=set(item_ids)))
 
 
 # ---- steps ----------------------------------------------------------------
@@ -232,9 +236,14 @@ def score_test_set(
 
 @step(enable_cache=False)
 def compare_in_kitaru(
-    checkpoint: str, name: str, prices: Dict[str, List[float]], report: Dict[str, Any]
+    data_dir: str,
+    checkpoint: str,
+    name: str,
+    prices: Dict[str, List[float]],
+    report: Dict[str, Any],
 ) -> Annotated[Dict[str, Any], "kitaru_run"]:
-    out = kitaru_compare(name, checkpoint, prices)
+    items = [r["item_id"] for r in _rows(_path(data_dir, "test_items.jsonl"))]
+    out = kitaru_compare(name, checkpoint, prices, items)
     table = {r["name"]: r for r in out.get("table") or []}
     log_metadata(
         metadata={
@@ -266,7 +275,7 @@ def citecheck_finetune(
     replies = sample_test_set(data_dir, checkpoint, cfg)
     report = score_test_set(data_dir, replies)
     if kitaru:
-        compare_in_kitaru(checkpoint, experiment_name, prices or {}, report)
+        compare_in_kitaru(data_dir, checkpoint, experiment_name, prices or {}, report)
 
 
 def training_config(a: argparse.Namespace) -> Dict[str, Any]:
