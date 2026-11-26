@@ -601,3 +601,14 @@ def test_combine_lets_the_later_file_win(tmp_path):
     )
     assert counts == {"yes": 1, "no": 1}
     assert items.latest_labels(out)["2"]["label"] == "no"
+
+
+def test_combine_from_the_command_line_writes_a_file_not_a_folder(tmp_path):
+    a, b = tmp_path / "sol.jsonl", tmp_path / "mine.jsonl"
+    _write(a, [{"item_id": "1", "label": "no"}])
+    _write(b, [{"item_id": "1", "label": "yes"}])
+    out = tmp_path / "new" / "all.jsonl"
+    main(["combine", "--labels", str(a), str(b), "--out", str(out)])
+    assert out.is_file() and items.latest_labels(str(out))["1"]["label"] == "yes"
+    main(["combine", "--labels", str(b), str(a), "--out", str(out)])  # file exists
+    assert items.latest_labels(str(out))["1"]["label"] == "no"

@@ -399,7 +399,9 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--no-wait", action="store_true")
 
     a = p.parse_args(argv)
-    if getattr(a, "out", None):
+    # ``--out`` is a folder, except for review and combine, whose ``--out`` is
+    # a label file (they make its folder themselves)
+    if getattr(a, "out", None) and a.fn not in (cmd_review, cmd_combine):
         os.makedirs(a.out, exist_ok=True)
     a.fn(a)
 
