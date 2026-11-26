@@ -37,6 +37,7 @@ import sys
 from typing import Any, Dict, List
 
 from src.citecheck.items import (
+    article_meta,
     article_texts,
     claim_rows,
     latest_labels,
@@ -82,7 +83,13 @@ def cmd_label(a: argparse.Namespace) -> None:
     items = read_jsonl(a.items)
     if not items:
         sys.exit(f"no items in {a.items}")
-    app = make_app(items, a.labels, article_texts(a.articles), labeller=a.who)
+    app = make_app(
+        items,
+        a.labels,
+        article_texts(a.articles),
+        labeller=a.who,
+        meta=article_meta(a.articles),
+    )
     print(f"labelling {len(items)} items on http://127.0.0.1:{a.port}")
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")
 

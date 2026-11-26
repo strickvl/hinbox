@@ -282,7 +282,7 @@ Inkling 2 Mini is nearly as strict a judge as Haiku but takes about 40 times as 
 # 1. Draw a fixed test set from a finished run: 400 claims, only from "test" articles
 #    (15% of articles, chosen by a hash of the id; their claims never go into training)
 just citecheck sample --entities <run> --articles <articles.parquet> --out data/citecheck
-# 2. Label it yes/no in a local page (http://127.0.0.1:5078, keys y / n / u / b)
+# 2. Label it yes/no in a local page (http://127.0.0.1:5078, keys y / n / u / b), in sprints of 20 by default
 just citecheck label --items data/citecheck/test_items.jsonl --labels data/citecheck/test_labels.jsonl --articles <articles.parquet>
 # 3. Score judges: the run's stored verdicts, or any model asked now
 just citecheck score --items data/citecheck/test_items.jsonl --labels data/citecheck/test_labels.jsonl --stored <run>
