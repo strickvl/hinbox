@@ -347,8 +347,17 @@ def test_a_sprint_counts_its_own_labels_and_ends_with_a_summary(tmp_path, monkey
         )
     assert "Sprint done" in page.text and "2 labelled" in page.text
     assert "Another 2" in page.text and "2 of 5" in page.text
+    # a misclicked last answer can still be reopened and changed
+    fix = page.text.split('<a href="')[-1].split('">Change the last answer')[0]
+    page = client.get(fix.replace("&amp;", "&"))
+    assert f'name="item_id" value="{iid}"' in page.text
+    page = client.post(
+        "/label", data={"item_id": iid, "label": "no", "index": index, **sprint}
+    )
+    assert "Sprint done" in page.text and "2 labelled" in page.text
+    assert items.read_jsonl(path)[-1]["label"] == "no"
     # sentences of one article come together, so the second answer kept the article
-    done = [r["item_id"] for r in items.read_jsonl(path)]
+    done = [r["item_id"] for r in items.read_jsonl(path)][:2]
     assert (
         len({next(i["article_id"] for i in its if i["item_id"] == d) for d in done})
         == 1

@@ -270,6 +270,12 @@ def make_app(
         clean = {k: v for k, v in params.items() if v is not None}
         return path + ("?" + urlencode(clean) if clean else "")
 
+    def _last(raw: str, sprint: Dict[str, int]) -> Optional[str]:
+        """Link back to the sprint's last answer, to fix a misclick."""
+        if not raw.isdigit() or int(raw) >= len(items):
+            return None
+        return url("/", i=int(raw), **{k: sprint[k] for k in SPRINT_KEYS})
+
     async def start(request: Request) -> RedirectResponse:
         raw = request.query_params.get("n", "")
         size = int(raw) if raw.isdigit() and 0 < int(raw) <= 400 else DEFAULT_SIZE
@@ -296,7 +302,9 @@ def make_app(
                 "done": got,
                 "pct": min(100, round(100 * got / max(1, sprint["n"]))),
             }
-            if got >= sprint["n"] or not base["left"]:
+            # The summary only on the redirect after the last answer: a link
+            # naming an item (back, or "change the last answer") still opens it.
+            if not raw.isdigit() and (got >= sprint["n"] or not base["left"]):
                 spent = max(0, time.time() - sprint["s"])
                 info["minutes"] = _minutes(spent)
                 info["per_item"] = _minutes(spent / got) if got else "–"
@@ -304,6 +312,7 @@ def make_app(
                     PAGE.render(
                         screen="finish",
                         sprint=info,
+                        last=_last(params.get("last", ""), sprint),
                         nap=nap_for(sprint["s"], pets),
                         **base,
                     )
@@ -370,6 +379,12 @@ def make_app(
         nxt = next_unlabelled(int(raw) if raw.isdigit() else -1)
         sprint = sprint_of({k: str(form.get(k) or "") for k in SPRINT_KEYS})
         if sprint:
+            done = counts()["done"]
+            if nxt is None or done - sprint["b"] >= sprint["n"]:  # sprint over
+                last = raw if raw.isdigit() else None
+                return RedirectResponse(
+                    url("/", ok=1, last=last, **sprint), status_code=303
+                )
             return RedirectResponse(url("/", i=nxt, ok=1, **sprint), status_code=303)
         return RedirectResponse("/" if nxt is None else f"/?i={nxt}", status_code=303)
 

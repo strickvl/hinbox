@@ -101,6 +101,7 @@ a{color:var(--accent)}
 <div class="goal"><span style="width:{{ goal_pct }}%"></span></div>
 <p style="margin-top:20px">{% if left %}<a class="btn main" href="/start?n={{ sprint.size }}">Another {{ sprint.size }}<kbd>Enter</kbd></a>{% endif %}
 <a class="btn" href="/">Stop for now</a></p>
+{% if last %}<p class="muted" style="margin-top:14px"><a href="{{ last }}">Change the last answer</a></p>{% endif %}
 </div>
 
 {% else %}
