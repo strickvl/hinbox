@@ -647,7 +647,9 @@ def judge_claims(
     if model.startswith("tinker"):  # a model trained or sampled on Tinker
         from src.citecheck.tinker_judge import tinker_verdicts
 
-        reply = tinker_verdicts(messages, model, GROUNDING_MAX_TOKENS)
+        reply = tinker_verdicts(
+            messages, model, GROUNDING_MAX_TOKENS, with_passage=ask_passage
+        )
     else:
         with thinking:
             reply = generate(

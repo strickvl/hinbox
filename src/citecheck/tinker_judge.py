@@ -39,11 +39,14 @@ def is_tinker_model(model: str) -> bool:
     return model.startswith("tinker://") or model.startswith("tinker/")
 
 
-def parse_reply(text: str) -> List[Any]:
-    """``ClaimVerdict`` objects from a raw reply in the pipeline's JSON
+def parse_reply(text: str, with_passage: bool = False) -> List[Any]:
+    """``ClaimVerdict`` objects (``ClaimVerdictWithPassage`` when the prompt
+    asked for a copied passage) from a raw reply in the pipeline's JSON
     format (``{"items": [...]}``); an item that doesn't fit is left out, as
     an Instructor reply would leave it out."""
-    from src.utils.grounding import ClaimVerdict
+    from src.utils.grounding import ClaimVerdict, ClaimVerdictWithPassage
+
+    cls = ClaimVerdictWithPassage if with_passage else ClaimVerdict
 
     body = _FENCE.sub("", (text or "").strip())
     start, end = body.find("{"), body.rfind("}")
@@ -57,7 +60,7 @@ def parse_reply(text: str) -> List[Any]:
     out = []
     for item in items or []:
         try:
-            out.append(ClaimVerdict(**item))
+            out.append(cls(**item))
         except Exception:  # wrong level or missing field: no verdict
             continue
     return out
@@ -127,7 +130,10 @@ def sampling_settings(max_tokens: int) -> Tuple[float, Dict[str, Any]]:
 
 
 def tinker_verdicts(
-    messages: List[Dict[str, str]], model: str, max_tokens: int
+    messages: List[Dict[str, str]],
+    model: str,
+    max_tokens: int,
+    with_passage: bool = False,
 ) -> List[Any]:
     """One Tinker sample for the judge's ``messages``, at temperature 0
     unless a replay's ``model_params`` say otherwise (``sampling_settings()``)."""
@@ -146,4 +152,4 @@ def tinker_verdicts(
         message, _ = renderer.parse_response(tokens)
         text = reply_text(message)
         record(text, prompt.length, len(tokens))
-    return parse_reply(text)
+    return parse_reply(text, with_passage)

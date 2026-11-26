@@ -2,6 +2,7 @@
 evaluator and the investigation loop, without a model or a Kitaru server.
 All names and articles are made up."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -115,7 +116,7 @@ def test_a_tinker_judge_gets_the_pipelines_messages(monkeypatch):
 
     seen = {}
 
-    def fake(messages, model, max_tokens):
+    def fake(messages, model, max_tokens, with_passage=False):
         seen.update(messages=messages, model=model)
         return _reply(SupportLevel.NOT_SUPPORTED)
 
@@ -376,3 +377,22 @@ def test_a_replays_model_params_reach_the_tinker_sample():
             sampling_settings(4096)
     finally:
         set_model_params(None)
+
+
+def test_a_tinker_reply_keeps_its_copied_passage_when_one_was_asked_for():
+    text = json.dumps(
+        {
+            "items": [
+                {
+                    "claim_number": 1,
+                    "reasoning": "r",
+                    "support_level": "supported",
+                    "passage": "Mara Voss arrived in 2004.",
+                }
+            ]
+        }
+    )
+    assert parse_reply(text, with_passage=True)[0].passage == (
+        "Mara Voss arrived in 2004."
+    )
+    assert not hasattr(parse_reply(text)[0], "passage")
