@@ -15,6 +15,7 @@ from src.engine.later_updates import (
     to_date,
 )
 from src.engine.profile_edits import ProfileEdit
+from src.engine.profile_notes import reworded
 
 MARCH = "As of March 25, 2013, 28 captives were classified as hunger strikers.^[m25]"
 CAPTURE = "Nashiri was captured in Dubai in November 2002.^[c1]"
@@ -25,6 +26,8 @@ APRIL = (
     "states 28 captives were hunger strikers, the article reports that as of "
     "April 16, 2013, 59 captives were classified as hunger strikers.^[a17]"
 )
+# A dispute that stays never names "the profile" as a source
+_KEPT_APRIL = reworded(APRIL)
 
 
 def _add(text: str, anchor: str = "END") -> ProfileEdit:
@@ -145,10 +148,10 @@ def test_a_changed_count_from_a_later_article_becomes_a_timeline_entry():
 
 def test_without_dates_or_from_the_same_day_the_dispute_stays():
     edits, report = guard_edits(PROFILE, [_add(APRIL, anchor=MARCH)])
-    assert edits[0].text == APRIL and not report["later_updates"]
+    assert edits[0].text == _KEPT_APRIL and not report["later_updates"]
     same_day = {**DATES, "a17": "2013-03-25"}
     edits, _ = guard_edits(PROFILE, [_add(APRIL, anchor=MARCH)], "2013-03-25", same_day)
-    assert edits[0].text == APRIL
+    assert edits[0].text == _KEPT_APRIL
 
 
 def test_a_real_dispute_about_a_past_event_stays():
@@ -160,7 +163,8 @@ def test_a_real_dispute_about_a_past_event_stays():
     edits, report = guard_edits(
         PROFILE, [_add(conflict, anchor=CAPTURE)], DATES["a17"], DATES
     )
-    assert edits[0].text == conflict and not report["later_updates"]
+    assert edits[0].text == reworded(conflict) and not report["later_updates"]
+    assert "while another report states November 2002" in edits[0].text
 
 
 def test_only_dispute_wording_is_rewritten():
@@ -207,7 +211,7 @@ def test_two_counts_for_the_same_named_day_stay_a_dispute():
     edits, report = guard_edits(
         PROFILE, [_add(same_day, anchor=MARCH)], DATES["a17"], DATES
     )
-    assert edits[0].text == same_day and not report["later_updates"]
+    assert edits[0].text == reworded(same_day) and not report["later_updates"]
 
 
 def test_a_year_apart_is_not_the_same_day():
@@ -238,7 +242,7 @@ def test_an_anchor_that_isn_t_the_disputed_sentence_is_ignored():
     edits, report = guard_edits(
         profile, [_add(APRIL, anchor=lock)], "2013-04-17", dates
     )
-    assert edits[0].text == APRIL and not report["later_updates"]
+    assert edits[0].text == _KEPT_APRIL and not report["later_updates"]
 
 
 def test_short_and_lower_case_months_name_the_same_day():
