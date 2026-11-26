@@ -115,7 +115,7 @@ def train_loop(args, rows: list, tune: list, steps: int = 0):
         base_model=args.model, rank=args.rank
     ).result()
     lr = args.lr or hyperparam_utils.get_lr(args.model)
-    per_epoch = max(1, len(data) // args.batch_size)
+    per_epoch = max(1, -(-len(data) // args.batch_size))  # a partial last batch counts
     total = steps or per_epoch * args.epochs
     rng = random.Random(0)
     order: list = []
