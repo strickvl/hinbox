@@ -295,3 +295,96 @@ def render(
         f"<h2>By kind of claim</h2>{_strata(report)}"
         f"<h2>Run</h2><dl>{dl}</dl></div>"
     )
+
+
+# ---- the Kitaru comparison ------------------------------------------------
+
+# evaluation name -> (label, lower is better, how to print a mean)
+KITARU_MEASURES = {
+    "wrong_passed": ("Wrong claims passed", True, "pct"),
+    "good_doubted": ("Good claims doubted", True, "pct"),
+    "agrees": ("Agrees with the answer key", False, "pct"),
+    "answered": ("Gave a readable verdict", False, "pct"),
+    "seconds": ("Seconds per claim", True, "s"),
+    "input_tokens": ("Input tokens per claim", True, "n"),
+    "output_tokens": ("Output tokens per claim", True, "n"),
+    "cost_usd": ("Cost per claim", True, "usd"),
+}
+
+
+def _fmt(value: Optional[float], kind: str) -> str:
+    if value is None:
+        return "n/a"
+    if kind == "pct":
+        return _pct(value)
+    if kind == "s":
+        return f"{value:.1f} s"
+    if kind == "usd":
+        return f"${value:.4f}"
+    return f"{value:,.0f}"
+
+
+def _pair_bars(base: Optional[float], tuned: Optional[float]) -> str:
+    """Two thin bars on one scale: grey the baseline, blue the tuned model."""
+    top = max(v for v in (base, tuned, 1e-12) if v is not None)
+    bars = []
+    for i, (v, colour) in enumerate(((base, "var(--base)"), (tuned, "var(--tuned)"))):
+        w = 0 if v is None else max(2.0, 160 * v / top)
+        bars.append(
+            f'<rect x="0" y="{2 + i * 9}" width="{w:.1f}" height="6" rx="3" '
+            f'fill="{colour}"/>'
+        )
+    return f'<svg viewBox="0 0 160 19" style="width:160px">{"".join(bars)}</svg>'
+
+
+def render_kitaru(out: Dict[str, Any], experiment_name: str) -> str:
+    """The Kitaru experiment as one HTML page: per evaluation, the baseline
+    sessions' mean beside the tuned model's replay. Numbers and ids only."""
+    order = list(KITARU_MEASURES)
+    table = sorted(
+        out.get("table") or [],
+        key=lambda r: order.index(r["name"]) if r["name"] in order else len(order),
+    )
+    rows = []
+    for r in table:
+        label, lower, kind = KITARU_MEASURES.get(r["name"], (r["name"], True, "n"))
+        base, tuned = r.get("baseline_mean"), r.get("result_mean")
+        verdict = ""
+        if base is not None and tuned is not None and base != tuned:
+            better = (tuned < base) == lower
+            verdict = "better" if better else "worse"
+        rows.append(
+            f"<tr><td>{_e(label)}</td>"
+            f'<td class="n">{_fmt(base, kind)}</td>'
+            f'<td class="n" style="font-weight:600">{_fmt(tuned, kind)}</td>'
+            f"<td>{_pair_bars(base, tuned)}</td>"
+            f'<td style="color:var(--ink2)">{verdict}</td></tr>'
+        )
+    if not rows:
+        rows.append('<tr><td colspan="5">No evaluation results came back.</td></tr>')
+    ids = {
+        "experiment": experiment_name,
+        "experiment id": out.get("experiment_id"),
+        "run": out.get("run_id"),
+        "status": out.get("status"),
+        "sessions replayed": out.get("sessions"),
+        "minutes": out.get("minutes"),
+        "model override": out.get("model"),
+    }
+    dl = "".join(
+        f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in ids.items() if v is not None
+    )
+    return (
+        f'<style>{STYLE}</style><div class="rc">'
+        '<div class="eyebrow">Citation checker · Kitaru comparison</div>'
+        "<h1>Tuned checkpoint against the baseline</h1>"
+        '<p class="meta">Every labelled test session replayed with the tuned '
+        "checkpoint and scored by the same evaluator as the recorded baseline.</p>"
+        '<div class="legend" style="margin-top:18px">'
+        '<span><i style="background:var(--base)"></i>baseline sessions</span>'
+        '<span><i style="background:var(--tuned)"></i>tuned replay</span></div>'
+        '<table><tr><th>measure</th><th class="n">baseline</th>'
+        '<th class="n">tuned</th><th></th><th></th></tr>'
+        f"{''.join(rows)}</table>"
+        f"<h2>Run</h2><dl>{dl}</dl></div>"
+    )

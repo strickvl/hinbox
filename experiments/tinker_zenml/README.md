@@ -69,7 +69,7 @@ just tinker-pipeline --data-dir $D --articles $A --kitaru --prices prices.json
 | `sample_test_set` | one reply per test prompt at temperature 0 | replies, mean output tokens and seconds |
 | `score_test_set` | `citecheck score --replies` against the hand labels | wrong passed (with 95% range), good doubted, failed replies |
 | `report_card` | one HTML page (`report_card.py`): both rates with 95% ranges, any `--baselines` beside them, the loss curve, rates per kind of claim, settings | the `training_report` artifact (`HTMLString`, shown in the dashboard; numbers only) |
-| `compare_in_kitaru` | Kitaru experiment with the checkpoint as override (`--kitaru`) | experiment and run ids, baseline and tuned mean per evaluation |
+| `compare_in_kitaru` | Kitaru experiment with the checkpoint as override (`--kitaru`) | experiment and run ids, baseline and tuned mean per evaluation; the `kitaru_report` artifact (`HTMLString`: each measure, baseline against tuned) |
 
 `--baselines baselines.json` puts other checkers' scores on the same test set beside the tuned one in the report card: `{"Untuned Inkling 2 Mini": {"wrong_passed": 36, "good_doubted": 26}}`, each a count of the test set's wrong or good claims, or `[count, of]`.
 

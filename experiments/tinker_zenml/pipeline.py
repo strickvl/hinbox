@@ -270,7 +270,13 @@ def compare_in_kitaru(
     name: str,
     prices: Dict[str, List[float]],
     report: Dict[str, Any],
-) -> Annotated[Dict[str, Any], "kitaru_run"]:
+) -> Tuple[
+    Annotated[Dict[str, Any], "kitaru_run"], Annotated[HTMLString, "kitaru_report"]
+]:
+    """The Kitaru experiment, plus its results as one HTML page (baseline
+    against tuned per evaluation, with the experiment and run ids)."""
+    from experiments.tinker_zenml.report_card import render_kitaru
+
     items = [r["item_id"] for r in _rows(_path(data_dir, "test_items.jsonl"))]
     out = kitaru_compare(name, checkpoint, prices, items)
     table = {r["name"]: r for r in out.get("table") or []}
@@ -286,7 +292,7 @@ def compare_in_kitaru(
             },
         }
     )
-    return out
+    return out, HTMLString(render_kitaru(out, name))
 
 
 @pipeline(enable_cache=False)

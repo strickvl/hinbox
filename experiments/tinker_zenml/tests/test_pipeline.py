@@ -110,7 +110,14 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
                     "result_mean": 0.1,
                     "baseline_count": 2,
                     "result_count": 2,
-                }
+                },
+                {
+                    "name": "seconds",
+                    "baseline_mean": 3.1,
+                    "result_mean": 1.4,
+                    "baseline_count": 4,
+                    "result_count": 4,
+                },
             ],
         }
 
@@ -155,6 +162,9 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
     assert curve[-1] == {"step": 1, "train_nll": 0.4, "tune_nll": 0.5}
     train_meta = run.steps["train_on_tinker"].run_metadata
     assert train_meta["best_tune_nll"] == 0.5
+    kitaru_card = run.steps["compare_in_kitaru"].outputs["kitaru_report"][0].load()
+    assert "45.0%" in kitaru_card and "10.0%" in kitaru_card and "1.4 s" in kitaru_card
+    assert kitaru_card.count(">better<") == 2
     kitaru_meta = run.steps["compare_in_kitaru"].run_metadata
     assert kitaru_meta["wrong_passed_result"] == 0.1
     assert os.path.exists(
