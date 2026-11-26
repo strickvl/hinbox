@@ -32,6 +32,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from src.citecheck.items import article_split, item_id
 from src.engine.profile_stubs import split_sentences
+from src.utils.grounding import GROUNDING_MAX_ARTICLE_CHARS
 
 KINDS = ("year", "number", "name", "negation", "hedge")
 LEVEL = {
@@ -230,9 +231,12 @@ def planted_claims(
         if split not in splits or not article:
             continue
         flat = _squash(article)
+        # Only sentences from the part of the article the judge is shown
+        # (``build_examples()`` cuts the same way), so a "supported" copy is
+        # never one the training prompt leaves out
         sentences = [
             s
-            for s in split_sentences(article)
+            for s in split_sentences(article[:GROUNDING_MAX_ARTICLE_CHARS])
             if MIN_CHARS <= len(s) <= MAX_CHARS and _names_entity(s, entity_name)
         ]
         rng.shuffle(sentences)

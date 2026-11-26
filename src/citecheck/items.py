@@ -140,10 +140,11 @@ def sample_test_set(
 ) -> List[Dict[str, Any]]:
     """The claims a person labels, from test articles only.
 
-    Half (``doubted_share``) are drawn from claims the run's judge doubted
-    (partial, not supported, unclear), so the set holds enough wrong claims
-    to tell checkers apart; the rest at random from all test claims, so a
-    real-world error rate can be stated for that half alone. Each item keeps
+    Half (``1 - doubted_share``) are drawn first at random from all test
+    claims, so a real-world error rate can be stated for that half alone;
+    the rest from the remaining claims the run's judge doubted (partial, not
+    supported, unclear), so the set holds enough wrong claims to tell
+    checkers apart. Each item keeps
     its ``stratum``; the stored verdict is not written out, so the labeller
     can't see it. ``have_text`` (article ids with text) drops claims whose
     article is missing."""
@@ -159,16 +160,19 @@ def sample_test_set(
     per_entity: Dict[str, int] = defaultdict(int)
     taken: set = set()
     want_doubted = int(round(n * doubted_share))
+    # The random half first, from every test claim, so it stays a fair
+    # sample (doubted claims in it at their real share); the extra doubted
+    # claims are then drawn from what is left
     picked = [
-        dict(r, stratum="doubted")
+        dict(r, stratum="random")
         for r in _spread_pick(
-            doubted, want_doubted, rng, per_article, per_entity, taken
+            test, n - want_doubted, rng, per_article, per_entity, taken
         )
     ]
     picked += [
-        dict(r, stratum="random")
+        dict(r, stratum="doubted")
         for r in _spread_pick(
-            test, n - len(picked), rng, per_article, per_entity, taken
+            doubted, n - len(picked), rng, per_article, per_entity, taken
         )
     ]
     rng.shuffle(picked)

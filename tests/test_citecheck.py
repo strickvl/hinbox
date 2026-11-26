@@ -151,6 +151,39 @@ def test_planted_claims_label_copies_and_changes():
         assert quote in ARTICLE
 
 
+def test_planted_claims_only_use_the_part_of_the_article_the_judge_sees(
+    monkeypatch,
+):
+    # the article's second sentence naming him starts at character 141
+    monkeypatch.setattr(planted, "GROUNDING_MAX_ARTICLE_CHARS", 120)
+    made = planted.planted_claims(
+        [("Yusuf Qadir", TRAIN[0])], {TRAIN[0]: ARTICLE}, per_pair=5
+    )
+    copies = [ARTICLE.find(r["claim"]) for r in made if r["kind"] == "copy"]
+    assert copies == [0]
+
+
+def test_the_random_stratum_is_drawn_from_every_test_claim():
+    rows = [
+        {
+            "item_id": f"i{k}",
+            "entity_table": "people",
+            "entity_name": f"Person {k}",
+            "article_id": f"t{k}",
+            "claim": f"Claim {k}.",
+            "split": "test",
+            "stored_verdict": "partial" if k < 100 else "supported",
+        }
+        for k in range(200)
+    ]
+    picked = items.sample_test_set(rows, n=100, seed=3)
+    random_half = [r for r in picked if r["stratum"] == "random"]
+    doubted_in_random = sum(int(r["item_id"][1:]) < 100 for r in random_half)
+    # about half the population is doubted, so about half the random stratum
+    assert len(random_half) == 50 and 15 <= doubted_in_random <= 35
+    assert sum(r["stratum"] == "doubted" for r in picked) == 50
+
+
 def _labels(aid: str, n: int = 3) -> list:
     return [
         {
