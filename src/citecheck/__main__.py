@@ -18,6 +18,14 @@ Merge check:
     just citecheck merge-data  --entities <run> --eval-dir <eval> --out <dir> [--teach]
     just citecheck merge-score --eval-dir <eval> --replies <replies.jsonl>
 
+Kitaru (``src/citecheck/kitaru_loop.py``; needs ``uv sync --extra kitaru``):
+
+    just citecheck kitaru-sessions    --items ... --articles ... --model <judge> --file <dir>/sessions.jsonl [--labels ...]
+    kitaru session import <dir>/sessions.jsonl --importer kitaru/kitaru-jsonl@latest --agent hinbox-citation-check@latest
+    just citecheck kitaru-investigate --name "Citation test set"
+    just citecheck kitaru-pull        --investigation <id> --labels <dir>/test_labels.jsonl
+    just citecheck kitaru-experiment  --name "Haiku vs tuned" --model tinker://... [--prices prices.json]
+
 Everything written holds article text: keep ``--out`` under ``data/``.
 """
 
@@ -229,6 +237,52 @@ def cmd_merge_score(a: argparse.Namespace) -> None:
     print(json.dumps(m.score_replies(test, read_jsonl(a.replies)), indent=1))
 
 
+def cmd_kitaru_sessions(a: argparse.Namespace) -> None:
+    from src.citecheck.kitaru_loop import build_sessions
+
+    items = read_jsonl(a.items)
+    labels = latest_labels(a.labels) if a.labels else {}
+    counts = build_sessions(items, article_texts(a.articles), labels, a.model, a.file)
+    print(json.dumps(counts))
+
+
+def _ids(path: str) -> Any:
+    return {r["item_id"] for r in read_jsonl(path)} if path else None
+
+
+def cmd_kitaru_investigate(a: argparse.Namespace) -> None:
+    import asyncio
+
+    from src.citecheck.kitaru_loop import investigate
+
+    inv, n = asyncio.run(investigate(a.name, _ids(a.items)))
+    print(f"investigation {inv.id}: {n} sessions, one question each")
+
+
+def cmd_kitaru_pull(a: argparse.Namespace) -> None:
+    import asyncio
+
+    from src.citecheck.kitaru_loop import pull
+
+    print(json.dumps(asyncio.run(pull(a.investigation, a.labels, a.who))))
+
+
+def cmd_kitaru_experiment(a: argparse.Namespace) -> None:
+    import asyncio
+
+    from src.citecheck.kitaru_loop import describe_table, experiment, save_json
+
+    prices = json.load(open(a.prices, encoding="utf-8")) if a.prices else None
+    out = asyncio.run(
+        experiment(a.name, a.model, prices, _ids(a.items), wait=not a.no_wait)
+    )
+    if out.get("table"):
+        print(describe_table(out["table"], a.model))
+    if a.save:
+        save_json(a.save, out)
+    print(json.dumps({k: v for k, v in out.items() if k != "table"}))
+
+
 def main(argv: List[str] = None) -> None:
     from src.citecheck.teach import TEACHERS
 
@@ -281,6 +335,19 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--teach", action="store_true")
     sp.add_argument("--teachers", default=teachers)
     add("merge-score", cmd_merge_score, "eval-dir", "replies")
+    sp = add(
+        "kitaru-sessions", cmd_kitaru_sessions, "items", "articles", "model", "file"
+    )
+    sp.add_argument("--labels")
+    sp = add("kitaru-investigate", cmd_kitaru_investigate, "name")
+    sp.add_argument("--items", help="only these test items (default: all)")
+    sp = add("kitaru-pull", cmd_kitaru_pull, "investigation", "labels")
+    sp.add_argument("--who", default=os.getenv("HINBOX_REVIEWER", "kitaru"))
+    sp = add("kitaru-experiment", cmd_kitaru_experiment, "name", "model")
+    sp.add_argument("--items", help="only these test items (default: all)")
+    sp.add_argument("--prices", help="JSON file: model -> [$/M in, $/M out]")
+    sp.add_argument("--save", help="write the run and its table here as JSON")
+    sp.add_argument("--no-wait", action="store_true")
 
     a = p.parse_args(argv)
     if getattr(a, "out", None):

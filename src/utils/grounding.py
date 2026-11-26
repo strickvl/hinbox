@@ -29,6 +29,7 @@ from src.utils.quality_controls import CITATION_RE, citation_ids
 from src.utils.server_health import ModelServerUnreachable, unreachable
 from src.utils.step_timing import timed
 from src.utils.task_models import is_local_model, task_model
+from src.utils.tracing import annotate, record_step_input, record_step_output
 
 logger = get_logger("grounding")
 
@@ -625,6 +626,17 @@ def judge_claims(
 
     messages = grounding_messages(article_id, article_text, claims, ask_passage)
     model = model or grounding_model(model_type)
+    # The whole input, so a Kitaru replay can ask another judge the same thing
+    # (scripts/kitaru_traces.py --step grounding, scripts/kitaru_step.py)
+    record_step_input(
+        article_id=article_id,
+        article_text=article_text,
+        claims=[[name, text] for name, text in claims],
+        model_type=model_type,
+        ask_passage=ask_passage,
+        model=model,
+    )
+    annotate(article_id=article_id, claim_count=len(claims))
     local = is_local_model(model)
     generate = local_generation if local else cloud_generation
     thinking = (
@@ -632,16 +644,21 @@ def judge_claims(
         if local and GROUNDING_REASONING_EFFORT
         else nullcontext()
     )
-    with thinking:
-        reply = generate(
-            messages=messages,
-            response_model=List[
-                ClaimVerdictWithPassage if ask_passage else ClaimVerdict
-            ],
-            model=model,
-            temperature=0,
-            max_tokens=GROUNDING_MAX_TOKENS,
-        )
+    if model.startswith("tinker"):  # a model trained or sampled on Tinker
+        from src.citecheck.tinker_judge import tinker_verdicts
+
+        reply = tinker_verdicts(messages, model, GROUNDING_MAX_TOKENS)
+    else:
+        with thinking:
+            reply = generate(
+                messages=messages,
+                response_model=List[
+                    ClaimVerdictWithPassage if ask_passage else ClaimVerdict
+                ],
+                model=model,
+                temperature=0,
+                max_tokens=GROUNDING_MAX_TOKENS,
+            )
     out: List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]] = [
         None
     ] * len(claims)
@@ -653,6 +670,19 @@ def judge_claims(
         i = v.claim_number - 1 if by_number else pos
         if i < len(claims):
             out[i] = (v.support_level, v.reasoning, getattr(v, "passage", None))
+    record_step_output(
+        verdicts=[
+            None
+            if v is None
+            else {
+                "claim_number": n + 1,
+                "support_level": getattr(v[0], "value", v[0]),
+                "reasoning": v[1],
+                "passage": v[2],
+            }
+            for n, v in enumerate(out)
+        ]
+    )
     return out
 
 

@@ -93,6 +93,20 @@ kitaru-traces *args:
 kitaru-worker *args:
     uv run --env-file .env --extra kitaru kitaru worker start {{args}}
 
+# Kitaru worker in the Tinker experiment's environment, so a replay can sample a Tinker checkpoint (`tinker://...`) as the citation checker
+kitaru-worker-tinker *args:
+    uv run --env-file .env --project experiments/tinker_zenml kitaru worker start {{args}}
+
+# ─── Tinker fine-tune as a ZenML pipeline (own environment in experiments/tinker_zenml/) ──
+
+# Train the citation checker on Tinker, sample and score the test set, optionally compare in Kitaru (e.g. `just tinker-pipeline --data-dir data/citecheck --articles <parquet> --kitaru`)
+tinker-pipeline *args:
+    uv run --env-file .env --project experiments/tinker_zenml python -m experiments.tinker_zenml.pipeline {{args}}
+
+# Offline test of the ZenML pipeline (Tinker and Kitaru replaced by fakes)
+tinker-pipeline-test *args:
+    uv run --project experiments/tinker_zenml pytest experiments/tinker_zenml/tests {{args}}
+
 # ─── DSPy experiments (own environment in experiments/dspy_opt/, no LiteLLM) ──
 
 # Optimise the edit-list profile updater with DSPy GEPA (e.g. `just dspy-profile --model ollama/local-qwen36-16k:latest --reflection-model openai/gpt-6-luna`)

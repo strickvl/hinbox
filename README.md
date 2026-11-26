@@ -301,6 +301,8 @@ just citecheck score --items ... --labels ... --replies data/citecheck/replies.j
 ```
 The score is two numbers with 95% ranges: wrong claims let through (labelled "no", judged "supported") and good claims doubted. `merge-data` and `merge-score` do the same for the merge check, using the hand-labelled merge pairs (test split held out) and "split pages": a page cut in two, one article's sentences against the rest, which is the same entity by construction. Every file these steps write holds article text: keep it under `data/` (gitignored).
 
+The same loop also runs through Kitaru and ZenML (`experiments/tinker_zenml/README.md` has the runbook). Every citation check the pipeline makes now records its arguments and verdicts, so it can be replayed with another judge: `just citecheck kitaru-sessions` asks a baseline judge about each test claim as one Kitaru session; `kitaru-investigate` opens a Kitaru investigation with one yes/no question per claim, and `kitaru-pull` writes the answers back as labels; `kitaru-experiment` replays the labelled sessions with another model (a cloud judge, a local one, or a Tinker checkpoint, `tinker://...`) and scores both sides with the `hinbox-citation-check-checks` evaluator: wrong claims passed, good claims doubted, seconds, tokens and cost. `just tinker-pipeline` runs export, Tinker training, sampling, scoring and that Kitaru comparison as one ZenML pipeline.
+
 ### Evaluating Models
 The scoreboard grades any model on your hand-labelled answer keys, so you can compare cloud, frontier and local models (or later, optimized prompts) on equal terms.
 ```bash

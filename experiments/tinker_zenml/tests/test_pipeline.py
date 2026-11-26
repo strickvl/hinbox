@@ -1,0 +1,145 @@
+"""The ZenML pipeline end to end on a local ZenML store, with Tinker and
+Kitaru replaced by fakes: data counts, training, sampling, scoring and the
+Kitaru comparison are wired together, and only paths, counts and scores
+reach ZenML. Run with ``just tinker-pipeline-test``. Names are made up."""
+
+import json
+import os
+
+import pytest
+
+
+@pytest.fixture()
+def zen(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZENML_CONFIG_PATH", str(tmp_path / "zen"))
+    monkeypatch.setenv("ZENML_ANALYTICS_OPT_IN", "false")
+    monkeypatch.setenv("ZENML_LOGGING_VERBOSITY", "WARN")
+    monkeypatch.chdir(tmp_path)
+    from experiments.tinker_zenml import pipeline as p
+
+    return p
+
+
+def _write(path, rows):
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+def _data(d):
+    items = [
+        {
+            "item_id": f"i{k}",
+            "entity_name": "Mara Voss",
+            "article_id": "a1",
+            "claim": f"Claim {k}.^[a1]",
+            "stratum": "random",
+        }
+        for k in range(4)
+    ]
+    _write(d / "test_items.jsonl", items)
+    _write(
+        d / "test_labels.jsonl",
+        [
+            {"item_id": "i0", "label": "no"},
+            {"item_id": "i1", "label": "no"},
+            {"item_id": "i2", "label": "yes"},
+            {"item_id": "i3", "label": "yes"},
+        ],
+    )
+    _write(
+        d / "test_prompts.jsonl",
+        [{"item_ids": [f"i{k}"], "messages": []} for k in range(4)],
+    )
+    _write(d / "train.jsonl", [{"messages": []}] * 3)
+    _write(d / "tune.jsonl", [{"messages": []}])
+
+
+def _reply(level):
+    return json.dumps(
+        {"items": [{"claim_number": 1, "reasoning": "r", "support_level": level}]}
+    )
+
+
+def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypatch):
+    p = zen
+    d = tmp_path / "data"
+    d.mkdir()
+    _data(d)
+    seen = {}
+
+    def train(data_dir, cfg):
+        seen["cfg"] = cfg
+        return {
+            "checkpoint": {
+                "name": cfg["name"],
+                "sampler": "tinker://run-1/sampler_weights/citecheck",
+            },
+            "log": [
+                {"step": 0, "train_nll": 1.2, "tune_nll": 1.3},
+                {"step": 1, "train_nll": 0.4, "tune_nll": 0.5},
+            ],
+        }
+
+    def sample(checkpoint, prompts, out, cfg):
+        levels = ["partial", "supported", "supported", "not_supported"]
+        rows = [
+            {
+                "item_ids": [f"i{k}"],
+                "reply": _reply(lv),
+                "output_tokens": 40,
+                "seconds": 0.5,
+            }
+            for k, lv in enumerate(levels)
+        ]
+        _write(out, rows)
+        return rows
+
+    def compare(name, model, prices):
+        seen["kitaru"] = (name, model, prices)
+        return {
+            "experiment_id": "e1",
+            "run_id": "r1",
+            "status": "completed",
+            "table": [
+                {
+                    "name": "wrong_passed",
+                    "baseline_mean": 0.45,
+                    "result_mean": 0.1,
+                    "baseline_count": 2,
+                    "result_count": 2,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(p, "tinker_train", train)
+    monkeypatch.setattr(p, "tinker_sample", sample)
+    monkeypatch.setattr(p, "kitaru_compare", compare)
+    p.main(
+        [
+            "--data-dir",
+            str(d),
+            "--articles",
+            "unused.parquet",
+            "--steps",
+            "2",
+            "--kitaru",
+        ]
+    )
+
+    assert seen["cfg"]["steps"] == 2 and seen["cfg"]["effort"] == 0.0
+    assert seen["kitaru"][1] == "tinker://run-1/sampler_weights/citecheck"
+    from zenml.client import Client
+
+    run = Client().get_pipeline("citecheck_finetune").last_run
+    assert str(run.status) in ("completed", "ExecutionStatus.COMPLETED")
+    report = run.steps["score_test_set"].outputs["test_report"][0].load()
+    # i1 labelled "no" was called supported: 1 of 2 wrong claims passed;
+    # i3 labelled "yes" was doubted: 1 of 2 good claims doubted
+    assert report["wrong_passed"]["count"] == 1 and report["wrong_passed"]["of"] == 2
+    assert report["good_doubted"]["count"] == 1
+    train_meta = run.steps["train_on_tinker"].run_metadata
+    assert train_meta["best_tune_nll"] == 0.5
+    kitaru_meta = run.steps["compare_in_kitaru"].run_metadata
+    assert kitaru_meta["wrong_passed_result"] == 0.1
+    assert os.path.exists(d / "test_replies.citecheck.jsonl")
