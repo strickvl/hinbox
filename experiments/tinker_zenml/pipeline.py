@@ -16,6 +16,9 @@ label, plant, teach, audit) have filled ``<dir>``. The pipeline's steps:
    temperature 0, with tokens and seconds.
 4. ``score_test_set``: ``just citecheck score --replies`` against the hand
    labels: wrong claims passed, good claims doubted, with 95% ranges.
+   ``report_card`` then draws them as one HTML page (the ``training_report``
+   artifact, ``HTMLString``): both rates with ranges, any ``--baselines``
+   beside them, the loss curve, the rates per kind of claim, the settings.
 5. ``compare_in_kitaru`` (``--kitaru``): an experiment on the
    ``hinbox-citation-check`` agent's labelled sessions with the checkpoint
    as the model override and the ``hinbox-citation-check-checks`` evaluator,
@@ -31,9 +34,10 @@ import json
 import os
 import time
 from types import SimpleNamespace
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any, Dict, List, Optional, Tuple
 
 from zenml import log_metadata, pipeline, step
+from zenml.types import HTMLString
 
 FREE_MODEL = "thinkingmachines/Inkling-2-Mini:peft:65536:free"
 
@@ -169,7 +173,7 @@ def prepare_data(
 @step(enable_cache=False)
 def train_on_tinker(
     data_dir: str, counts: Dict[str, int], cfg: Dict[str, Any]
-) -> Annotated[str, "checkpoint"]:
+) -> Tuple[Annotated[str, "checkpoint"], Annotated[List[Dict[str, float]], "loss_log"]]:
     started = time.monotonic()
     result = tinker_train(data_dir, cfg)
     log = result["log"]
@@ -187,7 +191,10 @@ def train_on_tinker(
             "config": cfg,
         }
     )
-    return result["checkpoint"]["sampler"]
+    curve = [
+        {k: r[k] for k in ("step", "train_nll", "tune_nll") if k in r} for r in log
+    ]
+    return result["checkpoint"]["sampler"], curve
 
 
 @step(enable_cache=False)
@@ -234,6 +241,28 @@ def score_test_set(
     return report
 
 
+@step
+def report_card(
+    report: Dict[str, Any],
+    loss_log: List[Dict[str, float]],
+    cfg: Dict[str, Any],
+    replies_path: str,
+    baselines: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Annotated[HTMLString, "training_report"]:
+    """The run on one page in ZenML's dashboard: both error rates with their
+    ranges, the baselines beside them, the loss curve, the rates per kind of
+    claim and the settings. Numbers only (see ``report_card.py``)."""
+    from experiments.tinker_zenml.report_card import render
+
+    replies = _rows(replies_path)
+    n = max(1, len(replies))
+    sampling = {
+        "mean_output_tokens": sum(r.get("output_tokens", 0) for r in replies) / n,
+        "mean_seconds": sum(r.get("seconds", 0) for r in replies) / n,
+    }
+    return HTMLString(render(report, loss_log, cfg, baselines, sampling))
+
+
 @step(enable_cache=False)
 def compare_in_kitaru(
     data_dir: str,
@@ -269,11 +298,13 @@ def citecheck_finetune(
     experiment_name: str = "citation checker: tuned Inkling vs baseline",
     prices: Optional[Dict[str, List[float]]] = None,
     rebuild: bool = False,
+    baselines: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> None:
     counts = prepare_data(data_dir, articles, rebuild)
-    checkpoint = train_on_tinker(data_dir, counts, cfg)
+    checkpoint, loss_log = train_on_tinker(data_dir, counts, cfg)
     replies = sample_test_set(data_dir, checkpoint, cfg)
     report = score_test_set(data_dir, replies)
+    report_card(report, loss_log, cfg, replies, baselines)
     if kitaru:
         compare_in_kitaru(data_dir, checkpoint, experiment_name, prices or {}, report)
 
@@ -318,8 +349,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     p.add_argument("--prices", help="JSON file: model -> [$/M in, $/M out]")
     p.add_argument("--rebuild", action="store_true", help="export and prompts again")
+    p.add_argument(
+        "--baselines",
+        help="JSON file: checker name -> {wrong_passed, good_doubted}, each a "
+        "count on the same test set or [count, of]; shown in the report card",
+    )
     a = p.parse_args(argv)
     prices = json.load(open(a.prices, encoding="utf-8")) if a.prices else None
+    baselines = json.load(open(a.baselines, encoding="utf-8")) if a.baselines else None
     citecheck_finetune(
         data_dir=a.data_dir,
         articles=a.articles,
@@ -328,6 +365,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         experiment_name=a.experiment_name,
         prices=prices,
         rebuild=a.rebuild,
+        baselines=baselines,
     )
 
 

@@ -117,6 +117,10 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
     monkeypatch.setattr(p, "tinker_train", train)
     monkeypatch.setattr(p, "tinker_sample", sample)
     monkeypatch.setattr(p, "kitaru_compare", compare)
+    baselines = tmp_path / "baselines.json"
+    baselines.write_text(
+        json.dumps({"Untuned": {"wrong_passed": 2, "good_doubted": [0, 2]}})
+    )
     p.main(
         [
             "--data-dir",
@@ -126,6 +130,8 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
             "--steps",
             "2",
             "--kitaru",
+            "--baselines",
+            str(baselines),
         ]
     )
 
@@ -141,6 +147,12 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
     # i3 labelled "yes" was doubted: 1 of 2 good claims doubted
     assert report["wrong_passed"]["count"] == 1 and report["wrong_passed"]["of"] == 2
     assert report["good_doubted"]["count"] == 1
+    card = run.steps["report_card"].outputs["training_report"][0].load()
+    assert "Wrong claims passed" in card and "50.0%" in card and "Untuned" in card
+    # numbers only: no claim text reaches the ZenML artifact
+    assert "Claim 1" not in card and "Mara Voss" not in card
+    curve = run.steps["train_on_tinker"].outputs["loss_log"][0].load()
+    assert curve[-1] == {"step": 1, "train_nll": 0.4, "tune_nll": 0.5}
     train_meta = run.steps["train_on_tinker"].run_metadata
     assert train_meta["best_tune_nll"] == 0.5
     kitaru_meta = run.steps["compare_in_kitaru"].run_metadata
