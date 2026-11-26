@@ -51,8 +51,11 @@ from src.utils.tool_call_recovery import (  # noqa: F401  (tests import them fro
     _list_item_model,
     _recover_list_from_text,
     _recover_multiple_tool_calls,
+    answer_every_tool_use,
 )
 from src.utils.tracing import instrument_client, request_span
+
+answer_every_tool_use()
 
 # Get logger for this module
 logger = get_logger("utils.llm")
