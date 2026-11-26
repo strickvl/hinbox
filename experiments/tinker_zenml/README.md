@@ -68,7 +68,24 @@ just tinker-pipeline --data-dir $D --articles $A --kitaru --prices prices.json
 | `train_on_tinker` | LoRA training (code from `scripts/tinker_citecheck.py`, effort 0) and a sampler checkpoint | checkpoint path, loss curve ends, minutes, config |
 | `sample_test_set` | one reply per test prompt at temperature 0 | replies, mean output tokens and seconds |
 | `score_test_set` | `citecheck score --replies` against the hand labels | wrong passed (with 95% range), good doubted, failed replies |
-| `compare_in_kitaru` | Kitaru experiment with the checkpoint as override (`--kitaru`) | experiment and run ids, baseline and tuned mean per evaluation |
+| `report_card` | one HTML page (`report_card.py`): both rates with 95% ranges, any `--baselines` beside them, the loss curve, rates per kind of claim, settings | the `training_report` artifact (`HTMLString`, shown in the dashboard; numbers only) |
+| `compare_in_kitaru` | Kitaru experiment with the checkpoint as override (`--kitaru`) | experiment and run ids, baseline and tuned mean per evaluation; the `kitaru_report` artifact (`HTMLString`: each measure, baseline against tuned) |
+
+`--baselines baselines.json` puts other checkers' scores on the same test set beside the tuned one in the report card: `{"Untuned Inkling 2 Mini": {"wrong_passed": 36, "good_doubted": 26}}`, each a count of the test set's wrong or good claims, or `[count, of]`.
+
+`train_on_tinker` also returns the loss curve (`loss_log`: step, train and tune loss) as an artifact.
+
+## A ZenML server with an S3 artifact store
+
+The project carries ZenML's S3 integration packages (`s3fs`, `boto3`, `aws-profile-manager`), so after `zenml login <server>` a stack can keep artifacts in a bucket:
+
+```bash
+Z="uv run --project experiments/tinker_zenml zenml"
+$Z artifact-store register s3_store --flavor=s3 --path=s3://<bucket>/hinbox
+$Z stack register hinbox -o default -a s3_store --set
+```
+
+Credentials come from the machine's AWS profile unless the store is given a service connector. Only counts, paths, scores, the loss curve and the report card are written there.
 
 `just tinker-pipeline-test` runs the whole pipeline on a local ZenML store with Tinker and Kitaru replaced by fakes.
 

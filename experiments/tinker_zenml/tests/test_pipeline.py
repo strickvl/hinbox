@@ -110,13 +110,24 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
                     "result_mean": 0.1,
                     "baseline_count": 2,
                     "result_count": 2,
-                }
+                },
+                {
+                    "name": "seconds",
+                    "baseline_mean": 3.1,
+                    "result_mean": 1.4,
+                    "baseline_count": 4,
+                    "result_count": 4,
+                },
             ],
         }
 
     monkeypatch.setattr(p, "tinker_train", train)
     monkeypatch.setattr(p, "tinker_sample", sample)
     monkeypatch.setattr(p, "kitaru_compare", compare)
+    baselines = tmp_path / "baselines.json"
+    baselines.write_text(
+        json.dumps({"Untuned": {"wrong_passed": 2, "good_doubted": [0, 2]}})
+    )
     p.main(
         [
             "--data-dir",
@@ -126,6 +137,8 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
             "--steps",
             "2",
             "--kitaru",
+            "--baselines",
+            str(baselines),
         ]
     )
 
@@ -141,8 +154,17 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
     # i3 labelled "yes" was doubted: 1 of 2 good claims doubted
     assert report["wrong_passed"]["count"] == 1 and report["wrong_passed"]["of"] == 2
     assert report["good_doubted"]["count"] == 1
+    card = run.steps["report_card"].outputs["training_report"][0].load()
+    assert "Wrong claims passed" in card and "50.0%" in card and "Untuned" in card
+    # numbers only: no claim text reaches the ZenML artifact
+    assert "Claim 1" not in card and "Mara Voss" not in card
+    curve = run.steps["train_on_tinker"].outputs["loss_log"][0].load()
+    assert curve[-1] == {"step": 1, "train_nll": 0.4, "tune_nll": 0.5}
     train_meta = run.steps["train_on_tinker"].run_metadata
     assert train_meta["best_tune_nll"] == 0.5
+    kitaru_card = run.steps["compare_in_kitaru"].outputs["kitaru_report"][0].load()
+    assert "45.0%" in kitaru_card and "10.0%" in kitaru_card and "1.4 s" in kitaru_card
+    assert kitaru_card.count(">better<") == 2
     kitaru_meta = run.steps["compare_in_kitaru"].run_metadata
     assert kitaru_meta["wrong_passed_result"] == 0.1
     assert os.path.exists(
@@ -209,3 +231,22 @@ def test_a_rerun_reports_only_its_own_training_log(zen, tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "train_loop", train_loop)
     out = zen.tinker_train(str(d), {"name": "citecheck", "model": "m", "steps": 1})
     assert out["log"] == [{"step": 0, "tune_nll": 0.9}]
+
+
+def test_the_report_card_renders_when_a_rate_has_no_labelled_claims(zen):
+    """Only good claims labelled: wrong_passed has no denominator."""
+    from experiments.tinker_zenml.report_card import render
+
+    empty = {"count": 0, "of": 0, "share": None, "low": 0.0, "high": 1.0}
+    good = {"count": 1, "of": 4, "share": 0.25, "low": 0.05, "high": 0.7}
+    report = {
+        "labelled": 4,
+        "unsure": 0,
+        "errors": 0,
+        "wrong_passed": empty,
+        "good_doubted": good,
+        "by_stratum": {},
+    }
+    for baselines in (None, {"Other": {"good_doubted": 2}}):
+        page = render(report, [], {"name": "c"}, baselines)
+        assert "n/a" in page and "25.0%" in page
