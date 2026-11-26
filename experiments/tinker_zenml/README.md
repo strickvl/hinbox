@@ -74,6 +74,7 @@ just tinker-pipeline --data-dir $D --articles $A --kitaru --prices prices.json
 
 ## Known risks
 
-- Tinker's cookbook lists no Inkling support for exporting merged or PEFT weights. `scripts/tinker_citecheck.py smoke` tests this first; if the weights can't leave Tinker, the "runs locally" half needs training with Unsloth instead, on the same data.
+- Getting the weights out: Tinker's documented path is `save_weights_external()` and then `tinker checkpoint download`, and on 25 Nov a Thinking Machines engineer confirmed on X that Inkling 2 Mini LoRAs download this way. Nobody has said so for the `:free` model ID specifically, so `scripts/tinker_citecheck.py smoke` checks it first: 15 training steps on the free ID, then the download, then a list of the tensors. The cookbook's PEFT adapter builder lists no Inkling support; smoke tries it and reports what happens. If the raw LoRA can't be turned into something llama.cpp serves, the fallback is training with Unsloth on the same data.
+- Free tier: it needs a positive prepaid balance and keeps at most 100 checkpoints or 100 GB, so delete smoke and old checkpoints (`tinker checkpoint delete`).
 - The tuned model must be served with the same "Thinking effort level: 0.0" system message it was trained with.
 - Kitaru's means are per session; the sessions hold one claim each so the means equal per-claim shares.

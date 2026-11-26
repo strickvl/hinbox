@@ -19,7 +19,9 @@ Steps:
   format, downloads them, lists the tensors and tries the cookbook's PEFT
   adapter build. It answers the three unknowns before any real training:
   can a tuned Inkling leave Tinker, in what form, and does it stop
-  reasoning.
+  reasoning. Downloads go through Tinker's own ``tinker checkpoint
+  download``. Free-tier storage holds at most 100 checkpoints or 100 GB, so
+  delete smoke checkpoints afterwards (``tinker checkpoint delete``).
 - ``train --data <train.jsonl> [--tune <tune.jsonl>] --out <dir>``: one or
   more epochs of LoRA training, loss on the tune file every
   ``--eval-every`` steps, a checkpoint at the end (path printed and saved in
@@ -27,7 +29,8 @@ Steps:
 - ``sample --checkpoint <tinker://...> --prompts <file> --out <replies.jsonl>``:
   one reply per prompt at temperature 0, with seconds and token counts.
   ``--checkpoint base`` samples the untuned model.
-- ``download --checkpoint <tinker://.../weights/...> --out <dir>``.
+- ``download --checkpoint <tinker://.../external_weights/...|weights/...> --out <dir>``:
+  ``tinker checkpoint download`` into ``<dir>``, then the tensors are listed.
 
 Every example is rendered with reasoning effort ``--effort`` (default 0.0,
 the lowest the Inkling renderer accepts) both in training and in sampling,
@@ -185,12 +188,11 @@ def cmd_smoke(args) -> None:
         )
     saved = client.save_weights_external("smoke-external").result()
     print(f"external weights: {saved.path}")
-    from tinker_cookbook import weights
-
-    target = os.path.join(args.out, "smoke-weights")
-    weights.download(tinker_path=saved.path, output_dir=target)
+    target = _download(saved.path, os.path.join(args.out, "smoke-weights"))
     _list_tensors(target)
-    try:
+    try:  # a PEFT folder that transformers/vLLM/llama.cpp converters read
+        from tinker_cookbook import weights
+
         weights.build_lora_adapter(
             base_model=args.model.split(":", 1)[0],
             adapter_path=target,
@@ -199,6 +201,50 @@ def cmd_smoke(args) -> None:
         print("PEFT adapter built: the cookbook can export Inkling adapters")
     except Exception as exc:  # the cookbook lists no Inkling support; report it
         print(f"PEFT adapter build failed: {type(exc).__name__}: {exc}")
+
+
+def _download(tinker_path: str, parent: str) -> str:
+    """Download a checkpoint into ``parent``; the folder it landed in.
+
+    Uses Tinker's own ``tinker checkpoint download`` (the documented way:
+    ``save_weights_external()`` then this command; a Thinking Machines
+    engineer confirmed on 25 Nov that Inkling 2 Mini LoRAs download this way,
+    not yet on the ``:free`` ID word for word). It makes a folder named after
+    the checkpoint inside ``parent``. Falls back to the cookbook's
+    ``weights.download()`` if the command fails. Files ending ``.age`` are
+    encrypted and need ``age -d`` first.
+    """
+    import subprocess
+
+    os.makedirs(parent, exist_ok=True)
+    before = set(os.listdir(parent))
+    cmd = [
+        sys.executable,
+        "-m",
+        "tinker.cli",
+        "checkpoint",
+        "download",
+        tinker_path,
+        "--output",
+        parent,
+        "--force",
+    ]
+    done = subprocess.run(cmd, capture_output=True, text=True)
+    print(done.stdout[-2000:], done.stderr[-2000:], sep="\n")
+    if done.returncode == 0:
+        new = sorted(set(os.listdir(parent)) - before) or sorted(os.listdir(parent))
+        folder = os.path.join(parent, new[-1]) if new else parent
+        print(f"downloaded with `tinker checkpoint download` into {folder}")
+    else:
+        from tinker_cookbook import weights
+
+        print("`tinker checkpoint download` failed; trying the cookbook's download")
+        folder = os.path.join(parent, "cookbook")
+        weights.download(tinker_path=tinker_path, output_dir=folder)
+    encrypted = [f for _, _, fs in os.walk(folder) for f in fs if f.endswith(".age")]
+    if encrypted:
+        print(f"{len(encrypted)} files are age-encrypted: decrypt with `age -d` first")
+    return folder
 
 
 def _list_tensors(folder: str) -> None:
@@ -253,10 +299,10 @@ def cmd_sample(args) -> None:
 
 
 def cmd_download(args) -> None:
-    from tinker_cookbook import weights
-
-    weights.download(tinker_path=args.checkpoint, output_dir=args.out)
-    _list_tensors(args.out)
+    """Download a checkpoint: ``tinker://.../external_weights/...`` from
+    ``save_weights_external()``, or ``.../weights/...`` from ``save_state()``
+    (Tinker exports that one through a temporary external checkpoint)."""
+    _list_tensors(_download(args.checkpoint, args.out))
 
 
 def main() -> None:
