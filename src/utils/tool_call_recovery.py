@@ -120,3 +120,64 @@ def _recover_multiple_tool_calls(
         "Recovered %d items from multiple tool calls without retry", len(recovered)
     )
     return recovered
+
+
+def _reask_answering_every_tool_use(
+    kwargs: dict, response: Any, exception: Exception
+) -> dict:
+    """Instructor's Anthropic re-ask, answering each ``tool_use`` block.
+
+    When Claude answers with two tool calls, Instructor's validation fails (it
+    wants one) and its re-ask sends a ``tool_result`` for the last call only.
+    The API then refuses the whole retry with a 400 ("tool_use ids were found
+    without tool_result blocks immediately after"), so the call fails even
+    though a second try could have worked. Opus 5.5 did this on teacher calls
+    with auto tool choice (26 Nov). This version answers every call.
+    """
+    from instructor.providers.anthropic.utils import reask_anthropic_tools
+
+    blocks = getattr(response, "content", None)
+    ids = (
+        [c.id for c in blocks if getattr(c, "type", None) == "tool_use"]
+        if isinstance(blocks, list)
+        else []
+    )
+    if len(ids) < 2:
+        return reask_anthropic_tools(kwargs, response, exception)
+    note = (
+        f"Validation Error found:\n{exception}\nRecall the function correctly, fix the errors. "
+        f"Call the tool once, not {len(ids)} times."
+    )
+    kwargs = kwargs.copy()
+    kwargs["messages"] = [
+        *kwargs["messages"],
+        {"role": "assistant", "content": [c.model_dump() for c in response.content]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": i,
+                    "content": note,
+                    "is_error": True,
+                }
+                for i in ids
+            ],
+        },
+    ]
+    return kwargs
+
+
+def answer_every_tool_use() -> None:
+    """Make Instructor's Anthropic tool modes re-ask with ``_reask_answering_every_tool_use``.
+
+    Instructor builds its table of re-ask functions on each retry from the
+    names imported into ``instructor.processing.response``, so replacing the
+    name there is enough.
+    """
+    try:
+        from instructor.processing import response as instructor_response
+    except ImportError:  # another Instructor layout: keep its own re-ask
+        return
+    if hasattr(instructor_response, "reask_anthropic_tools"):
+        instructor_response.reask_anthropic_tools = _reask_answering_every_tool_use
