@@ -12,7 +12,7 @@ import pyarrow.parquet as pq
 import pytest
 from starlette.testclient import TestClient
 
-from src.citecheck import export, items, merge_data, planted, score, teach
+from src.citecheck import export, items, label_app, merge_data, planted, score, teach
 from src.citecheck.__main__ import main
 from src.citecheck.label_app import make_app, marked_pieces
 from src.engine.match_checker import parse_sectioned_reply
@@ -302,7 +302,8 @@ def test_label_page_records_clicks(tmp_path):
     ]  # fmt: skip
     path = str(tmp_path / "labels.jsonl")
     client = TestClient(make_app(its, path, {"x": ARTICLE}))
-    page = client.get("/")
+    assert "How many in this sprint?" in client.get("/").text
+    page = client.get("/?i=0")
     assert "Qadir studied engineering." in page.text and "<mark" in page.text
     r = client.post(
         "/label",
@@ -321,6 +322,81 @@ def test_label_page_records_clicks(tmp_path):
     assert (
         client.post("/label", data={"item_id": "zz", "label": "no"}).status_code == 400
     )
+
+
+def test_a_sprint_counts_its_own_labels_and_ends_with_a_summary(tmp_path, monkeypatch):
+    monkeypatch.setenv("HINBOX_LABEL_CATS", "")
+    its = [
+        {"item_id": f"i{k}", "entity_name": "Yusuf Qadir", "article_id": f"x{k % 2}",
+         "claim": f"Qadir studied engineering, report {k} says."}
+        for k in range(5)
+    ]  # fmt: skip
+    path = str(tmp_path / "labels.jsonl")
+    meta = {"x0": {"title": "Detainee moved", "date": "2016-03-12T00:00:00"}}
+    client = TestClient(make_app(its, path, {"x0": ARTICLE, "x1": ARTICLE}, meta=meta))
+    r = client.get("/start?n=2", follow_redirects=False)
+    sprint = dict(p.split("=") for p in r.headers["location"].split("?")[1].split("&"))
+    assert sprint["n"] == "2" and sprint["b"] == "0"
+    page = client.get(r.headers["location"])
+    for step in range(2):
+        assert f"{step} of 2</b> in this sprint" in page.text
+        index = page.text.split('name="index" value="')[1].split('"')[0]
+        iid = page.text.split('name="item_id" value="')[1].split('"')[0]
+        page = client.post(
+            "/label", data={"item_id": iid, "label": "yes", "index": index, **sprint}
+        )
+    assert "Sprint done" in page.text and "2 labelled" in page.text
+    assert "Another 2" in page.text and "2 of 5" in page.text
+    # sentences of one article come together, so the second answer kept the article
+    done = [r["item_id"] for r in items.read_jsonl(path)]
+    assert (
+        len({next(i["article_id"] for i in its if i["item_id"] == d) for d in done})
+        == 1
+    )
+
+
+def test_the_page_shows_the_date_and_underlines_details_the_article_lacks(tmp_path):
+    its = [{"item_id": "a", "entity_name": "Yusuf Qadir", "article_id": "x",
+            "claim": "Qadir was flown to the base in 2009 by Mara Voss."}]  # fmt: skip
+    meta = {"x": {"title": "Detainee moved", "date": "2016-03-12T00:00:00"}}
+    client = TestClient(
+        make_app(its, str(tmp_path / "l.jsonl"), {"x": ARTICLE}, meta=meta)
+    )
+    text = client.get("/?i=0").text
+    assert "12 March 2016" in text and "Detainee moved" in text
+    assert '<span class="flag"' in text and ">2009</span>" in text
+    assert ">Mara</span>" not in text  # in the article, so not flagged
+
+
+def test_claim_pieces_flag_only_missing_years_numbers_and_names():
+    pieces = label_app.claim_pieces(
+        "In 2007, al-Nashiri met 14 men from Guantánamo and Lahore.",
+        "Al Nashiri was held at Guantanamo in 2006 with 14 other men.",
+    )
+    assert "".join(p for p, _ in pieces).startswith("In 2007, al-Nashiri")
+    assert [p for p, f in pieces if f] == ["2007", "Lahore"]
+
+
+def test_label_order_keeps_each_articles_sentences_together():
+    its = [{"article_id": a} for a in ["a", "b", "a", "c", "b", "a"]]
+    order = label_app.label_order(its)
+    arts = [its[i]["article_id"] for i in order]
+    assert sorted(order) == list(range(6))
+    assert all(
+        arts.index(a) + arts.count(a) - 1 == len(arts) - 1 - arts[::-1].index(a)
+        for a in arts
+    )
+
+
+def test_cats_come_now_and_then_never_twice_running_and_at_halfway():
+    pets = label_app.cats("Tom:ginger, Kit:tortie, bad:dog")
+    assert pets == [("Tom", "ginger"), ("Kit", "tortie")]
+    assert label_app.cats("")[0][0] == "The ginger cat"
+    shown = [label_app.cat_for(1700000000, d, 40, pets) for d in range(41)]
+    assert shown[20] and "Halfway" in shown[20]["line"]
+    assert not shown[0] and not shown[40]
+    assert 3 <= sum(1 for c in shown if c) <= 15
+    assert not any(shown[d] and shown[d + 1] for d in range(40))
 
 
 def test_shorter_name_and_split_positives(monkeypatch):

@@ -238,3 +238,20 @@ def article_texts(path: str) -> Dict[str, str]:
         for r in table.to_pylist()
         if r.get("id") and r.get("content")
     }
+
+
+def article_meta(path: str) -> Dict[str, Dict[str, Any]]:
+    """Article id -> ``{"title", "date"}`` from the articles Parquet (the
+    columns it has; nothing for a file without either)."""
+    import pyarrow.parquet as pq
+
+    have = set(pq.read_schema(path).names)
+    cols = [c for c in ("title", "published_date") if c in have]
+    if "id" not in have or not cols:
+        return {}
+    table = pq.read_table(path, columns=["id", *cols])
+    return {
+        str(r["id"]): {"title": r.get("title"), "date": r.get("published_date")}
+        for r in table.to_pylist()
+        if r.get("id")
+    }
