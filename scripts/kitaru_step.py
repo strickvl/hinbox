@@ -1,9 +1,10 @@
 """Run one recorded ``profile.update``, ``match_check``, ``extract.<type>`` or
-``grounding`` step again and record it in Kitaru.
+``grounding`` (citation check) step again and record it in Kitaru.
 
 Kitaru's worker starts this script for a replay of a step session (one that
-``scripts/kitaru_traces.py --step <step>`` wrote). The session's inputs are
-the step's own arguments; this script:
+``scripts/kitaru_traces.py --step <step>`` wrote, or ``just citecheck
+kitaru-sessions``). The session's inputs are the step's own arguments; this
+script:
 
 1. reads them from the task (``KITARU_TASK_INPUTS``, or the task's spec when
    they were too long for the environment);
@@ -15,7 +16,9 @@ the step's own arguments; this script:
    failed call fails the run, since its ``is_match=False`` is no verdict),
    ``ArticleProcessor._timed_extract()`` for an extraction step (raising when
    extraction failed so an empty fallback is never counted as a verdict), and
-   ``judge_claims()`` for a grounding call;
+   ``judge_claims()`` for a citation check (a ``tinker://`` checkpoint or
+   ``tinker/<base model>`` is sampled on Tinker,
+   ``src/citecheck/tinker_judge.py``);
 4. turns the spans that call left (the step and its model calls) into a
    session with the same code that converts traces for import
    (``step_sessions()``), so a replay and its baseline have the same shape;
@@ -24,7 +27,7 @@ the step's own arguments; this script:
 
 Register it as each step agent's run command,
 ``kitaru agent register hinbox-profile-update --spec spec.yaml`` (and
-``hinbox-match-check``, ``hinbox-extract``, ``hinbox-grounding``), with::
+``hinbox-match-check``, ``hinbox-extract``, ``hinbox-citation-check``), with::
 
     version:
       run_spec:
@@ -67,12 +70,20 @@ NOT_ARGUMENTS = ("call", "answering_model", "labels", "guarded_corrections")
 def hinbox_model(name: str) -> str:
     """Kitaru writes ``provider:model``; Hinbox ``provider/model``. A colon
     before the first slash is the provider's (``openrouter:anthropic/x``);
-    one after it is a tag (``ollama/qwen2.5:32b``), kept."""
+    one after it is a tag (``ollama/qwen2.5:32b``), kept. A Tinker checkpoint
+    (``tinker://...``) is a URL, kept as it is; ``tinker:<path>`` without the
+    slashes is read as one."""
+    if name.startswith("tinker://"):
+        return name
+    if name.startswith("tinker:") and "/sampler_weights/" in name:
+        return "tinker://" + name.split(":", 1)[1].lstrip("/")
     return name.replace(":", "/", 1) if ":" in name.split("/", 1)[0] else name
 
 
 def step_name(inputs: Dict[str, Any]) -> str:
-    """Which step recorded these arguments."""
+    """Which step recorded these arguments: only ``_check_match()`` takes an
+    existing profile's text, only extraction takes ``article_content``, and
+    only ``judge_claims()`` takes a list of claims."""
     if "existing_profile_text" in inputs:
         return MATCH_STEP
     if "article_content" in inputs and "entity_type" in inputs:
@@ -159,35 +170,6 @@ def _extract_step(
     return outcome
 
 
-def _grounding_step(
-    *,
-    article_id: str,
-    article_text: str,
-    claims: List[Any],
-    model: str = "",
-    model_type: Optional[str] = None,
-    ask_passage: Optional[bool] = None,
-) -> Any:
-    """Run one ``grounding`` call (``judge_claims()``) with the recorded or
-    overridden model."""
-    from src.utils.grounding import judge_claims
-    from src.utils.task_models import is_local_model
-
-    resolved_type = (
-        ("ollama" if is_local_model(model) else "gemini")
-        if model
-        else (model_type or "gemini")
-    )
-    return judge_claims(
-        article_id=article_id,
-        article_text=article_text,
-        claims=[(str(c[0]), str(c[1])) for c in claims],
-        model_type=resolved_type,
-        model=model or None,
-        ask_passage=ask_passage,
-    )
-
-
 def apply_model_params(override: Any) -> None:
     """Put the override's ``model_params`` on every model call this process
     makes; an unsupported key raises."""
@@ -213,6 +195,15 @@ def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any
         )
     args = {k: v for k, v in inputs.items() if k not in NOT_ARGUMENTS}
     name = step_name(inputs)
+    if name == GROUNDING_STEP:
+        from src.utils.grounding import judge_claims
+
+        model = str(args.get("model") or "")
+        return judge_claims, {
+            **args,
+            "claims": [tuple(c) for c in args["claims"]],
+            "model_type": "local" if model.startswith("ollama/") else "cloud",
+        }
     if name == MATCH_STEP:
         return _match_check, {
             **args,
@@ -220,8 +211,6 @@ def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any
         }
     if name.startswith("extract."):
         return _extract_step, args
-    if name == GROUNDING_STEP:
-        return _grounding_step, args
     if inputs.get("call") == "edit_profile":
         from src.evals.profile_update import edit_step
 

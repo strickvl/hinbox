@@ -23,11 +23,12 @@ then, for each part:
         --agent hinbox@latest --media-type application/x-ndjson --wait
 
 With ``--step profile.update`` (or ``match_check``, ``extract``,
-``extract.<type>``, ``grounding``) each span of that
-step becomes its own session instead (``step_sessions()``), whose inputs are
-the step's recorded arguments: the unit a Kitaru replay re-runs. Import those
-under the step's own agent (``hinbox-profile-update``, ``hinbox-match-check``,
-``hinbox-extract``, ``hinbox-grounding``),
+``extract.<type>``, or ``grounding`` for the citation check's calls, one per
+article and batch of claims) each span of that step becomes its own session
+instead (``step_sessions()``), whose inputs are the step's recorded arguments:
+the unit a Kitaru replay re-runs. Import those under the step's own agent
+(``hinbox-profile-update``, ``hinbox-match-check``, ``hinbox-extract``,
+``hinbox-citation-check``),
 not beside the article sessions.
 
 The parts hold article text: keep them off GitHub (the repo is public).

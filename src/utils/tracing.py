@@ -621,3 +621,50 @@ def in_current_context(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap ``fn`` to run in the caller's context (for ``run_in_executor``)."""
     ctx = contextvars.copy_context()
     return lambda *a, **kw: ctx.run(fn, *a, **kw)
+
+
+@contextmanager
+def llm_call_span(
+    provider: str, model: str, messages: List[Dict[str, Any]], **params: Any
+) -> Iterator[Callable[..., None]]:
+    """A model-call span for a client Hinbox doesn't wrap (Tinker's sampler),
+    with the same OpenInference attributes as ``instrument_client()``'s, so
+    ``scripts/kitaru_traces.py`` turns it into an ``llm_call`` node.
+
+    Yields ``record(reply, prompt_tokens, completion_tokens)`` for the reply.
+    """
+    system = next(
+        (_text(m.get("content")) for m in messages if m.get("role") == "system"), ""
+    )
+    attrs: Dict[str, Any] = {
+        "openinference.span.kind": "LLM",
+        "hinbox.step": _current_step(),
+        "hinbox.system_prompt_sha": hashlib.sha256(system.encode()).hexdigest()[:16],
+        "llm.provider": provider,
+        "llm.model_name": model,
+        "llm.invocation_parameters": _text(params),
+        "gen_ai.system": provider,
+        "gen_ai.request.model": model,
+        "input.value": _text({"messages": messages}),
+        "input.mime_type": "application/json",
+        **_message_attrs("llm.input_messages", messages),
+    }
+    with tracer().start_as_current_span(f"{provider}.sample", attributes=attrs) as span:
+
+        def record(reply: str, prompt_tokens: int, completion_tokens: int) -> None:
+            if not span.is_recording():
+                return
+            span.set_attributes(
+                {
+                    "gen_ai.response.model": model,
+                    "llm.token_count.prompt": prompt_tokens,
+                    "llm.token_count.completion": completion_tokens,
+                    "llm.token_count.total": prompt_tokens + completion_tokens,
+                    "output.value": reply,
+                    **_message_attrs(
+                        "llm.output_messages", [{"role": "assistant", "content": reply}]
+                    ),
+                }
+            )
+
+        yield record

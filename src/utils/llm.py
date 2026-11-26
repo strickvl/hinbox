@@ -273,6 +273,12 @@ def set_model_params(params: Optional[Dict[str, Any]]) -> None:
     _PARAM_OVERRIDE.update(params or {})
 
 
+def model_params() -> Dict[str, Any]:
+    """A copy of the parameters ``set_model_params()`` set (empty in the
+    pipeline), for callers that don't go through ``_sampling_kwargs()``."""
+    return dict(_PARAM_OVERRIDE)
+
+
 def _sampling_kwargs(
     target: ProviderTarget, max_tokens: int, temperature: float
 ) -> Dict[str, Any]:
