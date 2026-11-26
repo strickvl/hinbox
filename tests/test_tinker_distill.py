@@ -60,3 +60,10 @@ def test_row_key_ignores_the_reply() -> None:
     prompt = [{"role": "user", "content": "u"}]
     assert row_key(prompt) == row_key(list(prompt))
     assert row_key(prompt) != row_key([{"role": "user", "content": "v"}])
+
+
+def test_missing_or_unknown_level_never_matches() -> None:
+    gold = {1: "not_supported"}
+    for text in ('{"items": [{"claim_number": 1}]}', _reply("wrong")):
+        assert reply_levels(text) == {}
+        assert not matches_gold(text, gold, loose=True)

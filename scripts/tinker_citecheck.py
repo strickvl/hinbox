@@ -167,6 +167,9 @@ def _parts(message: dict) -> tuple:
     return thinking, text
 
 
+LEVELS = ("supported", "partial", "not_supported", "unclear")
+
+
 def _level(value) -> str:
     return str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
 
@@ -174,7 +177,8 @@ def _level(value) -> str:
 def reply_levels(text: str) -> dict:
     """Claim number -> support level from a JSON ``{"items": [...]}`` reply
     (code fences and words around the JSON are allowed); empty when the
-    reply can't be read."""
+    reply can't be read. A claim whose level is missing or not one of
+    ``LEVELS`` is left out, so the reply can't match its labels."""
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         return {}
@@ -187,8 +191,11 @@ def reply_levels(text: str) -> dict:
     for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict):
             continue
+        level = _level(item.get("support_level"))
+        if level not in LEVELS:  # missing or made up: the claim has no verdict
+            continue
         try:
-            levels[int(item.get("claim_number"))] = _level(item.get("support_level"))
+            levels[int(item.get("claim_number"))] = level
         except (TypeError, ValueError):
             continue
     return levels
@@ -287,7 +294,7 @@ def cmd_distill(args) -> None:
                 log["kept"] = i
                 meta = {"sample": i, "output_tokens": len(seq.tokens), "item_ids": ids}
                 out = distilled_row(prompt, thinking, text, meta)
-                if not checked:  # the reasoning must carry training weight
+                if thinking and not checked:  # reasoning must carry weight
                     with_thinking = _weighted(renderer, out["messages"], args.effort)
                     plain = distilled_row(prompt, "", text, meta)["messages"]
                     without = _weighted(renderer, plain, args.effort)
