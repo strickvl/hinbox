@@ -197,6 +197,11 @@ def _json_items(text: str):
     return items if isinstance(items, list) else None
 
 
+def _looks_json(text: str) -> bool:
+    """A reply written as JSON (quoted keys), readable or not."""
+    return bool(re.search(r'"(?:items|support_level|claim_number)"', text))
+
+
 def plain_items(text: str) -> list:
     """(level, reasoning) per claim, in order, from a reply written as text
     ("1. Reasoning: ... Support_level: partial"), as untuned Inkling
@@ -214,9 +219,12 @@ def reply_levels(text: str) -> dict:
     """Claim number -> support level from a JSON ``{"items": [...]}`` reply
     (code fences and words around the JSON are allowed) or, failing that, a
     reply written as text (``plain_items()``, numbered in order); empty when
-    the reply can't be read. A JSON claim whose level is missing or not one
+    the reply can't be read, as is JSON that doesn't parse (cut off before
+    its closing brackets), which is never read as text. A JSON claim whose level is missing or not one
     of ``LEVELS`` is left out, so the reply can't match its labels."""
     items = _json_items(text)
+    if items is None and _looks_json(text):  # cut off or broken: not text
+        return {}
     if items is None:
         return {i + 1: level for i, (level, _) in enumerate(plain_items(text))}
     levels = {}

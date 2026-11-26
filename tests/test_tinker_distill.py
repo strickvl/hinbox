@@ -38,6 +38,9 @@ def test_reply_levels_reads_text_replies_in_order() -> None:
 
 def test_reply_levels_empty_when_cut_off() -> None:
     assert reply_levels(_reply("supported")[:-5]) == {}
+    cut = _reply("supported", "partial")[:-3]  # every verdict, no closing brackets
+    assert reply_levels(cut) == {}
+    assert not matches_gold(cut, {1: "supported", 2: "partial"})
 
 
 def test_text_reply_kept_as_json() -> None:
