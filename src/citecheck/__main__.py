@@ -4,6 +4,8 @@ Citation checker, in order:
 
     just citecheck sample  --entities <run> --articles <parquet> --out <dir>
     just citecheck label   --items <dir>/test_items.jsonl --labels <dir>/test_labels.jsonl --articles <parquet>
+    just citecheck review  --items ... --labels <yours> --agent-labels <theirs> --articles <parquet>
+    just citecheck combine --labels <theirs> <yours> <review> --out <combined>   # later files win
     just citecheck score   --items ... --labels ... --stored <run>         # the run's own judge
     just citecheck score   --items ... --labels ... --articles ... --model ollama/<m>
     just citecheck plant   --entities <run> --articles <parquet> --out <dir>
@@ -92,6 +94,39 @@ def cmd_label(a: argparse.Namespace) -> None:
     )
     print(f"labelling {len(items)} items on http://127.0.0.1:{a.port}")
     uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")
+
+
+def cmd_review(a: argparse.Namespace) -> None:
+    """Serve the items where your labels and another labeller's differ; your
+    new answers go to ``--out``, then ``combine`` puts the files together."""
+    import uvicorn
+
+    from src.citecheck.label_app import make_app
+    from src.citecheck.review import review_items
+
+    items = review_items(read_jsonl(a.items), a.labels, a.agent_labels, a.agent_name)
+    if not items:
+        sys.exit("no items where the two label files disagree")
+    app = make_app(
+        items,
+        a.out,
+        article_texts(a.articles),
+        labeller=a.who,
+        meta=article_meta(a.articles),
+    )
+    print(f"reviewing {len(items)} disagreements on http://127.0.0.1:{a.port}")
+    print(
+        f"answers go to {a.out}; then: just citecheck combine --labels "
+        f"{a.agent_labels} {a.labels} {a.out} --out <combined.jsonl>"
+    )
+    uvicorn.run(app, host="127.0.0.1", port=a.port, log_level="warning")
+
+
+def cmd_combine(a: argparse.Namespace) -> None:
+    from src.citecheck.review import combine_labels
+
+    counts = combine_labels(a.labels, a.out)
+    print(f"wrote {a.out}: {sum(counts.values())} items {counts} (later files win)")
 
 
 def cmd_plant(a: argparse.Namespace) -> None:
@@ -330,6 +365,13 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--no-planted", action="store_true")
     sp.add_argument("--no-teachers", action="store_true")
     add("prompts", cmd_prompts, "items", "articles", "file")
+    sp = add("review", cmd_review, "items", "labels", "agent-labels", "articles")
+    sp.add_argument("--out", default="data/citecheck/review_labels.jsonl")
+    sp.add_argument("--agent-name", default="")
+    sp.add_argument("--port", type=int, default=5078)
+    sp.add_argument("--who", default=os.getenv("HINBOX_REVIEWER", ""))
+    sp = add("combine", cmd_combine, "out")
+    sp.add_argument("--labels", nargs="+", required=True)
     sp = add("score", cmd_score, "items", "labels")
     sp.add_argument("--articles")
     sp.add_argument("--model")
