@@ -581,6 +581,26 @@ def _claim_line(n: int, entity_name: str, claim: str) -> str:
     return f"{n}. {about}{claim}"
 
 
+def grounding_messages(
+    article_id: str,
+    article_text: str,
+    claims: List[Tuple[str, str]],
+    ask_passage: bool = False,
+) -> List[Dict[str, str]]:
+    """The system and user messages of one judge call: the article, then the
+    numbered claims (entity name, claim text). Training examples for a tuned
+    checker (``src/citecheck/export.py``) use these same messages, so the
+    tuned model is asked exactly as the pipeline asks it."""
+    claims_text = "\n".join(
+        _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
+    )
+    system = _GROUNDING_SYSTEM_PROMPT + (_PASSAGE_INSTRUCTION if ask_passage else "")
+    user = _GROUNDING_USER_TEMPLATE.format(
+        article_id=article_id, article_text=article_text, claims_text=claims_text
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
 @timed("grounding")
 def judge_claims(
     *,
@@ -589,9 +609,11 @@ def judge_claims(
     claims: List[Tuple[str, str]],
     model_type: str,
     ask_passage: Optional[bool] = None,
+    model: Optional[str] = None,
 ) -> List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]]:
     """One model call: judge ``claims`` (entity name, claim text) against one
-    article. Returns (verdict, reasoning, copied passage) per claim, or None
+    article. ``model`` overrides the judge (the citation-checker eval and its
+    teacher labels name theirs). Returns (verdict, reasoning, copied passage) per claim, or None
     where the reply had none; the passage is None unless ``ask_passage``
     (default ``HINBOX_GROUNDING_PASSAGE``) and is not yet checked against the
     article. Raises when the call itself fails. The judge is
@@ -601,22 +623,8 @@ def judge_claims(
         ask_passage = GROUNDING_PASSAGE
     from src.utils.llm import cloud_generation, local_generation
 
-    claims_text = "\n".join(
-        _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
-    )
-    system = _GROUNDING_SYSTEM_PROMPT + (_PASSAGE_INSTRUCTION if ask_passage else "")
-    messages = [
-        {"role": "system", "content": system},
-        {
-            "role": "user",
-            "content": _GROUNDING_USER_TEMPLATE.format(
-                article_id=article_id,
-                article_text=article_text,
-                claims_text=claims_text,
-            ),
-        },
-    ]
-    model = grounding_model(model_type)
+    messages = grounding_messages(article_id, article_text, claims, ask_passage)
+    model = model or grounding_model(model_type)
     local = is_local_model(model)
     generate = local_generation if local else cloud_generation
     thinking = (

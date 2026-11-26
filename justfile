@@ -65,6 +65,11 @@ eval *args:
 eval-replay *args:
     uv run python -m src.evals.profile_replay {{args}}
 
+# Data, hand labels and scores for a tuned local citation checker or merge check
+# (e.g. `just citecheck sample --entities <run> --articles <parquet> --out data/citecheck`)
+citecheck *args:
+    uv run python -m src.citecheck {{args}}
+
 # Build profile-update test cases from replay snapshots (e.g. `just eval-cases --model openai/gpt-6-luna`)
 eval-cases *args:
     uv run python -m src.evals.profile_cases {{args}}
