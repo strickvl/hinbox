@@ -142,4 +142,36 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
     assert train_meta["best_tune_nll"] == 0.5
     kitaru_meta = run.steps["compare_in_kitaru"].run_metadata
     assert kitaru_meta["wrong_passed_result"] == 0.1
-    assert os.path.exists(d / "test_replies.citecheck.jsonl")
+    assert os.path.exists(
+        p.replies_path(str(d), "tinker://run-1/sampler_weights/citecheck")
+    )
+
+
+def test_two_checkpoints_with_one_name_never_share_a_replies_file(zen):
+    a = zen.replies_path("d", "tinker://run-1/sampler_weights/citecheck")
+    b = zen.replies_path("d", "tinker://run-2/sampler_weights/citecheck")
+    assert a != b and ".citecheck." in a
+
+
+def test_sampling_starts_when_no_replies_file_exists(zen, tmp_path, monkeypatch):
+    from scripts import tinker_citecheck as tc
+
+    prompts = tmp_path / "prompts.jsonl"
+    _write(prompts, [{"item_ids": ["i0"], "messages": []}])
+    out = tmp_path / "new" / "replies.jsonl"
+    out.parent.mkdir()
+
+    class Service:
+        def create_sampling_client(self, **kw):
+            return "sampler"
+
+    def sample_rows(sampler, renderer, todo, args, out_path):
+        _write(out_path, [{"item_ids": p["item_ids"], "reply": "{}"} for p in todo])
+
+    import tinker
+
+    monkeypatch.setattr(tinker, "ServiceClient", Service)
+    monkeypatch.setattr(tc, "_renderer", lambda model: ("renderer", None))
+    monkeypatch.setattr(tc, "_sample_rows", sample_rows)
+    rows = zen.tinker_sample("tinker://x", str(prompts), str(out), {"model": "m"})
+    assert [r["item_ids"] for r in rows] == [["i0"]]

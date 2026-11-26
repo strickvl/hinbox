@@ -42,6 +42,25 @@ def _path(data_dir: str, name: str) -> str:
     return os.path.join(data_dir, name)
 
 
+def _rows(path: str) -> List[Dict[str, Any]]:
+    """The JSONL rows in ``path``; none when it doesn't exist yet."""
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def replies_path(data_dir: str, checkpoint: str) -> str:
+    """Where one checkpoint's test replies go: its name plus a hash of its
+    whole path, so two training runs saved under the same name never share
+    (and silently resume) one file."""
+    import hashlib
+
+    tag = checkpoint.rstrip("/").rsplit("/", 1)[-1] or "base"
+    digest = hashlib.sha256(checkpoint.encode()).hexdigest()[:10]
+    return _path(data_dir, f"test_replies.{tag}.{digest}.jsonl")
+
+
 def _count(path: str) -> int:
     if not os.path.exists(path):
         return 0
@@ -62,8 +81,8 @@ def tinker_train(data_dir: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     args = SimpleNamespace(out=out, **cfg)
     client = tc.train_loop(
         args,
-        tc._read(_path(data_dir, "train.jsonl")),
-        tc._read(_path(data_dir, "tune.jsonl")),
+        _rows(_path(data_dir, "train.jsonl")),
+        _rows(_path(data_dir, "tune.jsonl")),
         steps=cfg.get("steps", 0),
     )
     sampler = client.save_weights_for_sampler(cfg["name"]).result()
@@ -75,7 +94,7 @@ def tinker_train(data_dir: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
         "model": cfg["model"],
     }
     tc._append(os.path.join(out, "checkpoints.jsonl"), row)
-    return {"checkpoint": row, "log": tc._read(os.path.join(out, "train_log.jsonl"))}
+    return {"checkpoint": row, "log": _rows(os.path.join(out, "train_log.jsonl"))}
 
 
 def tinker_sample(
@@ -92,11 +111,11 @@ def tinker_sample(
         sampler = tc._resolve(service.create_sampling_client(base_model=cfg["model"]))
     else:
         sampler = tc._resolve(service.create_sampling_client(model_path=checkpoint))
-    done = {tuple(r["item_ids"]) for r in tc._read(out_path)}
-    todo = [p for p in tc._read(prompts_path) if tuple(p["item_ids"]) not in done]
+    done = {tuple(r["item_ids"]) for r in _rows(out_path)}
+    todo = [p for p in _rows(prompts_path) if tuple(p["item_ids"]) not in done]
     args = SimpleNamespace(**cfg)
     tc._sample_rows(sampler, renderer, todo, args, out_path=out_path)
-    return tc._read(out_path)
+    return _rows(out_path)
 
 
 def kitaru_compare(
@@ -171,8 +190,7 @@ def train_on_tinker(
 def sample_test_set(
     data_dir: str, checkpoint: str, cfg: Dict[str, Any]
 ) -> Annotated[str, "replies_path"]:
-    tag = checkpoint.rstrip("/").rsplit("/", 1)[-1] or "base"
-    out = _path(data_dir, f"test_replies.{tag}.jsonl")
+    out = replies_path(data_dir, checkpoint)
     replies = tinker_sample(checkpoint, _path(data_dir, "test_prompts.jsonl"), out, cfg)
     n = max(1, len(replies))
     log_metadata(
