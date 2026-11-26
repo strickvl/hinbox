@@ -190,7 +190,7 @@ def cmd_audit(a: argparse.Namespace) -> None:
 
 
 def cmd_export(a: argparse.Namespace) -> None:
-    from src.citecheck.export import build_examples, split_labels
+    from src.citecheck.export import build_examples, cap_planted, split_labels
 
     labels: List[Dict[str, Any]] = []
     if not a.no_teachers:
@@ -204,6 +204,8 @@ def cmd_export(a: argparse.Namespace) -> None:
     texts = article_texts(a.articles)
     summary: Dict[str, Any] = {}
     for name, part in zip(("train", "tune"), split_labels(labels)):
+        if a.planted_ratio is not None:
+            part = cap_planted(part, a.planted_ratio)
         examples, counts = build_examples(part, texts, max_claims=a.max_claims)
         write_jsonl(os.path.join(a.out, f"{name}.jsonl"), examples)
         summary[name] = counts
@@ -370,6 +372,12 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--teachers", default=teachers)
     sp.add_argument("--no-planted", action="store_true")
     sp.add_argument("--no-teachers", action="store_true")
+    sp.add_argument(
+        "--planted-ratio",
+        type=float,
+        default=None,
+        help="at most this many planted claims per teacher claim, in each split",
+    )
     add("prompts", cmd_prompts, "items", "articles", "file")
     sp = add("review", cmd_review, "items", "labels", "agent-labels", "articles")
     sp.add_argument("--out", default="data/citecheck/review_labels.jsonl")

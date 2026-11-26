@@ -275,19 +275,35 @@ def test_read_reply_handles_fences_order_and_junk():
     assert preds == {"x": "supported", "y": "partial"}
 
 
-def test_teachers_must_agree_and_quote():
+def test_teachers_must_agree_and_a_supported_label_needs_a_quote():
     rows = []
     for k, t in enumerate(teach.TEACHERS):
         rows += [
             {"item_id": "same", "teacher": t, "level": "supported", "passages": ["p"]},
             {"item_id": "split", "teacher": t, "level": f"level{k}", "passages": ["p"]},
-            {"item_id": "noquote", "teacher": t, "level": "partial", "passages": None},
+            {"item_id": "noquote", "teacher": t, "level": "supported", "passages": None},
+            {"item_id": "partial", "teacher": t, "level": "partial", "passages": None},
             {"item_id": "absent", "teacher": t, "level": "not_supported"},
-        ]
+            # only the second teacher quoted the article: its reasoning is kept
+            {"item_id": "second", "teacher": t, "level": "supported",
+             "passages": ["q"] if k else [], "reasoning": f"by {k}"},
+        ]  # fmt: skip
     rows.append({"item_id": "one", "teacher": teach.TEACHERS[0], "level": "supported"})
     labels, dropped = teach.agreed_labels(rows)
-    assert {r["item_id"] for r in labels} == {"same", "absent"}
+    by_id = {r["item_id"]: r for r in labels}
+    assert set(by_id) == {"same", "partial", "absent", "second"}
+    assert by_id["second"]["reasoning"] == "by 1"
     assert dropped == {"disagree": 1, "no_quote": 1, "missing": 1}
+
+
+def test_cap_planted_keeps_every_teacher_label_and_samples_the_planted():
+    teacher = [{"item_id": f"t{i}", "source": "teachers"} for i in range(3)]
+    planted = [{"item_id": f"p{i}", "source": "planted"} for i in range(20)]
+    kept = export.cap_planted(teacher + planted, ratio=2)
+    assert [r for r in kept if r["source"] == "teachers"] == teacher
+    assert sum(r["source"] == "planted" for r in kept) == 6
+    assert kept == export.cap_planted(teacher + planted, ratio=2)  # same pick each time
+    assert export.cap_planted(teacher + planted[:4], ratio=2) == teacher + planted[:4]
 
 
 def test_article_chunks_cap_claims_per_call():
