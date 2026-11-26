@@ -151,6 +151,21 @@ def test_planted_claims_label_copies_and_changes():
         assert quote in ARTICLE
 
 
+def test_planted_claims_change_years_too_when_negation_would_fit():
+    """Every sentence here allows a negation ("was"), a year and a number; a
+    fixed order of kinds planted only negations and names."""
+    ids = [
+        a for a in (f"art-{k}" for k in range(400)) if items.article_split(a) == "train"
+    ][:40]
+    texts = {
+        a: f"Yusuf Qadir was flown to the base in 2006 with {k + 4} other men."
+        for k, a in enumerate(ids)
+    }
+    made = planted.planted_claims([("Yusuf Qadir", a) for a in ids], texts, per_pair=1)
+    kinds = {r["kind"] for r in made}
+    assert {"year", "number", "negation"} <= kinds
+
+
 def test_planted_claims_only_use_the_part_of_the_article_the_judge_sees(
     monkeypatch,
 ):
