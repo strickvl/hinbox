@@ -148,6 +148,8 @@ def _resolve_instructor_mode(
     if target.sdk == "anthropic":
         if json_fallback:
             return instructor.Mode.ANTHROPIC_JSON
+        if _ANTHROPIC_NO_FORCED_TOOL.match(target.api_model):
+            return instructor.Mode.ANTHROPIC_REASONING_TOOLS
         return instructor.Mode.ANTHROPIC_TOOLS
     # OpenAI-compatible providers
     if json_fallback:
@@ -244,6 +246,15 @@ _OPENAI_REASONING_MODEL = re.compile(r"^(gpt-5|gpt-6|o\d)")
 _OPENAI_NO_REASONING_OK = re.compile(r"^(gpt-5\.\d|gpt-6)")
 # Claude 5-family models reject ``temperature``
 _ANTHROPIC_NO_TEMPERATURE = re.compile(r"^claude-[a-z]+-5")
+# Claude models that refuse a forced tool call (``tool_choice`` "tool" or
+# "any" returns a 400) and think before every answer: Instructor's default
+# Anthropic mode forces its tool, so these get its "auto" tool-choice mode
+# (a reply without the tool call goes to the JSON-mode fallback), and room for
+# the thinking before the answer, which counts against ``max_tokens``.
+_ANTHROPIC_NO_FORCED_TOOL = re.compile(
+    r"^claude-(opus-5-5|sonnet-5-5|fable-5-[12]|mythos-5-[12])"
+)
+ANTHROPIC_THINKING_MAX_TOKENS = 16000
 
 
 # Output-token ceilings for models that reject a larger request. Profile calls
@@ -304,6 +315,8 @@ def _model_sampling_kwargs(
         if _OPENAI_NO_REASONING_OK.match(model):
             kwargs["reasoning_effort"] = "none"
         return kwargs
+    if target.sdk == "anthropic" and _ANTHROPIC_NO_FORCED_TOOL.match(model):
+        return {"max_tokens": max(max_tokens, ANTHROPIC_THINKING_MAX_TOKENS)}
     if target.sdk == "anthropic" and _ANTHROPIC_NO_TEMPERATURE.match(model):
         return {"max_tokens": max_tokens}
     kwargs = {"max_tokens": max_tokens, "temperature": temperature}
