@@ -524,3 +524,11 @@ def test_cli_sample_score_plant_export(tmp_path, capsys):
     summary = json.load(open(f"{out}/export_summary.json"))
     assert summary["train"]["examples"] >= 0
     assert "wrong claims passed" in capsys.readouterr().out
+
+
+def test_the_article_date_reads_unix_seconds_as_the_articles_file_stores_them():
+    assert label_app._date(1371742594) == "20 June 2013"
+    assert label_app._date("1371742594") == "20 June 2013"
+    assert label_app._date(1371742594000) == "20 June 2013"
+    assert label_app._date("2016-03-12T00:00:00") == "12 March 2016"
+    assert label_app._date(None) == "" and label_app._date("soon") == "soon"

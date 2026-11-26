@@ -205,19 +205,15 @@ def nap_for(sprint_start: int, pets: List[Tuple[str, str]]) -> Dict[str, str]:
 
 
 def _date(value: Any) -> str:
-    if not value:
-        return ""
-    try:
-        from datetime import datetime
+    """12 March 2016, from Unix seconds (as the articles file stores it),
+    milliseconds, ISO text or a date; anything else as it came."""
+    from src.engine.later_updates import to_date
 
-        stamp = (
-            value
-            if hasattr(value, "strftime")
-            else datetime.fromisoformat(str(value)[:19])
-        )
-        return f"{stamp.day} {stamp.strftime('%B %Y')}"
-    except (TypeError, ValueError):
-        return str(value)[:10]
+    if value is None or value == "":
+        return ""
+    text = str(value).strip()
+    day = to_date(int(text) if text.isdigit() else value)
+    return f"{day.day} {day.strftime('%B %Y')}" if day else text[:10]
 
 
 def _minutes(seconds: float) -> str:
