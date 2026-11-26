@@ -19,14 +19,17 @@ METRICS = (
 STYLE = """
 .rc{color-scheme:light;--bg:#fff;--ink:#191919;--ink2:#666;--rule:#e6e6e6;
 --track:#f1f1f1;--tuned:#257de0;--base:#9a9a9a;--train:#9bbfe9;--tune:#f47230;
+--good:#087a1a;--good-bg:#e3f4e6;--bad:#b42d2e;--bad-bg:#fbe6e6;
 font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif;
 color:var(--ink);background:var(--bg);max-width:760px;margin:0 auto;padding:24px 20px}
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .rc{
 color-scheme:dark;--bg:#191919;--ink:#efefef;--ink2:#9c9c9c;--rule:#333;
---track:#262626;--tuned:#338ced;--base:#7a7a7a;--train:#3f6a99;--tune:#e76624}}
+--track:#262626;--tuned:#338ced;--base:#7a7a7a;--train:#3f6a99;--tune:#e76624;--good:#3fcf55;
+--good-bg:#12331a;--bad:#f07a7b;--bad-bg:#3d1a1a}}
 :root[data-theme="dark"] .rc{color-scheme:dark;--bg:#191919;--ink:#efefef;
 --ink2:#9c9c9c;--rule:#333;--track:#262626;--tuned:#338ced;--base:#7a7a7a;
---train:#3f6a99;--tune:#e76624}
+--train:#3f6a99;--tune:#e76624;--good:#3fcf55;
+--good-bg:#12331a;--bad:#f07a7b;--bad-bg:#3d1a1a}
 .rc *{box-sizing:border-box}
 .rc .eyebrow{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}
 .rc h1{font-size:22px;margin:2px 0 4px;font-weight:600}
@@ -49,6 +52,9 @@ text-transform:uppercase;letter-spacing:.05em}
 .rc th{font-weight:600;font-size:12px;color:var(--ink2)}
 .rc td.n,.rc th.n{text-align:right}
 .rc dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;margin:0;font-size:12.5px}
+.rc .tag{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.rc .tag.good{color:var(--good);background:var(--good-bg)}
+.rc .tag.bad{color:var(--bad);background:var(--bad-bg)}
 .rc dt{color:var(--ink2)} .rc dd{margin:0;font-variant-numeric:tabular-nums}
 """
 
@@ -353,13 +359,18 @@ def render_kitaru(out: Dict[str, Any], experiment_name: str) -> str:
         verdict = ""
         if base is not None and tuned is not None and base != tuned:
             better = (tuned < base) == lower
-            verdict = "better" if better else "worse"
+            # colour plus a mark and a word, so it never rests on colour alone
+            verdict = (
+                '<span class="tag good">✓ better</span>'
+                if better
+                else '<span class="tag bad">✕ worse</span>'
+            )
         rows.append(
             f"<tr><td>{_e(label)}</td>"
             f'<td class="n">{_fmt(base, kind)}</td>'
             f'<td class="n" style="font-weight:600">{_fmt(tuned, kind)}</td>'
             f"<td>{_pair_bars(base, tuned)}</td>"
-            f'<td style="color:var(--ink2)">{verdict}</td></tr>'
+            f"<td>{verdict}</td></tr>"
         )
     if not rows:
         rows.append('<tr><td colspan="5">No evaluation results came back.</td></tr>')

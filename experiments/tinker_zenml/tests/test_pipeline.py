@@ -164,7 +164,7 @@ def test_the_pipeline_trains_samples_scores_and_compares(zen, tmp_path, monkeypa
     assert train_meta["best_tune_nll"] == 0.5
     kitaru_card = run.steps["compare_in_kitaru"].outputs["kitaru_report"][0].load()
     assert "45.0%" in kitaru_card and "10.0%" in kitaru_card and "1.4 s" in kitaru_card
-    assert kitaru_card.count(">better<") == 2
+    assert kitaru_card.count('class="tag good"') == 2 and "tag bad" not in kitaru_card
     kitaru_meta = run.steps["compare_in_kitaru"].run_metadata
     assert kitaru_meta["wrong_passed_result"] == 0.1
     assert os.path.exists(
