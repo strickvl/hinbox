@@ -29,6 +29,17 @@ Steps:
 - ``sample --checkpoint <tinker://...> --prompts <file> --out <replies.jsonl>``:
   one reply per prompt at temperature 0, with seconds and token counts.
   ``--checkpoint base`` samples the untuned model.
+- ``distill --data <train.jsonl> --out <distilled.jsonl>``: self-distillation
+  (rejection sampling). The untuned model (or ``--checkpoint``) answers each
+  example's prompt ``--samples`` times at ``--temperature``, reasoning
+  included; the first answer whose verdicts all match the example's own
+  labels is kept, with its reasoning, as that example's training reply. An
+  example no answer matches is left out. Up to ``--workers`` prompts are
+  sampled at once (``--loose``: partial and not supported count as one
+  answer, as in the test score); resumable (``<out>.log.jsonl`` lists every example tried).
+  Training on the result teaches the model to keep reasoning the way it
+  already does, only to land on the labelled verdict: the plain export has
+  no reasoning in its replies, so a model trained on it stops thinking.
 - ``download --checkpoint <tinker://.../external_weights/...|weights/...> --out <dir>``:
   ``tinker checkpoint download`` into ``<dir>``, then the tensors are listed.
 
@@ -144,6 +155,175 @@ def train_loop(args, rows: list, tune: list, steps: int = 0):
     return client
 
 
+def _parts(message: dict) -> tuple:
+    """(thinking, text) of a parsed reply message."""
+    content = message.get("content")
+    if not isinstance(content, list):
+        return "", content or ""
+    thinking = "".join(
+        p.get("thinking", "") for p in content if p.get("type") == "thinking"
+    )
+    text = "".join(p.get("text", "") for p in content if p.get("type") == "text")
+    return thinking, text
+
+
+def _level(value) -> str:
+    return str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def reply_levels(text: str) -> dict:
+    """Claim number -> support level from a JSON ``{"items": [...]}`` reply
+    (code fences and words around the JSON are allowed); empty when the
+    reply can't be read."""
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    items = data.get("items") if isinstance(data, dict) else None
+    levels = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            levels[int(item.get("claim_number"))] = _level(item.get("support_level"))
+        except (TypeError, ValueError):
+            continue
+    return levels
+
+
+def _yes_no(levels: dict) -> dict:
+    return {
+        k: "yes" if v == "supported" else v if v == "unclear" else "no"
+        for k, v in levels.items()
+    }
+
+
+def matches_gold(text: str, gold: dict, loose: bool = False) -> bool:
+    """True when the reply gives every labelled claim its label, and no
+    other claim numbers. ``loose`` counts partial and not supported as one
+    answer, as the test score does."""
+    got = reply_levels(text)
+    return bool(gold) and (_yes_no(got) == _yes_no(gold) if loose else got == gold)
+
+
+def row_key(messages: list) -> str:
+    import hashlib
+
+    return hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()[
+        :16
+    ]
+
+
+def distilled_row(prompt: list, thinking: str, text: str, meta: dict) -> dict:
+    """A training row whose reply holds the model's reasoning and answer."""
+    parts = ([{"type": "thinking", "thinking": thinking}] if thinking else []) + [
+        {"type": "text", "text": text}
+    ]
+    return {
+        "messages": prompt + [{"role": "assistant", "content": parts}],
+        "distill": meta,
+    }
+
+
+def _weighted(renderer, messages: list, effort: float) -> int:
+    from tinker_cookbook.renderers import TrainOnWhat
+
+    pairs = renderer.build_supervised_examples(
+        messages, TrainOnWhat.LAST_ASSISTANT_MESSAGE, effort=effort
+    )
+    return int(sum(float(w.sum()) for _, w in pairs))
+
+
+def cmd_distill(args) -> None:
+    import tinker
+
+    renderer, _ = _renderer(args.model)
+    service = tinker.ServiceClient()
+    if args.checkpoint in (None, "", "base"):
+        sampler = _resolve(service.create_sampling_client(base_model=args.model))
+    else:
+        sampler = _resolve(service.create_sampling_client(model_path=args.checkpoint))
+    params = tinker.SamplingParams(
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        stop=renderer.get_stop_sequences(),
+    )
+    log_path = args.out + ".log.jsonl"
+    tried = {r["key"] for r in _read(log_path)} if os.path.exists(log_path) else set()
+    todo = []
+    for row in _read(args.data):
+        prompt, last = row["messages"][:-1], row["messages"][-1]
+        if row_key(prompt) in tried:
+            continue
+        gold = reply_levels(last["content"] if isinstance(last["content"], str) else "")
+        todo.append((prompt, gold, row.get("item_ids")))
+    print(f"distilling {len(todo)} examples ({len(tried)} already in {log_path})")
+    checked = os.path.exists(args.out)
+    kept = total = 0
+    pending: list = []
+    queue = list(todo)
+    while queue or pending:
+        while queue and len(pending) < args.workers:
+            prompt, gold, ids = queue.pop(0)
+            model_input = renderer.build_generation_prompt(prompt, effort=args.effort)
+            future = sampler.sample(
+                prompt=model_input, num_samples=args.samples, sampling_params=params
+            )
+            pending.append((prompt, gold, ids, future, time.perf_counter()))
+        prompt, gold, ids, future, start = pending.pop(0)
+        resp = _resolve(future)
+        total += 1
+        log = {"key": row_key(prompt), "item_ids": ids, "gold": gold, "kept": None}
+        lengths, unreadable = [], 0
+        for i, seq in enumerate(resp.sequences):
+            message, _ = renderer.parse_response(seq.tokens)
+            thinking, text = _parts(message)
+            lengths.append(len(seq.tokens))
+            unreadable += not reply_levels(text)  # not JSON, or cut off
+            if log["kept"] is None and matches_gold(text, gold, args.loose):
+                log["kept"] = i
+                meta = {"sample": i, "output_tokens": len(seq.tokens), "item_ids": ids}
+                out = distilled_row(prompt, thinking, text, meta)
+                if not checked:  # the reasoning must carry training weight
+                    with_thinking = _weighted(renderer, out["messages"], args.effort)
+                    plain = distilled_row(prompt, "", text, meta)["messages"]
+                    without = _weighted(renderer, plain, args.effort)
+                    print(
+                        f"weighted tokens: {with_thinking} with reasoning, {without} without"
+                    )
+                    if with_thinking <= without:
+                        sys.exit("the renderer gives the reasoning no weight; stopping")
+                    checked = True
+                _append(args.out, out)
+                kept += 1
+        log["output_tokens"], log["unreadable"] = lengths, unreadable
+        log["seconds"] = round(time.perf_counter() - start, 1)
+        _append(log_path, log)
+        print(
+            f"{total}/{len(todo)}: {'kept sample ' + str(log['kept']) if log['kept'] is not None else 'none matched'}"
+            f" (labels {sorted(set(gold.values()))}; kept {kept} of {total})"
+        )
+    _distill_summary(log_path)
+
+
+def _distill_summary(log_path: str) -> None:
+    """Share of examples kept, per label they hold."""
+    counts: dict = {}
+    for r in _read(log_path):
+        for level in set(r["gold"].values()) or {"(none)"}:
+            k, n = counts.get(level, (0, 0))
+            counts[level] = (k + (r["kept"] is not None), n + 1)
+    for level, (k, n) in sorted(counts.items()):
+        print(f"{level}: kept {k} of {n} examples holding it")
+    rows = _read(log_path)
+    bad = sum(r.get("unreadable", 0) for r in rows)
+    answers = sum(len(r.get("output_tokens", [])) for r in rows)
+    print(f"{bad} of {answers} answers had no readable JSON verdicts (text or cut off)")
+
+
 def _sample_rows(sampler, renderer, prompts: list, args, out_path: str = "") -> list:
     import tinker
 
@@ -159,14 +339,11 @@ def _sample_rows(sampler, renderer, prompts: list, args, out_path: str = "") -> 
         ).result()
         tokens = resp.sequences[0].tokens
         message, _ = renderer.parse_response(tokens)
-        content = message.get("content")
-        if isinstance(content, list):  # thinking + text parts
-            content = "".join(
-                p.get("text", "") for p in content if p.get("type") == "text"
-            )
+        thinking, content = _parts(message)
         out = {
             "item_ids": row["item_ids"],
-            "reply": content or "",
+            "reply": content,
+            "thinking": thinking,
             "output_tokens": len(tokens),
             "prompt_tokens": prompt.length,
             "seconds": round(time.perf_counter() - start, 2),
@@ -309,7 +486,7 @@ def main() -> None:
     if not os.getenv("TINKER_API_KEY"):
         sys.exit("set TINKER_API_KEY first")
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    p.add_argument("step", choices=["smoke", "train", "sample", "download"])
+    p.add_argument("step", choices=["smoke", "train", "sample", "distill", "download"])
     p.add_argument("--model", default=FREE_MODEL)
     p.add_argument("--data")
     p.add_argument("--tune")
@@ -325,10 +502,18 @@ def main() -> None:
     p.add_argument("--eval-every", type=int, default=20)
     p.add_argument("--max-length", type=int, default=32768)
     p.add_argument("--max-tokens", type=int, default=2048)
+    p.add_argument(
+        "--samples", type=int, default=4, help="distill: answers per example"
+    )
+    p.add_argument("--temperature", type=float, default=0.7, help="distill only")
+    p.add_argument("--workers", type=int, default=8, help="distill: prompts at once")
+    p.add_argument(
+        "--loose", action="store_true", help="distill: partial = not supported"
+    )
     args = p.parse_args()
     os.makedirs(
         args.out
-        if args.step != "sample"
+        if args.step not in ("sample", "distill")
         else os.path.dirname(os.path.abspath(args.out)),
         exist_ok=True,
     )
@@ -336,6 +521,7 @@ def main() -> None:
         "smoke": cmd_smoke,
         "train": cmd_train,
         "sample": cmd_sample,
+        "distill": cmd_distill,
         "download": cmd_download,
     }[args.step](args)
 
