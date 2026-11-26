@@ -35,7 +35,9 @@ Steps:
   included; the first answer whose verdicts all match the example's own
   labels is kept, with its reasoning, as that example's training reply. An
   example no answer matches is left out. Up to ``--workers`` prompts are
-  sampled at once (``--loose``: partial and not supported count as one
+  sampled at once. Answers written as text ("Support_level: partial", as
+  untuned Inkling writes) are read too, and a kept one is stored in the
+  pipeline's JSON format (``--loose``: partial and not supported count as one
   answer, as in the test score); resumable (``<out>.log.jsonl`` lists every example tried).
   Training on the result teaches the model to keep reasoning the way it
   already does, only to land on the labelled verdict: the plain export has
@@ -54,6 +56,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 import time
 
@@ -174,21 +177,58 @@ def _level(value) -> str:
     return str(value or "").strip().lower().replace(" ", "_").replace("-", "_")
 
 
-def reply_levels(text: str) -> dict:
-    """Claim number -> support level from a JSON ``{"items": [...]}`` reply
-    (code fences and words around the JSON are allowed); empty when the
-    reply can't be read. A claim whose level is missing or not one of
-    ``LEVELS`` is left out, so the reply can't match its labels."""
+_PLAIN_LEVEL = re.compile(
+    r"support[ _]level\W{0,4}(supported|partial|not[ _]supported|unclear)", re.I
+)
+_CLAIM_HEAD = re.compile(r"^[\s*#]*(?:claim\s*)?\d+\s*[.):]*[\s*]*", re.I)
+_REASON_HEAD = re.compile(r"^[\s*]*reasoning[\s*]*:[\s*]*", re.I)
+
+
+def _json_items(text: str):
+    """The ``items`` list of a JSON reply, or None when there is none."""
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
-        return {}
+        return None
     try:
         data = json.loads(text[start : end + 1])
     except json.JSONDecodeError:
-        return {}
+        return None
     items = data.get("items") if isinstance(data, dict) else None
+    return items if isinstance(items, list) else None
+
+
+def _looks_json(text: str) -> bool:
+    """A reply written as JSON (quoted keys), readable or not."""
+    return bool(re.search(r'"(?:items|support_level|claim_number)"', text))
+
+
+def plain_items(text: str) -> list:
+    """(level, reasoning) per claim, in order, from a reply written as text
+    ("1. Reasoning: ... Support_level: partial"), as untuned Inkling
+    answers; the same reading as ``read_reply()`` in ``src/citecheck/score.py``.
+    The reasoning is the text between one verdict and the next."""
+    out, prev = [], 0
+    for m in _PLAIN_LEVEL.finditer(text):
+        reason = _REASON_HEAD.sub("", _CLAIM_HEAD.sub("", text[prev : m.start()]))
+        out.append((_level(m.group(1)), reason.strip(" \n*-:")))
+        prev = m.end()
+    return out
+
+
+def reply_levels(text: str) -> dict:
+    """Claim number -> support level from a JSON ``{"items": [...]}`` reply
+    (code fences and words around the JSON are allowed) or, failing that, a
+    reply written as text (``plain_items()``, numbered in order); empty when
+    the reply can't be read, as is JSON that doesn't parse (cut off before
+    its closing brackets), which is never read as text. A JSON claim whose level is missing or not one
+    of ``LEVELS`` is left out, so the reply can't match its labels."""
+    items = _json_items(text)
+    if items is None and _looks_json(text):  # cut off or broken: not text
+        return {}
+    if items is None:
+        return {i + 1: level for i, (level, _) in enumerate(plain_items(text))}
     levels = {}
-    for item in items if isinstance(items, list) else []:
+    for item in items:
         if not isinstance(item, dict):
             continue
         level = _level(item.get("support_level"))
@@ -199,6 +239,19 @@ def reply_levels(text: str) -> dict:
         except (TypeError, ValueError):
             continue
     return levels
+
+
+def as_json_reply(text: str) -> str:
+    """The reply in the pipeline's JSON format: a JSON reply as it is, a
+    text reply rebuilt as ``{"items": [{claim_number, reasoning,
+    support_level}]}``, so the tuned model keeps answering in JSON."""
+    if _json_items(text) is not None:
+        return text
+    items = [
+        {"claim_number": i + 1, "reasoning": reason, "support_level": level}
+        for i, (level, reason) in enumerate(plain_items(text))
+    ]
+    return json.dumps({"items": items}, ensure_ascii=False)
 
 
 def _yes_no(levels: dict) -> dict:
@@ -289,10 +342,11 @@ def cmd_distill(args) -> None:
             message, _ = renderer.parse_response(seq.tokens)
             thinking, text = _parts(message)
             lengths.append(len(seq.tokens))
-            unreadable += not reply_levels(text)  # not JSON, or cut off
+            unreadable += not reply_levels(text)  # no verdicts, or cut off
             if log["kept"] is None and matches_gold(text, gold, args.loose):
                 log["kept"] = i
                 meta = {"sample": i, "output_tokens": len(seq.tokens), "item_ids": ids}
+                text = as_json_reply(text)  # the reasoning stays in `thinking`
                 out = distilled_row(prompt, thinking, text, meta)
                 if thinking and not checked:  # reasoning must carry weight
                     with_thinking = _weighted(renderer, out["messages"], args.effort)
@@ -328,7 +382,9 @@ def _distill_summary(log_path: str) -> None:
     rows = _read(log_path)
     bad = sum(r.get("unreadable", 0) for r in rows)
     answers = sum(len(r.get("output_tokens", [])) for r in rows)
-    print(f"{bad} of {answers} answers had no readable JSON verdicts (text or cut off)")
+    print(
+        f"{bad} of {answers} answers had no readable verdicts (cut off, or another format)"
+    )
 
 
 def _sample_rows(sampler, renderer, prompts: list, args, out_path: str = "") -> list:
