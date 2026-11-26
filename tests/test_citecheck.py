@@ -651,3 +651,13 @@ def test_export_refuses_teacher_verdicts_asked_under_other_rules(tmp_path, monke
     monkeypatch.setattr(grounding, "GROUNDING_RULES", "strict")
     teach.same_rules([row], "x", "fix")  # matching rules pass
     teach.same_rules([{"item_id": "p", "level": "partial"}], "x", "fix")  # planted
+
+
+def test_read_reply_reads_an_untuned_models_plain_text_answer():
+    text = (
+        "1. Reasoning: the article says so.\nSupport_level: supported\n\n"
+        "2. Reasoning: the year differs.\n**Support level:** Not supported"
+    )
+    assert score.read_reply(text, 2) == ["supported", "not_supported"]
+    assert score.read_reply(text, 3) == [None, None, None]  # one verdict short
+    assert score.read_reply("no verdicts here", 1) == [None]
