@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.citecheck.items import append_jsonl, read_jsonl
 from src.logging_config import get_logger
+from src.utils import grounding
 from src.utils.grounding import (
     GROUNDING_MAX_ARTICLE_CHARS,
     GROUNDING_MAX_CLAIMS_PER_CALL,
@@ -124,9 +125,23 @@ def _ask(
                 "level": level,
                 "reasoning": reasoning,
                 "passages": passages_from_reasoning(seen, reasoning, c["claim"]),
+                "rules": grounding.GROUNDING_RULES,
             }
         )
     return rows
+
+
+def same_rules(rows: List[Dict[str, Any]], path: str, fix: str) -> None:
+    """Stop when teacher ``rows`` were asked under other judge rules than
+    ``HINBOX_GROUNDING_RULES`` now names (a row without ``rules`` predates
+    them: standard), so verdicts never meet a prompt they weren't asked with."""
+    other = {r.get("rules", "standard") for r in rows if "teacher" in r}
+    other.discard(grounding.GROUNDING_RULES)
+    if other:
+        raise SystemExit(
+            f"{path} holds verdicts under rules={sorted(other)}, not "
+            f"{grounding.GROUNDING_RULES}: {fix}"
+        )
 
 
 def run_teachers(
@@ -137,7 +152,10 @@ def run_teachers(
     workers: int = 4,
 ) -> Dict[str, int]:
     """Ask each teacher about ``claims`` and append its verdicts to
-    ``out_path``; calls already there are skipped. Returns counts."""
+    ``out_path``; calls already there are skipped. Returns counts. A file
+    holding verdicts asked under other judge rules (``HINBOX_GROUNDING_RULES``)
+    is refused, so one file never mixes two standards."""
+    same_rules(read_jsonl(out_path), out_path, "use another --out")
     done = _done(out_path)
     jobs = [
         (t, aid, [c for c in group if (t, c["item_id"]) not in done])

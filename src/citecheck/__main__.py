@@ -194,6 +194,10 @@ def cmd_export(a: argparse.Namespace) -> None:
 
     labels: List[Dict[str, Any]] = []
     if not a.no_teachers:
+        from src.citecheck.teach import same_rules
+
+        path = os.path.join(a.out, "teacher_verdicts.jsonl")
+        same_rules(read_jsonl(path), path, "set HINBOX_GROUNDING_RULES to match")
         labels += _agreed(a.out, _teachers(a.teachers))
     if not a.no_planted:
         labels += read_jsonl(os.path.join(a.out, "planted.jsonl"))
@@ -234,7 +238,9 @@ def cmd_score(a: argparse.Namespace) -> None:
         predicted, extra = s.predict_with_model(
             items, article_texts(a.articles), a.model, workers=a.workers
         )
-        name = a.model
+        from src.utils.grounding import GROUNDING_RULES
+
+        name = a.model + (" (rules=strict)" if GROUNDING_RULES == "strict" else "")
     else:
         sys.exit("give one of --stored, --replies or --model")
     report = {**s.score(items, labels, predicted), **extra, "judge": name}
