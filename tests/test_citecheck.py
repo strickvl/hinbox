@@ -612,3 +612,29 @@ def test_combine_from_the_command_line_writes_a_file_not_a_folder(tmp_path):
     assert out.is_file() and items.latest_labels(str(out))["1"]["label"] == "yes"
     main(["combine", "--labels", str(b), str(a), "--out", str(out)])  # file exists
     assert items.latest_labels(str(out))["1"]["label"] == "no"
+
+
+def test_strict_rules_add_to_the_judge_prompt_and_the_judge_name(monkeypatch):
+    from src.utils import grounding
+
+    assert grounding.grounding_system_prompt() == _GROUNDING_SYSTEM_PROMPT
+    strict = grounding.grounding_system_prompt("strict")
+    assert "dropped attribution" in strict and '"the profile"' in strict
+    # the rules come before the reply instructions, which stay last
+    assert strict.index("dropped hedge") < strict.index("first write the reasoning")
+    assert strict.replace(grounding._STRICT_RULES, "") == _GROUNDING_SYSTEM_PROMPT
+    monkeypatch.setattr(grounding, "GROUNDING_RULES", "strict")
+    system = grounding.grounding_messages("a", ARTICLE, [("X", "c")])[0]["content"]
+    assert system == strict
+    monkeypatch.setattr(grounding, "grounding_model", lambda _t: "cloud/judge")
+    assert grounding.grounding_judge("cloud") == "cloud/judge (rules=strict)"
+
+
+def test_teach_refuses_a_file_asked_under_other_rules(tmp_path, monkeypatch):
+    from src.utils import grounding
+
+    out = tmp_path / "teacher_verdicts.jsonl"
+    out.write_text('{"item_id": "a", "teacher": "t", "level": "supported"}\n')
+    monkeypatch.setattr(grounding, "GROUNDING_RULES", "strict")
+    with pytest.raises(SystemExit, match="another --out"):
+        teach.run_teachers([], {}, str(out), teachers=("t",))

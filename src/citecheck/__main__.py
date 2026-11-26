@@ -234,7 +234,9 @@ def cmd_score(a: argparse.Namespace) -> None:
         predicted, extra = s.predict_with_model(
             items, article_texts(a.articles), a.model, workers=a.workers
         )
-        name = a.model
+        from src.utils.grounding import GROUNDING_RULES
+
+        name = a.model + (" (rules=strict)" if GROUNDING_RULES == "strict" else "")
     else:
         sys.exit("give one of --stored, --replies or --model")
     report = {**s.score(items, labels, predicted), **extra, "judge": name}

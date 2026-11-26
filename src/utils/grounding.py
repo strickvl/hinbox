@@ -250,6 +250,34 @@ A claim saying that sources disagree ("one report says X; this article says Y") 
 
 For each claim, first write the reasoning: quote or name the article passage you compared it with, and say which detail, if any, differs (at most 40 words). Then give the support_level. Return one verdict for every claim, with its claim_number. Do not repeat the claim text."""
 
+# HINBOX_GROUNDING_RULES=strict adds the rules the citation test set was
+# labelled by (written before it was labelled). On that set (26 Nov, 242 wrong
+# and 156 right sentences) Opus and Sonnet with the standard rules both passed
+# 37 of the wrong ones; 19 dropped an attribution or hedge or added an
+# interpretation, and 9 were about what "the profile" says. Off by default
+# until measured on local Qwen and a cloud judge.
+GROUNDING_RULES = os.getenv("HINBOX_GROUNDING_RULES", "standard").strip().lower()
+_STRICT_RULES = """Also count as "partial", because the claim goes further than the article:
+- a dropped attribution: the article says someone claimed, alleged, reported or testified it, and the claim states it as fact
+- a dropped hedge: the article says "allegedly", "seemed", "likely" or "expected", or that something was scheduled or planned, and the claim says it is certain or happened
+- a cause, motive, consequence, "first" or judgment the article does not state itself ("led to", "in retaliation", "underscoring")
+- a detail the article gives for another person or event
+A claim about what "the profile" says, or that the article conflicts with the profile, can't be shown by an article: it is "partial" at best.
+
+"""
+_REPLY_INSTRUCTION = "For each claim, first write the reasoning"
+
+
+def grounding_system_prompt(rules: Optional[str] = None) -> str:
+    """The judge's instructions; ``rules`` (default ``HINBOX_GROUNDING_RULES``)
+    "strict" adds the stricter rules before the reply instructions."""
+    if (rules or GROUNDING_RULES) != "strict":
+        return _GROUNDING_SYSTEM_PROMPT
+    return _GROUNDING_SYSTEM_PROMPT.replace(
+        _REPLY_INSTRUCTION, _STRICT_RULES + _REPLY_INSTRUCTION
+    )
+
+
 # HINBOX_GROUNDING_PASSAGE=on: the judge also copies the passage its verdict
 # rests on into a field of its own, after the verdict. Off by default: on the
 # 64 hand-labelled claims (10 Nov) it changed 35% of Haiku's verdicts (labels
@@ -563,12 +591,13 @@ def grounding_model(model_type: str) -> str:
 
 def grounding_judge(model_type: str) -> str:
     """The judge as stored on reports: the model, plus its thinking setting
-    when a local judge thinks for grounding only, so turning that on or off
-    rechecks old reports like a change of model does."""
+    when a local judge thinks for grounding only and "(rules=strict)" under
+    the stricter rules, so changing either rechecks old reports like a change
+    of model does."""
     model = grounding_model(model_type)
     if is_local_model(model) and GROUNDING_REASONING_EFFORT:
-        return f"{model} (reasoning_effort={GROUNDING_REASONING_EFFORT})"
-    return model
+        model = f"{model} (reasoning_effort={GROUNDING_REASONING_EFFORT})"
+    return f"{model} (rules=strict)" if GROUNDING_RULES == "strict" else model
 
 
 def judged_by(report: Any, model: str) -> bool:
@@ -595,7 +624,7 @@ def grounding_messages(
     claims_text = "\n".join(
         _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
     )
-    system = _GROUNDING_SYSTEM_PROMPT + (_PASSAGE_INSTRUCTION if ask_passage else "")
+    system = grounding_system_prompt() + (_PASSAGE_INSTRUCTION if ask_passage else "")
     user = _GROUNDING_USER_TEMPLATE.format(
         article_id=article_id, article_text=article_text, claims_text=claims_text
     )
