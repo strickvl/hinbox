@@ -96,22 +96,50 @@ def reply_text(message: Dict[str, Any]) -> str:
     return content or ""
 
 
+def sampling_settings(max_tokens: int) -> Tuple[float, Dict[str, Any]]:
+    """(reasoning effort, Tinker sampling parameters) for one call: temperature
+    0, ``max_tokens`` and ``HINBOX_TINKER_EFFORT``, with a Kitaru replay's
+    ``model_params`` (``set_model_params()``) on top. ``reasoning_effort``
+    must be a number in [0, 1) (the Inkling renderer's effort) or ``"none"``
+    (0.0); anything Tinker can't honour fails the call rather than running
+    another configuration than the one asked for."""
+    from src.utils.llm import model_params
+
+    over = model_params()
+    effort = EFFORT
+    if "reasoning_effort" in over:
+        raw = over.pop("reasoning_effort")
+        try:
+            effort = 0.0 if raw == "none" else float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"Tinker judges take reasoning_effort as a number in [0, 1), not {raw!r}"
+            ) from None
+        if not 0.0 <= effort < 1.0:
+            raise ValueError(f"reasoning_effort {effort} is outside [0, 1)")
+    params: Dict[str, Any] = {"max_tokens": max_tokens, "temperature": 0.0}
+    for key in ("temperature", "max_tokens", "top_p", "seed"):
+        if key in over:
+            params[key] = over.pop(key)
+    if over:  # a key added to MODEL_PARAM_KEYS that Tinker has no field for
+        raise ValueError(f"Tinker judges can't honour model_params {sorted(over)}")
+    return effort, params
+
+
 def tinker_verdicts(
     messages: List[Dict[str, str]], model: str, max_tokens: int
 ) -> List[Any]:
-    """One Tinker sample at temperature 0 for the judge's ``messages``."""
+    """One Tinker sample for the judge's ``messages``, at temperature 0
+    unless a replay's ``model_params`` say otherwise (``sampling_settings()``)."""
     import tinker
 
     from src.utils.tracing import llm_call_span
 
+    effort, settings = sampling_settings(max_tokens)
     sampler, renderer = _sampler(model)
-    prompt = renderer.build_generation_prompt(messages, effort=EFFORT)
-    params = tinker.SamplingParams(
-        max_tokens=max_tokens, temperature=0.0, stop=renderer.get_stop_sequences()
-    )
-    with llm_call_span(
-        "tinker", model, messages, temperature=0.0, max_tokens=max_tokens, effort=EFFORT
-    ) as record:
+    prompt = renderer.build_generation_prompt(messages, effort=effort)
+    params = tinker.SamplingParams(**settings, stop=renderer.get_stop_sequences())
+    with llm_call_span("tinker", model, messages, effort=effort, **settings) as record:
         resp = sampler.sample(prompt=prompt, num_samples=1, sampling_params=params)
         resp = resp.result() if hasattr(resp, "result") else resp
         tokens = resp.sequences[0].tokens

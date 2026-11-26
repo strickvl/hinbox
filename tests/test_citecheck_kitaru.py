@@ -348,3 +348,31 @@ def test_the_experiment_table_sets_baseline_beside_replay():
     assert [r["name"] for r in rows] == ["agrees", "wrong_passed"]
     text = kl.describe_table(rows, "tinker://x")
     assert "0.450" in text and "0.100" in text
+
+
+def test_a_replays_model_params_reach_the_tinker_sample():
+    """A Kitaru replay's model_params set the Tinker call's temperature,
+    length, seed and effort; a value Tinker can't honour fails the call."""
+    from src.citecheck.tinker_judge import sampling_settings
+    from src.utils.llm import set_model_params
+
+    try:
+        assert sampling_settings(4096) == (
+            0.0,
+            {"max_tokens": 4096, "temperature": 0.0},
+        )
+        set_model_params(
+            {"temperature": 0.7, "max_tokens": 512, "seed": 3, "reasoning_effort": 0.5}
+        )
+        assert sampling_settings(4096) == (
+            0.5,
+            {"max_tokens": 512, "temperature": 0.7, "seed": 3},
+        )
+        set_model_params({"reasoning_effort": "high"})
+        with pytest.raises(ValueError):
+            sampling_settings(4096)
+        set_model_params({"reasoning_effort": 1.5})
+        with pytest.raises(ValueError):
+            sampling_settings(4096)
+    finally:
+        set_model_params(None)
