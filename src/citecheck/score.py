@@ -184,18 +184,32 @@ def prompt_rows(
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$")
 
 
+_PLAIN_LEVEL = re.compile(
+    r"support[ _]level\W{0,4}(supported|partial|not[ _]supported|unclear)", re.I
+)
+
+
+def _plain_verdicts(body: str, count: int) -> List[Optional[str]]:
+    """Verdicts from a reply written as text ("1. Reasoning: … Support_level:
+    partial"), as an untuned model answers: the levels in claim order, used
+    only when there is exactly one per claim."""
+    found = [m.group(1).lower().replace(" ", "_") for m in _PLAIN_LEVEL.finditer(body)]
+    return list(found) if len(found) == count else [None] * count
+
+
 def read_reply(text: str, count: int) -> List[Optional[str]]:
     """Verdicts from a raw reply in the pipeline's JSON format, by claim
-    number; a claim with no readable verdict is None."""
+    number, or written as text (``_plain_verdicts()``); a claim with no
+    readable verdict is None."""
     out: List[Optional[str]] = [None] * count
     body = _FENCE.sub("", (text or "").strip())
     start, end = body.find("{"), body.rfind("}")
-    if start < 0 or end <= start:
-        return out
     try:
-        payload = json.loads(body[start : end + 1])
+        payload = json.loads(body[start : end + 1]) if 0 <= start < end else None
     except json.JSONDecodeError:
-        return out
+        payload = None
+    if payload is None:
+        return _plain_verdicts(body, count)
     items = payload.get("items") if isinstance(payload, dict) else None
     for pos, item in enumerate(items or []):
         if not isinstance(item, dict):
