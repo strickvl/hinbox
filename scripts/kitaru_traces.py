@@ -21,10 +21,12 @@ then, for each part:
     kitaru session import <part> --importer kitaru/kitaru-jsonl@latest \\
         --agent hinbox@latest --media-type application/x-ndjson --wait
 
-With ``--step profile.update`` (or ``--step match_check``) each span of that
-step becomes its own session instead (``step_sessions()``), whose inputs are
-the step's recorded arguments: the unit a Kitaru replay re-runs. Import those
-under the step's own agent (``hinbox-profile-update``, ``hinbox-match-check``),
+With ``--step profile.update`` (or ``--step match_check``, or ``--step
+grounding`` for the citation check's calls, one per article and batch of
+claims) each span of that step becomes its own session instead
+(``step_sessions()``), whose inputs are the step's recorded arguments: the
+unit a Kitaru replay re-runs. Import those under the step's own agent
+(``hinbox-profile-update``, ``hinbox-match-check``, ``hinbox-citation-check``),
 not beside the article sessions.
 
 The parts hold article text: keep them off GitHub (the repo is public).
@@ -370,6 +372,7 @@ def step_sessions(rows: List[Dict[str, Any]], step: str) -> List[Dict[str, Any]]
         about = labels.get("entity_name") or " vs ".join(
             str(labels[k]) for k in ("new_name", "existing_name") if labels.get(k)
         )
+        about = about or str(labels.get("article_id") or "")  # a citation check
         trace_id = span["context"]["trace_id"]
         case = {k: _decode(article[k]) for k in EVAL_KEYS if k in article}
         sessions.append(

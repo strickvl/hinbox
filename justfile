@@ -65,6 +65,11 @@ eval *args:
 eval-replay *args:
     uv run python -m src.evals.profile_replay {{args}}
 
+# Data, hand labels and scores for a tuned local citation checker or merge check
+# (e.g. `just citecheck sample --entities <run> --articles <parquet> --out data/citecheck`)
+citecheck *args:
+    uv run python -m src.citecheck {{args}}
+
 # Build profile-update test cases from replay snapshots (e.g. `just eval-cases --model openai/gpt-6-luna`)
 eval-cases *args:
     uv run python -m src.evals.profile_cases {{args}}
@@ -87,6 +92,20 @@ kitaru-traces *args:
 # evaluator both need it (e.g. `just kitaru-worker --job-id <job> --claim agent --claim evaluator`)
 kitaru-worker *args:
     uv run --env-file .env --extra kitaru kitaru worker start {{args}}
+
+# Kitaru worker in the Tinker experiment's environment, so a replay can sample a Tinker checkpoint (`tinker://...`) as the citation checker
+kitaru-worker-tinker *args:
+    uv run --env-file .env --project experiments/tinker_zenml kitaru worker start {{args}}
+
+# ─── Tinker fine-tune as a ZenML pipeline (own environment in experiments/tinker_zenml/) ──
+
+# Train the citation checker on Tinker, sample and score the test set, optionally compare in Kitaru (e.g. `just tinker-pipeline --data-dir data/citecheck --articles <parquet> --kitaru`)
+tinker-pipeline *args:
+    uv run --env-file .env --project experiments/tinker_zenml python -m experiments.tinker_zenml.pipeline {{args}}
+
+# Offline test of the ZenML pipeline (Tinker and Kitaru replaced by fakes)
+tinker-pipeline-test *args:
+    uv run --project experiments/tinker_zenml pytest experiments/tinker_zenml/tests {{args}}
 
 # ─── DSPy experiments (own environment in experiments/dspy_opt/, no LiteLLM) ──
 

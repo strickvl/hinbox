@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -490,7 +490,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.13.3" },
     { name = "instructor", specifier = ">=1.14" },
     { name = "jinja2", specifier = ">=3.1" },
-    { name = "kitaru", extras = ["cli", "worker"], marker = "extra == 'kitaru'", specifier = ">=0.27.7,<0.28" },
+    { name = "kitaru", extras = ["cli", "worker"], marker = "extra == 'kitaru'", specifier = ">=0.27.8,<0.28" },
     { name = "markdown", specifier = ">=3.7" },
     { name = "numpy", specifier = ">=2.0.0,<3.0.0" },
     { name = "openai", specifier = ">=1.0" },
@@ -757,15 +757,15 @@ wheels = [
 
 [[package]]
 name = "kitaru"
-version = "0.27.7"
+version = "0.27.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/15/2f09bbfc346a71e12bf3b6b9837caa6ffeb114d36ed35944aa4f6f46c8ab/kitaru-0.27.7.tar.gz", hash = "sha256:88a9d79f75dfba6bef886b9141f3fd87b6333a93f55dd5ddb1cac7171af9e6a4", size = 7144410, upload-time = "2026-11-10T13:59:58.148Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/58/626888e772b140729e759eff54c6676f261412ed33a58c1c565e7b289f40/kitaru-0.27.8.tar.gz", hash = "sha256:44c98057bbf3dc7e2e449cc701e53b28ed8d42b0407a3f8db6e6d06e41ca7f89", size = 7523311, upload-time = "2026-11-25T15:28:11.993Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/3c/626ccfe83a844491acd87b3129265c071eebea98b5d365d0d8e21d52fd90/kitaru-0.27.7-py3-none-any.whl", hash = "sha256:54bebe38e6ec5ecdfa8127b6294a4bcfa95345bd958dd328f87b8bdeaa5ab26e", size = 3481774, upload-time = "2026-11-10T13:59:56.402Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/ae/b49318bb74ba3029e60c3c521bf7c2d8d9d54b0a9465fefcb3639896f8fa/kitaru-0.27.8-py3-none-any.whl", hash = "sha256:ea332f5480cec7ca992fcdff96c4d46830a72656639b3167f15f6e2f125d0f27", size = 3824405, upload-time = "2026-11-25T15:28:09.883Z" },
 ]
 
 [package.optional-dependencies]

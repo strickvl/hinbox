@@ -29,6 +29,7 @@ from src.utils.quality_controls import CITATION_RE, citation_ids
 from src.utils.server_health import ModelServerUnreachable, unreachable
 from src.utils.step_timing import timed
 from src.utils.task_models import is_local_model, task_model
+from src.utils.tracing import annotate, record_step_input, record_step_output
 
 logger = get_logger("grounding")
 
@@ -581,6 +582,26 @@ def _claim_line(n: int, entity_name: str, claim: str) -> str:
     return f"{n}. {about}{claim}"
 
 
+def grounding_messages(
+    article_id: str,
+    article_text: str,
+    claims: List[Tuple[str, str]],
+    ask_passage: bool = False,
+) -> List[Dict[str, str]]:
+    """The system and user messages of one judge call: the article, then the
+    numbered claims (entity name, claim text). Training examples for a tuned
+    checker (``src/citecheck/export.py``) use these same messages, so the
+    tuned model is asked exactly as the pipeline asks it."""
+    claims_text = "\n".join(
+        _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
+    )
+    system = _GROUNDING_SYSTEM_PROMPT + (_PASSAGE_INSTRUCTION if ask_passage else "")
+    user = _GROUNDING_USER_TEMPLATE.format(
+        article_id=article_id, article_text=article_text, claims_text=claims_text
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
 @timed("grounding")
 def judge_claims(
     *,
@@ -589,9 +610,11 @@ def judge_claims(
     claims: List[Tuple[str, str]],
     model_type: str,
     ask_passage: Optional[bool] = None,
+    model: Optional[str] = None,
 ) -> List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]]:
     """One model call: judge ``claims`` (entity name, claim text) against one
-    article. Returns (verdict, reasoning, copied passage) per claim, or None
+    article. ``model`` overrides the judge (the citation-checker eval and its
+    teacher labels name theirs). Returns (verdict, reasoning, copied passage) per claim, or None
     where the reply had none; the passage is None unless ``ask_passage``
     (default ``HINBOX_GROUNDING_PASSAGE``) and is not yet checked against the
     article. Raises when the call itself fails. The judge is
@@ -601,22 +624,19 @@ def judge_claims(
         ask_passage = GROUNDING_PASSAGE
     from src.utils.llm import cloud_generation, local_generation
 
-    claims_text = "\n".join(
-        _claim_line(i + 1, name, text) for i, (name, text) in enumerate(claims)
+    messages = grounding_messages(article_id, article_text, claims, ask_passage)
+    model = model or grounding_model(model_type)
+    # The whole input, so a Kitaru replay can ask another judge the same thing
+    # (scripts/kitaru_traces.py --step grounding, scripts/kitaru_step.py)
+    record_step_input(
+        article_id=article_id,
+        article_text=article_text,
+        claims=[[name, text] for name, text in claims],
+        model_type=model_type,
+        ask_passage=ask_passage,
+        model=model,
     )
-    system = _GROUNDING_SYSTEM_PROMPT + (_PASSAGE_INSTRUCTION if ask_passage else "")
-    messages = [
-        {"role": "system", "content": system},
-        {
-            "role": "user",
-            "content": _GROUNDING_USER_TEMPLATE.format(
-                article_id=article_id,
-                article_text=article_text,
-                claims_text=claims_text,
-            ),
-        },
-    ]
-    model = grounding_model(model_type)
+    annotate(article_id=article_id, claim_count=len(claims))
     local = is_local_model(model)
     generate = local_generation if local else cloud_generation
     thinking = (
@@ -624,16 +644,23 @@ def judge_claims(
         if local and GROUNDING_REASONING_EFFORT
         else nullcontext()
     )
-    with thinking:
-        reply = generate(
-            messages=messages,
-            response_model=List[
-                ClaimVerdictWithPassage if ask_passage else ClaimVerdict
-            ],
-            model=model,
-            temperature=0,
-            max_tokens=GROUNDING_MAX_TOKENS,
+    if model.startswith("tinker"):  # a model trained or sampled on Tinker
+        from src.citecheck.tinker_judge import tinker_verdicts
+
+        reply = tinker_verdicts(
+            messages, model, GROUNDING_MAX_TOKENS, with_passage=ask_passage
         )
+    else:
+        with thinking:
+            reply = generate(
+                messages=messages,
+                response_model=List[
+                    ClaimVerdictWithPassage if ask_passage else ClaimVerdict
+                ],
+                model=model,
+                temperature=0,
+                max_tokens=GROUNDING_MAX_TOKENS,
+            )
     out: List[Optional[Tuple[SupportLevel, Optional[str], Optional[str]]]] = [
         None
     ] * len(claims)
@@ -645,6 +672,19 @@ def judge_claims(
         i = v.claim_number - 1 if by_number else pos
         if i < len(claims):
             out[i] = (v.support_level, v.reasoning, getattr(v, "passage", None))
+    record_step_output(
+        verdicts=[
+            None
+            if v is None
+            else {
+                "claim_number": n + 1,
+                "support_level": getattr(v[0], "value", v[0]),
+                "reasoning": v[1],
+                "passage": v[2],
+            }
+            for n, v in enumerate(out)
+        ]
+    )
     return out
 
 

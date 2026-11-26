@@ -1,9 +1,9 @@
-"""Run one recorded ``profile.update`` or ``match_check`` step again and record
-it in Kitaru.
+"""Run one recorded ``profile.update``, ``match_check`` or ``grounding`` (citation
+check) step again and record it in Kitaru.
 
 Kitaru's worker starts this script for a replay of a step session (one that
-``scripts/kitaru_traces.py --step profile.update`` or ``--step match_check``
-wrote). The session's inputs are the step's own arguments; this script:
+``scripts/kitaru_traces.py --step profile.update``, ``--step match_check`` or
+``--step grounding`` wrote, or ``just citecheck kitaru-sessions``). The session's inputs are the step's own arguments; this script:
 
 1. reads them from the task (``KITARU_TASK_INPUTS``, or the task's spec when
    they were too long for the environment);
@@ -12,7 +12,9 @@ wrote). The session's inputs are the step's own arguments; this script:
    for a pipeline step, ``edit_step()`` (``edit_profile()``) for an eval step,
    as the recorded ``call`` says, and ``_check_match()`` for a match check
    (its ``backend`` set from the model, so a local model is asked locally; a
-   failed call fails the run, since its ``is_match=False`` is no verdict);
+   failed call fails the run, since its ``is_match=False`` is no verdict),
+   and ``judge_claims()`` for a citation check (a ``tinker://`` checkpoint
+   or ``tinker/<base model>`` is sampled on Tinker, ``src/citecheck/tinker_judge.py``);
 4. turns the spans that call left (the step and its model calls) into a
    session with the same code that converts traces for import
    (``step_sessions()``), so a replay and its baseline have the same shape;
@@ -55,6 +57,7 @@ from scripts.kitaru_traces import step_sessions
 
 PROFILE_STEP = "profile.update"
 MATCH_STEP = "match_check"
+GROUNDING_STEP = "grounding"
 # Recorded beside update_profile()'s arguments but not one of them
 NOT_ARGUMENTS = ("call", "answering_model", "labels", "guarded_corrections")
 
@@ -62,14 +65,24 @@ NOT_ARGUMENTS = ("call", "answering_model", "labels", "guarded_corrections")
 def hinbox_model(name: str) -> str:
     """Kitaru writes ``provider:model``; Hinbox ``provider/model``. A colon
     before the first slash is the provider's (``openrouter:anthropic/x``);
-    one after it is a tag (``ollama/qwen2.5:32b``), kept."""
+    one after it is a tag (``ollama/qwen2.5:32b``), kept. A Tinker checkpoint
+    (``tinker://...``) is a URL, kept as it is; ``tinker:<path>`` without the
+    slashes is read as one."""
+    if name.startswith("tinker://"):
+        return name
+    if name.startswith("tinker:") and "/sampler_weights/" in name:
+        return "tinker://" + name.split(":", 1)[1].lstrip("/")
     return name.replace(":", "/", 1) if ":" in name.split("/", 1)[0] else name
 
 
 def step_name(inputs: Dict[str, Any]) -> str:
     """Which step recorded these arguments: only ``_check_match()`` takes an
-    existing profile's text."""
-    return MATCH_STEP if "existing_profile_text" in inputs else PROFILE_STEP
+    existing profile's text, only ``judge_claims()`` a list of claims."""
+    if "existing_profile_text" in inputs:
+        return MATCH_STEP
+    if "claims" in inputs and "article_text" in inputs:
+        return GROUNDING_STEP
+    return PROFILE_STEP
 
 
 def _model_of(inputs: Dict[str, Any]) -> str:
@@ -139,6 +152,15 @@ def step_call(inputs: Dict[str, Any]) -> Tuple[Callable[..., Any], Dict[str, Any
             "can't restore yet; replaying it would let them be rewritten"
         )
     args = {k: v for k, v in inputs.items() if k not in NOT_ARGUMENTS}
+    if step_name(inputs) == GROUNDING_STEP:
+        from src.utils.grounding import judge_claims
+
+        model = str(args.get("model") or "")
+        return judge_claims, {
+            **args,
+            "claims": [tuple(c) for c in args["claims"]],
+            "model_type": "local" if model.startswith("ollama/") else "cloud",
+        }
     if step_name(inputs) == MATCH_STEP:
         return _match_check, {
             **args,

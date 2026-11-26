@@ -276,6 +276,33 @@ After merging, the grounding pass asks a model whether each cited article really
 - The judge reads the first `HINBOX_GROUNDING_MAX_ARTICLE_CHARS` characters of each article (default 80000, which is the whole article for everything in the Guantánamo corpus). Profiles are written from the whole article, so a lower limit marks true sentences from further down "not supported". With a local model whose context window is under about 32k tokens, set it lower (roughly 3 characters per token of window you can spare), or checks of long articles fail as too long for the model.
 - Switching the judge (or its thinking setting) makes the next run check every stored report again, because each report records which judge produced it.
 
+### Training a local citation checker (experimental)
+Inkling 2 Mini is nearly as strict a judge as Haiku but takes about 40 times as long, because it writes thousands of words of reasoning before each answer. `just citecheck` builds what a fine-tune needs to make a small local model answer straight away (quote the article, then the verdict), and scores the result against hand labels. Nothing in the pipeline changes: a tuned model is asked the pipeline's own question in its own format, so it is used through `HINBOX_GROUNDING_MODEL` (or `HINBOX_MATCH_MODEL` for the merge check).
+```bash
+# 1. Draw a fixed test set from a finished run: 400 claims, only from "test" articles
+#    (15% of articles, chosen by a hash of the id; their claims never go into training)
+just citecheck sample --entities <run> --articles <articles.parquet> --out data/citecheck
+# 2. Label it yes/no in a local page (http://127.0.0.1:5078, keys y / n / u / b)
+just citecheck label --items data/citecheck/test_items.jsonl --labels data/citecheck/test_labels.jsonl --articles <articles.parquet>
+# 3. Score judges: the run's stored verdicts, or any model asked now
+just citecheck score --items data/citecheck/test_items.jsonl --labels data/citecheck/test_labels.jsonl --stored <run>
+just citecheck score --items ... --labels ... --articles <articles.parquet> --model ollama/<model>
+# 4. Training data: claims with one detail changed in code (a year, a number, a name,
+#    "not", a dropped "allegedly"), and verdicts from two cloud teachers kept where they agree
+just citecheck plant --entities <run> --articles <articles.parquet> --out data/citecheck
+just citecheck teach --entities <run> --articles <articles.parquet> --out data/citecheck --n 12000 --dry-run
+just citecheck audit --out data/citecheck --n 100     # label audit_items.jsonl to measure teacher errors
+just citecheck export --articles <articles.parquet> --out data/citecheck   # train.jsonl, tune.jsonl
+# 5. Train and sample on Tinker (needs TINKER_API_KEY), then score the replies
+uv run --script scripts/tinker_citecheck.py smoke --data data/citecheck/train.jsonl --prompts data/citecheck/test_prompts.jsonl --out data/citecheck/tinker
+just citecheck prompts --items data/citecheck/test_items.jsonl --articles <articles.parquet> --file data/citecheck/test_prompts.jsonl
+uv run --script scripts/tinker_citecheck.py sample --checkpoint <tinker://...> --prompts data/citecheck/test_prompts.jsonl --out data/citecheck/replies.jsonl
+just citecheck score --items ... --labels ... --replies data/citecheck/replies.jsonl
+```
+The score is two numbers with 95% ranges: wrong claims let through (labelled "no", judged "supported") and good claims doubted. `merge-data` and `merge-score` do the same for the merge check, using the hand-labelled merge pairs (test split held out) and "split pages": a page cut in two, one article's sentences against the rest, which is the same entity by construction. Every file these steps write holds article text: keep it under `data/` (gitignored).
+
+The same loop also runs through Kitaru and ZenML (`experiments/tinker_zenml/README.md` has the runbook). Every citation check the pipeline makes now records its arguments and verdicts, so it can be replayed with another judge: `just citecheck kitaru-sessions` asks a baseline judge about each test claim as one Kitaru session; `kitaru-investigate` opens a Kitaru investigation with one yes/no question per claim, and `kitaru-pull` writes the answers back as labels; `kitaru-experiment` replays the labelled sessions with another model (a cloud judge, a local one, or a Tinker checkpoint, `tinker://...`) and scores both sides with the `hinbox-citation-check-checks` evaluator: wrong claims passed, good claims doubted, seconds, tokens and cost. `just tinker-pipeline` runs export, Tinker training, sampling, scoring and that Kitaru comparison as one ZenML pipeline.
+
 ### Evaluating Models
 The scoreboard grades any model on your hand-labelled answer keys, so you can compare cloud, frontier and local models (or later, optimized prompts) on equal terms.
 ```bash
