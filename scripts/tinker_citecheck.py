@@ -38,7 +38,9 @@ Steps:
   sampled at once. Answers written as text ("Support_level: partial", as
   untuned Inkling writes) are read too, and a kept one is stored in the
   pipeline's JSON format (``--loose``: partial and not supported count as one
-  answer, as in the test score); resumable (``<out>.log.jsonl`` lists every example tried).
+  answer, as in the test score); resumable (``<out>.log.jsonl`` lists every
+  example tried, with each answer's verdicts, kept or not, so a never-matched
+  example shows which claim went wrong and which way).
   Training on the result teaches the model to keep reasoning the way it
   already does, only to land on the labelled verdict: the plain export has
   no reasoning in its replies, so a model trained on it stops thinking.
@@ -337,12 +339,14 @@ def cmd_distill(args) -> None:
         resp = _resolve(future)
         total += 1
         log = {"key": row_key(prompt), "item_ids": ids, "gold": gold, "kept": None}
-        lengths, unreadable = [], 0
+        lengths, unreadable, answers = [], 0, []
         for i, seq in enumerate(resp.sequences):
             message, _ = renderer.parse_response(seq.tokens)
             thinking, text = _parts(message)
             lengths.append(len(seq.tokens))
-            unreadable += not reply_levels(text)  # no verdicts, or cut off
+            levels = reply_levels(text)
+            answers.append({str(n): level for n, level in levels.items()})
+            unreadable += not levels  # no verdicts, or cut off
             if log["kept"] is None and matches_gold(text, gold, args.loose):
                 log["kept"] = i
                 meta = {"sample": i, "output_tokens": len(seq.tokens), "item_ids": ids}
@@ -361,6 +365,7 @@ def cmd_distill(args) -> None:
                 _append(args.out, out)
                 kept += 1
         log["output_tokens"], log["unreadable"] = lengths, unreadable
+        log["answers"] = answers  # each answer's verdicts, kept or not
         log["seconds"] = round(time.perf_counter() - start, 1)
         _append(log_path, log)
         print(
