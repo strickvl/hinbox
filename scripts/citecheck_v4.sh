@@ -57,11 +57,16 @@ uv run python -m src.citecheck hard --export "$EXPORT" --distilled "$V3" \
 
 for split in train tune; do
   step="distill $split"
-  say "distilling hard_$split (16 tries each)"
-  uv run --script scripts/tinker_citecheck.py distill --data "$OUT/hard_$split.jsonl" \
-    --out "$OUT/hard_$split.distilled.jsonl" --samples 16 --temperature 1.0 --loose \
-    --max-tokens 8192 --workers 8
-  touch "$OUT/hard_$split.distilled.jsonl"
+  if [[ -s "$OUT/hard_$split.jsonl" ]]; then
+    say "distilling hard_$split (16 tries each)"
+    uv run --script scripts/tinker_citecheck.py distill --data "$OUT/hard_$split.jsonl" \
+      --out "$OUT/hard_$split.distilled.jsonl" --samples 16 --temperature 1.0 --loose \
+      --max-tokens 8192 --workers 8
+  else
+    say "no hard claims in $split: nothing to distill"
+  fi
+  # distill writes nothing when no answer is kept (or no claim is hard)
+  touch "$OUT/hard_$split.distilled.jsonl" "$OUT/hard_$split.distilled.jsonl.log.jsonl"
 done
 
 extra=("$OUT/hard_train.distilled.jsonl" "$OUT/hard_tune.distilled.jsonl")
