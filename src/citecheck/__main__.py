@@ -15,6 +15,13 @@ Citation checker, in order:
     just citecheck prompts --items ... --articles ... --file <dir>/test_prompts.jsonl
     just citecheck score   --items ... --labels ... --replies <replies.jsonl>
 
+Claims self-distillation never gets right (``src/citecheck/hard.py``):
+
+    just citecheck hard    --export <export dir> --distilled <distill dir> --out <dir> [--planted <planted.jsonl>]
+    (then ``distill`` <dir>/hard_train.jsonl and hard_tune.jsonl with more samples)
+    just citecheck reteach --prompts <dir>/hard_train.jsonl --log <distilled>.log.jsonl --teacher <model> --out <file> --max-dollars 5 --price-in X --price-out Y [--dry-run]
+    just citecheck mix     --base <distill dir> --extra <kept rows>... --out <dir> [--repeat 4] [--planted ... --drop-kinds planted:year,planted:number]
+
 Merge check:
 
     just citecheck merge-data  --entities <run> --eval-dir <eval> --out <dir> [--teach]
@@ -333,6 +340,97 @@ def cmd_kitaru_experiment(a: argparse.Namespace) -> None:
     print(json.dumps({k: v for k, v in out.items() if k != "table"}))
 
 
+def _kinds(path: str) -> Dict:
+    from src.citecheck.hard import label_kinds
+
+    return label_kinds(read_jsonl(path)) if path else {}
+
+
+def cmd_hard(a: argparse.Namespace) -> None:
+    from src.citecheck.hard import hard_claims, hard_prompts, hard_summary
+
+    kinds = _kinds(a.planted)
+    summary: Dict[str, Any] = {}
+    for split in ("train", "tune"):
+        examples = read_jsonl(os.path.join(a.export, f"{split}.jsonl"))
+        log = read_jsonl(os.path.join(a.distilled, f"{split}.jsonl.log.jsonl"))
+        if not examples or not log:
+            sys.exit(
+                f"no {split}.jsonl in {a.export} or no distill log in {a.distilled}"
+            )
+        rows = hard_prompts(hard_claims(examples, log, a.min_answers), kinds)
+        write_jsonl(os.path.join(a.out, f"hard_{split}.jsonl"), rows)
+        summary[split] = {
+            "examples": len(examples),
+            "tried": len(log),
+            "hard_claims": len(rows),
+            "by_kind": hard_summary(rows),
+        }
+    with open(os.path.join(a.out, "hard_summary.json"), "w") as f:
+        json.dump(summary, f, indent=1)
+    print(json.dumps(summary, indent=1))
+
+
+def cmd_reteach(a: argparse.Namespace) -> None:
+    from src.citecheck.hard import estimate_dollars, missed, teacher_rows
+
+    prompts = missed(read_jsonl(a.prompts), read_jsonl(a.log))
+    cost = estimate_dollars(prompts, a.price_in, a.price_out)
+    print(
+        f"{len(prompts)} hard prompts never kept; estimated ${cost:.2f} with {a.teacher}"
+    )
+    if cost > a.max_dollars:
+        sys.exit(
+            f"estimate ${cost:.2f} is over --max-dollars {a.max_dollars}: stopping"
+        )
+    if a.dry_run:
+        return
+    rows, counts = teacher_rows(prompts, a.teacher)
+    write_jsonl(a.out, rows)
+    print(
+        json.dumps(
+            {"teacher": a.teacher, "estimated_dollars": round(cost, 2), **counts}
+        )
+    )
+
+
+def cmd_mix(a: argparse.Namespace) -> None:
+    import shutil
+
+    from src.citecheck.hard import mixed
+
+    kinds = _kinds(a.planted)
+    drop = tuple(k.strip() for k in a.drop_kinds.split(",") if k.strip())
+    if drop and not kinds:
+        sys.exit("--drop-kinds needs --planted")
+    summary: Dict[str, Any] = {}
+    for split in ("train", "tune"):
+        base = read_jsonl(os.path.join(a.base, f"{split}.jsonl"))
+        extra = [
+            r
+            for path in a.extra
+            if f"_{split}." in os.path.basename(path)
+            for r in read_jsonl(path)
+        ]
+        rows, counts = mixed(
+            base,
+            extra,
+            a.repeat if split == "train" else 1,
+            kinds=kinds,
+            drop_kinds=drop,
+        )
+        write_jsonl(os.path.join(a.out, f"{split}.jsonl"), rows)
+        summary[split] = counts
+    for name in ("test_items.jsonl", "test_labels.jsonl", "test_prompts.jsonl"):
+        src = os.path.join(a.base, name)
+        if not os.path.exists(src):
+            sys.exit(f"{src} is missing: the pipeline scores from it")
+        shutil.copyfile(src, os.path.join(a.out, name))
+    with open(os.path.join(a.out, "mix_summary.json"), "w") as f:
+        json.dump(summary, f, indent=1)
+    print(json.dumps(summary, indent=1))
+
+
 def main(argv: List[str] = None) -> None:
     from src.citecheck.teach import TEACHERS
 
@@ -379,6 +477,24 @@ def main(argv: List[str] = None) -> None:
         help="at most this many planted claims per teacher claim, in each split",
     )
     add("prompts", cmd_prompts, "items", "articles", "file")
+    sp = add("hard", cmd_hard, "export", "distilled", "out")
+    sp.add_argument("--planted", default="", help="planted.jsonl, to count kinds")
+    sp.add_argument("--min-answers", type=int, default=3)
+    sp = add("reteach", cmd_reteach, "prompts", "log", "teacher", "out")
+    sp.add_argument("--max-dollars", type=float, required=True)
+    sp.add_argument("--price-in", type=float, required=True, help="$ per M tokens")
+    sp.add_argument("--price-out", type=float, required=True, help="$ per M tokens")
+    sp.add_argument("--dry-run", action="store_true")
+    sp = add("mix", cmd_mix, "base", "out")
+    sp.add_argument(
+        "--extra",
+        nargs="*",
+        default=[],
+        help="kept rows; a name holding _train. or _tune. picks the split",
+    )
+    sp.add_argument("--repeat", type=int, default=4, help="times each extra train row")
+    sp.add_argument("--planted", default="")
+    sp.add_argument("--drop-kinds", default="")
     sp = add("review", cmd_review, "items", "labels", "agent-labels", "articles")
     sp.add_argument("--out", default="data/citecheck/review_labels.jsonl")
     sp.add_argument("--agent-name", default="")
@@ -415,7 +531,7 @@ def main(argv: List[str] = None) -> None:
     a = p.parse_args(argv)
     # ``--out`` is a folder, except for review and combine, whose ``--out`` is
     # a label file (they make its folder themselves)
-    if getattr(a, "out", None) and a.fn not in (cmd_review, cmd_combine):
+    if getattr(a, "out", None) and a.fn not in (cmd_review, cmd_combine, cmd_reteach):
         os.makedirs(a.out, exist_ok=True)
     a.fn(a)
 
