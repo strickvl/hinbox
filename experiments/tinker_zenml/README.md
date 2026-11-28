@@ -28,12 +28,12 @@ with `spec.yaml`:
 ```yaml
 version:
   run_spec:
-    command: uv run --project experiments/tinker_zenml --with anthropic python -m scripts.kitaru_step
+    command: uv run --project experiments/tinker_zenml python -m scripts.kitaru_step
     working_dir: /path/to/hinbox
     runtime_capabilities: {overrides: true, tool_policies: false}
 ```
 
-(The Tinker project's environment, so a replay can sample a `tinker://` checkpoint, plus the Anthropic SDK, which that environment lacks, so a replay can also use a Claude checker; without `--with anthropic` every Claude replay fails on import. For cloud and local judges only, `uv run --extra kitaru --extra anthropic` works too. The worker runs this command, whatever environment the worker itself runs in.)
+(The Tinker project's environment, so a replay can sample a `tinker://` checkpoint. It also holds Hinbox's `anthropic` extra, pinned to the same `instructor` and `anthropic` versions as Hinbox's own lockfile (`constraint-dependencies` in its `pyproject.toml`), so cloud checkers replay in it too: with `instructor` 1.17 and the newest `anthropic`, every Sonnet 5.5 call was refused ("tool_choice: type tool and any are not supported for this model"). The worker runs this command, whatever environment the worker itself runs in.)
 
 ```bash
 uvx --from 'kitaru[cli]' kitaru evaluator register hinbox-citation-check-checks \

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "ZenML pipeline that fine-tunes Hinbox's citation checker on Tinker and compares it in Kitaru (kept out of the main environment)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "hinbox",
+    "hinbox[anthropic]",
     "zenml[local]==0.99.0",
     "tinker>=0.40.1",
     "tinker-cookbook>=0.7.1",
@@ -19,6 +19,10 @@ dev = ["pytest>=8"]
 
 [tool.uv]
 package = false
+# Same SDK versions as Hinbox's own lockfile, so a replay calls a model the
+# way the pipeline does (instructor 1.17 with the newest anthropic sends a
+# forced tool choice Sonnet 5.5 refuses)
+constraint-dependencies = ["instructor==1.15.1", "anthropic==0.88.0"]
 
 [tool.uv.sources]
 hinbox = { path = "../..", editable = true }
