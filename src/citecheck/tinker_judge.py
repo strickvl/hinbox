@@ -26,7 +26,7 @@ import json
 import os
 import re
 import threading
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 BASE_MODEL = os.getenv("HINBOX_TINKER_BASE_MODEL", "thinkingmachines/Inkling-2-Mini")
 EFFORT = float(os.getenv("HINBOX_TINKER_EFFORT", "0.0"))
@@ -47,13 +47,16 @@ _REASON_HEAD = re.compile(r"^[\s*]*reasoning[\s*]*:[\s*]*", re.I)
 _JSON_KEYS = re.compile(r'"(?:items|support_level|claim_number)"')
 
 
-def _plain_items(body: str, cls: Any) -> List[Any]:
+def _plain_items(body: str, cls: Any, count: Optional[int] = None) -> List[Any]:
     """Verdicts from a reply written as text ("1. Reasoning: ...
     Support_level: partial"), as untuned Inkling answers, numbered in order:
     the same reading as ``read_reply()`` in ``score.py`` and ``plain_items()``
     in ``scripts/tinker_citecheck.py``. The reasoning is the text between one
     verdict and the next; in differences mode the differences listed there
-    go with it."""
+    go with it. With ``count`` (the claims asked about), a reply with any
+    other number of readable verdicts gives none, as in ``read_reply()``:
+    a verdict missing or unreadable early on would move every later one
+    onto the wrong claim."""
     from src.utils.grounding_differences import plain_differences
 
     out, prev = [], 0
@@ -69,16 +72,19 @@ def _plain_items(body: str, cls: Any) -> List[Any]:
             fields["differences"] = plain_differences(segment)
         out.append(cls(**fields))
         prev = m.end()
-    return out
+    return out if count is None or len(out) == count else []
 
 
-def parse_reply(text: str, with_passage: bool = False) -> List[Any]:
+def parse_reply(
+    text: str, with_passage: bool = False, count: Optional[int] = None
+) -> List[Any]:
     """``ClaimVerdict`` objects (``ClaimVerdictWithPassage`` when the prompt
     asked for a copied passage) from a raw reply in the pipeline's JSON
     format (``{"items": [...]}``), or from a reply written as text
     (``_plain_items()``); an item that doesn't fit is left out, as an
     Instructor reply would leave it out. JSON that doesn't parse (cut off
-    before its closing brackets) is never read as text."""
+    before its closing brackets) is never read as text; ``count`` is the
+    number of claims asked about, which a text reply must match."""
     from src.utils import grounding_differences as gd
     from src.utils.grounding import ClaimVerdict, ClaimVerdictWithPassage
 
@@ -93,7 +99,7 @@ def parse_reply(text: str, with_passage: bool = False) -> List[Any]:
         except json.JSONDecodeError:
             payload = None
     if payload is None:
-        return [] if _JSON_KEYS.search(body) else _plain_items(body, cls)
+        return [] if _JSON_KEYS.search(body) else _plain_items(body, cls, count)
     items = payload.get("items") if isinstance(payload, dict) else None
     out = []
     for item in items or []:
@@ -172,6 +178,7 @@ def tinker_verdicts(
     model: str,
     max_tokens: int,
     with_passage: bool = False,
+    count: Optional[int] = None,
 ) -> List[Any]:
     """One Tinker sample for the judge's ``messages``, at temperature 0
     unless a replay's ``model_params`` say otherwise (``sampling_settings()``)."""
@@ -190,4 +197,4 @@ def tinker_verdicts(
         message, _ = renderer.parse_response(tokens)
         text = reply_text(message)
         record(text, prompt.length, len(tokens))
-    return parse_reply(text, with_passage)
+    return parse_reply(text, with_passage, count)

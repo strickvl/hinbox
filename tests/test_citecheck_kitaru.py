@@ -116,7 +116,7 @@ def test_a_tinker_judge_gets_the_pipelines_messages(monkeypatch):
 
     seen = {}
 
-    def fake(messages, model, max_tokens, with_passage=False):
+    def fake(messages, model, max_tokens, with_passage=False, count=None):
         seen.update(messages=messages, model=model)
         return _reply(SupportLevel.NOT_SUPPORTED)
 
@@ -154,6 +154,11 @@ def test_a_tinker_reply_is_read_like_a_structured_one():
         "supported",
     )
     assert a.reasoning == "the article says 2009."
+    # with the claim count, a missing or unreadable verdict gives none, so a
+    # later verdict can't move onto an earlier claim
+    shifted = "1. Support_level: unknown\n2. Support_level: supported"
+    assert len(parse_reply(shifted)) == 1 and parse_reply(shifted, count=2) == []
+    assert len(parse_reply(plain, count=2)) == 2
     # cut-off JSON is never read as text
     assert (
         parse_reply('{"items": [{"claim_number": 1, "support_level": "partial"') == []
