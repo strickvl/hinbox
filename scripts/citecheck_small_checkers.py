@@ -3,6 +3,7 @@
 # dependencies = [
 #   "minicheck @ git+https://github.com/Liyan06/MiniCheck.git@main",
 #   "transformers>=4.40",
+#   "accelerate>=0.30",
 #   "torch>=2.2",
 #   "pyarrow>=15",
 # ]
@@ -23,7 +24,8 @@ Checkers (``--checkers``, comma list):
 
 - ``hhem``: Vectara HHEM-2.1-Open (``vectara/hallucination_evaluation_model``,
   T5-base, transformers). The article is cut into overlapping chunks of
-  about ``--chunk-words`` words and the claim's score is its best chunk's.
+  about ``--chunk-words`` words (250, so a chunk and its claim fit
+  HHEM's 512 tokens) and the claim's score is its best chunk's.
 - ``flan-t5``: MiniCheck-Flan-T5-Large through the ``minicheck`` package,
   which chunks the article itself and takes the best chunk.
 - ``bespoke-7b``: Bespoke-MiniCheck-7B through the same package; it needs
@@ -174,7 +176,7 @@ def main() -> None:
     p.add_argument("--stratum", default="random", help="'' for every item")
     p.add_argument("--warnings", type=int, required=True, help="Inkling's warnings")
     p.add_argument("--checkers", default="hhem,flan-t5")
-    p.add_argument("--chunk-words", type=int, default=350)
+    p.add_argument("--chunk-words", type=int, default=250)
     p.add_argument("--cache", default="data/citecheck/small_checkers/models")
     a = p.parse_args()
     os.makedirs(a.out, exist_ok=True)
