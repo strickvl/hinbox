@@ -20,6 +20,8 @@ Several answers per claim and paired comparisons (``src/citecheck/votes.py``):
     just citecheck dev-set --teach-dir <teach dir> --out <dir> [--n 400]   # judge-prompt work off the test set
     just citecheck votes   --items ... --labels ... --replies <replies with --votes N> [--save <file>]
     just citecheck paired  --items ... --labels ... --sources untuned=<file> v4=<file> ... [--core-of a,b --audit-of a,b --audit-out <ids>]
+    just citecheck meaning-prompts --items ... --articles ... --replies <differences replies> --file <second prompts>
+    just citecheck meaning-score   --items ... --labels ... --replies <differences replies> --second <second replies> [--save-prefix <p>]
 
 Claims self-distillation never gets right (``src/citecheck/hard.py``):
 
@@ -372,6 +374,36 @@ def cmd_paired(a: argparse.Namespace) -> None:
             json.dump({"base": base_name, "core": core, "rows": rows}, f, indent=1)
 
 
+def cmd_meaning_prompts(a: argparse.Namespace) -> None:
+    from src.citecheck import meaning as m
+
+    heads = article_heads(a.articles) if a.with_head else {}
+    texts = {k: heads.get(k, "") + v for k, v in article_texts(a.articles).items()}
+    details = m.details_by_sample(read_jsonl(a.replies))
+    rows = m.meaning_prompts(read_jsonl(a.items), texts, details)
+    write_jsonl(a.file, rows)
+    print(
+        f"wrote {len(rows)} second-step prompts ({len(details)} answer sets) to {a.file}"
+    )
+
+
+def cmd_meaning_score(a: argparse.Namespace) -> None:
+    from src.citecheck import meaning as m
+    from src.citecheck import votes as v
+
+    items, labels = read_jsonl(a.items), latest_labels(a.labels)
+    details = m.details_by_sample(read_jsonl(a.replies))
+    readings, counts = m.meaning_predictions(details, read_jsonl(a.second))
+    print("second step: " + ", ".join(f"{k} {n}" for k, n in counts.items()))
+    for name, samples in readings.items():
+        print(v.describe_votes(v.vote_report(items, labels, samples), name))
+        if a.save_prefix:
+            path = f"{a.save_prefix}{name}.json"
+            with open(path, "w") as f:
+                json.dump({"predicted": v.majority(v.vote_counts(samples))}, f)
+            print(f"  majority vote saved to {path}")
+
+
 def cmd_merge_data(a: argparse.Namespace) -> None:
     from src.citecheck import merge_data as m
 
@@ -645,6 +677,12 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--audit-of", default="", help="names for --audit-out")
     sp.add_argument("--audit-out", default="")
     sp.add_argument("--save")
+    sp = add(
+        "meaning-prompts", cmd_meaning_prompts, "items", "articles", "replies", "file"
+    )
+    sp.add_argument("--with-head", action="store_true", help=HEAD_HELP)
+    sp = add("meaning-score", cmd_meaning_score, "items", "labels", "replies", "second")
+    sp.add_argument("--save-prefix", default="", help="writes <prefix><reading>.json")
     sp = add("merge-data", cmd_merge_data, "entities", "eval-dir", "out")
     sp.add_argument("--split-pages", type=int, default=1500)
     sp.add_argument("--teach", action="store_true")

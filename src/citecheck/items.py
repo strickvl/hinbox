@@ -257,6 +257,17 @@ def article_meta(path: str) -> Dict[str, Dict[str, Any]]:
     }
 
 
+def _day(value: Any) -> str:
+    """YYYY-MM-DD from Unix seconds (as the articles file stores dates),
+    milliseconds, ISO text or a date; anything else as it came, cut to 10
+    characters."""
+    from src.engine.later_updates import to_date
+
+    text = str(value).strip()
+    day = to_date(int(text) if text.isdigit() else value)
+    return day.isoformat() if day else text[:10]
+
+
 def article_head(meta: Dict[str, Any]) -> str:
     """The lines put above an article's text by ``prompts --with-head`` and
     ``score --with-head``: its headline and publication date (the day only),
@@ -265,8 +276,8 @@ def article_head(meta: Dict[str, Any]) -> str:
     lines = []
     if meta.get("title"):
         lines.append(f"Headline: {str(meta['title']).strip()}")
-    if meta.get("date"):
-        lines.append(f"Published: {str(meta['date'])[:10]}")
+    if meta.get("date") not in (None, ""):
+        lines.append(f"Published: {_day(meta['date'])}")
     return "\n".join(lines) + "\n\n" if lines else ""
 
 
