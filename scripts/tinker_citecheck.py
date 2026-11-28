@@ -353,6 +353,16 @@ def mentions_hint(*texts: str) -> bool:
     return any(_HINT_WORDS.search(t or "") for t in texts)
 
 
+def limited(rows: list, limit: int, seed: int) -> list:
+    """At most ``limit`` of ``rows`` (0 = all), the same seeded pick on every
+    call with the same rows."""
+    if not limit or len(rows) <= limit:
+        return rows
+    rows = list(rows)
+    random.Random(seed).shuffle(rows)
+    return rows[:limit]
+
+
 def kept_keys(log_path: str) -> set:
     """Keys of the examples an earlier distill log kept."""
     if not log_path:
@@ -389,13 +399,14 @@ def cmd_distill(args) -> None:
     todo = []
     for row in _read(args.data):
         prompt, last = row["messages"][:-1], row["messages"][-1]
-        if row_key(prompt) in tried or row_key(prompt) in skip:
+        if row_key(prompt) in skip:
             continue
         gold = reply_levels(last["content"] if isinstance(last["content"], str) else "")
         todo.append((prompt, gold, row.get("item_ids")))
-    if args.limit and len(todo) > args.limit:  # a fixed random part
-        random.Random(args.seed).shuffle(todo)
-        todo = todo[: args.limit]
+    # the pick is made before dropping what the log already tried, so a
+    # resumed run finishes the same examples and never goes past the limit
+    todo = limited(todo, args.limit, args.seed)
+    todo = [t for t in todo if row_key(t[0]) not in tried]
     print(
         f"distilling {len(todo)} examples ({len(tried)} already in {log_path}, "
         f"{len(skip)} kept before){' with the labels as hints' if args.hint else ''}"

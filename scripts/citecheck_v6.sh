@@ -17,6 +17,9 @@
 #    then `citecheck votes` and `citecheck paired` against untuned and v4
 #    (their 7-answer files), on all 400 and on the random half alone.
 #
+# A re-run reuses the checkpoint already saved under $NAME (no second
+# training) and its own answer file, named after the checkpoint.
+#
 # Everything goes to $OUT (default data/citecheck/distill_v6): run.log,
 # RESULT.md, and FAILED.txt naming the step if one fails. Re-running
 # resumes. Files hold article text: data/ only. Free: Tinker's free model
@@ -72,21 +75,29 @@ uv run python -m src.citecheck mix --base "$V3" \
   "$OUT/hard_train.hinted.jsonl" "$OUT/hard_tune.hinted.jsonl" --repeat 1 \
   --planted "$PLANTED" --drop-kinds planted:year,planted:number --out "$OUT"
 
-step=pipeline
-say "training $NAME in ZenML"
-just tinker-pipeline --data-dir "$OUT" --articles "$A" --name "$NAME" --epochs 1 \
-  --max-tokens 8192
-
-step=checkpoint
-ck=$(find "$OUT" -name checkpoints.jsonl -exec cat {} + | uv run python -c "
+checkpoint() {  # the last checkpoint saved under $NAME, or nothing
+  find "$OUT" -name checkpoints.jsonl -exec cat {} + 2>/dev/null | uv run python -c "
 import json, sys
 rows = [json.loads(l) for l in sys.stdin if l.strip()]
-print([r for r in rows if r['name'] == '$NAME'][-1]['sampler'])")
+named = [r for r in rows if r['name'] == '$NAME']
+print(named[-1]['sampler'] if named else '')"
+}
+
+step=pipeline
+ck=$(checkpoint)
+if [[ -z "$ck" ]]; then  # a resumed chain never trains a second checkpoint
+  say "training $NAME in ZenML"
+  just tinker-pipeline --data-dir "$OUT" --articles "$A" --name "$NAME" --epochs 1 \
+    --max-tokens 8192
+  ck=$(checkpoint)
+fi
+[[ -n "$ck" ]] || { echo "no checkpoint saved for $NAME"; false; }
 say "checkpoint $ck"
 
 step=votes
+votes="$OUT/v6_x7.$(printf %s "$ck" | shasum -a 256 | cut -c1-10).jsonl"  # one file per checkpoint
 uv run --script scripts/tinker_citecheck.py sample --checkpoint "$ck" \
-  --prompts "$OUT/test_prompts.jsonl" --out "$OUT/v6_x7.jsonl" --votes 7 \
+  --prompts "$OUT/test_prompts.jsonl" --out "$votes" --votes 7 \
   --temperature 0.7 --max-tokens 8192 --workers 8
 
 step=report
@@ -112,13 +123,13 @@ t0=$(ls -t "$OUT"/test_replies."$NAME".*.jsonl | head -1)
     items="$OUT/test_items.jsonl"; [[ $set == random ]] && items="$OUT/test_items.random.jsonl"
     echo
     echo "## 7 answers, $set"
-    for who in untuned:"$VOTES/untuned_x7.jsonl" v4:"$VOTES/v4_x7.jsonl" v6:"$OUT/v6_x7.jsonl"; do
+    for who in untuned:"$VOTES/untuned_x7.jsonl" v4:"$VOTES/v4_x7.jsonl" v6:"$votes"; do
       uv run python -m src.citecheck votes --items "$items" \
         --labels "$OUT/test_labels.jsonl" --replies "${who#*:}" | sed "s/^/${who%%:*} /"
     done
     uv run python -m src.citecheck paired --items "$items" --labels "$OUT/test_labels.jsonl" \
       --sources untuned="$VOTES/untuned_x7.jsonl" v4="$VOTES/v4_x7.jsonl" \
-      v6="$OUT/v6_x7.jsonl" v6_t0="$t0"
+      v6="$votes" v6_t0="$t0"
   done
   echo '```'
 } >"$OUT/RESULT.md"

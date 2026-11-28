@@ -214,3 +214,12 @@ def test_hinted_distill_samples_with_hint_and_stores_plain_prompt(
     assert kept[0]["distill"]["hinted"] is True
     log = json.loads((tmp_path / "hinted.jsonl.log.jsonl").read_text())
     assert log["kept"] == 1 and log["leaked"] == 1
+
+
+def test_limited_pick_is_the_same_on_every_call() -> None:
+    from scripts.tinker_citecheck import limited
+
+    rows = list(range(50))
+    pick = limited(rows, 10, 6)
+    assert len(pick) == 10 and pick == limited(rows, 10, 6) and rows == list(range(50))
+    assert limited(rows, 0, 6) == rows and limited(rows, 99, 6) == rows
