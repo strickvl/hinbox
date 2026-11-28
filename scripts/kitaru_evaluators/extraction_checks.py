@@ -13,11 +13,26 @@ Register it once (scoped to the step agent)::
     uvx --from 'kitaru[cli]' kitaru evaluator register hinbox-extract-checks \
         --script scripts/kitaru_evaluators/extraction_checks.py \
         --entrypoint evaluate --agent-id <hinbox-extract agent id>
+
+Then ``just kitaru-describe`` gives it the ``DESCRIPTION`` below, which the
+dashboard shows on its page and beside experiment results.
 """
 
 from typing import Any, List
 
 from kitaru.task.evaluator import EvaluationResult, SessionView
+
+# What the Kitaru dashboard shows for this evaluator (`just kitaru-describe` sets it)
+NAME = "hinbox-extract-checks"
+DESCRIPTION = """\
+Checks one extraction step (the people, organizations, locations or events found in one article) without a model.
+extract_ok: the step finished without an error.
+entity_count: entities kept. raw_count: entities the model returned.
+deduped: duplicates merged by quality control. dropped_missing_required: entities dropped for missing fields.
+retry_attempted: the step asked the model a second time.
+qc_flags: quality-control flags raised.
+mention_rate: share of the kept names that appear in the article.
+"""
 
 
 def evaluate(session: SessionView, **params: Any) -> List[EvaluationResult]:

@@ -446,3 +446,42 @@ def test_a_tinker_reply_keeps_its_copied_passage_when_one_was_asked_for():
         "Mara Voss arrived in 2004."
     )
     assert not hasattr(parse_reply(text)[0], "passage")
+
+
+def test_quality_rows_pass_when_nothing_went_wrong():
+    from src.citecheck.kitaru_eval import citation_results
+
+    inputs = {"claims": ["a"], "labels": {"gold": ["no"]}}
+    by = {
+        r["name"]: r
+        for r in citation_results(inputs, {"verdicts": [{"support_level": "partial"}]})
+    }
+    assert by["wrong_passed"]["score"] is False and by["wrong_passed"]["passed"] is True
+    assert by["agrees"]["passed"] is True and by["answered"]["passed"] is True
+    by = {
+        r["name"]: r
+        for r in citation_results(
+            inputs, {"verdicts": [{"support_level": "supported"}]}
+        )
+    }
+    assert by["wrong_passed"]["passed"] is False and by["agrees"]["passed"] is False
+
+
+def test_every_evaluator_script_carries_a_description():
+    import importlib.util
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "kitaru_describe_evaluators.py"
+    )
+    spec = importlib.util.spec_from_file_location("kitaru_describe", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    found = mod.descriptions()
+    scripts = sorted(mod.FOLDER.glob("*.py"))
+    assert len(found) == len(scripts) and all(n.startswith("hinbox-") for n in found)
+    for name, text in found.items():
+        assert name in "".join(p.read_text() for p in scripts)
+        assert 50 < len(text) < 2000

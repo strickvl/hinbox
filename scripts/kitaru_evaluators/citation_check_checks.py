@@ -17,11 +17,27 @@ Register it once (scoped to the step agent)::
     uvx --from 'kitaru[cli]' kitaru evaluator register hinbox-citation-check-checks \
         --script scripts/kitaru_evaluators/citation_check_checks.py \
         --entrypoint evaluate --agent-id <hinbox-citation-check agent id>
+
+Then ``just kitaru-describe`` gives it the ``DESCRIPTION`` below, which the
+dashboard shows on its page and beside experiment results.
 """
 
 from typing import Any, List
 
 from kitaru.task.evaluator import EvaluationResult, SessionView
+
+# What the Kitaru dashboard shows for this evaluator (`just kitaru-describe` sets it)
+NAME = "hinbox-citation-check-checks"
+DESCRIPTION = """\
+Scores one citation check against the hand labels (the answer key).
+wrong_passed: a sentence labelled wrong that the checker called supported. This is the error that matters most; passes when it did not happen.
+good_doubted: a sentence labelled right that the checker called partly or not supported; passes when it did not happen.
+agrees: the checker's verdict matches the label.
+answered: the checker gave a verdict for every sentence.
+verdict: the checker's answer (supported, partial, not_supported, unclear).
+seconds, input_tokens, output_tokens: how long the call took and how big it was.
+cost_usd: dollars, from the prices parameter (dollars per million input and output tokens), else Kitaru's own price.
+"""
 
 
 def _seconds(s: Any) -> Any:

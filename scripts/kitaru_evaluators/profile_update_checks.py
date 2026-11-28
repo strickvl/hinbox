@@ -16,11 +16,30 @@ Register it once (scoped to the step agent)::
     uvx --from 'kitaru[cli]' kitaru evaluator register hinbox-profile-update-checks \
         --script scripts/kitaru_evaluators/profile_update_checks.py \
         --entrypoint evaluate --agent-id <hinbox-profile-update agent id>
+
+Then ``just kitaru-describe`` gives it the ``DESCRIPTION`` below, which the
+dashboard shows on its page and beside experiment results.
 """
 
 from typing import Any, List
 
 from kitaru.task.evaluator import EvaluationResult, SessionView
+
+# What the Kitaru dashboard shows for this evaluator (`just kitaru-describe` sets it)
+NAME = "hinbox-profile-update-checks"
+DESCRIPTION = """\
+Checks one profile update without a model, by comparing the updated profile with the old one.
+update_ok: the profile did not collapse, kept its cited sentences and invented no citations.
+length_ratio: new length over old; far below 1 means the profile collapsed.
+fact_retention: share of the old cited sentences still there.
+invented_citations: citations to articles the profile does not have.
+unchanged_share: share of old sentences kept word for word.
+added_sentences: new sentences with no close match in the old profile.
+cites_article: the new article is cited. updated: it joined the profile's sources.
+dispute_claims: new "sources disagree" sentences.
+unsupported_numbers: new sentences citing the article with numbers it lacks.
+case_ok: for an eval case, the profile-update eval's own pass verdict.
+"""
 
 
 def evaluate(session: SessionView, **params: Any) -> List[EvaluationResult]:
