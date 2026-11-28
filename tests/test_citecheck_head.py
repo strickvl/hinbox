@@ -79,3 +79,11 @@ def test_commands_read_title_and_date(tmp_path):
             ]
         )
     assert judge.call_args.kwargs["article_text"].startswith("Headline: Base news\n")
+
+
+def test_head_date_from_unix_seconds():
+    from src.citecheck.items import article_head
+
+    assert article_head({"date": 1457656959}) == "Published: 2016-03-11\n\n"
+    assert article_head({"date": "1457656959000"}) == "Published: 2016-03-11\n\n"
+    assert article_head({"date": "2016-03-11T05:00:00"}) == "Published: 2016-03-11\n\n"
