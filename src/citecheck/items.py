@@ -255,3 +255,21 @@ def article_meta(path: str) -> Dict[str, Dict[str, Any]]:
         for r in table.to_pylist()
         if r.get("id")
     }
+
+
+def article_head(meta: Dict[str, Any]) -> str:
+    """The lines put above an article's text by ``prompts --with-head`` and
+    ``score --with-head``: its headline and publication date (the day only),
+    as the labellers saw them beside each sentence. Empty when neither is
+    known."""
+    lines = []
+    if meta.get("title"):
+        lines.append(f"Headline: {str(meta['title']).strip()}")
+    if meta.get("date"):
+        lines.append(f"Published: {str(meta['date'])[:10]}")
+    return "\n".join(lines) + "\n\n" if lines else ""
+
+
+def article_heads(path: str) -> Dict[str, str]:
+    """Article id -> ``article_head()`` from the articles Parquet."""
+    return {aid: article_head(m) for aid, m in article_meta(path).items()}

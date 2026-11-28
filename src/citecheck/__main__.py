@@ -12,7 +12,7 @@ Citation checker, in order:
     just citecheck teach   --entities <run> --articles <parquet> --out <dir> --n 12000 [--dry-run]
     just citecheck audit   --out <dir> --n 100      # then label <dir>/audit_items.jsonl
     just citecheck export  --articles <parquet> --out <dir>
-    just citecheck prompts --items ... --articles ... --file <dir>/test_prompts.jsonl
+    just citecheck prompts --items ... --articles ... --file <dir>/test_prompts.jsonl  [--with-head: headline and date above the article]
     just citecheck score   --items ... --labels ... --replies <replies.jsonl>
 
 Several answers per claim and paired comparisons (``src/citecheck/votes.py``):
@@ -52,6 +52,7 @@ import sys
 from typing import Any, Dict, List
 
 from src.citecheck.items import (
+    article_heads,
     article_meta,
     article_texts,
     claim_rows,
@@ -267,7 +268,8 @@ def cmd_export(a: argparse.Namespace) -> None:
 def cmd_prompts(a: argparse.Namespace) -> None:
     from src.citecheck.score import prompt_rows
 
-    rows = prompt_rows(read_jsonl(a.items), article_texts(a.articles))
+    heads = article_heads(a.articles) if a.with_head else None
+    rows = prompt_rows(read_jsonl(a.items), article_texts(a.articles), heads)
     write_jsonl(a.file, rows)
     print(f"wrote {len(rows)} prompts to {a.file}")
 
@@ -288,11 +290,16 @@ def cmd_score(a: argparse.Namespace) -> None:
         if not a.articles:
             sys.exit("--model needs --articles")
         predicted, extra = s.predict_with_model(
-            items, article_texts(a.articles), a.model, workers=a.workers
+            items,
+            article_texts(a.articles),
+            a.model,
+            workers=a.workers,
+            heads=article_heads(a.articles) if a.with_head else None,
         )
         from src.utils.grounding import GROUNDING_RULES
 
         name = a.model + (" (rules=strict)" if GROUNDING_RULES == "strict" else "")
+        name += " (with headline and date)" if a.with_head else ""
     else:
         sys.exit("give one of --stored, --replies or --model")
     report = {**s.score(items, labels, predicted), **extra, "judge": name}
@@ -535,6 +542,12 @@ def cmd_mix(a: argparse.Namespace) -> None:
     print(json.dumps(summary, indent=1))
 
 
+HEAD_HELP = (
+    "put the article's headline and publication date above its text, as the "
+    "labellers saw them (the pipeline's judge gets neither)"
+)
+
+
 def main(argv: List[str] = None) -> None:
     from src.citecheck.teach import TEACHERS
 
@@ -580,7 +593,8 @@ def main(argv: List[str] = None) -> None:
         default=None,
         help="at most this many planted claims per teacher claim, in each split",
     )
-    add("prompts", cmd_prompts, "items", "articles", "file")
+    sp = add("prompts", cmd_prompts, "items", "articles", "file")
+    sp.add_argument("--with-head", action="store_true", help=HEAD_HELP)
     sp = add("hard", cmd_hard, "export", "distilled", "out")
     sp.add_argument("--planted", default="", help="planted.jsonl, to count kinds")
     sp.add_argument("--min-answers", type=int, default=3)
@@ -613,6 +627,7 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--replies")
     sp.add_argument("--workers", type=int, default=1)
     sp.add_argument("--save")
+    sp.add_argument("--with-head", action="store_true", help=HEAD_HELP)
     sp = add("dev-set", cmd_dev_set, "teach-dir", "out")
     sp.add_argument("--splits", default="tune,train")
     sp.add_argument("--n", type=int, default=400, help="0 = every agreed label")
