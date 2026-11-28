@@ -116,7 +116,7 @@ def test_a_tinker_judge_gets_the_pipelines_messages(monkeypatch):
 
     seen = {}
 
-    def fake(messages, model, max_tokens, with_passage=False):
+    def fake(messages, model, max_tokens, with_passage=False, count=None):
         seen.update(messages=messages, model=model)
         return _reply(SupportLevel.NOT_SUPPORTED)
 
@@ -142,6 +142,27 @@ def test_a_tinker_reply_is_read_like_a_structured_one():
     (v,) = parse_reply(text)
     assert v.claim_number == 1 and v.support_level == SupportLevel.PARTIAL
     assert parse_reply("no json here") == []
+    plain = (
+        "1. Reasoning: the article says 2009.\nSupport_level: partial\n"
+        "**Claim 2** Reasoning: matches.\nSupport level: supported"
+    )
+    a, b = parse_reply(plain)
+    assert (a.claim_number, a.support_level, b.claim_number, b.support_level) == (
+        1,
+        "partial",
+        2,
+        "supported",
+    )
+    assert a.reasoning == "the article says 2009."
+    # with the claim count, a missing or unreadable verdict gives none, so a
+    # later verdict can't move onto an earlier claim
+    shifted = "1. Support_level: unknown\n2. Support_level: supported"
+    assert len(parse_reply(shifted)) == 1 and parse_reply(shifted, count=2) == []
+    assert len(parse_reply(plain, count=2)) == 2
+    # cut-off JSON is never read as text
+    assert (
+        parse_reply('{"items": [{"claim_number": 1, "support_level": "partial"') == []
+    )
     parts = {
         "content": [{"type": "thinking", "text": "hm"}, {"type": "text", "text": "{}"}]
     }
@@ -298,6 +319,13 @@ def test_sessions_are_built_one_claim_each_and_resume(tmp_path):
     assert calls[0]["labels"]["gold"] == ["no"] and calls[1]["labels"]["gold"] == [None]
     again = kl.build_sessions(items, texts, {}, "m", out, run=run)
     assert again["skipped"] == 2 and len(calls) == 2
+
+
+def test_names_are_made_ones_kitaru_takes():
+    assert kl.kitaru_name("Trial: v4 vs untuned") == "Trial-v4-vs-untuned"
+    assert kl.kitaru_name("  opus_strict (v2) ") == "opus_strict-v2"
+    with pytest.raises(ValueError):
+        kl.kitaru_name(" : ")
 
 
 def test_parts_cover_every_item_once():

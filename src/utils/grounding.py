@@ -685,7 +685,11 @@ def judge_claims(
             from src.citecheck.tinker_judge import tinker_verdicts
 
             reply = tinker_verdicts(
-                messages, model, GROUNDING_MAX_TOKENS, with_passage=ask_passage
+                messages,
+                model,
+                GROUNDING_MAX_TOKENS,
+                with_passage=ask_passage,
+                count=len(claims),
             )
         else:
             with thinking:
