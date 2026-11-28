@@ -28,7 +28,11 @@ Steps:
   ``<dir>/checkpoints.jsonl``).
 - ``sample --checkpoint <tinker://...> --prompts <file> --out <replies.jsonl>``:
   one reply per prompt at temperature 0, with seconds and token counts.
-  ``--checkpoint base`` samples the untuned model.
+  ``--checkpoint base`` samples the untuned model. ``--votes N`` (N > 1)
+  asks each prompt N times at ``--temperature`` instead, up to ``--workers``
+  prompts at once, and writes one row per answer with its ``sample``
+  number, for ``just citecheck votes`` (each answer set alone, majority
+  vote, "pass only if k of N say supported").
 - ``distill --data <train.jsonl> --out <distilled.jsonl>``: self-distillation
   (rejection sampling). The untuned model (or ``--checkpoint``) answers each
   example's prompt ``--samples`` times at ``--temperature``, reasoning
@@ -422,6 +426,50 @@ def _sample_rows(sampler, renderer, prompts: list, args, out_path: str = "") -> 
     return replies
 
 
+def _sample_votes(sampler, renderer, prompts: list, args, out_path: str) -> list:
+    """``args.votes`` answers per prompt at ``args.temperature``, up to
+    ``args.workers`` prompts at once; all of a prompt's answers are written
+    together, so a resumed run never holds part of a prompt."""
+    import tinker
+
+    params = tinker.SamplingParams(
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        stop=renderer.get_stop_sequences(),
+    )
+    replies, pending, queue = [], [], list(prompts)
+    while queue or pending:
+        while queue and len(pending) < args.workers:
+            row = queue.pop(0)
+            prompt = renderer.build_generation_prompt(
+                row["messages"], effort=args.effort
+            )
+            future = sampler.sample(
+                prompt=prompt, num_samples=args.votes, sampling_params=params
+            )
+            pending.append((row, prompt, future, time.perf_counter()))
+        row, prompt, future, start = pending.pop(0)
+        resp = _resolve(future)
+        seconds = round(time.perf_counter() - start, 2)
+        for i, seq in enumerate(resp.sequences):
+            message, _ = renderer.parse_response(seq.tokens)
+            thinking, content = _parts(message)
+            out = {
+                "item_ids": row["item_ids"],
+                "sample": i,
+                "temperature": args.temperature,
+                "reply": content,
+                "thinking": thinking,
+                "output_tokens": len(seq.tokens),
+                "prompt_tokens": prompt.length,
+                "seconds": seconds,
+            }
+            replies.append(out)
+            _append(out_path, out)
+        print(f"{len(replies) // args.votes}/{len(prompts)} prompts ({seconds} s)")
+    return replies
+
+
 def cmd_smoke(args) -> None:
     rows = _read(args.data)[: args.batch_size * 15]
     client = train_loop(args, rows, [], steps=15)
@@ -537,7 +585,10 @@ def cmd_sample(args) -> None:
         done = {tuple(r["item_ids"]) for r in _read(args.out)}
     prompts = [p for p in _read(args.prompts) if tuple(p["item_ids"]) not in done]
     print(f"sampling {len(prompts)} prompts ({len(done)} already in {args.out})")
-    replies = _sample_rows(sampler, renderer, prompts, args, out_path=args.out)
+    if args.votes > 1:
+        replies = _sample_votes(sampler, renderer, prompts, args, args.out)
+    else:
+        replies = _sample_rows(sampler, renderer, prompts, args, out_path=args.out)
     if replies:
         tokens = sum(r["output_tokens"] for r in replies) / len(replies)
         print(f"mean output tokens per prompt: {tokens:.0f}")
@@ -573,8 +624,21 @@ def main() -> None:
     p.add_argument(
         "--samples", type=int, default=4, help="distill: answers per example"
     )
-    p.add_argument("--temperature", type=float, default=0.7, help="distill only")
-    p.add_argument("--workers", type=int, default=8, help="distill: prompts at once")
+    p.add_argument(
+        "--temperature", type=float, default=0.7, help="distill, and sample --votes"
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="distill, sample --votes: prompts at once",
+    )
+    p.add_argument(
+        "--votes",
+        type=int,
+        default=1,
+        help="sample: answers per prompt (1 = temperature 0)",
+    )
     p.add_argument(
         "--loose", action="store_true", help="distill: partial = not supported"
     )

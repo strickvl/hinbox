@@ -15,6 +15,11 @@ Citation checker, in order:
     just citecheck prompts --items ... --articles ... --file <dir>/test_prompts.jsonl
     just citecheck score   --items ... --labels ... --replies <replies.jsonl>
 
+Several answers per claim and paired comparisons (``src/citecheck/votes.py``):
+
+    just citecheck votes   --items ... --labels ... --replies <replies with --votes N> [--save <file>]
+    just citecheck paired  --items ... --labels ... --sources untuned=<file> v4=<file> ... [--core-of a,b --audit-of a,b --audit-out <ids>]
+
 Claims self-distillation never gets right (``src/citecheck/hard.py``):
 
     just citecheck hard    --export <export dir> --distilled <distill dir> --out <dir> [--planted <planted.jsonl>]
@@ -259,6 +264,67 @@ def cmd_score(a: argparse.Namespace) -> None:
     if a.save:
         with open(a.save, "w") as f:
             json.dump({"report": report, "predicted": predicted}, f, indent=1)
+
+
+def cmd_votes(a: argparse.Namespace) -> None:
+    from src.citecheck import votes as v
+
+    items, labels = read_jsonl(a.items), latest_labels(a.labels)
+    report = v.vote_report(items, labels, v.by_sample(read_jsonl(a.replies)))
+    print(v.describe_votes(report, a.replies))
+    if a.save:
+        with open(a.save, "w") as f:
+            json.dump(report, f, indent=1)
+
+
+def cmd_paired(a: argparse.Namespace) -> None:
+    from src.citecheck import votes as v
+    from src.citecheck.score import score
+
+    items, labels = read_jsonl(a.items), latest_labels(a.labels)
+    sources: Dict[str, Any] = {}
+    for spec in a.sources:
+        name, _, path = spec.partition("=")
+        if not path:
+            sys.exit(f"--sources takes name=path, got {spec!r}")
+        sources[name] = v.load_predictions(path)
+    base_name = next(iter(sources))
+    base = sources[base_name][0]
+    core_names = _teachers(a.core_of) or tuple(sources)
+    core = v.wrong_passed_by_all(items, labels, (sources[n][0] for n in core_names))
+    print(
+        f"{len(core)} wrong claims passed by every one of {', '.join(core_names)}; "
+        f"compared with {base_name}: 'better/worse' counts claims only one of the two "
+        "got right, p is a two-sided sign test on them"
+    )
+    print(
+        "| checker | read as | wrong passed | good doubted | failed | wrong: better/worse (p) "
+        "| good: better/worse (p) | core caught |"
+    )
+    print("|---|---|---|---|---|---|---|---|")
+    rows = {}
+    for name, (pred, kind) in sources.items():
+        t = score(items, labels, pred)
+        pr = v.paired(items, labels, base, pred)
+        caught = sum(pred.get(i) != "supported" for i in core)
+        w, g = pr["wrong"], pr["good"]
+        print(
+            f"| {name} | {kind} | {t['wrong_passed']['count']} | {t['good_doubted']['count']} "
+            f"| {t['errors']} | {w['other_better']}/{w['other_worse']} ({w['p']}) "
+            f"| {g['other_better']}/{g['other_worse']} ({g['p']}) | {caught}/{len(core)} |"
+        )
+        rows[name] = {"kind": kind, "paired": pr, "core_caught": caught}
+    if a.audit_out:
+        names = _teachers(a.audit_of) or tuple(sources)
+        ids = v.all_disagree(items, labels, (sources[n][0] for n in names))
+        with open(a.audit_out, "w") as f:
+            f.write("\n".join(ids) + ("\n" if ids else ""))
+        print(
+            f"{len(ids)} claims where {', '.join(names)} all disagree with the key: {a.audit_out}"
+        )
+    if a.save:
+        with open(a.save, "w") as f:
+            json.dump({"base": base_name, "core": core, "rows": rows}, f, indent=1)
 
 
 def cmd_merge_data(a: argparse.Namespace) -> None:
@@ -508,6 +574,18 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--stored")
     sp.add_argument("--replies")
     sp.add_argument("--workers", type=int, default=1)
+    sp.add_argument("--save")
+    sp = add("votes", cmd_votes, "items", "labels", "replies")
+    sp.add_argument("--save")
+    sp = add("paired", cmd_paired, "items", "labels")
+    sp.add_argument(
+        "--sources", nargs="+", required=True, help="name=path; the first is the base"
+    )
+    sp.add_argument(
+        "--core-of", default="", help="names: core = wrong claims all of them pass"
+    )
+    sp.add_argument("--audit-of", default="", help="names for --audit-out")
+    sp.add_argument("--audit-out", default="")
     sp.add_argument("--save")
     sp = add("merge-data", cmd_merge_data, "entities", "eval-dir", "out")
     sp.add_argument("--split-pages", type=int, default=1500)
