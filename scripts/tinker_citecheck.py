@@ -80,6 +80,13 @@ def _append(path: str, row: dict) -> None:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def _append_all(path: str, rows: list) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    text = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(text)
+
+
 def _renderer(model: str):
     from tinker_cookbook import model_info, renderers
     from tinker_cookbook.tokenizer_utils import get_tokenizer
@@ -451,6 +458,7 @@ def _sample_votes(sampler, renderer, prompts: list, args, out_path: str) -> list
         row, prompt, future, start = pending.pop(0)
         resp = _resolve(future)
         seconds = round(time.perf_counter() - start, 2)
+        batch = []
         for i, seq in enumerate(resp.sequences):
             message, _ = renderer.parse_response(seq.tokens)
             thinking, content = _parts(message)
@@ -464,8 +472,9 @@ def _sample_votes(sampler, renderer, prompts: list, args, out_path: str) -> list
                 "prompt_tokens": prompt.length,
                 "seconds": seconds,
             }
-            replies.append(out)
-            _append(out_path, out)
+            batch.append(out)
+        _append_all(out_path, batch)  # one write: a stop never leaves part of a set
+        replies += batch
         print(f"{len(replies) // args.votes}/{len(prompts)} prompts ({seconds} s)")
     return replies
 
@@ -582,7 +591,16 @@ def cmd_sample(args) -> None:
         sampler = _resolve(service.create_sampling_client(model_path=args.checkpoint))
     done = set()
     if os.path.exists(args.out):
-        done = {tuple(r["item_ids"]) for r in _read(args.out)}
+        counts: dict = {}
+        for r in _read(args.out):
+            counts[tuple(r["item_ids"])] = counts.get(tuple(r["item_ids"]), 0) + 1
+        short = [k for k, n in counts.items() if n != max(1, args.votes)]
+        if short:  # a set of answers of the wrong size would skew the vote
+            sys.exit(
+                f"{len(short)} prompts in {args.out} have other than {args.votes} "
+                "answers: use a new --out, or remove their rows"
+            )
+        done = set(counts)
     prompts = [p for p in _read(args.prompts) if tuple(p["item_ids"]) not in done]
     print(f"sampling {len(prompts)} prompts ({len(done)} already in {args.out})")
     if args.votes > 1:
