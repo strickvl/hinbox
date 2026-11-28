@@ -95,10 +95,18 @@ fi
 say "checkpoint $ck"
 
 step=votes
-votes="$OUT/v6_x7.$(printf %s "$ck" | shasum -a 256 | cut -c1-10).jsonl"  # one file per checkpoint
+tag=$(printf %s "$ck" | shasum -a 256 | cut -c1-10)  # answer files are per checkpoint
+votes="$OUT/v6_x7.$tag.jsonl"
 uv run --script scripts/tinker_citecheck.py sample --checkpoint "$ck" \
   --prompts "$OUT/test_prompts.jsonl" --out "$votes" --votes 7 \
   --temperature 0.7 --max-tokens 8192 --workers 8
+
+step="temperature 0"
+# the chain's own temperature-0 answers, resumable even when an earlier run
+# stopped inside the pipeline's sampling after the checkpoint was saved
+t0="$OUT/v6_t0.$tag.jsonl"
+uv run --script scripts/tinker_citecheck.py sample --checkpoint "$ck" \
+  --prompts "$OUT/test_prompts.jsonl" --out "$t0" --max-tokens 8192
 
 step=report
 uv run python -c "
@@ -106,7 +114,6 @@ import json
 rows = [json.loads(l) for l in open('$OUT/test_items.jsonl')]
 with open('$OUT/test_items.random.jsonl', 'w') as f:
     f.writelines(json.dumps(r) + '\n' for r in rows if r.get('stratum') == 'random')"
-t0=$(ls -t "$OUT"/test_replies."$NAME".*.jsonl | head -1)
 {
   echo "# $NAME"
   echo

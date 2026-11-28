@@ -223,3 +223,45 @@ def test_limited_pick_is_the_same_on_every_call() -> None:
     pick = limited(rows, 10, 6)
     assert len(pick) == 10 and pick == limited(rows, 10, 6) and rows == list(range(50))
     assert limited(rows, 0, 6) == rows and limited(rows, 99, 6) == rows
+
+
+def test_distill_with_every_example_kept_before_is_a_no_op(tmp_path, monkeypatch):
+    import argparse
+    import sys
+    import types
+
+    import scripts.tinker_citecheck as tc
+
+    fake = types.SimpleNamespace(
+        ServiceClient=lambda: types.SimpleNamespace(
+            create_sampling_client=lambda **k: None
+        ),
+        SamplingParams=lambda **k: k,
+    )
+    renderer = types.SimpleNamespace(get_stop_sequences=lambda: [])
+    monkeypatch.setitem(sys.modules, "tinker", fake)
+    monkeypatch.setattr(tc, "_renderer", lambda model: (renderer, None))
+    prompt = [{"role": "user", "content": "u"}]
+    reply = {"role": "assistant", "content": _reply("partial")}
+    data, earlier = tmp_path / "hard.jsonl", tmp_path / "earlier.log.jsonl"
+    data.write_text(json.dumps({"messages": prompt + [reply]}) + "\n")
+    earlier.write_text(json.dumps({"key": row_key(prompt), "kept": 0}) + "\n")
+    out = tmp_path / "hinted.jsonl"
+    args = argparse.Namespace(
+        model="m",
+        checkpoint="base",
+        data=str(data),
+        out=str(out),
+        max_tokens=10,
+        temperature=1.0,
+        workers=2,
+        samples=3,
+        effort=0.0,
+        loose=True,
+        hint=True,
+        skip_kept=str(earlier),
+        limit=0,
+        seed=6,
+    )
+    tc.cmd_distill(args)  # no FileNotFoundError from the summary
+    assert not out.exists()

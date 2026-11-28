@@ -468,7 +468,8 @@ def cmd_distill(args) -> None:
             f"{total}/{len(todo)}: {'kept sample ' + str(log['kept']) if log['kept'] is not None else 'none matched'}"
             f" (labels {sorted(set(gold.values()))}; kept {kept} of {total})"
         )
-    _distill_summary(log_path)
+    if os.path.exists(log_path):  # nothing tried yet when no example was left
+        _distill_summary(log_path)
 
 
 def _distill_summary(log_path: str) -> None:
