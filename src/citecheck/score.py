@@ -193,7 +193,13 @@ def _plain_verdicts(body: str, count: int) -> List[Optional[str]]:
     """Verdicts from a reply written as text ("1. Reasoning: … Support_level:
     partial"), as an untuned model answers: the levels in claim order, used
     only when there is exactly one per claim."""
-    found = [m.group(1).lower().replace(" ", "_") for m in _PLAIN_LEVEL.finditer(body)]
+    from src.utils.grounding_differences import decided_level, plain_differences
+
+    found, prev = [], 0
+    for m in _PLAIN_LEVEL.finditer(body):
+        level = m.group(1).lower().replace(" ", "_")
+        found.append(decided_level(level, plain_differences(body[prev : m.start()])))
+        prev = m.end()
     return list(found) if len(found) == count else [None] * count
 
 
@@ -201,6 +207,8 @@ def read_reply(text: str, count: int) -> List[Optional[str]]:
     """Verdicts from a raw reply in the pipeline's JSON format, by claim
     number, or written as text (``_plain_verdicts()``); a claim with no
     readable verdict is None."""
+    from src.utils.grounding_differences import decided_level
+
     out: List[Optional[str]] = [None] * count
     body = _FENCE.sub("", (text or "").strip())
     start, end = body.find("{"), body.rfind("}")
@@ -217,8 +225,8 @@ def read_reply(text: str, count: int) -> List[Optional[str]]:
         n = item.get("claim_number")
         i = n - 1 if isinstance(n, int) and 1 <= n <= count else pos
         level = item.get("support_level")
-        if i < count and level in LEVELS:
-            out[i] = level
+        if i < count and level in LEVELS:  # a listed difference rules out supported
+            out[i] = decided_level(level, item.get("differences"))
     return out
 
 

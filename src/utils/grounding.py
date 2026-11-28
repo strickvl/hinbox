@@ -271,11 +271,12 @@ _REPLY_INSTRUCTION = "For each claim, first write the reasoning"
 def grounding_system_prompt(rules: Optional[str] = None) -> str:
     """The judge's instructions; ``rules`` (default ``HINBOX_GROUNDING_RULES``)
     "strict" adds the stricter rules before the reply instructions."""
-    if (rules or GROUNDING_RULES) != "strict":
-        return _GROUNDING_SYSTEM_PROMPT
-    return _GROUNDING_SYSTEM_PROMPT.replace(
-        _REPLY_INSTRUCTION, _STRICT_RULES + _REPLY_INSTRUCTION
-    )
+    from src.utils import grounding_differences as gd
+
+    prompt = _GROUNDING_SYSTEM_PROMPT
+    if (rules or GROUNDING_RULES) == "strict":
+        prompt = prompt.replace(_REPLY_INSTRUCTION, _STRICT_RULES + _REPLY_INSTRUCTION)
+    return gd.with_differences(prompt) if gd.decides() else prompt
 
 
 # HINBOX_GROUNDING_PASSAGE=on: the judge also copies the passage its verdict
@@ -597,7 +598,10 @@ def grounding_judge(model_type: str) -> str:
     model = grounding_model(model_type)
     if is_local_model(model) and GROUNDING_REASONING_EFFORT:
         model = f"{model} (reasoning_effort={GROUNDING_REASONING_EFFORT})"
-    return f"{model} (rules=strict)" if GROUNDING_RULES == "strict" else model
+    from src.utils.grounding_differences import decides
+
+    model += " (rules=strict)" if GROUNDING_RULES == "strict" else ""
+    return model + (" (decide=differences)" if decides() else "")
 
 
 def judged_by(report: Any, model: str) -> bool:
@@ -668,6 +672,9 @@ def judge_claims(
     annotate(article_id=article_id, claim_count=len(claims), model=model)
     local = is_local_model(model)
     generate = local_generation if local else cloud_generation
+    from src.utils import grounding_differences as gd
+
+    verdict_model = gd.verdict_model(ask_passage, ClaimVerdict, ClaimVerdictWithPassage)
     thinking = (
         local_thinking(GROUNDING_REASONING_EFFORT, GROUNDING_THINKING_MAX_TOKENS)
         if local and GROUNDING_REASONING_EFFORT
@@ -684,9 +691,7 @@ def judge_claims(
             with thinking:
                 reply = generate(
                     messages=messages,
-                    response_model=List[
-                        ClaimVerdictWithPassage if ask_passage else ClaimVerdict
-                    ],
+                    response_model=List[verdict_model],
                     model=model,
                     temperature=0,
                     max_tokens=GROUNDING_MAX_TOKENS,
@@ -704,7 +709,10 @@ def judge_claims(
     for pos, v in enumerate(reply):
         i = v.claim_number - 1 if by_number else pos
         if i < len(claims):
-            out[i] = (v.support_level, v.reasoning, getattr(v, "passage", None))
+            found = getattr(v, "differences", None)  # HINBOX_GROUNDING_DECIDE
+            level = gd.decided_level(v.support_level, found)
+            why = gd.reasoning_with(found, v.reasoning)
+            out[i] = (level, why, getattr(v, "passage", None))
     missing = sum(1 for v in out if v is None)
     counts = Counter(getattr(v[0], "value", v[0]) for v in out if v is not None)
     level_counts = {
