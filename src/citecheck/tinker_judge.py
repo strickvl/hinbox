@@ -39,11 +39,46 @@ def is_tinker_model(model: str) -> bool:
     return model.startswith("tinker://") or model.startswith("tinker/")
 
 
+_PLAIN_LEVEL = re.compile(
+    r"support[ _]level\W{0,4}(supported|partial|not[ _]supported|unclear)", re.I
+)
+_CLAIM_HEAD = re.compile(r"^[\s*#]*(?:claim\s*)?\d+\s*[.):]*[\s*]*", re.I)
+_REASON_HEAD = re.compile(r"^[\s*]*reasoning[\s*]*:[\s*]*", re.I)
+_JSON_KEYS = re.compile(r'"(?:items|support_level|claim_number)"')
+
+
+def _plain_items(body: str, cls: Any) -> List[Any]:
+    """Verdicts from a reply written as text ("1. Reasoning: ...
+    Support_level: partial"), as untuned Inkling answers, numbered in order:
+    the same reading as ``read_reply()`` in ``score.py`` and ``plain_items()``
+    in ``scripts/tinker_citecheck.py``. The reasoning is the text between one
+    verdict and the next; in differences mode the differences listed there
+    go with it."""
+    from src.utils.grounding_differences import plain_differences
+
+    out, prev = [], 0
+    for n, m in enumerate(_PLAIN_LEVEL.finditer(body), 1):
+        segment = body[prev : m.start()]
+        reason = _REASON_HEAD.sub("", _CLAIM_HEAD.sub("", segment)).strip(" \n*-:")
+        fields: Dict[str, Any] = {
+            "claim_number": n,
+            "reasoning": reason or None,
+            "support_level": m.group(1).lower().replace(" ", "_"),
+        }
+        if "differences" in cls.model_fields:
+            fields["differences"] = plain_differences(segment)
+        out.append(cls(**fields))
+        prev = m.end()
+    return out
+
+
 def parse_reply(text: str, with_passage: bool = False) -> List[Any]:
     """``ClaimVerdict`` objects (``ClaimVerdictWithPassage`` when the prompt
     asked for a copied passage) from a raw reply in the pipeline's JSON
-    format (``{"items": [...]}``); an item that doesn't fit is left out, as
-    an Instructor reply would leave it out."""
+    format (``{"items": [...]}``), or from a reply written as text
+    (``_plain_items()``); an item that doesn't fit is left out, as an
+    Instructor reply would leave it out. JSON that doesn't parse (cut off
+    before its closing brackets) is never read as text."""
     from src.utils import grounding_differences as gd
     from src.utils.grounding import ClaimVerdict, ClaimVerdictWithPassage
 
@@ -51,12 +86,14 @@ def parse_reply(text: str, with_passage: bool = False) -> List[Any]:
 
     body = _FENCE.sub("", (text or "").strip())
     start, end = body.find("{"), body.rfind("}")
-    if start < 0 or end <= start:
-        return []
-    try:
-        payload = json.loads(body[start : end + 1])
-    except json.JSONDecodeError:
-        return []
+    payload = None
+    if 0 <= start < end:
+        try:
+            payload = json.loads(body[start : end + 1])
+        except json.JSONDecodeError:
+            payload = None
+    if payload is None:
+        return [] if _JSON_KEYS.search(body) else _plain_items(body, cls)
     items = payload.get("items") if isinstance(payload, dict) else None
     out = []
     for item in items or []:

@@ -28,6 +28,7 @@ send is built by the plain functions here, which the tests check.
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -316,7 +317,10 @@ async def experiment(
     poll_seconds: float = 20.0,
 ) -> Dict[str, Any]:
     """Cohort of the labelled sessions, experiment with ``model`` as the
-    override, one run; with ``wait`` its aggregates once it ends."""
+    override, one run; with ``wait`` its aggregates once it ends. ``name`` is
+    made a name Kitaru takes (``kitaru_name()``); the cohort is
+    ``<name>-cohort``."""
+    name = kitaru_name(name)
     from kitaru.api_models.v1.cohort import CohortCreateRequest
     from kitaru.api_models.v1.cohort_version import CohortVersionCreateRequest
     from kitaru.api_models.v1.experiment import ExperimentCreateRequest
@@ -329,7 +333,7 @@ async def experiment(
         a = await _agent(client, agent)
         sessions = await _labelled_sessions(client, a.id, item_ids)
         cohort = await client.cohorts.create(
-            CohortCreateRequest(name=f"{name} cohort", agent_id=a.id)
+            CohortCreateRequest(name=f"{name}-cohort", agent_id=a.id)
         )
         version = await client.cohorts.create_version(
             cohort.id,
@@ -358,6 +362,7 @@ async def experiment(
             ),
         )
         out: Dict[str, Any] = {
+            "name": name,
             "experiment_id": str(exp.id),
             "run_id": str(run.id),
             "sessions": len(sessions),
@@ -375,6 +380,19 @@ async def experiment(
             await client.experiment_runs.get_evaluation_aggregates(run.id)
         )
         return out
+
+
+_NOT_NAME = re.compile(r"[^A-Za-z0-9_-]+")
+
+
+def kitaru_name(name: str) -> str:
+    """``name`` as Kitaru takes it for a cohort or experiment: only letters,
+    digits, ``-`` and ``_``, starting and ending with a letter or digit
+    ("Opus vs untuned: strict" -> "Opus-vs-untuned-strict")."""
+    slug = re.sub(r"-{2,}", "-", _NOT_NAME.sub("-", name)).strip("-_")
+    if not slug:
+        raise ValueError(f"name {name!r} has no letters or digits")
+    return slug
 
 
 def save_json(path: str, value: Any) -> None:
