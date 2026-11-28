@@ -48,6 +48,15 @@ Steps:
   Training on the result teaches the model to keep reasoning the way it
   already does, only to land on the labelled verdict: the plain export has
   no reasoning in its replies, so a model trained on it stops thinking.
+  ``--hint`` (hinted reasoning, as in STaR's "rationalization") is for the
+  claims no plain answer ever gets right (``citecheck hard``): the labelled
+  verdicts are added to the end of the sampling prompt as reference
+  verdicts, with a note to reason from the article and not mention them;
+  an answer that lands on the labels and doesn't mention them
+  (``mentions_hint()``) is kept, stored under the original prompt without
+  the hint, so the model learns reasoning that reaches the right verdict on
+  a claim it would otherwise get wrong. ``--skip-kept <log>`` passes over
+  examples an earlier distill log already kept.
 - ``download --checkpoint <tinker://.../external_weights/...|weights/...> --out <dir>``:
   ``tinker checkpoint download`` into ``<dir>``, then the tensors are listed.
 
@@ -301,6 +310,56 @@ def distilled_row(prompt: list, thinking: str, text: str, meta: dict) -> dict:
     }
 
 
+HINT_HEADER = "## REFERENCE VERDICTS (for checking your work)"
+HINT_NOTE = (
+    "These are the verdicts a careful checker reached under the same rules. "
+    "Work from the article to your own verdict as usual; where a reference "
+    "verdict differs from your first reading, find the exact words of the "
+    "article and of the claim that decide it. Do not mention these reference "
+    "verdicts, or that you were given any, in your reasoning or your answer."
+)
+_HINT_WORDS = re.compile(
+    r"reference verdict|reference answer|\bthe hints?\b|\bhints? (?:says?|given)"
+    r"|answer key|(?:i am|i'm|we are|we're|i was|we were|i've been|i have been) "
+    r"(?:told|given)"
+    r"|(?:correct|expected|given|target|provided|reference) "
+    r"(?:verdict|answer|label|level|support)"
+    r"|careful checker|for checking your work",
+    re.I,
+)
+
+
+def _with_text(message: dict, extra: str) -> dict:
+    content = message.get("content")
+    if isinstance(content, list):
+        return {**message, "content": content + [{"type": "text", "text": extra}]}
+    return {**message, "content": (content or "") + extra}
+
+
+def hinted_prompt(prompt: list, gold: dict) -> list:
+    """``prompt`` with the labelled verdicts added at the end of its last user
+    message, for ``distill --hint``. Only the sampling prompt carries them:
+    the kept row is stored with the original prompt."""
+    lines = "\n".join(f"Claim {n}: {level}" for n, level in sorted(gold.items()))
+    extra = f"\n\n{HINT_HEADER}\n{lines}\n\n{HINT_NOTE}"
+    last = max(i for i, m in enumerate(prompt) if m.get("role") == "user")
+    return prompt[:last] + [_with_text(prompt[last], extra)] + prompt[last + 1 :]
+
+
+def mentions_hint(*texts: str) -> bool:
+    """True when an answer's reasoning or text shows it was given the
+    verdicts: such an answer would teach the model to cite a hint it will
+    never see, so it is never kept."""
+    return any(_HINT_WORDS.search(t or "") for t in texts)
+
+
+def kept_keys(log_path: str) -> set:
+    """Keys of the examples an earlier distill log kept."""
+    if not log_path:
+        return set()
+    return {r["key"] for r in _read(log_path) if r.get("kept") is not None}
+
+
 def _weighted(renderer, messages: list, effort: float) -> int:
     from tinker_cookbook.renderers import TrainOnWhat
 
@@ -326,14 +385,21 @@ def cmd_distill(args) -> None:
     )
     log_path = args.out + ".log.jsonl"
     tried = {r["key"] for r in _read(log_path)} if os.path.exists(log_path) else set()
+    skip = kept_keys(args.skip_kept)
     todo = []
     for row in _read(args.data):
         prompt, last = row["messages"][:-1], row["messages"][-1]
-        if row_key(prompt) in tried:
+        if row_key(prompt) in tried or row_key(prompt) in skip:
             continue
         gold = reply_levels(last["content"] if isinstance(last["content"], str) else "")
         todo.append((prompt, gold, row.get("item_ids")))
-    print(f"distilling {len(todo)} examples ({len(tried)} already in {log_path})")
+    if args.limit and len(todo) > args.limit:  # a fixed random part
+        random.Random(args.seed).shuffle(todo)
+        todo = todo[: args.limit]
+    print(
+        f"distilling {len(todo)} examples ({len(tried)} already in {log_path}, "
+        f"{len(skip)} kept before){' with the labels as hints' if args.hint else ''}"
+    )
     checked = os.path.exists(args.out)
     kept = total = 0
     pending: list = []
@@ -341,7 +407,8 @@ def cmd_distill(args) -> None:
     while queue or pending:
         while queue and len(pending) < args.workers:
             prompt, gold, ids = queue.pop(0)
-            model_input = renderer.build_generation_prompt(prompt, effort=args.effort)
+            asked = hinted_prompt(prompt, gold) if args.hint and gold else prompt
+            model_input = renderer.build_generation_prompt(asked, effort=args.effort)
             future = sampler.sample(
                 prompt=model_input, num_samples=args.samples, sampling_params=params
             )
@@ -350,7 +417,7 @@ def cmd_distill(args) -> None:
         resp = _resolve(future)
         total += 1
         log = {"key": row_key(prompt), "item_ids": ids, "gold": gold, "kept": None}
-        lengths, unreadable, answers = [], 0, []
+        lengths, unreadable, answers, leaked = [], 0, [], 0
         for i, seq in enumerate(resp.sequences):
             message, _ = renderer.parse_response(seq.tokens)
             thinking, text = _parts(message)
@@ -358,9 +425,14 @@ def cmd_distill(args) -> None:
             levels = reply_levels(text)
             answers.append({str(n): level for n, level in levels.items()})
             unreadable += not levels  # no verdicts, or cut off
-            if log["kept"] is None and matches_gold(text, gold, args.loose):
+            matched = matches_gold(text, gold, args.loose)
+            if matched and args.hint and mentions_hint(thinking, text):
+                leaked += 1  # it leans on the hint: never kept
+                continue
+            if log["kept"] is None and matched:
                 log["kept"] = i
                 meta = {"sample": i, "output_tokens": len(seq.tokens), "item_ids": ids}
+                meta["hinted"] = bool(args.hint)
                 text = as_json_reply(text)  # the reasoning stays in `thinking`
                 out = distilled_row(prompt, thinking, text, meta)
                 if thinking and not checked:  # reasoning must carry weight
@@ -377,6 +449,8 @@ def cmd_distill(args) -> None:
                 kept += 1
         log["output_tokens"], log["unreadable"] = lengths, unreadable
         log["answers"] = answers  # each answer's verdicts, kept or not
+        if args.hint:
+            log["hinted"], log["leaked"] = True, leaked
         log["seconds"] = round(time.perf_counter() - start, 1)
         _append(log_path, log)
         print(
@@ -401,6 +475,9 @@ def _distill_summary(log_path: str) -> None:
     print(
         f"{bad} of {answers} answers had no readable verdicts (cut off, or another format)"
     )
+    if any(r.get("hinted") for r in rows):
+        leaked = sum(r.get("leaked", 0) for r in rows)
+        print(f"{leaked} matching answers mentioned the hint and were not kept")
 
 
 def _sample_rows(sampler, renderer, prompts: list, args, out_path: str = "") -> list:
@@ -660,6 +737,21 @@ def main() -> None:
     p.add_argument(
         "--loose", action="store_true", help="distill: partial = not supported"
     )
+    p.add_argument(
+        "--hint",
+        action="store_true",
+        help="distill: show the labels in the sampling prompt (kept rows have none)",
+    )
+    p.add_argument(
+        "--skip-kept", default="", help="distill: skip examples this log kept"
+    )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="distill: at most this many new examples, a seeded random pick (0 = all)",
+    )
+    p.add_argument("--seed", type=int, default=6, help="distill --limit: the pick")
     args = p.parse_args()
     os.makedirs(
         args.out
