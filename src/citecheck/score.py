@@ -117,9 +117,12 @@ def predict_with_model(
     texts: Dict[str, str],
     model: str,
     workers: int = 1,
+    heads: Optional[Dict[str, str]] = None,
 ) -> Tuple[Dict[str, Optional[str]], Dict[str, Any]]:
     """Ask ``model`` (through the pipeline's judge call) about every item,
-    one call per article chunk. Returns verdicts and timing."""
+    one call per article chunk. Returns verdicts and timing. ``heads``
+    (article id -> lines, ``article_heads()``) go above each article's text."""
+    heads = heads or {}
     from concurrent.futures import ThreadPoolExecutor
 
     chunks = article_chunks(items)
@@ -130,7 +133,8 @@ def predict_with_model(
         try:
             verdicts = judge_claims(
                 article_id=aid,
-                article_text=(texts.get(aid) or "")[:GROUNDING_MAX_ARTICLE_CHARS],
+                article_text=heads.get(aid, "")
+                + (texts.get(aid) or "")[:GROUNDING_MAX_ARTICLE_CHARS],
                 claims=[(c["entity_name"], c["claim"]) for c in group],
                 model_type="ollama" if model.startswith("ollama/") else "cloud",
                 ask_passage=False,
@@ -164,16 +168,21 @@ def stored_predictions(
 
 
 def prompt_rows(
-    items: List[Dict[str, Any]], texts: Dict[str, str]
+    items: List[Dict[str, Any]],
+    texts: Dict[str, str],
+    heads: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """One judge prompt per article chunk of ``items``, for a model sampled
-    outside Hinbox (a tuned model on Tinker): ``{"item_ids", "messages"}``."""
+    outside Hinbox (a tuned model on Tinker): ``{"item_ids", "messages"}``.
+    ``heads`` (article id -> lines) go above each article's text."""
+    heads = heads or {}
     return [
         {
             "item_ids": [c["item_id"] for c in group],
             "messages": grounding_messages(
                 aid,
-                (texts.get(aid) or "")[:GROUNDING_MAX_ARTICLE_CHARS],
+                heads.get(aid, "")
+                + (texts.get(aid) or "")[:GROUNDING_MAX_ARTICLE_CHARS],
                 [(c["entity_name"], c["claim"]) for c in group],
             ),
         }
