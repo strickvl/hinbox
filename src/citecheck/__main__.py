@@ -17,6 +17,7 @@ Citation checker, in order:
 
 Several answers per claim and paired comparisons (``src/citecheck/votes.py``):
 
+    just citecheck dev-set --teach-dir <teach dir> --out <dir> [--n 400]   # judge-prompt work off the test set
     just citecheck votes   --items ... --labels ... --replies <replies with --votes N> [--save <file>]
     just citecheck paired  --items ... --labels ... --sources untuned=<file> v4=<file> ... [--core-of a,b --audit-of a,b --audit-out <ids>]
 
@@ -189,6 +190,43 @@ def _agreed(out: str, teachers: tuple) -> List[Dict[str, Any]]:
     )
     print(f"{len(labels)} teacher labels agreed; left out {dropped}")
     return labels
+
+
+def cmd_dev_set(a: argparse.Namespace) -> None:
+    """Items and labels from the teachers' agreed verdicts on train and tune
+    articles, for developing a judge prompt without reading the test set.
+    The labels measure only; nothing here is trained on."""
+    from src.citecheck.items import article_split, label_row
+    from src.citecheck.teach import same_rules
+
+    path = os.path.join(a.teach_dir, "teacher_verdicts.jsonl")
+    same_rules(read_jsonl(path), path, "set HINBOX_GROUNDING_RULES to match")
+    splits = set(_teachers(a.splits))
+    if "test" in splits:
+        sys.exit("the dev set never draws on test articles")
+    agreed = [
+        r
+        for r in _agreed(a.teach_dir, _teachers(a.teachers))
+        if article_split(r["article_id"]) in splits
+    ]
+    random.Random(a.seed).shuffle(agreed)
+    picked = agreed[: a.n] if a.n else agreed
+    keep = ("item_id", "article_id", "entity_name", "claim")
+    items = [
+        {**{k: r[k] for k in keep}, "stratum": article_split(r["article_id"])}
+        for r in picked
+    ]
+    labels = [
+        label_row(
+            r["item_id"], "yes" if r["level"] == "supported" else "no", who="teachers"
+        )
+        for r in picked
+    ]
+    os.makedirs(a.out, exist_ok=True)
+    write_jsonl(os.path.join(a.out, "dev_items.jsonl"), items)
+    write_jsonl(os.path.join(a.out, "dev_labels.jsonl"), labels)
+    yes = sum(r["label"] == "yes" for r in labels)
+    print(f"wrote {len(items)} dev items ({yes} yes, {len(items) - yes} no) to {a.out}")
 
 
 def cmd_audit(a: argparse.Namespace) -> None:
@@ -575,6 +613,11 @@ def main(argv: List[str] = None) -> None:
     sp.add_argument("--replies")
     sp.add_argument("--workers", type=int, default=1)
     sp.add_argument("--save")
+    sp = add("dev-set", cmd_dev_set, "teach-dir", "out")
+    sp.add_argument("--splits", default="tune,train")
+    sp.add_argument("--n", type=int, default=400, help="0 = every agreed label")
+    sp.add_argument("--seed", type=int, default=28)
+    sp.add_argument("--teachers", default=teachers)
     sp = add("votes", cmd_votes, "items", "labels", "replies")
     sp.add_argument("--save")
     sp = add("paired", cmd_paired, "items", "labels")

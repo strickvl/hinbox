@@ -44,9 +44,11 @@ def parse_reply(text: str, with_passage: bool = False) -> List[Any]:
     asked for a copied passage) from a raw reply in the pipeline's JSON
     format (``{"items": [...]}``); an item that doesn't fit is left out, as
     an Instructor reply would leave it out."""
+    from src.utils import grounding_differences as gd
     from src.utils.grounding import ClaimVerdict, ClaimVerdictWithPassage
 
-    cls = ClaimVerdictWithPassage if with_passage else ClaimVerdict
+    cls: Any = ClaimVerdictWithPassage if with_passage else ClaimVerdict
+    cls = gd.ClaimVerdictWithDifferences if gd.decides() else cls
 
     body = _FENCE.sub("", (text or "").strip())
     start, end = body.find("{"), body.rfind("}")
