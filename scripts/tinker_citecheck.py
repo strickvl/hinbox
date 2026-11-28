@@ -28,7 +28,11 @@ Steps:
   ``<dir>/checkpoints.jsonl``).
 - ``sample --checkpoint <tinker://...> --prompts <file> --out <replies.jsonl>``:
   one reply per prompt at temperature 0, with seconds and token counts.
-  ``--checkpoint base`` samples the untuned model.
+  ``--checkpoint base`` samples the untuned model. ``--votes N`` (N > 1)
+  asks each prompt N times at ``--temperature`` instead, up to ``--workers``
+  prompts at once, and writes one row per answer with its ``sample``
+  number, for ``just citecheck votes`` (each answer set alone, majority
+  vote, "pass only if k of N say supported").
 - ``distill --data <train.jsonl> --out <distilled.jsonl>``: self-distillation
   (rejection sampling). The untuned model (or ``--checkpoint``) answers each
   example's prompt ``--samples`` times at ``--temperature``, reasoning
@@ -74,6 +78,13 @@ def _append(path: str, row: dict) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _append_all(path: str, rows: list) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    text = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(text)
 
 
 def _renderer(model: str):
@@ -422,6 +433,52 @@ def _sample_rows(sampler, renderer, prompts: list, args, out_path: str = "") -> 
     return replies
 
 
+def _sample_votes(sampler, renderer, prompts: list, args, out_path: str) -> list:
+    """``args.votes`` answers per prompt at ``args.temperature``, up to
+    ``args.workers`` prompts at once; all of a prompt's answers are written
+    together, so a resumed run never holds part of a prompt."""
+    import tinker
+
+    params = tinker.SamplingParams(
+        max_tokens=args.max_tokens,
+        temperature=args.temperature,
+        stop=renderer.get_stop_sequences(),
+    )
+    replies, pending, queue = [], [], list(prompts)
+    while queue or pending:
+        while queue and len(pending) < args.workers:
+            row = queue.pop(0)
+            prompt = renderer.build_generation_prompt(
+                row["messages"], effort=args.effort
+            )
+            future = sampler.sample(
+                prompt=prompt, num_samples=args.votes, sampling_params=params
+            )
+            pending.append((row, prompt, future, time.perf_counter()))
+        row, prompt, future, start = pending.pop(0)
+        resp = _resolve(future)
+        seconds = round(time.perf_counter() - start, 2)
+        batch = []
+        for i, seq in enumerate(resp.sequences):
+            message, _ = renderer.parse_response(seq.tokens)
+            thinking, content = _parts(message)
+            out = {
+                "item_ids": row["item_ids"],
+                "sample": i,
+                "temperature": args.temperature,
+                "reply": content,
+                "thinking": thinking,
+                "output_tokens": len(seq.tokens),
+                "prompt_tokens": prompt.length,
+                "seconds": seconds,
+            }
+            batch.append(out)
+        _append_all(out_path, batch)  # one write: a stop never leaves part of a set
+        replies += batch
+        print(f"{len(replies) // args.votes}/{len(prompts)} prompts ({seconds} s)")
+    return replies
+
+
 def cmd_smoke(args) -> None:
     rows = _read(args.data)[: args.batch_size * 15]
     client = train_loop(args, rows, [], steps=15)
@@ -534,10 +591,22 @@ def cmd_sample(args) -> None:
         sampler = _resolve(service.create_sampling_client(model_path=args.checkpoint))
     done = set()
     if os.path.exists(args.out):
-        done = {tuple(r["item_ids"]) for r in _read(args.out)}
+        counts: dict = {}
+        for r in _read(args.out):
+            counts[tuple(r["item_ids"])] = counts.get(tuple(r["item_ids"]), 0) + 1
+        short = [k for k, n in counts.items() if n != max(1, args.votes)]
+        if short:  # a set of answers of the wrong size would skew the vote
+            sys.exit(
+                f"{len(short)} prompts in {args.out} have other than {args.votes} "
+                "answers: use a new --out, or remove their rows"
+            )
+        done = set(counts)
     prompts = [p for p in _read(args.prompts) if tuple(p["item_ids"]) not in done]
     print(f"sampling {len(prompts)} prompts ({len(done)} already in {args.out})")
-    replies = _sample_rows(sampler, renderer, prompts, args, out_path=args.out)
+    if args.votes > 1:
+        replies = _sample_votes(sampler, renderer, prompts, args, args.out)
+    else:
+        replies = _sample_rows(sampler, renderer, prompts, args, out_path=args.out)
     if replies:
         tokens = sum(r["output_tokens"] for r in replies) / len(replies)
         print(f"mean output tokens per prompt: {tokens:.0f}")
@@ -573,8 +642,21 @@ def main() -> None:
     p.add_argument(
         "--samples", type=int, default=4, help="distill: answers per example"
     )
-    p.add_argument("--temperature", type=float, default=0.7, help="distill only")
-    p.add_argument("--workers", type=int, default=8, help="distill: prompts at once")
+    p.add_argument(
+        "--temperature", type=float, default=0.7, help="distill, and sample --votes"
+    )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=8,
+        help="distill, sample --votes: prompts at once",
+    )
+    p.add_argument(
+        "--votes",
+        type=int,
+        default=1,
+        help="sample: answers per prompt (1 = temperature 0)",
+    )
     p.add_argument(
         "--loose", action="store_true", help="distill: partial = not supported"
     )
