@@ -28,17 +28,18 @@ with `spec.yaml`:
 ```yaml
 version:
   run_spec:
-    command: uv run --project experiments/tinker_zenml python -m scripts.kitaru_step
+    command: uv run --project experiments/tinker_zenml --with anthropic python -m scripts.kitaru_step
     working_dir: /path/to/hinbox
     runtime_capabilities: {overrides: true, tool_policies: false}
 ```
 
-(The Tinker project's environment, so a replay can sample a `tinker://` checkpoint; for cloud and local judges only, `uv run --extra kitaru` works too.)
+(The Tinker project's environment, so a replay can sample a `tinker://` checkpoint, plus the Anthropic SDK, which that environment lacks, so a replay can also use a Claude checker; without `--with anthropic` every Claude replay fails on import. For cloud and local judges only, `uv run --extra kitaru --extra anthropic` works too. The worker runs this command, whatever environment the worker itself runs in.)
 
 ```bash
 uvx --from 'kitaru[cli]' kitaru evaluator register hinbox-citation-check-checks \
     --script scripts/kitaru_evaluators/citation_check_checks.py \
     --entrypoint evaluate --agent-id <hinbox-citation-check agent id>
+just kitaru-describe               # the evaluator's description on its dashboard page
 just kitaru-worker-tinker          # keep it running: it does the replays and evaluations
 ```
 

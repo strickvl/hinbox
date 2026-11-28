@@ -24,7 +24,10 @@ true/false per session and only present where they apply:
 - ``answered``: every claim got a verdict (a failed reply is never a pass).
 
 With one claim per session, which is what ``kitaru-sessions`` writes, the
-means are exactly the shares ``just citecheck score`` reports. Speed and
+means are exactly the shares ``just citecheck score`` reports. Each quality
+row's ``passed`` says whether the session went right (no wrong claim passed,
+no good claim doubted), so the dashboard colours an error red rather than
+the score: ``wrong_passed`` scored false is a pass. Speed and
 price rows: ``seconds`` (the session's wall time), ``input_tokens``,
 ``output_tokens``, and ``cost_usd`` from the evaluator's ``prices`` (model
 -> [dollars per million input tokens, per million output]) or else the cost
@@ -86,6 +89,7 @@ def citation_results(
         {
             "name": "answered",
             "score": all(level is not None for level in levels),
+            "passed": all(level is not None for level in levels),
             "explanation": f"{sum(lv is not None for lv in levels)}/{len(levels)} claims got a verdict",
         }
     ]
@@ -99,6 +103,7 @@ def citation_results(
             {
                 "name": "wrong_passed",
                 "score": bool(passed),
+                "passed": not passed,
                 "explanation": f"{len(passed)} of {len(no)} claims labelled 'no' called supported",
             }
         )
@@ -108,6 +113,7 @@ def citation_results(
             {
                 "name": "good_doubted",
                 "score": bool(doubted),
+                "passed": not doubted,
                 "explanation": f"{len(doubted)} of {len(yes)} claims labelled 'yes' not called supported",
             }
         )
@@ -115,7 +121,7 @@ def citation_results(
         right = all(levels[i] == "supported" for i in yes) and all(
             levels[i] not in (None, "supported") for i in no
         )
-        rows.append({"name": "agrees", "score": right})
+        rows.append({"name": "agrees", "score": right, "passed": right})
     if seconds is not None:
         rows.append({"name": "seconds", "score": float(seconds), "min_score": 0.0})
     for name, value in (

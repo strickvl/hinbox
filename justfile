@@ -97,6 +97,10 @@ kitaru-worker *args:
 kitaru-worker-tinker *args:
     uv run --env-file .env --project experiments/tinker_zenml kitaru worker start {{args}}
 
+# Give each registered Hinbox evaluator its description in the Kitaru dashboard (`--dry-run` lists what would change)
+kitaru-describe *args:
+    uv run --extra kitaru python scripts/kitaru_describe_evaluators.py {{args}}
+
 # ─── Tinker fine-tune as a ZenML pipeline (own environment in experiments/tinker_zenml/) ──
 
 # Train the citation checker on Tinker, sample and score the test set, optionally compare in Kitaru (e.g. `just tinker-pipeline --data-dir data/citecheck --articles <parquet> --kitaru`)
