@@ -112,11 +112,12 @@ def reasoning_with(differences: Any, reasoning: Optional[str]) -> Optional[str]:
 
 
 # A "Differences:" header at the start of a line (after a claim number, if
-# any: "1. Differences: ..."), so a reasoning that only
+# any: "1. Differences: ..."), up to the next field header on the same line
+# or a later one ("... Reasoning: ..."), so a reasoning that only
 # mentions "the difference" in an older reply is never read as a list
 _PLAIN_DIFF = re.compile(
     r"(?:^|\n)[\W_]*(?:claim\s*)?\d*[\W_]*differences?[*_]*\s*:"
-    r"(.*?)(?=\n[\W_]*(?:claim\s*)?\d*[\W_]*(?:reasoning|support[ _]level)|$)",
+    r"(.*?)(?=\b(?:reasoning|support[ _]level)\b[*_]*\s*:|$)",
     re.I | re.S,
 )
 

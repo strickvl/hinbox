@@ -89,6 +89,12 @@ def test_raw_replies_json_and_text():
     assert read_reply(text, 2) == ["partial", "supported"]
     same_line = "1. Differences: date not in article\nSupport_level: supported"
     assert read_reply(same_line, 1) == ["partial"]
+    inline = "1. Differences: none. Reasoning: The article states this. Support_level: supported"
+    assert read_reply(inline, 1) == ["supported"]
+    inline_diff = (
+        "1. Differences: adds a cause. Reasoning: close. Support_level: supported"
+    )
+    assert read_reply(inline_diff, 1) == ["partial"]
     numbered = "**Claim 1** Differences: none\nSupport_level: supported"
     assert read_reply(numbered, 1) == ["supported"]
     # an older reply that only mentions "the difference" keeps its verdict
