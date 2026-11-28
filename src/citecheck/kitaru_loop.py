@@ -64,6 +64,17 @@ def step_inputs(
     }
 
 
+def shard(items: List[Dict[str, Any]], part: str) -> List[Dict[str, Any]]:
+    """Part ``"i/N"`` of ``items``: every N-th item from the i-th (counting
+    from 0), so N processes, each writing its own file, cover the items once.
+    One process at a time per file, because ``run_step()`` sets up tracing
+    for the whole process; several processes run the judge side by side."""
+    i, n = (int(x) for x in part.split("/"))
+    if not 0 <= i < n:
+        raise ValueError(f"part {part!r}: need 0 <= i < N")
+    return items[i::n]
+
+
 def build_sessions(
     items: List[Dict[str, Any]],
     texts: Dict[str, str],

@@ -300,6 +300,15 @@ def test_sessions_are_built_one_claim_each_and_resume(tmp_path):
     assert again["skipped"] == 2 and len(calls) == 2
 
 
+def test_parts_cover_every_item_once():
+    items = [{"item_id": str(k)} for k in range(7)]
+    parts = [kl.shard(items, f"{i}/3") for i in range(3)]
+    assert sorted(r["item_id"] for p in parts for r in p) == [str(k) for k in range(7)]
+    assert [len(p) for p in parts] == [3, 2, 2]
+    with pytest.raises(ValueError):
+        kl.shard(items, "3/3")
+
+
 def test_the_investigation_asks_one_question_per_session_with_the_claim_marked():
     pytest.importorskip("kitaru.api_models.v1.investigation")
     import uuid

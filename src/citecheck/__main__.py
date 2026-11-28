@@ -37,7 +37,7 @@ Merge check:
 
 Kitaru (``src/citecheck/kitaru_loop.py``; needs ``uv sync --extra kitaru``):
 
-    just citecheck kitaru-sessions    --items ... --articles ... --model <judge> --file <dir>/sessions.jsonl [--labels ...]
+    just citecheck kitaru-sessions    --items ... --articles ... --model <judge> --file <dir>/sessions.jsonl [--labels ...] [--part i/N]
     kitaru session import <dir>/sessions.jsonl --importer kitaru/kitaru-jsonl@latest --agent hinbox-citation-check@latest
     just citecheck kitaru-investigate --name "Citation test set"
     just citecheck kitaru-pull        --investigation <id> --labels <dir>/test_labels.jsonl
@@ -438,9 +438,11 @@ def cmd_merge_score(a: argparse.Namespace) -> None:
 
 
 def cmd_kitaru_sessions(a: argparse.Namespace) -> None:
-    from src.citecheck.kitaru_loop import build_sessions
+    from src.citecheck.kitaru_loop import build_sessions, shard
 
     items = read_jsonl(a.items)
+    if a.part:
+        items = shard(items, a.part)
     labels = latest_labels(a.labels) if a.labels else {}
     counts = build_sessions(items, article_texts(a.articles), labels, a.model, a.file)
     print(json.dumps(counts))
@@ -692,6 +694,9 @@ def main(argv: List[str] = None) -> None:
         "kitaru-sessions", cmd_kitaru_sessions, "items", "articles", "model", "file"
     )
     sp.add_argument("--labels")
+    sp.add_argument(
+        "--part", help="i/N: only every N-th item from the i-th, for N processes"
+    )
     sp = add("kitaru-investigate", cmd_kitaru_investigate, "name")
     sp.add_argument("--items", help="only these test items (default: all)")
     sp = add("kitaru-pull", cmd_kitaru_pull, "investigation", "labels")
