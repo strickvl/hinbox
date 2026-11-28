@@ -47,8 +47,7 @@ def parse_reply(text: str, with_passage: bool = False) -> List[Any]:
     from src.utils import grounding_differences as gd
     from src.utils.grounding import ClaimVerdict, ClaimVerdictWithPassage
 
-    cls: Any = ClaimVerdictWithPassage if with_passage else ClaimVerdict
-    cls = gd.ClaimVerdictWithDifferences if gd.decides() else cls
+    cls = gd.verdict_model(with_passage, ClaimVerdict, ClaimVerdictWithPassage)
 
     body = _FENCE.sub("", (text or "").strip())
     start, end = body.find("{"), body.rfind("}")

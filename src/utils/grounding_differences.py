@@ -58,6 +58,25 @@ class ClaimVerdictWithDifferences(BaseModel):
     support_level: SupportLevel
 
 
+class ClaimVerdictWithDifferencesAndPassage(ClaimVerdictWithDifferences):
+    """The same, plus the copied passage when ``HINBOX_GROUNDING_PASSAGE`` asks
+    for one, after the verdict as in ``ClaimVerdictWithPassage``."""
+
+    passage: Optional[str] = None
+
+
+def verdict_model(with_passage: bool, plain: Any, with_copy: Any) -> Any:
+    """The reply schema for one verdict: ``plain`` or ``with_copy`` (the
+    passage schema) normally, their differences versions in this mode."""
+    if decides():
+        return (
+            ClaimVerdictWithDifferencesAndPassage
+            if with_passage
+            else ClaimVerdictWithDifferences
+        )
+    return with_copy if with_passage else plain
+
+
 _NONE = re.compile(r"^(none|no differences?( found)?|n/?a|nothing|-|\[\])\W*$", re.I)
 
 
@@ -92,10 +111,12 @@ def reasoning_with(differences: Any, reasoning: Optional[str]) -> Optional[str]:
     return f"{lead} {reasoning}" if reasoning else lead
 
 
-# A "Differences:" header at the start of a line, so a reasoning that only
+# A "Differences:" header at the start of a line (after a claim number, if
+# any: "1. Differences: ..."), so a reasoning that only
 # mentions "the difference" in an older reply is never read as a list
 _PLAIN_DIFF = re.compile(
-    r"(?:^|\n)[\W_]*differences?[*_]*\s*:(.*?)(?=\n[\W_]*(?:reasoning|support[ _]level)|$)",
+    r"(?:^|\n)[\W_]*(?:claim\s*)?\d*[\W_]*differences?[*_]*\s*:"
+    r"(.*?)(?=\n[\W_]*(?:claim\s*)?\d*[\W_]*(?:reasoning|support[ _]level)|$)",
     re.I | re.S,
 )
 

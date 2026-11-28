@@ -87,6 +87,10 @@ def test_raw_replies_json_and_text():
         "2.\nDifferences: none\nReasoning: same.\nSupport_level: supported"
     )
     assert read_reply(text, 2) == ["partial", "supported"]
+    same_line = "1. Differences: date not in article\nSupport_level: supported"
+    assert read_reply(same_line, 1) == ["partial"]
+    numbered = "**Claim 1** Differences: none\nSupport_level: supported"
+    assert read_reply(numbered, 1) == ["supported"]
     # an older reply that only mentions "the difference" keeps its verdict
     old = "1. Reasoning: the only difference: wording.\nSupport_level: supported"
     assert read_reply(old, 1) == ["supported"]
@@ -134,3 +138,35 @@ def test_dev_set_uses_agreed_labels_off_the_test_articles(tmp_path, capsys):
     }
     assert {r["article_id"] for r in items} == set(off_test)
     assert labels == {"i0": "no", "i1": "yes", "i2": "no", "i3": "yes"}
+
+
+def test_passage_is_kept_with_differences(monkeypatch):
+    monkeypatch.setattr(gd, "GROUNDING_DECIDE", "differences")
+    model = gd.verdict_model(
+        True, grounding.ClaimVerdict, grounding.ClaimVerdictWithPassage
+    )
+    assert model is gd.ClaimVerdictWithDifferencesAndPassage
+    reply = [
+        model(
+            claim_number=1,
+            differences=["date"],
+            support_level=SupportLevel.SUPPORTED,
+            passage="Ann Lee will be flown to the base in May",
+        )
+    ]
+    with patch("src.utils.llm.cloud_generation", return_value=reply) as gen:
+        out = judge_claims(
+            article_id="a1",
+            article_text=ARTICLE,
+            claims=[("Ann Lee", "Ann Lee was flown in April.")],
+            model_type="cloud",
+            ask_passage=True,
+            model="openai/test",
+        )
+    assert gen.call_args.kwargs["response_model"] == List[model]
+    assert out[0][0] == SupportLevel.PARTIAL and out[0][2].startswith("Ann Lee will")
+    monkeypatch.setattr(gd, "GROUNDING_DECIDE", "model")
+    plain = gd.verdict_model(
+        True, grounding.ClaimVerdict, grounding.ClaimVerdictWithPassage
+    )
+    assert plain is grounding.ClaimVerdictWithPassage

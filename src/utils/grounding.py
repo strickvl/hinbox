@@ -674,8 +674,7 @@ def judge_claims(
     generate = local_generation if local else cloud_generation
     from src.utils import grounding_differences as gd
 
-    verdict_model: Any = ClaimVerdictWithPassage if ask_passage else ClaimVerdict
-    verdict_model = gd.ClaimVerdictWithDifferences if gd.decides() else verdict_model
+    verdict_model = gd.verdict_model(ask_passage, ClaimVerdict, ClaimVerdictWithPassage)
     thinking = (
         local_thinking(GROUNDING_REASONING_EFFORT, GROUNDING_THINKING_MAX_TOKENS)
         if local and GROUNDING_REASONING_EFFORT
