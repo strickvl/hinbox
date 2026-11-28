@@ -321,6 +321,19 @@ def test_sessions_are_built_one_claim_each_and_resume(tmp_path):
     assert again["skipped"] == 2 and len(calls) == 2
 
 
+def test_only_the_newest_recording_of_each_claim_is_kept():
+    def sess(sid, ids, origin="import"):
+        return SimpleNamespace(id=sid, metadata={"item_ids": ids}, origin=origin)
+
+    trial = sess("01a2219e-0000", ["i1"])
+    real = sess("01a2300a-0000", ["i1"])
+    other = sess("01a2300b-0000", ["i2"])
+    replay = sess("01a2400c-0000", ["i1"], origin="replay")
+    unlabelled = sess("01a2400d-0000", [])
+    kept = kl.newest_per_claims([trial, other, real, replay, unlabelled])
+    assert kept == [other, real]
+
+
 def test_names_are_made_ones_kitaru_takes():
     assert kl.kitaru_name("Trial: v4 vs untuned") == "Trial-v4-vs-untuned"
     assert kl.kitaru_name("  opus_strict (v2) ") == "opus_strict-v2"

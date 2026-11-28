@@ -236,17 +236,32 @@ async def _labelled_sessions(
     client: Any, agent_id: uuid.UUID, item_ids: Optional[set] = None
 ) -> List[Tuple[Any, Dict[str, Any]]]:
     """(session, its inputs) for the agent's recorded citation sessions
-    (replays left out), optionally only those for ``item_ids``."""
+    (replays left out), optionally only those for ``item_ids``. When the
+    same claims were recorded more than once (a trial run, then the real
+    one), only the newest recording is kept (``newest_per_claims()``)."""
     out = []
-    for s in await _agent_sessions(client, agent_id):
+    for s in newest_per_claims(await _agent_sessions(client, agent_id)):
         ids = (s.metadata or {}).get("item_ids") or []
-        if str(getattr(s.origin, "value", s.origin)) == "replay" or not ids:
-            continue
         if item_ids is not None and not set(ids) & item_ids:
             continue
         detail = await client.sessions.get(s.id)
         out.append((s, detail.inputs or {}))
     return out
+
+
+def newest_per_claims(sessions: Sequence[Any]) -> List[Any]:
+    """The recorded (not replayed) sessions that hold claims, one per set of
+    item ids: the newest, by id, since Kitaru's ids are UUIDv7 and so sort by
+    the time they were made. In the order given."""
+    newest: Dict[Tuple[str, ...], Any] = {}
+    for s in sessions:
+        ids = tuple(sorted((s.metadata or {}).get("item_ids") or []))
+        if str(getattr(s.origin, "value", s.origin)) == "replay" or not ids:
+            continue
+        if ids not in newest or str(s.id) > str(newest[ids].id):
+            newest[ids] = s
+    keep = {id(s) for s in newest.values()}
+    return [s for s in sessions if id(s) in keep]
 
 
 async def investigate(name: str, item_ids: Optional[set] = None, agent: str = AGENT):
