@@ -161,7 +161,11 @@ def test_commands(tmp_path):
         and "Headline: T\nPublished: 2010-01-02" in rows[0]["messages"][1]["content"]
     )
     second = [
-        {"item_ids": r["item_ids"], "reply": "Answer: rewording\nAnswer: rewording"}
+        {
+            "item_ids": r["item_ids"],
+            "reply": "Answer: rewording\n"
+            * (2 if r["item_ids"][0].startswith("b") else 1),
+        }
         for r in rows
     ]
     paths["second"].write_text("".join(json.dumps(r) + "\n" for r in second))
@@ -187,3 +191,21 @@ def test_commands(tmp_path):
         json.loads((tmp_path / "dev_code.json").read_text())["predicted"]["a"]
         == "partial"
     )
+
+
+def test_answers_must_cover_every_difference_once():
+    def two(*pairs):
+        return _reply(*({"difference_number": n, "answer": a} for n, a in pairs))
+
+    assert m.meaning_answers(two((2, "changes_meaning"), (1, "rewording")), 2) == [
+        "rewording",
+        "changes_meaning",
+    ]
+    assert m.meaning_answers(two((1, "rewording"), (1, "rewording")), 2) is None
+    assert m.meaning_answers(two((1, "rewording")), 2) is None
+    assert m.meaning_answers(two((1, "rewording"), (2, "maybe")), 2) is None
+    assert (
+        m.meaning_answers("Answer: rewording\nAnswer: rewording", 2)
+        == ["rewording"] * 2
+    )
+    assert m.meaning_answers("Answer: rewording", 2) is None

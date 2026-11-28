@@ -148,18 +148,34 @@ def meaning_prompts(
     return rows
 
 
-def meaning_answers(text: str) -> List[str]:
-    """The "rewording" / "changes_meaning" answers in a reply, in order."""
+def meaning_answers(text: str, count: int) -> Optional[List[str]]:
+    """The "rewording" / "changes_meaning" answer to each of ``count``
+    differences, in order; None unless every difference has exactly one
+    answer. JSON items are placed by ``difference_number`` (a number given
+    twice or missing is None); text answers ("Answer: rewording") must come
+    exactly ``count`` times."""
+    ok = ("rewording", "changes_meaning")
     payload = _payload(text)
     items = payload.get("items") if isinstance(payload, dict) else None
     if isinstance(items, list):
-        got = [
-            str(i.get("answer", "")).strip().lower().replace(" ", "_")
-            for i in items
-            if isinstance(i, dict)
+        rows = [i for i in items if isinstance(i, dict)]
+        numbers = [i.get("difference_number") for i in rows]
+        if not all(isinstance(n, int) for n in numbers):
+            numbers = list(range(1, len(rows) + 1))  # unnumbered: in order
+        if sorted(numbers) != list(range(1, count + 1)):
+            return None
+        got = {
+            n: str(i.get("answer", "")).strip().lower().replace(" ", "_")
+            for n, i in zip(numbers, rows)
+        }
+        answers = [got[n] for n in range(1, count + 1)]
+    else:
+        answers = [
+            m.group(1).lower().replace(" ", "_") for m in _ANSWER.finditer(text or "")
         ]
-        return [a for a in got if a in ("rewording", "changes_meaning")]
-    return [m.group(1).lower().replace(" ", "_") for m in _ANSWER.finditer(text or "")]
+        if len(answers) != count:
+            return None
+    return answers if all(x in ok for x in answers) else None
 
 
 Predicted = Dict[str, Optional[str]]
@@ -175,8 +191,8 @@ def meaning_predictions(
     - ``code``: "supported" with any difference listed is "partial"
       (``HINBOX_GROUNDING_DECIDE=differences`` as it is);
     - ``meaning``: as ``code``, except that the claim stays "supported" when
-      the second step answered "rewording" for every listed difference (a
-      missing or short second answer counts as doubt)."""
+      the second step answered "rewording" for every listed difference (an
+      answer missing, given twice or unreadable counts as doubt)."""
     second = {
         r["item_ids"][0]: r.get("reply") or "" for r in replies if r.get("item_ids")
     }
@@ -193,10 +209,10 @@ def meaning_predictions(
             counts["asked"] += 1
             key = asked_id(iid, sample)
             counts["answered"] += key in second
-            answers = meaning_answers(second.get(key, ""))
-            if len(answers) < len(d[1]):
+            answers = meaning_answers(second.get(key, ""), len(d[1]))
+            if answers is None:
                 counts["unread"] += 1
-            elif all(x == "rewording" for x in answers[: len(d[1])]):
+            elif all(x == "rewording" for x in answers):
                 counts["kept_supported"] += 1
                 meaning[iid] = "supported"
             else:

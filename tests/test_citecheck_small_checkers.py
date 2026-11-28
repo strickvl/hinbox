@@ -50,3 +50,16 @@ def test_run_resumes(tmp_path):
         "a",
         "b",
     ]
+
+
+def test_timing_survives_a_resume(tmp_path):
+    out = tmp_path / "x.jsonl"
+    groups = {"a1": [{"item_id": "a", "claim": "A"}, {"item_id": "b", "claim": "B"}]}
+    sc.run("x", lambda doc, claims: [0.5] * len(claims), groups, {"a1": "d"}, str(out))
+    rows = [
+        {"item_id": "a", "article_id": "a1", "score": 1, "seconds": 2.0},
+        {"item_id": "b", "article_id": "a1", "score": 1, "seconds": 2.0},
+        {"item_id": "c", "article_id": "a2", "score": 1, "seconds": 1.0},
+    ]
+    out.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert sc.run("x", lambda d, c: [], groups, {}, str(out)) == 2.5

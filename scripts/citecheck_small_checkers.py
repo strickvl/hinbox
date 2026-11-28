@@ -130,14 +130,25 @@ def tally(scored: List[Tuple[float, str]], cut: float) -> Dict[str, int]:
     }
 
 
+def seconds_per_article(rows: List[Dict]) -> float:
+    """Mean seconds per article over the scored rows: each row stores its
+    share of its article's time, so a resumed run still counts every
+    article it holds."""
+    spent: Dict[str, float] = defaultdict(float)
+    for r in rows:
+        if "seconds" in r:
+            spent[r["article_id"]] += r["seconds"]
+    return sum(spent.values()) / len(spent) if spent else 0.0
+
+
 def run(checker: str, scorer, groups, texts, out_path: str) -> float:
-    """Scores every claim not yet in ``out_path``; seconds per article."""
+    """Scores every claim not yet in ``out_path``; seconds per article over
+    every article in it."""
     done = (
         {r["item_id"] for r in read_jsonl(out_path)}
         if os.path.exists(out_path)
         else set()
     )
-    spent, articles = 0.0, 0
     with open(out_path, "a") as f:
         for aid, rows in groups.items():
             todo = [r for r in rows if r["item_id"] not in done]
@@ -146,12 +157,12 @@ def run(checker: str, scorer, groups, texts, out_path: str) -> float:
             start = time.time()
             scores = scorer(texts.get(aid, ""), [r["claim"] for r in todo])
             took = time.time() - start
-            spent, articles = spent + took, articles + 1
             for r, s in zip(todo, scores):
-                f.write(json.dumps({"item_id": r["item_id"], "score": s}) + "\n")
+                row = {"item_id": r["item_id"], "article_id": aid, "score": s}
+                f.write(json.dumps({**row, "seconds": took / len(todo)}) + "\n")
             f.flush()
             print(f"[{checker}] {aid}: {len(todo)} claims in {took:.1f} s", flush=True)
-    return spent / articles if articles else 0.0
+    return seconds_per_article(read_jsonl(out_path))
 
 
 def main() -> None:
